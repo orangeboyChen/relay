@@ -45,7 +45,10 @@ var _ = Describe("Incoming call notification verification", func() {
 				},
 			},
 		}
-		notification.Signature = ed25519.Sign(privateKey, incomingCallSignedData(notification))
+		for index := range notification.Recipients {
+			recipient := &notification.Recipients[index]
+			recipient.Signature = ed25519.Sign(privateKey, incomingCallRecipientSignedData(notification, *recipient))
+		}
 	})
 
 	It("accepts canonical recipient ciphertexts signed by the device", func() {
@@ -99,7 +102,7 @@ var _ = Describe("Incoming call notification verification", func() {
 		Entry("unsorted recipients", func(value *domain.IncomingCallNotification) {
 			value.Recipients[0], value.Recipients[1] = value.Recipients[1], value.Recipients[0]
 		}),
-		Entry("short signature", func(value *domain.IncomingCallNotification) { value.Signature = []byte("short") }),
+		Entry("short signature", func(value *domain.IncomingCallNotification) { value.Recipients[0].Signature = []byte("short") }),
 	)
 
 	It("distinguishes malformed signing keys from invalid signatures", func() {

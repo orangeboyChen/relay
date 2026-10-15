@@ -27,8 +27,10 @@ func VerifyIncomingCallNotification(verificationKey ed25519.PublicKey, notificat
 	if err := validateIncomingCallNotification(notification); err != nil {
 		return err
 	}
-	if !ed25519.Verify(verificationKey, incomingCallSignedData(notification), notification.Signature) {
-		return ErrInvalidSignature
+	for _, recipient := range notification.Recipients {
+		if !ed25519.Verify(verificationKey, incomingCallRecipientSignedData(notification, recipient), recipient.Signature) {
+			return ErrInvalidSignature
+		}
 	}
 	return nil
 }
@@ -49,7 +51,8 @@ func validateIncomingCallNotification(notification domain.IncomingCallNotificati
 			len(recipient.SenderPublicKey) != keyAgreementPublicBytes ||
 			len(recipient.Nonce) != gcmNonceBytes ||
 			len(recipient.Ciphertext) < gcmAuthenticationBytes ||
-			len(recipient.Ciphertext) > maxIncomingCiphertext {
+			len(recipient.Ciphertext) > maxIncomingCiphertext ||
+			len(recipient.Signature) != ed25519.SignatureSize {
 			return fmt.Errorf("%w: recipient envelope is invalid", ErrInvalidIncomingCall)
 		}
 		if previousID != "" && strings.Compare(previousID, recipient.InstallationID) >= 0 {
@@ -57,26 +60,20 @@ func validateIncomingCallNotification(notification domain.IncomingCallNotificati
 		}
 		previousID = recipient.InstallationID
 	}
-	if len(notification.Signature) != ed25519.SignatureSize {
-		return fmt.Errorf("%w: signature must contain exactly %d bytes", ErrInvalidIncomingCall, ed25519.SignatureSize)
-	}
 	return nil
 }
 
-func incomingCallSignedData(notification domain.IncomingCallNotification) []byte {
-	buffer := make([]byte, 0, 512)
+func incomingCallRecipientSignedData(notification domain.IncomingCallNotification, recipient domain.IncomingCallRecipient) []byte {
+	buffer := make([]byte, 0, 256)
 	buffer = appendBytes(buffer, []byte(notification.ID))
 	buffer = appendBytes(buffer, []byte(notification.Type))
 	buffer = appendBytes(buffer, []byte(notification.DeviceUUID))
 	buffer = binary.BigEndian.AppendUint64(buffer, uint64(notification.OccurredAt.UTC().UnixNano()))
 	buffer = binary.BigEndian.AppendUint64(buffer, uint64(notification.KeyEpoch))
-	buffer = binary.BigEndian.AppendUint32(buffer, uint32(len(notification.Recipients)))
-	for _, recipient := range notification.Recipients {
-		buffer = appendBytes(buffer, []byte(recipient.InstallationID))
-		buffer = appendBytes(buffer, recipient.SenderPublicKey)
-		buffer = appendBytes(buffer, recipient.Nonce)
-		buffer = appendBytes(buffer, recipient.Ciphertext)
-	}
+	buffer = appendBytes(buffer, []byte(recipient.InstallationID))
+	buffer = appendBytes(buffer, recipient.SenderPublicKey)
+	buffer = appendBytes(buffer, recipient.Nonce)
+	buffer = appendBytes(buffer, recipient.Ciphertext)
 	return buffer
 }
 

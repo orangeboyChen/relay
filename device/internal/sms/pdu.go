@@ -101,7 +101,10 @@ func DecodeDeliver(encoded string) (Message, error) {
 		if septets < 0 {
 			return Message{}, ErrUnsupportedPDU
 		}
-		text = decodeGSM7(userData, septets, headerBytes*8)
+		text, err = decodeGSM7(userData, septets, headerSeptets*7)
+		if err != nil {
+			return Message{}, err
+		}
 	case 0x08:
 		if userDataLength > len(userData) {
 			return Message{}, ErrUnsupportedPDU
@@ -132,30 +135,39 @@ func EncodeSubmit(destination string, text string, reference byte) ([]SubmitPDU,
 		return nil, errors.New("message must not be empty")
 	}
 
-	if septets, ok := encodeGSM7(text); ok && len(septets) <= 160 {
-		packed := packSeptets(septets, nil)
-		return []SubmitPDU{buildSubmitPDU(destination, 0x11, 0x00, byte(len(septets)), packed, 1, 1)}, nil
+	if septets, ok := encodeGSM7(text); ok {
+		if len(septets) <= 160 {
+			packed := packSeptets(septets, nil)
+			return []SubmitPDU{buildSubmitPDU(destination, 0x11, 0x00, byte(len(septets)), packed, 1, 1)}, nil
+		}
+		segments := splitGSM7(septets, 153)
+		if len(segments) > 255 {
+			return nil, errors.New("message requires more than 255 segments")
+		}
+		result := make([]SubmitPDU, 0, len(segments))
+		for index, segment := range segments {
+			header := []byte{0x05, 0x00, 0x03, reference, byte(len(segments)), byte(index + 1)}
+			payload := packSeptets(segment, header)
+			headerSeptets := (len(header)*8 + 6) / 7
+			result = append(result, buildSubmitPDU(destination, 0x51, 0x00, byte(headerSeptets+len(segment)), payload, index+1, len(segments)))
+		}
+		return result, nil
 	}
 
 	runes := []rune(text)
-	const segmentRunes = 67
-	total := (len(runes) + segmentRunes - 1) / segmentRunes
-	if total > 255 {
+	encodedText := encodeUCS2(runes)
+	if len(encodedText) <= 140 {
+		return []SubmitPDU{buildSubmitPDU(destination, 0x11, 0x08, byte(len(encodedText)), encodedText, 1, 1)}, nil
+	}
+	segments := splitUCS2(runes, 67)
+	if len(segments) > 255 {
 		return nil, errors.New("message requires more than 255 segments")
 	}
-	result := make([]SubmitPDU, 0, total)
-	for index := 0; index < total; index++ {
-		start := index * segmentRunes
-		end := min(start+segmentRunes, len(runes))
-		encodedText := encodeUCS2(runes[start:end])
-		payload := encodedText
-		firstOctet := byte(0x11)
-		if total > 1 {
-			firstOctet = 0x51
-			header := []byte{0x05, 0x00, 0x03, reference, byte(total), byte(index + 1)}
-			payload = append(header, encodedText...)
-		}
-		result = append(result, buildSubmitPDU(destination, firstOctet, 0x08, byte(len(payload)), payload, index+1, total))
+	result := make([]SubmitPDU, 0, len(segments))
+	for index, segment := range segments {
+		header := []byte{0x05, 0x00, 0x03, reference, byte(len(segments)), byte(index + 1)}
+		payload := append(header, encodeUCS2(segment)...)
+		result = append(result, buildSubmitPDU(destination, 0x51, 0x08, byte(len(payload)), payload, index+1, len(segments)))
 	}
 	return result, nil
 }
@@ -197,18 +209,18 @@ func decodeTimestamp(value []byte) (time.Time, error) {
 	if len(value) != 7 {
 		return time.Time{}, ErrUnsupportedPDU
 	}
-	parts := make([]int, 7)
-	for index, octet := range value {
+	parts := make([]int, 6)
+	for index, octet := range value[:6] {
 		parts[index] = int(octet&0x0f)*10 + int(octet>>4&0x0f)
 	}
 	year := 2000 + parts[0]
-	offsetQuarters := parts[6]
+	offsetQuarters := int(value[6]&0x07)*10 + int(value[6]>>4&0x0f)
 	if value[6]&0x08 != 0 {
 		offsetQuarters = -offsetQuarters
 	}
 	zone := time.FixedZone("SMS", offsetQuarters*15*60)
 	timestamp := time.Date(year, time.Month(parts[1]), parts[2], parts[3], parts[4], parts[5], 0, zone)
-	if timestamp.Month() != time.Month(parts[1]) || timestamp.Day() != parts[2] {
+	if timestamp.Year() != year || timestamp.Month() != time.Month(parts[1]) || timestamp.Day() != parts[2] || timestamp.Hour() != parts[3] || timestamp.Minute() != parts[4] || timestamp.Second() != parts[5] {
 		return time.Time{}, ErrUnsupportedPDU
 	}
 	return timestamp, nil
@@ -258,22 +270,39 @@ func encodeUCS2(value []rune) []byte {
 	return result
 }
 
-func decodeGSM7(data []byte, septetCount int, bitOffset int) string {
-	result := make([]rune, 0, septetCount)
+func decodeGSM7(data []byte, septetCount int, bitOffset int) (string, error) {
+	if septetCount < 0 || bitOffset < 0 || (bitOffset+septetCount*7+7)/8 > len(data) {
+		return "", ErrUnsupportedPDU
+	}
+	septets := make([]byte, 0, septetCount)
 	for index := 0; index < septetCount; index++ {
 		position := bitOffset + index*7
 		byteIndex := position / 8
 		shift := position % 8
-		if byteIndex >= len(data) {
-			break
-		}
 		value := data[byteIndex] >> shift
 		if shift > 1 && byteIndex+1 < len(data) {
 			value |= data[byteIndex+1] << (8 - shift)
 		}
-		result = append(result, gsm7Alphabet[value&0x7f])
+		septets = append(septets, value&0x7f)
 	}
-	return string(result)
+	result := make([]rune, 0, septetCount)
+	for position := 0; position < len(septets); position++ {
+		value := septets[position]
+		if value != 0x1b {
+			result = append(result, gsm7Alphabet[value])
+			continue
+		}
+		position++
+		if position >= len(septets) {
+			return "", ErrUnsupportedPDU
+		}
+		character, ok := gsm7ExtensionAlphabet[septets[position]]
+		if !ok {
+			return "", ErrUnsupportedPDU
+		}
+		result = append(result, character)
+	}
+	return string(result), nil
 }
 
 func encodeGSM7(text string) ([]byte, bool) {
@@ -287,15 +316,52 @@ func encodeGSM7(text string) ([]byte, bool) {
 			}
 		}
 		if index < 0 {
-			return nil, false
+			extension, ok := gsm7ExtensionEncoding[character]
+			if !ok {
+				return nil, false
+			}
+			result = append(result, 0x1b, extension)
+			continue
 		}
 		result = append(result, byte(index))
 	}
 	return result, true
 }
 
+func splitGSM7(septets []byte, limit int) [][]byte {
+	result := make([][]byte, 0, (len(septets)+limit-1)/limit)
+	for position := 0; position < len(septets); {
+		end := min(position+limit, len(septets))
+		if end < len(septets) && septets[end-1] == 0x1b {
+			end--
+		}
+		result = append(result, append([]byte(nil), septets[position:end]...))
+		position = end
+	}
+	return result
+}
+
+func splitUCS2(runes []rune, limit int) [][]rune {
+	result := make([][]rune, 0)
+	start := 0
+	units := 0
+	for index, character := range runes {
+		characterUnits := utf16.RuneLen(character)
+		if units+characterUnits > limit {
+			result = append(result, append([]rune(nil), runes[start:index]...))
+			start = index
+			units = 0
+		}
+		units += characterUnits
+	}
+	if start < len(runes) {
+		result = append(result, append([]rune(nil), runes[start:]...))
+	}
+	return result
+}
+
 func packSeptets(septets []byte, prefix []byte) []byte {
-	bitOffset := len(prefix) * 8
+	bitOffset := ((len(prefix)*8 + 6) / 7) * 7
 	length := (bitOffset + len(septets)*7 + 7) / 8
 	result := make([]byte, length)
 	copy(result, prefix)
@@ -312,3 +378,29 @@ func packSeptets(septets []byte, prefix []byte) []byte {
 }
 
 var gsm7Alphabet = []rune("@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\x1bÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà")
+
+var gsm7ExtensionAlphabet = map[byte]rune{
+	0x0a: '\f',
+	0x14: '^',
+	0x28: '{',
+	0x29: '}',
+	0x2f: '\\',
+	0x3c: '[',
+	0x3d: '~',
+	0x3e: ']',
+	0x40: '|',
+	0x65: '€',
+}
+
+var gsm7ExtensionEncoding = map[rune]byte{
+	'\f': 0x0a,
+	'^':  0x14,
+	'{':  0x28,
+	'}':  0x29,
+	'\\': 0x2f,
+	'[':  0x3c,
+	'~':  0x3d,
+	']':  0x3e,
+	'|':  0x40,
+	'€':  0x65,
+}

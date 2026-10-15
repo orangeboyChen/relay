@@ -13,6 +13,7 @@ import (
 )
 
 var phoneNumberPattern = regexp.MustCompile(`^\+?[0-9]{1,20}$`)
+var incomingNumberPattern = regexp.MustCompile(`^\+(?:CLIP|CCWA):\s*"(\+?[0-9]{1,20})"`)
 
 // State is the locally known cellular call state.
 type State string
@@ -29,10 +30,11 @@ const (
 
 // Snapshot represents simultaneous active, held, and waiting cellular call legs.
 type Snapshot struct {
-	State   State
-	Active  bool
-	Held    bool
-	Waiting bool
+	State          State
+	Active         bool
+	Held           bool
+	Waiting        bool
+	IncomingNumber string
 }
 
 // Commander is the AT command capability required by the call controller.
@@ -97,7 +99,11 @@ func (controller *Controller) Answer(ctx context.Context) error {
 	if err := controller.command(ctx, "ATA"); err != nil {
 		return err
 	}
-	controller.setSnapshot(Snapshot{State: StateActive, Active: true})
+	snapshot := controller.Snapshot()
+	snapshot.State = StateActive
+	snapshot.Active = true
+	snapshot.Waiting = false
+	controller.setSnapshot(snapshot)
 	return nil
 }
 
@@ -113,6 +119,7 @@ func (controller *Controller) Reject(ctx context.Context) error {
 	}
 	if snapshot.Waiting {
 		snapshot.Waiting = false
+		snapshot.IncomingNumber = ""
 		snapshot.State = remainingState(snapshot)
 		controller.setSnapshot(snapshot)
 	} else {
@@ -158,7 +165,10 @@ func (controller *Controller) Hold(ctx context.Context) error {
 	if err := controller.command(ctx, "AT+CHLD=2"); err != nil {
 		return err
 	}
-	controller.setSnapshot(Snapshot{State: StateHeld, Held: true})
+	snapshot.Active = false
+	snapshot.Held = true
+	snapshot.State = StateHeld
+	controller.setSnapshot(snapshot)
 	return nil
 }
 
@@ -171,7 +181,10 @@ func (controller *Controller) Resume(ctx context.Context) error {
 	if err := controller.command(ctx, "AT+CHLD=2"); err != nil {
 		return err
 	}
-	controller.setSnapshot(Snapshot{State: StateActive, Active: true})
+	snapshot.Active = true
+	snapshot.Held = false
+	snapshot.State = StateActive
+	controller.setSnapshot(snapshot)
 	return nil
 }
 
@@ -204,11 +217,23 @@ func (controller *Controller) ApplyURC(urc string) {
 			snapshot.Waiting = true
 			snapshot.State = StateWaiting
 		} else {
-			snapshot = Snapshot{State: StateRinging}
+			snapshot.State = StateRinging
+		}
+	case strings.HasPrefix(urc, "+CLIP:"):
+		number, ok := incomingNumber(urc)
+		if !ok {
+			return
+		}
+		snapshot.IncomingNumber = number
+		if snapshot.State == StateIdle || snapshot.State == StateEnded {
+			snapshot.State = StateRinging
 		}
 	case strings.HasPrefix(urc, "+CCWA:"):
 		snapshot.Waiting = true
 		snapshot.State = StateWaiting
+		if number, ok := incomingNumber(urc); ok {
+			snapshot.IncomingNumber = number
+		}
 	case urc == "NO CARRIER", urc == "NO ANSWER", urc == "BUSY":
 		if snapshot.Held {
 			snapshot.Active = false
@@ -225,7 +250,8 @@ func (controller *Controller) ApplyURC(urc string) {
 
 // ApplyCLCC replaces the local snapshot with the modem's authoritative call list.
 func (controller *Controller) ApplyCLCC(lines []string) error {
-	snapshot := Snapshot{}
+	previous := controller.Snapshot()
+	snapshot := Snapshot{IncomingNumber: previous.IncomingNumber}
 	dialing := false
 	ringing := false
 	callCount := 0
@@ -278,6 +304,14 @@ func (controller *Controller) ApplyCLCC(lines []string) error {
 	}
 	controller.setSnapshot(snapshot)
 	return nil
+}
+
+func incomingNumber(urc string) (string, bool) {
+	match := incomingNumberPattern.FindStringSubmatch(strings.TrimSpace(urc))
+	if len(match) != 2 {
+		return "", false
+	}
+	return match[1], true
 }
 
 func (controller *Controller) command(ctx context.Context, command string) error {

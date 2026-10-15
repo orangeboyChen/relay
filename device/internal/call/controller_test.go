@@ -61,19 +61,28 @@ var _ = Describe("Cellular call controller", func() {
 
 	It("answers an incoming call", func() {
 		controller.ApplyURC("RING")
+		controller.ApplyURC(`+CLIP: "+8613500000000",145,"",0,"",0`)
 		Expect(controller.State()).To(Equal(StateRinging))
+		Expect(controller.Snapshot().IncomingNumber).To(Equal("+8613500000000"))
 
 		Expect(controller.Answer(context.Background())).To(Succeed())
 
-		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateActive, Active: true}))
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateActive, Active: true, IncomingNumber: "+8613500000000"}))
 		Expect(commander.commands).To(Equal([]string{"ATA"}))
+	})
+
+	It("ignores malformed caller identification without losing the ringing state", func() {
+		controller.ApplyURC("RING")
+		controller.ApplyURC(`+CLIP: "private",128,"",0,"",0`)
+
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateRinging}))
 	})
 
 	It("preserves the active call when rejecting a waiting call", func() {
 		controller.ApplyURC("RING")
 		Expect(controller.Answer(context.Background())).To(Succeed())
 		controller.ApplyURC(`+CCWA: "10086",129,1`)
-		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateWaiting, Active: true, Waiting: true}))
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateWaiting, Active: true, Waiting: true, IncomingNumber: "10086"}))
 
 		Expect(controller.Reject(context.Background())).To(Succeed())
 
@@ -107,7 +116,7 @@ var _ = Describe("Cellular call controller", func() {
 
 		Expect(controller.AnswerWaiting(context.Background())).To(Succeed())
 
-		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateActive, Active: true, Held: true}))
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateActive, Active: true, Held: true, IncomingNumber: "10086"}))
 		Expect(commander.commands).To(Equal([]string{"ATA", "AT+CHLD=2"}))
 	})
 
@@ -142,7 +151,7 @@ var _ = Describe("Cellular call controller", func() {
 
 		Expect(controller.Swap(context.Background())).To(Succeed())
 
-		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateActive, Active: true, Held: true}))
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateActive, Active: true, Held: true, IncomingNumber: "10010"}))
 		Expect(commander.commands).To(HaveLen(3))
 		Expect(commander.commands[2]).To(Equal("AT+CHLD=2"))
 	})
@@ -155,7 +164,7 @@ var _ = Describe("Cellular call controller", func() {
 
 		controller.ApplyURC("NO CARRIER")
 
-		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateHeld, Held: true}))
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateHeld, Held: true, IncomingNumber: "10010"}))
 	})
 
 	It("marks the call ended for terminal network notifications", func() {

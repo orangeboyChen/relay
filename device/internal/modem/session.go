@@ -18,6 +18,7 @@ var initializationCommands = []string{
 	"AT+CMEE=2",
 	"AT+CMGF=0",
 	"AT+CNMI=2,2,0,1,0",
+	"AT+CLIP=1",
 	"AT+CCWA=1,1",
 }
 
@@ -199,7 +200,7 @@ func historyPDUs(lines []string) ([]string, error) {
 }
 
 func isCallURC(urc string) bool {
-	return urc == "RING" || strings.HasPrefix(urc, "+CCWA:") || urc == "NO CARRIER" || urc == "NO ANSWER" || urc == "BUSY"
+	return urc == "RING" || strings.HasPrefix(urc, "+CLIP:") || strings.HasPrefix(urc, "+CCWA:") || urc == "NO CARRIER" || urc == "NO ANSWER" || urc == "BUSY"
 }
 
 func notificationType(urc string) string {

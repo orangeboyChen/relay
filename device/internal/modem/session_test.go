@@ -157,10 +157,10 @@ var _ = Describe("Modem session", func() {
 		result := make(chan error, 1)
 		go func() { result <- session.Run(ctx) }()
 
-		_, _ = modemTransport.Write([]byte("+CMT: ,23\r\n" + testDeliverPDU + "\r\nRING\r\n+CCWA: \"10086\",129,1\r\n"))
+		_, _ = modemTransport.Write([]byte("+CMT: ,23\r\n" + testDeliverPDU + "\r\nRING\r\n+CLIP: \"13500000000\",129,\"\",0,\"\",0\r\n+CCWA: \"10086\",129,1\r\n"))
 
 		Eventually(received).Should(Receive(WithTransform(func(message sms.ReceivedMessage) string { return message.Text }, Equal("你好"))))
-		Eventually(func() call.Snapshot { return session.Calls().Snapshot() }).Should(Equal(call.Snapshot{State: call.StateWaiting, Waiting: true}))
+		Eventually(func() call.Snapshot { return session.Calls().Snapshot() }).Should(Equal(call.Snapshot{State: call.StateWaiting, Waiting: true, IncomingNumber: "10086"}))
 		cancel()
 		Eventually(result).Should(Receive(MatchError(context.Canceled)))
 	})

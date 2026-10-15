@@ -6,6 +6,7 @@ import XCTest
 final class ServerConnectionManagerTests: XCTestCase {
     func testSignInPersistsSessionAndLoadsEncryptedCommandMetadata() async throws {
         let deviceID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!
+        let futureDeviceID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-ffffffffffff")!
         let commandKey = Data(repeating: 7, count: 32)
         let network = ScriptedServerNetwork { request in
             switch (request.httpMethod, request.url?.path) {
@@ -29,6 +30,14 @@ final class ServerConnectionManagerTests: XCTestCase {
                       "command_public_key":"\(commandKey.base64EncodedString())",
                       "paired_at":"2026-10-16T00:00:00Z",
                       "last_seen_at":"2026-10-16T00:00:30Z"
+                    },{
+                      "device_uuid":"\(futureDeviceID.uuidString.lowercased())",
+                      "numeric_id":4,
+                      "profile_ciphertext":"",
+                      "identity_public_key":"",
+                      "command_public_key":"\(commandKey.base64EncodedString())",
+                      "paired_at":"2026-10-16T00:00:00Z",
+                      "last_seen_at":"2026-10-16T00:02:00Z"
                     }]}
                     """
                 )
@@ -44,17 +53,18 @@ final class ServerConnectionManagerTests: XCTestCase {
 
         try await manager.signIn(password: "correct horse")
         let devices = try await manager.loadDevices(
-            now: Date(timeIntervalSince1970: 1_792_080_060)
+            now: Date(timeIntervalSince1970: 1_792_108_860)
         )
 
         XCTAssertEqual(manager.state, .connected)
         XCTAssertNotNil(store.value)
         XCTAssertEqual(defaults.string(forKey: "sim-deck.server-address.v1"), manager.address)
-        XCTAssertEqual(devices.count, 1)
+        XCTAssertEqual(devices.count, 2)
         XCTAssertEqual(devices[0].id, deviceID)
         XCTAssertEqual(devices[0].numericID, 2)
         XCTAssertEqual(devices[0].commandPublicKey, commandKey)
         XCTAssertTrue(devices[0].isOnline)
+        XCTAssertFalse(devices[1].isOnline)
     }
 
     func testExpiredAccessTokenRefreshesBeforeLoadingDevices() async throws {

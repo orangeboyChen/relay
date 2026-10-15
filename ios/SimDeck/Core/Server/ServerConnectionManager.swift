@@ -187,7 +187,10 @@ final class ServerConnectionManager {
         }
         let body = try Self.decoder.decode(DeviceListResponse.self, from: data)
         return body.devices.map { device in
-            let recentlySeen = device.lastSeenAt.map { now.timeIntervalSince($0) < 60 } ?? false
+            let recentlySeen = device.lastSeenAt.map {
+                let age = now.timeIntervalSince($0)
+                return age >= 0 && age < 60
+            } ?? false
             return DeviceLineIdentity(
                 id: device.deviceUUID,
                 numericID: device.numericID,

@@ -168,7 +168,7 @@ func (router *router) pairDevice(writer http.ResponseWriter, request *http.Reque
 		writeError(writer, http.StatusUnauthorized, "invalid_pairing_token", domain.ErrInvalidPairingToken.Error())
 		return
 	}
-	if !validUUID(body.DeviceUUID) || len(body.IdentityPublicKey) != ed25519.PublicKeySize || len(body.ProfileCiphertext) == 0 || len(body.ProfileCiphertext) > maxProfileCiphertextBytes || len(body.WrappedVaultKey) > maxWrappedVaultKeyBytes {
+	if !validUUID(body.DeviceUUID) || len(body.IdentityPublicKey) != ed25519.PublicKeySize || len(body.ProfileCiphertext) > maxProfileCiphertextBytes || len(body.WrappedVaultKey) > maxWrappedVaultKeyBytes {
 		writeError(writer, http.StatusUnprocessableEntity, "invalid_device", "Device identity or encrypted profile is invalid.")
 		return
 	}

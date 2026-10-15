@@ -73,7 +73,7 @@ var _ = Describe("Device pairing API", func() {
 		requestBody, err := json.Marshal(map[string]any{
 			"pairing_token":       pairingToken,
 			"device_uuid":         repository.pairingRecord.ID,
-			"profile_ciphertext":  []byte("encrypted profile"),
+			"profile_ciphertext":  []byte{},
 			"identity_public_key": bytes.Repeat([]byte{7}, ed25519.PublicKeySize),
 			"wrapped_vault_key":   []byte("wrapped vault key"),
 		})
@@ -95,6 +95,7 @@ var _ = Describe("Device pairing API", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(repository.pairing.CredentialHash).To(Equal(credentialHash[:]))
 		Expect(repository.pairing.IdentityPublicKey).To(HaveLen(ed25519.PublicKeySize))
+		Expect(repository.pairing.ProfileCiphertext).To(BeEmpty())
 	})
 
 	It("rejects malformed device identity before consuming a token", func() {

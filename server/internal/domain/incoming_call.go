@@ -35,3 +35,17 @@ type IncomingCallDelivery struct {
 	KeyEpoch       int                   `json:"key_epoch"`
 	Recipient      IncomingCallRecipient `json:"recipient"`
 }
+
+// IncomingCallClaim records the installation that atomically won an incoming call.
+type IncomingCallClaim struct {
+	NotificationID string    `json:"notification_id"`
+	InstallationID string    `json:"installation_id"`
+	ClaimedAt      time.Time `json:"claimed_at"`
+	Won            bool      `json:"won"`
+}
+
+// IncomingCallClaimDelivery tells another iPhone to end its presented call.
+type IncomingCallClaimDelivery struct {
+	NotificationID string `json:"notification_id"`
+	Reason         string `json:"reason"`
+}

@@ -551,6 +551,80 @@ func incomingCallMatches(ctx context.Context, tx pgx.Tx, notification domain.Inc
 	return true, nil
 }
 
+// ClaimIncomingCall atomically selects the first approved iPhone and notifies the others.
+func (store *Postgres) ClaimIncomingCall(ctx context.Context, ownerID string, notificationID string, installationID string, now time.Time) (domain.IncomingCallClaim, error) {
+	tx, err := store.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return domain.IncomingCallClaim{}, fmt.Errorf("begin incoming call claim: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var eligible bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM incoming_call_notifications AS notification
+			JOIN incoming_call_recipients AS recipient
+			  ON recipient.notification_id = notification.id AND recipient.installation_id = $3
+			JOIN app_installations AS installation
+			  ON installation.id = recipient.installation_id
+			WHERE notification.id = $1
+			  AND notification.expires_at > $4
+			  AND installation.owner_id = $2
+			  AND installation.approved_at IS NOT NULL
+			  AND installation.revoked_at IS NULL
+		)`, notificationID, ownerID, installationID, now.UTC()).Scan(&eligible); err != nil {
+		return domain.IncomingCallClaim{}, fmt.Errorf("authorize incoming call claim: %w", err)
+	}
+	if !eligible {
+		return domain.IncomingCallClaim{}, pgx.ErrNoRows
+	}
+	command, err := tx.Exec(ctx, `
+		INSERT INTO incoming_call_claims (notification_id, installation_id, claimed_at)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (notification_id) DO NOTHING`, notificationID, installationID, now.UTC())
+	if err != nil {
+		return domain.IncomingCallClaim{}, fmt.Errorf("insert incoming call claim: %w", err)
+	}
+	created := command.RowsAffected() == 1
+	claim := domain.IncomingCallClaim{NotificationID: notificationID}
+	if err := tx.QueryRow(ctx, `
+		SELECT claim.installation_id, claim.claimed_at
+		FROM incoming_call_claims AS claim
+		JOIN incoming_call_notifications AS notification ON notification.id = claim.notification_id
+		WHERE claim.notification_id = $1 AND notification.expires_at > $2`, notificationID, now.UTC()).Scan(
+		&claim.InstallationID,
+		&claim.ClaimedAt,
+	); err != nil {
+		return domain.IncomingCallClaim{}, err
+	}
+	claim.Won = claim.InstallationID == installationID
+	if created {
+		payload, err := json.Marshal(domain.IncomingCallClaimDelivery{
+			NotificationID: notificationID,
+			Reason:         "answered_elsewhere",
+		})
+		if err != nil {
+			return domain.IncomingCallClaim{}, fmt.Errorf("encode incoming call claim delivery: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO outbox_jobs (kind, routing_key, payload, available_at)
+			SELECT 'voip.incoming_call_claimed', recipient.installation_id::text, $2, $3
+			FROM incoming_call_recipients AS recipient
+			JOIN app_installations AS installation ON installation.id = recipient.installation_id
+			WHERE recipient.notification_id = $1
+			  AND recipient.installation_id <> $4
+			  AND installation.approved_at IS NOT NULL
+			  AND installation.revoked_at IS NULL`, notificationID, payload, now.UTC(), installationID); err != nil {
+			return domain.IncomingCallClaim{}, fmt.Errorf("enqueue incoming call claim deliveries: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.IncomingCallClaim{}, fmt.Errorf("commit incoming call claim: %w", err)
+	}
+	return claim, nil
+}
+
 // ConsumePairingToken atomically consumes a pairing token, allocates a SIM ID, and stores a device credential hash.
 func (store *Postgres) ConsumePairingToken(ctx context.Context, tokenHash []byte, now time.Time, pairing DevicePairing) (DeviceRecord, error) {
 	tx, err := store.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})

@@ -99,6 +99,9 @@ func (repository *memoryRepository) ListApprovedAppInstallationRecipients(contex
 func (repository *memoryRepository) InsertIncomingCall(context.Context, domain.IncomingCallNotification, time.Time) (bool, error) {
 	return true, nil
 }
+func (repository *memoryRepository) ClaimIncomingCall(context.Context, string, string, string, time.Time) (domain.IncomingCallClaim, error) {
+	return domain.IncomingCallClaim{}, pgx.ErrNoRows
+}
 
 type memoryHTTPServer struct {
 	listenError   error

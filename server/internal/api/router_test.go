@@ -19,74 +19,80 @@ import (
 )
 
 type fakeRepository struct {
-	devices                 []store.DeviceRecord
-	listDevicesError        error
-	updatedDeviceID         string
-	updatedNumericID        int
-	updateNumericIDError    error
-	insertSequence          int64
-	insertCreated           bool
-	insertError             error
-	insertedEnvelope        domain.EventEnvelope
-	insertedExpiry          time.Time
-	listedEvents            []domain.EventEnvelope
-	listEventsError         error
-	listEventsAfter         int64
-	listEventsLimit         int
-	listEventsNow           time.Time
-	credential              store.OwnerCredential
-	credentialError         error
-	sessionPair             auth.TokenPair
-	createSessionError      error
-	rotatedRefresh          string
-	rotateSessionError      error
-	revokedAccess           string
-	revokeSessionError      error
-	ownerID                 string
-	ownerAuthError          error
-	pairingOwnerID          string
-	pairingTokenHash        []byte
-	pairingExpiresAt        time.Time
-	pairingTokenError       error
-	pairing                 store.DevicePairing
-	pairingRecord           store.DeviceRecord
-	pairingError            error
-	devicePublicKey         []byte
-	deviceAuthError         error
-	authenticatedDeviceID   string
-	authenticatedCredential string
-	enqueuedCommand         domain.EncryptedCommand
-	enqueueCreated          bool
-	enqueueError            error
-	claimedCommand          domain.EncryptedCommand
-	claimDeviceID           string
-	claimNow                time.Time
-	claimLeaseUntil         time.Time
-	claimError              error
-	completedDeviceID       string
-	completedCommandID      string
-	completedResult         domain.EncryptedCommandResult
-	completedAt             time.Time
-	completeError           error
-	commandStatus           domain.CommandStatus
-	statusDeviceID          string
-	statusCommandID         string
-	statusError             error
-	updatedCommandKeyDevice string
-	updatedCommandKey       []byte
-	updateCommandKeyError   error
-	installationOwnerID     string
-	installation            store.AppInstallationRegistration
-	installationRecord      store.AppInstallationRecord
-	installationCreated     bool
-	installationNow         time.Time
-	installationError       error
-	installationRecipients  []store.AppInstallationRecipient
-	installationListError   error
-	incomingCall            domain.IncomingCallNotification
-	incomingCallExpiry      time.Time
-	incomingCallCreated     bool
-	incomingCallError       error
+	devices                     []store.DeviceRecord
+	listDevicesError            error
+	updatedDeviceID             string
+	updatedNumericID            int
+	updateNumericIDError        error
+	insertSequence              int64
+	insertCreated               bool
+	insertError                 error
+	insertedEnvelope            domain.EventEnvelope
+	insertedExpiry              time.Time
+	listedEvents                []domain.EventEnvelope
+	listEventsError             error
+	listEventsAfter             int64
+	listEventsLimit             int
+	listEventsNow               time.Time
+	credential                  store.OwnerCredential
+	credentialError             error
+	sessionPair                 auth.TokenPair
+	createSessionError          error
+	rotatedRefresh              string
+	rotateSessionError          error
+	revokedAccess               string
+	revokeSessionError          error
+	ownerID                     string
+	ownerAuthError              error
+	pairingOwnerID              string
+	pairingTokenHash            []byte
+	pairingExpiresAt            time.Time
+	pairingTokenError           error
+	pairing                     store.DevicePairing
+	pairingRecord               store.DeviceRecord
+	pairingError                error
+	devicePublicKey             []byte
+	deviceAuthError             error
+	authenticatedDeviceID       string
+	authenticatedCredential     string
+	enqueuedCommand             domain.EncryptedCommand
+	enqueueCreated              bool
+	enqueueError                error
+	claimedCommand              domain.EncryptedCommand
+	claimDeviceID               string
+	claimNow                    time.Time
+	claimLeaseUntil             time.Time
+	claimError                  error
+	completedDeviceID           string
+	completedCommandID          string
+	completedResult             domain.EncryptedCommandResult
+	completedAt                 time.Time
+	completeError               error
+	commandStatus               domain.CommandStatus
+	statusDeviceID              string
+	statusCommandID             string
+	statusError                 error
+	updatedCommandKeyDevice     string
+	updatedCommandKey           []byte
+	updateCommandKeyError       error
+	installationOwnerID         string
+	installation                store.AppInstallationRegistration
+	installationRecord          store.AppInstallationRecord
+	installationCreated         bool
+	installationNow             time.Time
+	installationError           error
+	installationRecipients      []store.AppInstallationRecipient
+	installationListError       error
+	incomingCall                domain.IncomingCallNotification
+	incomingCallExpiry          time.Time
+	incomingCallCreated         bool
+	incomingCallError           error
+	incomingClaim               domain.IncomingCallClaim
+	incomingClaimOwnerID        string
+	incomingClaimNotificationID string
+	incomingClaimInstallationID string
+	incomingClaimNow            time.Time
+	incomingClaimError          error
 }
 
 func (fake *fakeRepository) ListDevices(context.Context) ([]store.DeviceRecord, error) {
@@ -109,6 +115,14 @@ func (fake *fakeRepository) InsertIncomingCall(_ context.Context, notification d
 	fake.incomingCall = notification
 	fake.incomingCallExpiry = expiresAt
 	return fake.incomingCallCreated, fake.incomingCallError
+}
+
+func (fake *fakeRepository) ClaimIncomingCall(_ context.Context, ownerID string, notificationID string, installationID string, now time.Time) (domain.IncomingCallClaim, error) {
+	fake.incomingClaimOwnerID = ownerID
+	fake.incomingClaimNotificationID = notificationID
+	fake.incomingClaimInstallationID = installationID
+	fake.incomingClaimNow = now
+	return fake.incomingClaim, fake.incomingClaimError
 }
 
 func (fake *fakeRepository) ListEvents(_ context.Context, afterSequence int64, limit int, now time.Time) ([]domain.EventEnvelope, error) {

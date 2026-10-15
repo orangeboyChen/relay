@@ -52,6 +52,7 @@ var _ = Describe("Embedded migrations", func() {
 		Entry("pairing retries", "migrations/005_pairing_retry.sql", "paired_device_id"),
 		Entry("installation agreement keys", "migrations/007_installation_key_agreement.sql", "key_agreement_public_key"),
 		Entry("incoming call notifications", "migrations/008_incoming_call_notifications.sql", "incoming_call_recipients"),
+		Entry("incoming call claims", "migrations/009_incoming_call_claims.sql", "incoming_call_claims"),
 	)
 })
 
@@ -482,6 +483,83 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(database.pool.QueryRow(context.Background(), `
 			SELECT count(*) FROM incoming_call_notifications WHERE id = $1`, notification.ID).Scan(&count)).To(Succeed())
 		Expect(count).To(BeZero())
+	})
+
+	It("allows only the first approved installation to claim an incoming call", func() {
+		owner := createOwner()
+		first := AppInstallationRegistration{
+			ID:                    "01900000-0000-7000-8000-000000000101",
+			IdentityPublicKey:     bytes.Repeat([]byte{9}, 32),
+			KeyAgreementPublicKey: bytes.Repeat([]byte{10}, 32),
+		}
+		second := first
+		second.ID = "01900000-0000-7000-8000-000000000102"
+		_, _, err := database.RegisterAppInstallation(context.Background(), owner.ID, first, now)
+		Expect(err).NotTo(HaveOccurred())
+		_, _, err = database.RegisterAppInstallation(context.Background(), owner.ID, second, now.Add(time.Second))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = database.pool.Exec(context.Background(), `
+			UPDATE app_installations SET approved_at = $2 WHERE id = $1`, second.ID, now)
+		Expect(err).NotTo(HaveOccurred())
+		device := createDevice(firstDeviceID)
+		notification := domain.IncomingCallNotification{
+			ID:         "01900000-0000-7000-8000-000000000042",
+			Type:       "call.incoming",
+			DeviceUUID: device.ID,
+			OccurredAt: now,
+			KeyEpoch:   1,
+			Recipients: []domain.IncomingCallRecipient{
+				{
+					InstallationID:  first.ID,
+					SenderPublicKey: bytes.Repeat([]byte{11}, 32),
+					Nonce:           bytes.Repeat([]byte{12}, 12),
+					Ciphertext:      []byte("opaque first call"),
+					Signature:       bytes.Repeat([]byte{13}, ed25519.SignatureSize),
+				},
+				{
+					InstallationID:  second.ID,
+					SenderPublicKey: bytes.Repeat([]byte{14}, 32),
+					Nonce:           bytes.Repeat([]byte{15}, 12),
+					Ciphertext:      []byte("opaque second call"),
+					Signature:       bytes.Repeat([]byte{16}, ed25519.SignatureSize),
+				},
+			},
+		}
+		_, err = database.InsertIncomingCall(context.Background(), notification, now.Add(time.Hour))
+		Expect(err).NotTo(HaveOccurred())
+
+		winner, err := database.ClaimIncomingCall(context.Background(), owner.ID, notification.ID, first.ID, now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(winner.InstallationID).To(Equal(first.ID))
+		Expect(winner.Won).To(BeTrue())
+		loser, err := database.ClaimIncomingCall(context.Background(), owner.ID, notification.ID, second.ID, now.Add(time.Second))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(loser.InstallationID).To(Equal(first.ID))
+		Expect(loser.Won).To(BeFalse())
+		retry, err := database.ClaimIncomingCall(context.Background(), owner.ID, notification.ID, first.ID, now.Add(2*time.Second))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(retry.Won).To(BeTrue())
+
+		var claimedJobs int
+		var routingKey string
+		var payload []byte
+		Expect(database.pool.QueryRow(context.Background(), `
+			SELECT count(*) FROM outbox_jobs WHERE kind = 'voip.incoming_call_claimed'`).Scan(&claimedJobs)).To(Succeed())
+		Expect(claimedJobs).To(Equal(1))
+		Expect(database.pool.QueryRow(context.Background(), `
+			SELECT routing_key, payload
+			FROM outbox_jobs
+			WHERE kind = 'voip.incoming_call_claimed'`).Scan(&routingKey, &payload)).To(Succeed())
+		Expect(routingKey).To(Equal(second.ID))
+		var delivery domain.IncomingCallClaimDelivery
+		Expect(json.Unmarshal(payload, &delivery)).To(Succeed())
+		Expect(delivery.NotificationID).To(Equal(notification.ID))
+		Expect(delivery.Reason).To(Equal("answered_elsewhere"))
+
+		_, err = database.ClaimIncomingCall(
+			context.Background(), owner.ID, "01900000-0000-7000-8000-000000000099", first.ID, now,
+		)
+		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
 	})
 
 	It("lists only unexpired encrypted events after a sequence cursor", func() {

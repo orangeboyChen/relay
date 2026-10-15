@@ -42,6 +42,7 @@ type Repository interface {
 	RegisterAppInstallation(context.Context, string, store.AppInstallationRegistration, time.Time) (store.AppInstallationRecord, bool, error)
 	ListApprovedAppInstallationRecipients(context.Context) ([]store.AppInstallationRecipient, error)
 	InsertIncomingCall(context.Context, domain.IncomingCallNotification, time.Time) (bool, error)
+	ClaimIncomingCall(context.Context, string, string, string, time.Time) (domain.IncomingCallClaim, error)
 }
 
 // Config describes public endpoints advertised to clients.
@@ -64,6 +65,7 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("POST /v1/app-installations", router.requireOwner(router.registerAppInstallation))
 	mux.HandleFunc("GET /v1/device-installations", router.listDeviceInstallationRecipients)
 	mux.HandleFunc("POST /v1/incoming-calls", router.insertIncomingCall)
+	mux.HandleFunc("POST /v1/incoming-calls/{notificationID}/claim", router.requireOwner(router.claimIncomingCall))
 	mux.HandleFunc("POST /v1/device-pairings", router.pairDevice)
 	mux.HandleFunc("POST /v1/events", router.insertEvent)
 	mux.HandleFunc("GET /v1/events", router.requireOwner(router.listEvents))
@@ -222,6 +224,38 @@ func (router *router) insertIncomingCall(writer http.ResponseWriter, request *ht
 		status = http.StatusCreated
 	}
 	writeJSON(writer, status, map[string]bool{"created": created})
+}
+
+func (router *router) claimIncomingCall(writer http.ResponseWriter, request *http.Request) {
+	ownerID, ok := request.Context().Value(ownerContextKey{}).(string)
+	if !ok || ownerID == "" {
+		writeError(writer, http.StatusUnauthorized, "invalid_access_token", "Access token is invalid or expired.")
+		return
+	}
+	notificationID := request.PathValue("notificationID")
+	var body struct {
+		InstallationID string `json:"installation_id"`
+	}
+	if err := decodeJSON(request, &body); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if !validUUID(notificationID) || !validUUID(body.InstallationID) {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_incoming_call_claim", "Notification and installation identities are invalid.")
+		return
+	}
+	claim, err := router.repository.ClaimIncomingCall(
+		request.Context(), ownerID, notificationID, body.InstallationID, router.now(),
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(writer, http.StatusNotFound, "incoming_call_unavailable", "Incoming call is unavailable to this installation.")
+			return
+		}
+		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to claim the incoming call.")
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"claim": claim})
 }
 
 func (router *router) health(writer http.ResponseWriter, _ *http.Request) {

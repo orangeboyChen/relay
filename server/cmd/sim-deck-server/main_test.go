@@ -2,7 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"net/http"
 	"sync"
@@ -12,9 +17,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"sim-deck-server/internal/apns"
 	"sim-deck-server/internal/auth"
 	"sim-deck-server/internal/bootstrap"
 	"sim-deck-server/internal/domain"
+	"sim-deck-server/internal/push"
 	"sim-deck-server/internal/store"
 )
 
@@ -114,6 +121,21 @@ func (repository *memoryRepository) InsertIncomingCall(context.Context, domain.I
 func (repository *memoryRepository) ClaimIncomingCall(context.Context, string, string, string, time.Time) (domain.IncomingCallClaim, error) {
 	return domain.IncomingCallClaim{}, pgx.ErrNoRows
 }
+func (repository *memoryRepository) ClaimVoIPPushJob(context.Context, time.Time, time.Duration) (store.OutboxPushJob, error) {
+	return store.OutboxPushJob{}, pgx.ErrNoRows
+}
+func (repository *memoryRepository) CompletePushJob(context.Context, int64, int, time.Time) error {
+	return nil
+}
+func (repository *memoryRepository) DiscardPushJob(context.Context, int64, int, time.Time, string) error {
+	return nil
+}
+func (repository *memoryRepository) RetryPushJob(context.Context, int64, int, time.Time, string) error {
+	return nil
+}
+func (repository *memoryRepository) DeleteVoIPPushToken(context.Context, string, string, []byte) error {
+	return nil
+}
 
 type memoryHTTPServer struct {
 	listenError   error
@@ -165,6 +187,20 @@ func (server *memoryHTTPServer) Shutdown(context.Context) error {
 	return server.shutdownError
 }
 
+type memoryWorker struct {
+	started chan struct{}
+	err     error
+}
+
+func (worker *memoryWorker) Run(ctx context.Context) error {
+	close(worker.started)
+	if worker.err != nil {
+		return worker.err
+	}
+	<-ctx.Done()
+	return nil
+}
+
 var _ = Describe("Server command", func() {
 	var (
 		environment       map[string]string
@@ -176,6 +212,10 @@ var _ = Describe("Server command", func() {
 		openedDatabaseURL string
 		serverAddress     string
 		serverHandler     http.Handler
+		pushWorker        *memoryWorker
+		pushConfig        apns.Config
+		pushConfigError   error
+		privateKeyPath    string
 		testDependencies  dependencies
 	)
 
@@ -189,8 +229,16 @@ var _ = Describe("Server command", func() {
 		openedDatabaseURL = ""
 		serverAddress = ""
 		serverHandler = nil
+		pushWorker = &memoryWorker{started: make(chan struct{})}
+		pushConfig = apns.Config{}
+		pushConfigError = nil
+		privateKeyPath = ""
 		testDependencies = dependencies{
 			getenv: func(name string) string { return environment[name] },
+			readFile: func(path string) ([]byte, error) {
+				privateKeyPath = path
+				return []byte("private-key"), nil
+			},
 			openRepository: func(_ context.Context, databaseURL string) (repository, error) {
 				openedDatabaseURL = databaseURL
 				return memoryStore, openError
@@ -204,6 +252,10 @@ var _ = Describe("Server command", func() {
 				serverAddress = address
 				serverHandler = handler
 				return server
+			},
+			newPushWorker: func(_ push.Repository, config apns.Config) (backgroundWorker, error) {
+				pushConfig = config
+				return pushWorker, pushConfigError
 			},
 		}
 	})
@@ -321,10 +373,76 @@ var _ = Describe("Server command", func() {
 		Eventually(result).Should(Receive(MatchError("shutdown failed")))
 	})
 
+	It("starts an APNs worker from the configured secret and stops it with the server", func() {
+		environment["APNS_KEY_ID"] = "KEY123"
+		environment["APNS_TEAM_ID"] = "TEAM123"
+		environment["APNS_TOPIC"] = "com.nowcent.simdeck.voip"
+		environment["APNS_PRIVATE_KEY_FILE"] = "/run/secrets/apns_private_key"
+		ctx, cancel := context.WithCancel(context.Background())
+		result := make(chan error, 1)
+		go func() { result <- run(ctx, testDependencies) }()
+
+		Eventually(server.started).Should(BeClosed())
+		Eventually(pushWorker.started).Should(BeClosed())
+		Expect(privateKeyPath).To(Equal("/run/secrets/apns_private_key"))
+		Expect(pushConfig.KeyID).To(Equal("KEY123"))
+		Expect(pushConfig.TeamID).To(Equal("TEAM123"))
+		Expect(pushConfig.Topic).To(Equal("com.nowcent.simdeck.voip"))
+		Expect(pushConfig.PrivateKeyPEM).To(Equal([]byte("private-key")))
+
+		cancel()
+		Eventually(result).Should(Receive(BeNil()))
+	})
+
+	It("stops HTTP serving when the APNs worker fails", func() {
+		environment["APNS_KEY_ID"] = "KEY123"
+		environment["APNS_TEAM_ID"] = "TEAM123"
+		environment["APNS_TOPIC"] = "com.nowcent.simdeck.voip"
+		environment["APNS_PRIVATE_KEY_FILE"] = "/run/secrets/apns_private_key"
+		pushWorker.err = errors.New("worker failed")
+
+		Expect(run(context.Background(), testDependencies)).To(MatchError("run push worker: worker failed"))
+		Expect(server.shutdownCalls).To(Equal(1))
+	})
+
+	DescribeTable("rejects incomplete APNs configuration",
+		func(missing string) {
+			environment["APNS_KEY_ID"] = "KEY123"
+			environment["APNS_TEAM_ID"] = "TEAM123"
+			environment["APNS_TOPIC"] = "com.nowcent.simdeck.voip"
+			environment["APNS_PRIVATE_KEY_FILE"] = "/run/secrets/apns_private_key"
+			delete(environment, missing)
+
+			err := run(context.Background(), testDependencies)
+
+			Expect(err).To(MatchError(missing + " is required when APNs is configured"))
+			Expect(server.plainCalls).To(BeZero())
+		},
+		Entry("key ID", "APNS_KEY_ID"),
+		Entry("team ID", "APNS_TEAM_ID"),
+		Entry("topic", "APNS_TOPIC"),
+		Entry("private key", "APNS_PRIVATE_KEY_FILE"),
+	)
+
+	It("reports APNs secret and client construction failures", func() {
+		environment["APNS_KEY_ID"] = "KEY123"
+		environment["APNS_TEAM_ID"] = "TEAM123"
+		environment["APNS_TOPIC"] = "com.nowcent.simdeck.voip"
+		environment["APNS_PRIVATE_KEY_FILE"] = "/run/secrets/apns_private_key"
+		testDependencies.readFile = func(string) ([]byte, error) { return nil, errors.New("missing secret") }
+		Expect(run(context.Background(), testDependencies)).To(MatchError("read APNs private key: missing secret"))
+
+		testDependencies.readFile = func(string) ([]byte, error) { return []byte("key"), nil }
+		pushConfigError = errors.New("invalid key")
+		Expect(run(context.Background(), testDependencies)).To(MatchError("configure APNs worker: invalid key"))
+	})
+
 	It("builds production dependencies and environment defaults", func() {
 		production := productionDependencies()
 		Expect(production.getenv).NotTo(BeNil())
+		Expect(production.readFile).NotTo(BeNil())
 		Expect(production.bootstrapOwner).NotTo(BeNil())
+		Expect(production.newPushWorker).NotTo(BeNil())
 
 		opened, err := production.openRepository(context.Background(), "://invalid")
 		Expect(err).To(MatchError(ContainSubstring("configure postgres")))
@@ -338,6 +456,19 @@ var _ = Describe("Server command", func() {
 		Expect(realServer.Handler).NotTo(BeNil())
 		Expect(realServer.ReadHeaderTimeout).To(Equal(5 * time.Second))
 		Expect(realServer.IdleTimeout).To(Equal(60 * time.Second))
+
+		privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		Expect(err).NotTo(HaveOccurred())
+		encodedKey, err := x509.MarshalPKCS8PrivateKey(privateKey)
+		Expect(err).NotTo(HaveOccurred())
+		worker, err := production.newPushWorker(memoryStore, apns.Config{
+			KeyID:         "KEY123",
+			TeamID:        "TEAM123",
+			Topic:         "com.nowcent.simdeck.voip",
+			PrivateKeyPEM: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: encodedKey}),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(worker).NotTo(BeNil())
 
 		Expect(envOrDefault(func(string) string { return "" }, "NAME", "fallback")).To(Equal("fallback"))
 		Expect(envOrDefault(func(string) string { return "value" }, "NAME", "fallback")).To(Equal("value"))

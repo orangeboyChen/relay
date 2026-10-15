@@ -31,6 +31,12 @@ stack. The recovery public key file contains an unpadded base64 Ed25519 public
 key. Keep its private key on the Linux host and never mount it into the server
 container.
 
+VoIP pushes use an Apple token-signing `.p8` key mounted as a Docker secret.
+Set `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_TOPIC`, and `APNS_PRIVATE_KEY_FILE` in
+`.env`. The topic must be the iOS bundle identifier followed by `.voip`. The
+server forwards only opaque encrypted call deliveries, expires queued incoming
+calls after two minutes, and removes device tokens that APNs reports invalid.
+
 ```sh
 docker compose up --build
 ```

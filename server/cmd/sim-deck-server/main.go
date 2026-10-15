@@ -8,11 +8,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"sim-deck-server/internal/api"
+	"sim-deck-server/internal/apns"
 	"sim-deck-server/internal/bootstrap"
+	"sim-deck-server/internal/push"
 	"sim-deck-server/internal/store"
 )
 
@@ -28,6 +31,7 @@ func main() {
 type repository interface {
 	api.Repository
 	bootstrap.OwnerStore
+	push.Repository
 	Migrate(context.Context) error
 	Close()
 }
@@ -38,16 +42,23 @@ type httpServer interface {
 	Shutdown(context.Context) error
 }
 
+type backgroundWorker interface {
+	Run(context.Context) error
+}
+
 type dependencies struct {
 	getenv         func(string) string
+	readFile       func(string) ([]byte, error)
 	openRepository func(context.Context, string) (repository, error)
 	bootstrapOwner func(context.Context, bootstrap.OwnerStore, bootstrap.Config) (bootstrap.Result, error)
 	newHTTPServer  func(string, http.Handler) httpServer
+	newPushWorker  func(push.Repository, apns.Config) (backgroundWorker, error)
 }
 
 func productionDependencies() dependencies {
 	return dependencies{
-		getenv: os.Getenv,
+		getenv:   os.Getenv,
+		readFile: os.ReadFile,
 		openRepository: func(ctx context.Context, databaseURL string) (repository, error) {
 			return store.Open(ctx, databaseURL)
 		},
@@ -59,6 +70,13 @@ func productionDependencies() dependencies {
 				ReadHeaderTimeout: 5 * time.Second,
 				IdleTimeout:       60 * time.Second,
 			}
+		},
+		newPushWorker: func(repository push.Repository, config apns.Config) (backgroundWorker, error) {
+			client, err := apns.New(config)
+			if err != nil {
+				return nil, err
+			}
+			return push.NewWorker(repository, client, push.Config{}), nil
 		},
 	}
 }
@@ -102,7 +120,13 @@ func run(ctx context.Context, dependencies dependencies) error {
 		envOrDefault(getenv, "HTTP_ADDR", ":8080"),
 		api.Handler(repository, api.Config{PublicBaseURL: getenv("PUBLIC_BASE_URL"), MediaUDPPort: udpPort, MediaTCPPort: tcpPort}),
 	)
+	worker, err := configuredPushWorker(repository, dependencies)
+	if err != nil {
+		return err
+	}
 
+	runContext, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 	result := make(chan error, 1)
 	go func() {
 		certificate := getenv("TLS_CERT_FILE")
@@ -117,18 +141,73 @@ func run(ctx context.Context, dependencies dependencies) error {
 		}
 		result <- server.ListenAndServe()
 	}()
+	var workerResult <-chan error
+	if worker != nil {
+		channel := make(chan error, 1)
+		workerResult = channel
+		go func() { channel <- worker.Run(runContext) }()
+	}
 
 	select {
 	case <-ctx.Done():
+		cancelRun()
 		shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return server.Shutdown(shutdownContext)
 	case err := <-result:
+		cancelRun()
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
 		return fmt.Errorf("serve HTTP: %w", err)
+	case err := <-workerResult:
+		cancelRun()
+		shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		workerError := errors.New("push worker stopped unexpectedly")
+		if err != nil {
+			workerError = fmt.Errorf("run push worker: %w", err)
+		}
+		if shutdownErr := server.Shutdown(shutdownContext); shutdownErr != nil {
+			return errors.Join(workerError, shutdownErr)
+		}
+		return workerError
 	}
+}
+
+func configuredPushWorker(repository push.Repository, dependencies dependencies) (backgroundWorker, error) {
+	values := map[string]string{
+		"APNS_KEY_ID":           strings.TrimSpace(dependencies.getenv("APNS_KEY_ID")),
+		"APNS_TEAM_ID":          strings.TrimSpace(dependencies.getenv("APNS_TEAM_ID")),
+		"APNS_TOPIC":            strings.TrimSpace(dependencies.getenv("APNS_TOPIC")),
+		"APNS_PRIVATE_KEY_FILE": strings.TrimSpace(dependencies.getenv("APNS_PRIVATE_KEY_FILE")),
+	}
+	configured := false
+	for _, value := range values {
+		configured = configured || value != ""
+	}
+	if !configured {
+		return nil, nil
+	}
+	for name, value := range values {
+		if value == "" {
+			return nil, fmt.Errorf("%s is required when APNs is configured", name)
+		}
+	}
+	privateKey, err := dependencies.readFile(values["APNS_PRIVATE_KEY_FILE"])
+	if err != nil {
+		return nil, fmt.Errorf("read APNs private key: %w", err)
+	}
+	worker, err := dependencies.newPushWorker(repository, apns.Config{
+		KeyID:         values["APNS_KEY_ID"],
+		TeamID:        values["APNS_TEAM_ID"],
+		Topic:         values["APNS_TOPIC"],
+		PrivateKeyPEM: privateKey,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("configure APNs worker: %w", err)
+	}
+	return worker, nil
 }
 
 func envOrDefault(getenv func(string) string, name string, fallback string) string {

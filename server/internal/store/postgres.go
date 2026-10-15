@@ -81,6 +81,18 @@ type AppInstallationRecipient struct {
 	KeyAgreementPublicKey []byte `json:"key_agreement_public_key"`
 }
 
+// OutboxPushJob is one leased encrypted push delivery and its current APNs route.
+type OutboxPushJob struct {
+	ID             int64
+	Kind           string
+	RoutingKey     string
+	Payload        []byte
+	Attempt        int
+	Environment    string
+	DeviceToken    []byte
+	LeaseExpiresAt time.Time
+}
+
 // Open connects to PostgreSQL and verifies that the server is reachable.
 func Open(ctx context.Context, databaseURL string) (*Postgres, error) {
 	pool, err := pgxpool.New(ctx, databaseURL)
@@ -506,8 +518,9 @@ func (store *Postgres) InsertIncomingCall(ctx context.Context, notification doma
 			return false, fmt.Errorf("encode incoming call delivery: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO outbox_jobs (kind, routing_key, payload, available_at)
-			VALUES ('voip.incoming_call', $1, $2, now())`, recipient.InstallationID, delivery); err != nil {
+			INSERT INTO outbox_jobs (kind, routing_key, payload, available_at, expires_at)
+			VALUES ('voip.incoming_call', $1, $2, now(), $3)`,
+			recipient.InstallationID, delivery, notification.OccurredAt.Add(2*time.Minute)); err != nil {
 			return false, fmt.Errorf("enqueue incoming call delivery: %w", err)
 		}
 	}
@@ -640,8 +653,8 @@ func (store *Postgres) ClaimIncomingCall(ctx context.Context, ownerID string, no
 			return domain.IncomingCallClaim{}, fmt.Errorf("encode incoming call claim delivery: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO outbox_jobs (kind, routing_key, payload, available_at)
-			SELECT 'voip.incoming_call_claimed', recipient.installation_id::text, $2, $3
+			INSERT INTO outbox_jobs (kind, routing_key, payload, available_at, expires_at)
+			SELECT 'voip.incoming_call_claimed', recipient.installation_id::text, $2, $3, $3 + INTERVAL '30 seconds'
 			FROM incoming_call_recipients AS recipient
 			JOIN app_installations AS installation ON installation.id = recipient.installation_id
 			WHERE recipient.notification_id = $1
@@ -655,6 +668,129 @@ func (store *Postgres) ClaimIncomingCall(ctx context.Context, ownerID string, no
 		return domain.IncomingCallClaim{}, fmt.Errorf("commit incoming call claim: %w", err)
 	}
 	return claim, nil
+}
+
+// ClaimVoIPPushJob leases the next time-sensitive VoIP outbox job without blocking another worker.
+func (store *Postgres) ClaimVoIPPushJob(ctx context.Context, now time.Time, leaseDuration time.Duration) (OutboxPushJob, error) {
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return OutboxPushJob{}, fmt.Errorf("begin outbox claim: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE outbox_jobs
+		SET completed_at = $1, last_error = 'expired before delivery'
+		WHERE completed_at IS NULL
+		  AND expires_at IS NOT NULL
+		  AND expires_at <= $1
+		  AND kind LIKE 'voip.%'`, now.UTC()); err != nil {
+		return OutboxPushJob{}, fmt.Errorf("expire outbox jobs: %w", err)
+	}
+
+	var job OutboxPushJob
+	var environment *string
+	job.LeaseExpiresAt = now.UTC().Add(leaseDuration)
+	err = tx.QueryRow(ctx, `
+		SELECT job.id, job.kind, job.routing_key, job.payload, job.attempts,
+		       route.environment, route.token_ciphertext
+		FROM outbox_jobs AS job
+		LEFT JOIN LATERAL (
+			SELECT token.environment, token.token_ciphertext
+			FROM push_tokens AS token
+			JOIN app_installations AS installation ON installation.id = token.installation_id
+			WHERE token.installation_id::text = job.routing_key
+			  AND token.kind = 'voip'
+			  AND installation.approved_at IS NOT NULL
+			  AND installation.revoked_at IS NULL
+			ORDER BY token.updated_at DESC
+			LIMIT 1
+		) AS route ON true
+		WHERE job.completed_at IS NULL
+		  AND job.available_at <= $1
+		  AND (job.expires_at IS NULL OR job.expires_at > $1)
+		  AND job.kind IN ('voip.incoming_call', 'voip.incoming_call_claimed')
+		ORDER BY job.available_at, job.id
+		FOR UPDATE OF job SKIP LOCKED
+		LIMIT 1`, now.UTC()).Scan(
+		&job.ID,
+		&job.Kind,
+		&job.RoutingKey,
+		&job.Payload,
+		&job.Attempt,
+		&environment,
+		&job.DeviceToken,
+	)
+	if err != nil {
+		return OutboxPushJob{}, err
+	}
+	job.Attempt++
+	if environment != nil {
+		job.Environment = *environment
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE outbox_jobs
+		SET attempts = $2, available_at = $3
+		WHERE id = $1`, job.ID, job.Attempt, job.LeaseExpiresAt); err != nil {
+		return OutboxPushJob{}, fmt.Errorf("lease outbox job: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return OutboxPushJob{}, fmt.Errorf("commit outbox claim: %w", err)
+	}
+	return job, nil
+}
+
+// CompletePushJob marks a leased push delivery as successful.
+func (store *Postgres) CompletePushJob(ctx context.Context, id int64, attempt int, now time.Time) error {
+	return store.finishPushJob(ctx, id, attempt, now, "")
+}
+
+// DiscardPushJob records a permanent delivery failure without retrying it.
+func (store *Postgres) DiscardPushJob(ctx context.Context, id int64, attempt int, now time.Time, reason string) error {
+	return store.finishPushJob(ctx, id, attempt, now, reason)
+}
+
+func (store *Postgres) finishPushJob(ctx context.Context, id int64, attempt int, now time.Time, reason string) error {
+	command, err := store.pool.Exec(ctx, `
+		UPDATE outbox_jobs
+		SET completed_at = $3, last_error = NULLIF($4, '')
+		WHERE id = $1 AND attempts = $2 AND completed_at IS NULL`, id, attempt, now.UTC(), reason)
+	if err != nil {
+		return fmt.Errorf("finish push job: %w", err)
+	}
+	if command.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+// RetryPushJob releases a leased delivery at the requested retry time.
+func (store *Postgres) RetryPushJob(ctx context.Context, id int64, attempt int, availableAt time.Time, reason string) error {
+	command, err := store.pool.Exec(ctx, `
+		UPDATE outbox_jobs
+		SET available_at = $3, last_error = $4
+		WHERE id = $1 AND attempts = $2 AND completed_at IS NULL`, id, attempt, availableAt.UTC(), reason)
+	if err != nil {
+		return fmt.Errorf("retry push job: %w", err)
+	}
+	if command.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+// DeleteVoIPPushToken removes only the failed route that APNs rejected.
+func (store *Postgres) DeleteVoIPPushToken(ctx context.Context, installationID string, environment string, token []byte) error {
+	_, err := store.pool.Exec(ctx, `
+		DELETE FROM push_tokens
+		WHERE installation_id = $1
+		  AND environment = $2
+		  AND kind = 'voip'
+		  AND token_ciphertext = $3`, installationID, environment, token)
+	if err != nil {
+		return fmt.Errorf("delete VoIP push token: %w", err)
+	}
+	return nil
 }
 
 // ConsumePairingToken atomically consumes a pairing token, allocates a SIM ID, and stores a device credential hash.

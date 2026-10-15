@@ -53,6 +53,7 @@ var _ = Describe("Embedded migrations", func() {
 		Entry("installation agreement keys", "migrations/007_installation_key_agreement.sql", "key_agreement_public_key"),
 		Entry("incoming call notifications", "migrations/008_incoming_call_notifications.sql", "incoming_call_recipients"),
 		Entry("incoming call claims", "migrations/009_incoming_call_claims.sql", "incoming_call_claims"),
+		Entry("outbox expiry", "migrations/010_outbox_expiry.sql", "expires_at"),
 	)
 })
 
@@ -446,6 +447,50 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		notification.Recipients[0].Ciphertext = []byte("different ciphertext")
 		_, err = database.InsertIncomingCall(context.Background(), notification, expiresAt)
 		Expect(errors.Is(err, domain.ErrIdempotencyConflict)).To(BeTrue())
+	})
+
+	It("leases, retries, completes, and invalidates routed VoIP outbox jobs", func() {
+		owner := createOwner()
+		installation := AppInstallationRegistration{
+			ID:                    "01900000-0000-7000-8000-000000000101",
+			IdentityPublicKey:     bytes.Repeat([]byte{9}, 32),
+			KeyAgreementPublicKey: bytes.Repeat([]byte{10}, 32),
+		}
+		_, created, err := database.RegisterAppInstallation(context.Background(), owner.ID, installation, now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
+		token := []byte{1, 2, 3, 4}
+		Expect(database.UpsertPushToken(
+			context.Background(), owner.ID, installation.ID, "sandbox", "voip", token, now,
+		)).To(Succeed())
+		var jobID int64
+		Expect(database.pool.QueryRow(context.Background(), `
+			INSERT INTO outbox_jobs (kind, routing_key, payload, available_at, expires_at)
+			VALUES ('voip.incoming_call', $1, $2, $3, $4)
+			RETURNING id`, installation.ID, []byte(`{"ciphertext":"opaque"}`), now, now.Add(time.Minute)).Scan(&jobID)).To(Succeed())
+
+		job, err := database.ClaimVoIPPushJob(context.Background(), now, 20*time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(job.ID).To(Equal(jobID))
+		Expect(job.Attempt).To(Equal(1))
+		Expect(job.Environment).To(Equal("sandbox"))
+		Expect(job.DeviceToken).To(Equal(token))
+		Expect(job.LeaseExpiresAt).To(Equal(now.Add(20 * time.Second)))
+
+		Expect(database.RetryPushJob(
+			context.Background(), job.ID, job.Attempt, now.Add(5*time.Second), "temporary failure",
+		)).To(Succeed())
+		job, err = database.ClaimVoIPPushJob(context.Background(), now.Add(5*time.Second), 20*time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(job.Attempt).To(Equal(2))
+		Expect(database.CompletePushJob(context.Background(), job.ID, job.Attempt, now.Add(6*time.Second))).To(Succeed())
+		Expect(database.CompletePushJob(context.Background(), job.ID, job.Attempt, now.Add(7*time.Second))).To(MatchError(pgx.ErrNoRows))
+
+		Expect(database.DeleteVoIPPushToken(context.Background(), installation.ID, "sandbox", token)).To(Succeed())
+		var tokens int
+		Expect(database.pool.QueryRow(context.Background(), `
+			SELECT count(*) FROM push_tokens WHERE installation_id = $1`, installation.ID).Scan(&tokens)).To(Succeed())
+		Expect(tokens).To(BeZero())
 	})
 
 	It("rolls back an incoming call batch containing an unapproved recipient", func() {

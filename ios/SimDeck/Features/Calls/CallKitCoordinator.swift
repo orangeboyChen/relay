@@ -5,22 +5,23 @@ import Observation
 
 @MainActor
 @Observable
-final class CallKitCoordinator: NSObject, CallStarting, CallControlling {
+final class CallKitCoordinator: NSObject, CallStarting, CallControlling, IncomingCallReporting {
     private(set) var activeCall: ActiveCallSession?
     private(set) var isSpeakerEnabled = false
 
     let capabilities: CallCapabilities
 
-    @ObservationIgnored private let provider: CXProvider
+    @ObservationIgnored private let provider: any SystemCallProviding
     @ObservationIgnored private let controller: CXCallController
     @ObservationIgnored private let transport: any CallTransport
     @ObservationIgnored private let integratesWithSystem: Bool
     @ObservationIgnored private var pendingOutgoing: [UUID: OutgoingCallRequest] = [:]
+    @ObservationIgnored private var incomingCalls: [UUID: IncomingCallPresentation] = [:]
     @ObservationIgnored private var startCompletions: [UUID: (Result<Void, Error>) -> Void] = [:]
 
     init(
         transport: any CallTransport = UnavailableCallTransport(),
-        provider: CXProvider? = nil,
+        provider: (any SystemCallProviding)? = nil,
         controller: CXCallController = CXCallController(),
         integratesWithSystem: Bool = true,
         initialCall: ActiveCallSession? = nil
@@ -86,6 +87,46 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling {
                 }
             }
         }
+    }
+
+    func reportIncomingCall(_ call: IncomingCallPresentation) async throws {
+        let update = incomingCallUpdate(for: call)
+        activeCall = ActiveCallSession(
+            id: call.callID,
+            lineID: call.lineID,
+            remoteNumber: call.remoteNumber,
+            displayName: call.contactName,
+            status: .ringing,
+            isMuted: false
+        )
+        incomingCalls[call.callID] = call
+
+        do {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, any Error>) in
+                provider.reportNewIncomingCall(with: call.callID, update: update) { error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume()
+                    }
+                }
+            }
+        } catch {
+            finishCall(callID: call.callID)
+            throw error
+        }
+    }
+
+    func updateIncomingCallName(_ name: String?, callID: UUID) {
+        guard let activeCall, activeCall.id == callID,
+              let incomingCall = incomingCalls[callID] else { return }
+        self.activeCall?.displayName = name
+        let update = CXCallUpdate()
+        update.remoteHandle = CXHandle(type: .phoneNumber, value: activeCall.remoteNumber)
+        let caller = name.flatMap { $0.isEmpty ? nil : $0 } ?? activeCall.remoteNumber
+        update.localizedCallerName = "\(caller) · SIM \(incomingCall.numericID)"
+        provider.reportCall(with: callID, updated: update)
     }
 
     func endCall() async throws {
@@ -177,6 +218,18 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling {
         )
     }
 
+    private func incomingCallUpdate(for call: IncomingCallPresentation) -> CXCallUpdate {
+        let update = CXCallUpdate()
+        update.remoteHandle = CXHandle(type: .phoneNumber, value: call.remoteNumber)
+        update.localizedCallerName = call.callerName
+        update.hasVideo = false
+        update.supportsHolding = capabilities.supportsHolding
+        update.supportsDTMF = capabilities.supportsDTMF
+        update.supportsGrouping = false
+        update.supportsUngrouping = false
+        return update
+    }
+
     private func startOutgoingCall(
         _ request: OutgoingCallRequest,
         reportToCallKit: Bool
@@ -207,6 +260,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling {
     private func completeStart(callID: UUID, result: Result<Void, Error>) {
         let completion = startCompletions.removeValue(forKey: callID)
         pendingOutgoing.removeValue(forKey: callID)
+        incomingCalls.removeValue(forKey: callID)
         completion?(result)
     }
 

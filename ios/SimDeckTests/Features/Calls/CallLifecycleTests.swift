@@ -1,4 +1,5 @@
 import AVFAudio
+import CallKit
 import XCTest
 @testable import SimDeck
 
@@ -79,6 +80,61 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertNil(coordinator.activeCall)
     }
 
+    func testReportsIncomingCallWithRemoteNumberAndSIMIdentity() async throws {
+        let provider = RecordingSystemCallProvider()
+        let coordinator = CallKitCoordinator(
+            transport: UnavailableCallTransport(),
+            provider: provider,
+            integratesWithSystem: false
+        )
+        let call = IncomingCallPresentation(
+            notificationID: UUID(),
+            callID: UUID(),
+            lineID: UUID(),
+            numericID: 2,
+            remoteNumber: "+8613500000000",
+            contactName: "Home"
+        )
+
+        try await coordinator.reportIncomingCall(call)
+
+        XCTAssertEqual(provider.incomingCallID, call.callID)
+        XCTAssertEqual(provider.incomingUpdate?.remoteHandle?.value, call.remoteNumber)
+        XCTAssertEqual(provider.incomingUpdate?.localizedCallerName, "Home · SIM 2")
+        XCTAssertEqual(provider.incomingUpdate?.hasVideo, false)
+        XCTAssertEqual(provider.incomingUpdate?.supportsHolding, true)
+        XCTAssertEqual(provider.incomingUpdate?.supportsDTMF, true)
+        XCTAssertEqual(coordinator.activeCall?.status, .ringing)
+        XCTAssertEqual(coordinator.activeCall?.lineID, call.lineID)
+    }
+
+    func testIncomingCallReportFailureClearsVisibleCall() async {
+        let provider = RecordingSystemCallProvider(reportError: TestCallError.failed)
+        let coordinator = CallKitCoordinator(
+            transport: UnavailableCallTransport(),
+            provider: provider,
+            integratesWithSystem: false
+        )
+
+        do {
+            try await coordinator.reportIncomingCall(
+                IncomingCallPresentation(
+                    notificationID: UUID(),
+                    callID: UUID(),
+                    lineID: UUID(),
+                    numericID: 1,
+                    remoteNumber: "10086",
+                    contactName: nil
+                )
+            )
+            XCTFail("Expected reportIncomingCall to throw")
+        } catch {
+            XCTAssertEqual(error as? TestCallError, .failed)
+        }
+
+        XCTAssertNil(coordinator.activeCall)
+    }
+
     private func makeCoordinator(callID: UUID) -> CallKitCoordinator {
         let call = ActiveCallSession(
             id: callID,
@@ -93,6 +149,33 @@ final class CallLifecycleTests: XCTestCase {
             initialCall: call
         )
     }
+}
+
+private final class RecordingSystemCallProvider: SystemCallProviding {
+    private let reportError: Error?
+    private(set) var incomingCallID: UUID?
+    private(set) var incomingUpdate: CXCallUpdate?
+
+    init(reportError: Error? = nil) {
+        self.reportError = reportError
+    }
+
+    func setDelegate(_ delegate: (any CXProviderDelegate)?, queue: DispatchQueue?) {}
+
+    func reportNewIncomingCall(
+        with UUID: UUID,
+        update: CXCallUpdate,
+        completion: @escaping @Sendable (Error?) -> Void
+    ) {
+        incomingCallID = UUID
+        incomingUpdate = update
+        completion(reportError)
+    }
+
+    func reportCall(with UUID: UUID, updated update: CXCallUpdate) {}
+    func reportCall(with UUID: UUID, endedAt dateEnded: Date?, reason endedReason: CXCallEndedReason) {}
+    func reportOutgoingCall(with UUID: UUID, startedConnectingAt dateStartedConnecting: Date?) {}
+    func reportOutgoingCall(with UUID: UUID, connectedAt dateConnected: Date?) {}
 }
 
 @MainActor

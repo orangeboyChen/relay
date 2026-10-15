@@ -22,10 +22,7 @@ struct RootTabView: View {
             .tag(AppTab.messages)
 
             NavigationStack {
-                PlaceholderScreen(
-                    title: "Me",
-                    systemImage: "person.crop.circle.fill"
-                )
+                ProfileScreen(devices: model.devices)
             }
             .tabItem {
                 Label("Me", systemImage: "person.crop.circle.fill")

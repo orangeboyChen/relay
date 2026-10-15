@@ -380,6 +380,67 @@ final class ServerConnectionManagerTests: XCTestCase {
         }
     }
 
+    func testRegistersVoIPPushTokenForInstallation() async throws {
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
+        )
+        let installationID = UUID(uuidString: "01900000-0000-7000-8000-000000000101")!
+        let token = Data((0..<32).map(UInt8.init))
+        let network = ScriptedServerNetwork { request in
+            XCTAssertEqual(request.httpMethod, "PUT")
+            XCTAssertEqual(
+                request.url?.path,
+                "/v1/app-installations/\(installationID.uuidString.lowercased())/push-tokens/voip"
+            )
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
+            let object = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+            )
+            XCTAssertEqual(object["environment"] as? String, "sandbox")
+            XCTAssertEqual(object["token"] as? String, token.base64EncodedString())
+            return Self.response(status: 204, body: "")
+        }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+
+        try await manager.registerPushToken(
+            token,
+            kind: .voip,
+            environment: .sandbox,
+            installationID: installationID
+        )
+
+        XCTAssertEqual(network.requests.count, 1)
+    }
+
+    func testRejectsEmptyPushTokenBeforeNetworkRequest() async {
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
+        )
+        let network = ScriptedServerNetwork { _ in
+            XCTFail("Empty push tokens must not reach the network")
+            return Self.response(status: 500, body: "{}")
+        }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+
+        do {
+            try await manager.registerPushToken(
+                Data(),
+                kind: .voip,
+                environment: .production,
+                installationID: UUID()
+            )
+            XCTFail("Expected empty token validation to fail")
+        } catch {
+            XCTAssertEqual(error as? ServerConnectionError, .invalidResponse)
+        }
+
+        XCTAssertTrue(network.requests.isEmpty)
+    }
+
     private func isolatedDefaults() -> UserDefaults {
         let suiteName = "ServerConnectionManagerTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

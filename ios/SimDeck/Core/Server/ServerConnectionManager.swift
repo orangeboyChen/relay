@@ -122,6 +122,26 @@ protocol IncomingCallClaiming: AnyObject {
         -> IncomingCallClaim
 }
 
+enum PushTokenKind: String, Sendable {
+    case alert
+    case voip
+}
+
+enum PushEnvironment: String, Sendable {
+    case sandbox
+    case production
+}
+
+@MainActor
+protocol PushTokenRegistering: AnyObject {
+    func registerPushToken(
+        _ token: Data,
+        kind: PushTokenKind,
+        environment: PushEnvironment,
+        installationID: UUID
+    ) async throws
+}
+
 @MainActor
 protocol EncryptedCallCommandAPI: AnyObject {
     func commandRecipient(deviceID: UUID) async throws -> Data
@@ -408,6 +428,28 @@ final class ServerConnectionManager {
         return try Self.decoder.decode(IncomingCallClaimResponse.self, from: data).claim
     }
 
+    func registerPushToken(
+        _ token: Data,
+        kind: PushTokenKind,
+        environment: PushEnvironment,
+        installationID: UUID
+    ) async throws {
+        guard !token.isEmpty, token.count <= 256 else {
+            throw ServerConnectionError.invalidResponse
+        }
+        let body = try Self.encoder.encode(
+            PushTokenRegistrationRequest(environment: environment.rawValue, token: token)
+        )
+        let (_, response) = try await authenticatedRequest(
+            path: "v1/app-installations/\(installationID.uuidString.lowercased())/push-tokens/\(kind.rawValue)",
+            method: "PUT",
+            body: body
+        )
+        guard response.statusCode == 204 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
+        }
+    }
+
     private func authenticatedRequest(
         path: String,
         method: String,
@@ -514,6 +556,7 @@ final class ServerConnectionManager {
 
 extension ServerConnectionManager: EncryptedCallCommandAPI {}
 extension ServerConnectionManager: IncomingCallClaiming {}
+extension ServerConnectionManager: PushTokenRegistering {}
 
 private struct BootstrapRequest: Encodable {
     let username: String
@@ -556,6 +599,11 @@ private struct IncomingCallClaimRequest: Encodable {
 
 private struct IncomingCallClaimResponse: Decodable {
     let claim: IncomingCallClaim
+}
+
+private struct PushTokenRegistrationRequest: Encodable {
+    let environment: String
+    let token: Data
 }
 
 private struct DeviceListResponse: Decodable {

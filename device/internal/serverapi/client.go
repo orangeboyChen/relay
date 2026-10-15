@@ -26,6 +26,69 @@ type Client struct {
 	httpClient *http.Client
 }
 
+// InstallationRecipient identifies one approved iPhone encryption endpoint.
+type InstallationRecipient struct {
+	InstallationID        string `json:"installation_id"`
+	KeyAgreementPublicKey []byte `json:"key_agreement_public_key"`
+}
+
+// ListInstallationRecipients returns the approved iPhones that can decrypt device events.
+func (client *Client) ListInstallationRecipients(ctx context.Context, deviceID string, credential string) ([]InstallationRecipient, error) {
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		client.baseURL+"/v1/device-installations?device_uuid="+url.QueryEscape(deviceID),
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create installation recipient request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+credential)
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("list installation recipients: %w", err)
+	}
+	defer response.Body.Close()
+
+	limitedBody := io.LimitReader(response.Body, maxResponseBytes)
+	if response.StatusCode != http.StatusOK {
+		return nil, responseError("list installation recipients", response.StatusCode, limitedBody)
+	}
+	var body struct {
+		Installations []InstallationRecipient `json:"installations"`
+	}
+	if err := json.NewDecoder(limitedBody).Decode(&body); err != nil {
+		return nil, fmt.Errorf("decode installation recipients: %w", err)
+	}
+	for _, recipient := range body.Installations {
+		if !validUUID(recipient.InstallationID) || len(recipient.KeyAgreementPublicKey) != 32 {
+			return nil, errors.New("server returned an invalid installation recipient")
+		}
+	}
+	if body.Installations == nil {
+		return []InstallationRecipient{}, nil
+	}
+	return body.Installations, nil
+}
+
+func validUUID(value string) bool {
+	if len(value) != 36 {
+		return false
+	}
+	for index, character := range value {
+		if index == 8 || index == 13 || index == 18 || index == 23 {
+			if character != '-' {
+				return false
+			}
+			continue
+		}
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') || (character >= 'A' && character <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
 // UploadEvent sends one signed opaque event using the bound device credential.
 func (client *Client) UploadEvent(ctx context.Context, deviceID string, credential string, envelope callevent.Envelope) error {
 	if envelope.DeviceUUID != deviceID {

@@ -37,6 +37,85 @@ func clientWithHandler(handler roundTripFunc) *Client {
 	return NewClient("https://deck.example", &http.Client{Transport: handler})
 }
 
+var _ = Describe("Installation recipient client", func() {
+	const deviceID = "01900000-0000-7000-8000-000000000001"
+
+	It("lists approved public encryption identities with device authentication", func() {
+		recipients := []InstallationRecipient{{
+			InstallationID:        "01900000-0000-7000-8000-000000000101",
+			KeyAgreementPublicKey: bytes.Repeat([]byte{7}, 32),
+		}}
+		client := clientWithHandler(func(request *http.Request) (*http.Response, error) {
+			Expect(request.Method).To(Equal(http.MethodGet))
+			Expect(request.URL.Path).To(Equal("/v1/device-installations"))
+			Expect(request.URL.Query().Get("device_uuid")).To(Equal(deviceID))
+			Expect(request.Header.Get("Authorization")).To(Equal("Bearer device-secret"))
+			body, err := json.Marshal(map[string]any{"installations": recipients})
+			Expect(err).NotTo(HaveOccurred())
+			return response(http.StatusOK, string(body)), nil
+		})
+
+		listed, err := client.ListInstallationRecipients(context.Background(), deviceID, "device-secret")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(listed).To(Equal(recipients))
+	})
+
+	It("returns an initialized empty list when no iPhone is approved", func() {
+		client := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusOK, `{}`), nil
+		})
+
+		listed, err := client.ListInstallationRecipients(context.Background(), deviceID, "device-secret")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(listed).To(BeEmpty())
+		Expect(listed).NotTo(BeNil())
+	})
+
+	DescribeTable("rejects malformed recipient metadata",
+		func(installationID string, publicKey []byte) {
+			body, err := json.Marshal(map[string]any{"installations": []InstallationRecipient{{
+				InstallationID: installationID, KeyAgreementPublicKey: publicKey,
+			}}})
+			Expect(err).NotTo(HaveOccurred())
+			client := clientWithHandler(func(*http.Request) (*http.Response, error) {
+				return response(http.StatusOK, string(body)), nil
+			})
+
+			_, err = client.ListInstallationRecipients(context.Background(), deviceID, "device-secret")
+
+			Expect(err).To(MatchError("server returned an invalid installation recipient"))
+		},
+		Entry("invalid installation UUID", "not-a-uuid", bytes.Repeat([]byte{8}, 32)),
+		Entry("invalid X25519 key", "01900000-0000-7000-8000-000000000101", bytes.Repeat([]byte{8}, 31)),
+	)
+
+	It("maps malformed responses and request, transport, and server failures", func() {
+		malformed := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusOK, "not-json"), nil
+		})
+		_, err := malformed.ListInstallationRecipients(context.Background(), deviceID, "device-secret")
+		Expect(err).To(MatchError(ContainSubstring("decode installation recipients")))
+
+		_, err = NewClient("://invalid", nil).ListInstallationRecipients(context.Background(), deviceID, "device-secret")
+		Expect(err).To(MatchError(ContainSubstring("create installation recipient request")))
+
+		transportFailure := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("transport unavailable")
+		})
+		_, err = transportFailure.ListInstallationRecipients(context.Background(), deviceID, "device-secret")
+		Expect(err).To(MatchError(ContainSubstring("list installation recipients")))
+
+		serverFailure := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusUnauthorized, `{"error":{"code":"invalid_device_credential","message":"sensitive detail"}}`), nil
+		})
+		_, err = serverFailure.ListInstallationRecipients(context.Background(), deviceID, "device-secret")
+		Expect(err).To(MatchError(ContainSubstring("invalid_device_credential")))
+		Expect(err.Error()).NotTo(ContainSubstring("sensitive detail"))
+	})
+})
+
 var _ = Describe("Server pairing client", func() {
 	var state identity.State
 

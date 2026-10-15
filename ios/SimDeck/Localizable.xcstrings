@@ -31,6 +31,36 @@
         }
       }
     },
+    "SIM %lld" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SIM %lld"
+          }
+        }
+      }
+    },
+    "SIM %lld, line %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SIM %1$lld，线路 %2$@"
+          }
+        }
+      }
+    },
+    "SIM %lld, local number %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SIM %1$lld，本机号码 %2$@"
+          }
+        }
+      }
+    },
     "This section is ready for its feature implementation." : {
       "localizations" : {
         "zh-Hans" : {

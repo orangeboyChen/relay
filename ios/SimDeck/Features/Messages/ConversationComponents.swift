@@ -15,34 +15,39 @@ struct ConversationHeader: View {
                 }
             }
         } label: {
-            HStack(spacing: 8) {
+            VStack(spacing: 2) {
                 MessageContactAvatar(
                     displayName: conversation.displayName,
                     remoteNumber: conversation.remoteNumber,
-                    diameter: 30
+                    diameter: 36
                 )
 
-                VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 3) {
                     Text(conversation.displayName)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
                         .lineLimit(1)
 
-                    HStack(spacing: 4) {
-                        SIMBadge(line: line, size: 14)
-                        Text(line.displayName)
-                            .lineLimit(1)
-                    }
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.tertiary)
                 }
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.primary)
 
-                Image(systemName: "chevron.down")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.tertiary)
+                HStack(spacing: 3) {
+                    SIMBadge(line: line, size: 12)
+                    Text(line.displayName)
+                        .lineLimit(1)
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
             }
+            .frame(maxWidth: 220)
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(
+            Text(verbatim: "\(conversation.displayName), SIM \(line.numericID), \(line.displayName)")
+        )
     }
 
     private func lineFor(_ conversation: MessageConversation) -> DeviceLineIdentity {

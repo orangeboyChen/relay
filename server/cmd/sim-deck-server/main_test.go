@@ -112,6 +112,9 @@ func (repository *memoryRepository) UpsertPushToken(
 ) error {
 	return nil
 }
+func (repository *memoryRepository) DeletePushToken(context.Context, string, string, string, string) error {
+	return nil
+}
 func (repository *memoryRepository) ListApprovedAppInstallationRecipients(context.Context) ([]store.AppInstallationRecipient, error) {
 	return nil, nil
 }

@@ -263,4 +263,62 @@ var _ = Describe("App installation API", func() {
 		Entry("unapproved installation", pgx.ErrNoRows, http.StatusNotFound, "installation_unavailable"),
 		Entry("storage failure", errors.New("database unavailable"), http.StatusInternalServerError, "storage_error"),
 	)
+
+	It("deletes an invalidated VoIP token route", func() {
+		request := httptest.NewRequest(
+			http.MethodDelete,
+			"/v1/app-installations/"+installationID+"/push-tokens/voip?environment=sandbox",
+			nil,
+		)
+		request.Header.Set("Authorization", "Bearer owner-token")
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, request)
+
+		Expect(response.Code).To(Equal(http.StatusNoContent))
+		Expect(repository.deletePushTokenOwnerID).To(Equal("owner-1"))
+		Expect(repository.deletePushTokenInstallation).To(Equal(installationID))
+		Expect(repository.deletePushTokenEnvironment).To(Equal("sandbox"))
+		Expect(repository.deletePushTokenKind).To(Equal("voip"))
+	})
+
+	DescribeTable("rejects invalid push token deletion routes",
+		func(id string, kind string, environment string) {
+			request := httptest.NewRequest(
+				http.MethodDelete,
+				"/v1/app-installations/"+id+"/push-tokens/"+kind+"?environment="+environment,
+				nil,
+			)
+			request.Header.Set("Authorization", "Bearer owner-token")
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			Expect(response.Code).To(Equal(http.StatusUnprocessableEntity))
+			Expect(repository.deletePushTokenInstallation).To(BeEmpty())
+		},
+		Entry("installation", "invalid", "voip", "sandbox"),
+		Entry("kind", installationID, "email", "sandbox"),
+		Entry("environment", installationID, "voip", "staging"),
+	)
+
+	DescribeTable("maps push token deletion failures",
+		func(repositoryError error, expectedStatus int, expectedCode string) {
+			repository.deletePushTokenError = repositoryError
+			request := httptest.NewRequest(
+				http.MethodDelete,
+				"/v1/app-installations/"+installationID+"/push-tokens/voip?environment=production",
+				nil,
+			)
+			request.Header.Set("Authorization", "Bearer owner-token")
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			Expect(response.Code).To(Equal(expectedStatus))
+			Expect(response.Body.String()).To(ContainSubstring(expectedCode))
+		},
+		Entry("missing route", pgx.ErrNoRows, http.StatusNotFound, "push_token_unavailable"),
+		Entry("storage failure", errors.New("database unavailable"), http.StatusInternalServerError, "storage_error"),
+	)
 })

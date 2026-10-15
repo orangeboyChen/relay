@@ -452,6 +452,31 @@ func (store *Postgres) UpsertPushToken(
 	return nil
 }
 
+// DeletePushToken removes one owner-controlled APNs route after local invalidation.
+func (store *Postgres) DeletePushToken(
+	ctx context.Context,
+	ownerID string,
+	installationID string,
+	environment string,
+	kind string,
+) error {
+	command, err := store.pool.Exec(ctx, `
+		DELETE FROM push_tokens AS token
+		USING app_installations AS installation
+		WHERE token.installation_id = installation.id
+		  AND token.installation_id = $1
+		  AND installation.owner_id = $2
+		  AND token.environment = $3
+		  AND token.kind = $4`, installationID, ownerID, environment, kind)
+	if err != nil {
+		return fmt.Errorf("delete push token: %w", err)
+	}
+	if command.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
 // InsertIncomingCall stores recipient ciphertexts and queues one opaque VoIP delivery per approved iPhone.
 func (store *Postgres) InsertIncomingCall(ctx context.Context, notification domain.IncomingCallNotification, expiresAt time.Time) (bool, error) {
 	tx, err := store.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})

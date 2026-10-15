@@ -41,6 +41,7 @@ type Repository interface {
 	UpdateDeviceCommandPublicKey(context.Context, string, []byte) error
 	RegisterAppInstallation(context.Context, string, store.AppInstallationRegistration, time.Time) (store.AppInstallationRecord, bool, error)
 	UpsertPushToken(context.Context, string, string, string, string, []byte, time.Time) error
+	DeletePushToken(context.Context, string, string, string, string) error
 	ListApprovedAppInstallationRecipients(context.Context) ([]store.AppInstallationRecipient, error)
 	InsertIncomingCall(context.Context, domain.IncomingCallNotification, time.Time) (bool, error)
 	ClaimIncomingCall(context.Context, string, string, string, time.Time) (domain.IncomingCallClaim, error)
@@ -65,6 +66,7 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("POST /v1/device-pairing-tokens", router.requireOwner(router.createPairingToken))
 	mux.HandleFunc("POST /v1/app-installations", router.requireOwner(router.registerAppInstallation))
 	mux.HandleFunc("PUT /v1/app-installations/{installationID}/push-tokens/{kind}", router.requireOwner(router.upsertPushToken))
+	mux.HandleFunc("DELETE /v1/app-installations/{installationID}/push-tokens/{kind}", router.requireOwner(router.deletePushToken))
 	mux.HandleFunc("GET /v1/device-installations", router.listDeviceInstallationRecipients)
 	mux.HandleFunc("POST /v1/incoming-calls", router.insertIncomingCall)
 	mux.HandleFunc("POST /v1/incoming-calls/{notificationID}/claim", router.requireOwner(router.claimIncomingCall))
@@ -136,6 +138,33 @@ func (router *router) upsertPushToken(writer http.ResponseWriter, request *http.
 			return
 		}
 		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to register the push token.")
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (router *router) deletePushToken(writer http.ResponseWriter, request *http.Request) {
+	ownerID, ok := request.Context().Value(ownerContextKey{}).(string)
+	if !ok || ownerID == "" {
+		writeError(writer, http.StatusUnauthorized, "invalid_access_token", "Access token is invalid or expired.")
+		return
+	}
+	installationID := request.PathValue("installationID")
+	kind := request.PathValue("kind")
+	environment := request.URL.Query().Get("environment")
+	if !validUUID(installationID) || (kind != "alert" && kind != "voip") ||
+		(environment != "sandbox" && environment != "production") {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_push_token", "Push token route is invalid.")
+		return
+	}
+	if err := router.repository.DeletePushToken(
+		request.Context(), ownerID, installationID, environment, kind,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(writer, http.StatusNotFound, "push_token_unavailable", "The push token route does not exist.")
+			return
+		}
+		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to delete the push token.")
 		return
 	}
 	writer.WriteHeader(http.StatusNoContent)

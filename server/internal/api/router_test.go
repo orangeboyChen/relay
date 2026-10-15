@@ -90,6 +90,11 @@ type fakeRepository struct {
 	pushToken                   []byte
 	pushTokenNow                time.Time
 	pushTokenError              error
+	deletePushTokenOwnerID      string
+	deletePushTokenInstallation string
+	deletePushTokenEnvironment  string
+	deletePushTokenKind         string
+	deletePushTokenError        error
 	incomingCall                domain.IncomingCallNotification
 	incomingCallExpiry          time.Time
 	incomingCallCreated         bool
@@ -118,6 +123,20 @@ func (fake *fakeRepository) UpsertPushToken(
 	fake.pushToken = append([]byte(nil), token...)
 	fake.pushTokenNow = now
 	return fake.pushTokenError
+}
+
+func (fake *fakeRepository) DeletePushToken(
+	_ context.Context,
+	ownerID string,
+	installationID string,
+	environment string,
+	kind string,
+) error {
+	fake.deletePushTokenOwnerID = ownerID
+	fake.deletePushTokenInstallation = installationID
+	fake.deletePushTokenEnvironment = environment
+	fake.deletePushTokenKind = kind
+	return fake.deletePushTokenError
 }
 
 func (fake *fakeRepository) ListDevices(context.Context) ([]store.DeviceRecord, error) {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +27,8 @@ type State struct {
 	Version            int                `json:"version"`
 	DeviceUUID         string             `json:"device_uuid"`
 	IdentityPrivateKey ed25519.PrivateKey `json:"identity_private_key"`
+	ServerURL          string             `json:"server_url,omitempty"`
+	PendingCredential  string             `json:"pending_credential,omitempty"`
 	Credential         string             `json:"credential,omitempty"`
 	NumericID          int                `json:"numeric_id,omitempty"`
 }
@@ -35,21 +38,19 @@ func (state State) PublicKey() ed25519.PublicKey {
 	if len(state.IdentityPrivateKey) != ed25519.PrivateKeySize {
 		return nil
 	}
-	publicKey, ok := state.IdentityPrivateKey.Public().(ed25519.PublicKey)
-	if !ok {
-		return nil
-	}
+	publicKey := state.IdentityPrivateKey.Public().(ed25519.PublicKey)
 	return append(ed25519.PublicKey(nil), publicKey...)
 }
 
 // Store persists the identity in a container-specific state directory.
 type Store struct {
 	directory string
+	random    io.Reader
 }
 
 // NewStore creates an identity store rooted at a private persistent directory.
 func NewStore(directory string) Store {
-	return Store{directory: directory}
+	return Store{directory: directory, random: rand.Reader}
 }
 
 // LoadOrCreate returns the existing identity or atomically creates a new one.
@@ -69,11 +70,11 @@ func (store Store) LoadOrCreate() (State, error) {
 		return State{}, err
 	}
 
-	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	_, privateKey, err := ed25519.GenerateKey(store.randomSource())
 	if err != nil {
 		return State{}, fmt.Errorf("generate device identity key: %w", err)
 	}
-	deviceUUID, err := randomUUID()
+	deviceUUID, err := randomUUID(store.randomSource())
 	if err != nil {
 		return State{}, err
 	}
@@ -88,9 +89,29 @@ func (store Store) LoadOrCreate() (State, error) {
 	return state, nil
 }
 
-// Bind stores the server-issued credential and visible SIM ID after successful pairing.
-func (store Store) Bind(state State, credential string, numericID int) (State, error) {
-	state.Credential = credential
+// PreparePairing creates and durably stores the credential before a one-time pairing request is sent.
+func (store Store) PreparePairing(state State) (State, error) {
+	if state.Credential != "" {
+		return state, nil
+	}
+	if state.PendingCredential == "" {
+		credential := make([]byte, tokenBytes)
+		if _, err := io.ReadFull(store.randomSource(), credential); err != nil {
+			return State{}, fmt.Errorf("generate pending device credential: %w", err)
+		}
+		state.PendingCredential = base64.RawURLEncoding.EncodeToString(credential)
+	}
+	if err := store.save(state); err != nil {
+		return State{}, err
+	}
+	return state, nil
+}
+
+// Bind promotes the pending credential and stores the visible SIM ID after successful pairing.
+func (store Store) Bind(state State, serverURL string, numericID int) (State, error) {
+	state.ServerURL = strings.TrimRight(strings.TrimSpace(serverURL), "/")
+	state.Credential = state.PendingCredential
+	state.PendingCredential = ""
 	state.NumericID = numericID
 	if err := validate(state); err != nil {
 		return State{}, err
@@ -169,23 +190,43 @@ func validate(state State) error {
 	if len(state.IdentityPrivateKey) != ed25519.PrivateKeySize || len(state.PublicKey()) != ed25519.PublicKeySize {
 		return fmt.Errorf("%w: malformed private key", ErrInvalidState)
 	}
+	if state.PendingCredential != "" {
+		if state.Credential != "" || state.ServerURL != "" || state.NumericID != 0 || !validCredential(state.PendingCredential) {
+			return fmt.Errorf("%w: pending credential state is inconsistent", ErrInvalidState)
+		}
+		return nil
+	}
 	if state.Credential != "" {
-		decoded, err := base64.RawURLEncoding.DecodeString(state.Credential)
-		if err != nil || len(decoded) != tokenBytes {
+		if state.ServerURL == "" {
+			return fmt.Errorf("%w: server URL is required for a bound identity", ErrInvalidState)
+		}
+		if !validCredential(state.Credential) {
 			return fmt.Errorf("%w: malformed device credential", ErrInvalidState)
 		}
 		if state.NumericID < 1 || state.NumericID > 99 {
 			return fmt.Errorf("%w: numeric id must be between 1 and 99", ErrInvalidState)
 		}
-	} else if state.NumericID != 0 {
-		return fmt.Errorf("%w: numeric id requires a device credential", ErrInvalidState)
+	} else if state.NumericID != 0 || state.ServerURL != "" {
+		return fmt.Errorf("%w: binding metadata requires a device credential", ErrInvalidState)
 	}
 	return nil
 }
 
-func randomUUID() (string, error) {
+func validCredential(credential string) bool {
+	decoded, err := base64.RawURLEncoding.DecodeString(credential)
+	return err == nil && len(decoded) == tokenBytes
+}
+
+func (store Store) randomSource() io.Reader {
+	if store.random == nil {
+		return rand.Reader
+	}
+	return store.random
+}
+
+func randomUUID(random io.Reader) (string, error) {
 	value := make([]byte, 16)
-	if _, err := rand.Read(value); err != nil {
+	if _, err := io.ReadFull(random, value); err != nil {
 		return "", fmt.Errorf("generate device UUID: %w", err)
 	}
 	value[6] = (value[6] & 0x0f) | 0x40

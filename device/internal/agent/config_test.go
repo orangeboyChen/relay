@@ -1,49 +1,105 @@
 package agent
 
 import (
-	"testing"
+	"strings"
 	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestLoadConfigUsesStableDeviceDefaults(t *testing.T) {
-	config, err := LoadConfig(func(string) (string, bool) { return "", false })
-	if err != nil {
-		t.Fatalf("LoadConfig() error = %v", err)
-	}
-	if config.ATDevice != "/dev/sim-deck/at" || config.PCMDevice != "/dev/sim-deck/pcm" {
-		t.Fatalf("device paths = %q, %q", config.ATDevice, config.PCMDevice)
-	}
-	if config.Baud != 115200 || config.CommandTimeout != 5*time.Second {
-		t.Fatalf("serial defaults = %d, %s", config.Baud, config.CommandTimeout)
-	}
-}
-
-func TestLoadConfigReadsOverrides(t *testing.T) {
-	values := map[string]string{
-		"SIM_DECK_AT_DEVICE":       "/dev/ttyUSB2",
-		"SIM_DECK_BAUD":            "9600",
-		"SIM_DECK_COMMAND_TIMEOUT": "9s",
-	}
-	config, err := LoadConfig(func(key string) (string, bool) {
+func configLookup(values map[string]string) func(string) (string, bool) {
+	return func(key string) (string, bool) {
 		value, ok := values[key]
 		return value, ok
-	})
-	if err != nil {
-		t.Fatalf("LoadConfig() error = %v", err)
-	}
-	if config.ATDevice != "/dev/ttyUSB2" || config.Baud != 9600 || config.CommandTimeout != 9*time.Second {
-		t.Fatalf("config = %#v", config)
 	}
 }
 
-func TestLoadConfigRejectsInvalidBaud(t *testing.T) {
-	_, err := LoadConfig(func(key string) (string, bool) {
-		if key == "SIM_DECK_BAUD" {
-			return "fast", true
-		}
-		return "", false
+var _ = Describe("Agent configuration", func() {
+	It("uses stable device and persistence defaults", func() {
+		config, err := LoadConfig(configLookup(map[string]string{
+			"SIM_DECK_SERVER_URL": "https://deck.example",
+		}))
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(config.ATDevice).To(Equal("/dev/sim-deck/at"))
+		Expect(config.PCMDevice).To(Equal("/dev/sim-deck/pcm"))
+		Expect(config.SoundDevice).To(Equal("/dev/snd"))
+		Expect(config.HealthAddress).To(Equal(":8080"))
+		Expect(config.Baud).To(Equal(115200))
+		Expect(config.CommandTimeout).To(Equal(5 * time.Second))
+		Expect(config.StateDirectory).To(Equal("/var/lib/sim-deck"))
+		Expect(config.PairingTokenFile).To(Equal("/run/secrets/sim_deck_pairing_token"))
+		Expect(config.AllowInsecureHTTP).To(BeFalse())
 	})
-	if err == nil {
-		t.Fatal("LoadConfig() error = nil, want validation error")
-	}
-}
+
+	It("reads explicit development and device overrides", func() {
+		config, err := LoadConfig(configLookup(map[string]string{
+			"SIM_DECK_AT_DEVICE":           "/dev/ttyUSB2",
+			"SIM_DECK_PCM_DEVICE":          "/dev/ttyUSB4",
+			"SIM_DECK_SOUND_DEVICE":        "/dev/snd/controlC2",
+			"SIM_DECK_HEALTH_ADDRESS":      "127.0.0.1:9090",
+			"SIM_DECK_BAUD":                "9600",
+			"SIM_DECK_COMMAND_TIMEOUT":     "9s",
+			"SIM_DECK_SERVER_URL":          "http://server:8080/",
+			"SIM_DECK_STATE_DIRECTORY":     "/tmp/state",
+			"SIM_DECK_PAIRING_TOKEN_FILE":  "/tmp/pairing-token",
+			"SIM_DECK_ALLOW_INSECURE_HTTP": "true",
+		}))
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(config.ATDevice).To(Equal("/dev/ttyUSB2"))
+		Expect(config.PCMDevice).To(Equal("/dev/ttyUSB4"))
+		Expect(config.SoundDevice).To(Equal("/dev/snd/controlC2"))
+		Expect(config.HealthAddress).To(Equal("127.0.0.1:9090"))
+		Expect(config.Baud).To(Equal(9600))
+		Expect(config.CommandTimeout).To(Equal(9 * time.Second))
+		Expect(config.ServerURL).To(Equal("http://server:8080"))
+		Expect(config.StateDirectory).To(Equal("/tmp/state"))
+		Expect(config.PairingTokenFile).To(Equal("/tmp/pairing-token"))
+		Expect(config.AllowInsecureHTTP).To(BeTrue())
+	})
+
+	DescribeTable("rejects invalid environment values",
+		func(overrides map[string]string, expectedMessage string) {
+			values := map[string]string{"SIM_DECK_SERVER_URL": "https://deck.example"}
+			for key, value := range overrides {
+				values[key] = value
+			}
+
+			_, err := LoadConfig(configLookup(values))
+
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(expectedMessage))
+		},
+		Entry("invalid insecure HTTP flag", map[string]string{"SIM_DECK_ALLOW_INSECURE_HTTP": "perhaps"}, "ALLOW_INSECURE_HTTP"),
+		Entry("invalid baud", map[string]string{"SIM_DECK_BAUD": "fast"}, "BAUD"),
+		Entry("zero baud", map[string]string{"SIM_DECK_BAUD": "0"}, "BAUD"),
+		Entry("invalid command timeout", map[string]string{"SIM_DECK_COMMAND_TIMEOUT": "later"}, "COMMAND_TIMEOUT"),
+		Entry("zero command timeout", map[string]string{"SIM_DECK_COMMAND_TIMEOUT": "0s"}, "COMMAND_TIMEOUT"),
+		Entry("empty AT device", map[string]string{"SIM_DECK_AT_DEVICE": " "}, "AT_DEVICE"),
+		Entry("missing server URL", map[string]string{"SIM_DECK_SERVER_URL": ""}, "SERVER_URL"),
+		Entry("relative server URL", map[string]string{"SIM_DECK_SERVER_URL": "server:8080"}, "SERVER_URL"),
+		Entry("HTTP without opt in", map[string]string{"SIM_DECK_SERVER_URL": "http://server:8080"}, "must use HTTPS"),
+		Entry("server URL credentials", map[string]string{"SIM_DECK_SERVER_URL": "https://user:pass@server"}, "SERVER_URL"),
+		Entry("server URL query", map[string]string{"SIM_DECK_SERVER_URL": "https://server?token=value"}, "SERVER_URL"),
+		Entry("server URL fragment", map[string]string{"SIM_DECK_SERVER_URL": "https://server/#fragment"}, "SERVER_URL"),
+		Entry("relative state directory", map[string]string{"SIM_DECK_STATE_DIRECTORY": "state"}, "STATE_DIRECTORY"),
+		Entry("relative pairing token", map[string]string{"SIM_DECK_PAIRING_TOKEN_FILE": "pairing-token"}, "PAIRING_TOKEN_FILE"),
+	)
+
+	It("does not treat whitespace-only overrides as values", func() {
+		config, err := LoadConfig(configLookup(map[string]string{
+			"SIM_DECK_SERVER_URL":          "https://deck.example/",
+			"SIM_DECK_BAUD":                " ",
+			"SIM_DECK_COMMAND_TIMEOUT":     " ",
+			"SIM_DECK_ALLOW_INSECURE_HTTP": " ",
+		}))
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(config.ServerURL).To(Equal("https://deck.example"))
+		Expect(config.Baud).To(Equal(115200))
+		Expect(config.CommandTimeout).To(Equal(5 * time.Second))
+		Expect(strings.TrimSpace(config.ATDevice)).NotTo(BeEmpty())
+	})
+})

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -14,7 +15,9 @@ import (
 
 	"sim-deck-device/internal/agent"
 	"sim-deck-device/internal/at"
+	"sim-deck-device/internal/identity"
 	"sim-deck-device/internal/serialport"
+	"sim-deck-device/internal/serverapi"
 )
 
 func main() {
@@ -53,6 +56,11 @@ func run(ctx context.Context, config agent.Config, logger *slog.Logger) error {
 	}
 	client := at.NewClient(transport)
 	defer client.Close()
+	identityStore := identity.NewStore(config.StateDirectory)
+	deviceIdentity, err := identityStore.LoadOrCreate()
+	if err != nil {
+		return fmt.Errorf("load device identity: %w", err)
+	}
 
 	for _, command := range []string{"ATE0", "AT+CMEE=2", "AT+CMGF=0"} {
 		commandContext, cancel := context.WithTimeout(ctx, config.CommandTimeout)
@@ -65,6 +73,10 @@ func run(ctx context.Context, config agent.Config, logger *slog.Logger) error {
 			return errors.New("modem rejected initialization command " + command)
 		}
 	}
+	deviceIdentity, err = agent.EnsureBinding(ctx, config, identityStore, deviceIdentity, serverapi.NewClient(config.ServerURL, nil))
+	if err != nil {
+		return fmt.Errorf("bind device to server: %w", err)
+	}
 
 	ready.Store(true)
 	logger.Info(
@@ -72,6 +84,8 @@ func run(ctx context.Context, config agent.Config, logger *slog.Logger) error {
 		"at_device", config.ATDevice,
 		"pcm_device", config.PCMDevice,
 		"sound_device", config.SoundDevice,
+		"device_uuid", deviceIdentity.DeviceUUID,
+		"numeric_id", deviceIdentity.NumericID,
 	)
 	for {
 		select {

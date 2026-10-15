@@ -655,7 +655,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "新建短信"
+            "value" : "新信息"
           }
         }
       }
@@ -760,6 +760,12 @@
         }
       }
     },
+    "Add recipient" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加收件人" } } } },
+    "Connect a SIM before starting a new message." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "连接 SIM 后才能新建短信。" } } } },
+    "From:" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "发件：" } } } },
+    "From SIM %lld, %@" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "使用 SIM %1$lld，%2$@" } } } },
+    "Text Message" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "短信" } } } },
+    "To:" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "收件：" } } } },
     "This section is ready for its feature implementation." : {
       "localizations" : {
         "zh-Hans" : {

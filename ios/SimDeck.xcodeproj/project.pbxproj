@@ -165,7 +165,7 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		100000000000000000000100 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; ENABLE_TESTABILITY = YES; IPHONEOS_DEPLOYMENT_TARGET = 18.0; SDKROOT = iphoneos; SWIFT_VERSION = 6.0; }; name = Debug; };
+		100000000000000000000100 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; ENABLE_TESTABILITY = YES; IPHONEOS_DEPLOYMENT_TARGET = 18.0; SDKROOT = iphoneos; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; SWIFT_VERSION = 6.0; }; name = Debug; };
 		100000000000000000000101 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 18.0; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_VERSION = 6.0; }; name = Release; };
 		100000000000000000000102 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "sim-deck"; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES; INFOPLIST_KEY_UILaunchScreen_Generation = YES; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks"; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.orangeboychen.simdeck; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_STRICT_CONCURRENCY = complete; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
 		100000000000000000000103 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "sim-deck"; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES; INFOPLIST_KEY_UILaunchScreen_Generation = YES; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks"; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.orangeboychen.simdeck; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_STRICT_CONCURRENCY = complete; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
@@ -174,9 +174,9 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		100000000000000000000070 /* Build configuration list for PBXNativeTarget "SimDeck" */ = {isa = XCConfigurationList; buildConfigurations = (100000000000000000000102 /* Debug */, 100000000000000000000103 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		100000000000000000000071 /* Build configuration list for PBXNativeTarget "SimDeckTests" */ = {isa = XCConfigurationList; buildConfigurations = (100000000000000000000104 /* Debug */, 100000000000000000000105 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		100000000000000000000072 /* Build configuration list for PBXProject "SimDeck" */ = {isa = XCConfigurationList; buildConfigurations = (100000000000000000000100 /* Debug */, 100000000000000000000101 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		100000000000000000000070 /* Build configuration list for PBXNativeTarget "SimDeck" */ = {isa = XCConfigurationList; buildConfigurations = (100000000000000000000102 /* Debug */, 100000000000000000000103 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+		100000000000000000000071 /* Build configuration list for PBXNativeTarget "SimDeckTests" */ = {isa = XCConfigurationList; buildConfigurations = (100000000000000000000104 /* Debug */, 100000000000000000000105 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+		100000000000000000000072 /* Build configuration list for PBXProject "SimDeck" */ = {isa = XCConfigurationList; buildConfigurations = (100000000000000000000100 /* Debug */, 100000000000000000000101 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
 /* End XCConfigurationList section */
 	};
 	rootObject = 100000000000000000000080 /* Project object */;

@@ -6,12 +6,14 @@ struct SIMBadge: View {
     @ScaledMetric(relativeTo: .caption) private var height = 30.0
 
     var body: some View {
+        let badgeHeight = min(height, 44)
+
         Text(line.numericID, format: .number.grouping(.never))
             .font(.caption.bold().monospacedDigit())
             .foregroundStyle(.white)
             .lineLimit(1)
             .minimumScaleFactor(0.7)
-            .frame(width: height * 0.86, height: height)
+            .frame(width: badgeHeight * 0.86, height: badgeHeight)
             .background(Color.gray, in: SIMCardShape())
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityLabel)

@@ -38,7 +38,12 @@ struct ConversationScreen: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            MessageComposer(draft: $draft)
+            MessageComposer(
+                draft: $draft,
+                sendAction: {
+                    draft = ""
+                }
+            )
         }
         .navigationTitle(conversation.displayName)
         .navigationBarTitleDisplayMode(.inline)
@@ -186,37 +191,6 @@ private struct AttachmentPreview: View {
                     }
                 }
         }
-    }
-}
-
-private struct MessageComposer: View {
-    @Binding var draft: String
-
-    var body: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            Button { } label: {
-                Image(systemName: "photo")
-                    .frame(width: 44, height: 44)
-            }
-            .accessibilityLabel("Add image")
-
-            TextField("Message", text: $draft, axis: .vertical)
-                .lineLimit(1...5)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(.quaternary, in: Capsule())
-
-            Button { } label: {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.title)
-                    .frame(width: 44, height: 44)
-            }
-            .accessibilityLabel("Send message")
-            .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(.bar)
     }
 }
 

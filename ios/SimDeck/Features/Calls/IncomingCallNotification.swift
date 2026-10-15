@@ -68,6 +68,40 @@ struct OpenedIncomingCall: Equatable, Sendable {
     let payload: IncomingCallPayload
 }
 
+enum IncomingCallPushDelivery: Equatable, Sendable {
+    case incoming(IncomingCallDelivery)
+    case answeredElsewhere(notificationID: UUID)
+
+    static func decode(_ data: Data) throws -> IncomingCallPushDelivery {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        if let delivery = try? decoder.decode(IncomingCallDelivery.self, from: data),
+           delivery.type == "call.incoming" {
+            return .incoming(delivery)
+        }
+        let claim: ClaimDelivery
+        do {
+            claim = try decoder.decode(ClaimDelivery.self, from: data)
+        } catch {
+            throw IncomingCallNotificationError.invalidEnvelope
+        }
+        guard claim.reason == "answered_elsewhere" else {
+            throw IncomingCallNotificationError.invalidEnvelope
+        }
+        return .answeredElsewhere(notificationID: claim.notificationID)
+    }
+
+    private struct ClaimDelivery: Decodable {
+        let notificationID: UUID
+        let reason: String
+
+        enum CodingKeys: String, CodingKey {
+            case notificationID = "notification_id"
+            case reason
+        }
+    }
+}
+
 enum IncomingCallNotificationCodec {
     private static let context = "sim-deck-incoming-call-v1"
 

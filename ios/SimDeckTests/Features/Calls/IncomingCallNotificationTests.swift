@@ -3,6 +3,37 @@ import XCTest
 @testable import SimDeck
 
 final class IncomingCallNotificationTests: XCTestCase {
+    func testClassifiesIncomingAndAnsweredElsewhereDeliveries() throws {
+        guard case .incoming(let incoming) = try IncomingCallPushDelivery.decode(Self.deliveryData) else {
+            return XCTFail("Expected an incoming call delivery")
+        }
+        XCTAssertEqual(
+            incoming.notificationID,
+            UUID(uuidString: "11121314-1516-4718-991a-1b1c1d1e1f20")
+        )
+
+        let notificationID = UUID()
+        let claimData = Data(
+            """
+            {"notification_id":"\(notificationID.uuidString.lowercased())","reason":"answered_elsewhere","aps":{"content-available":1}}
+            """.utf8
+        )
+        XCTAssertEqual(
+            try IncomingCallPushDelivery.decode(claimData),
+            .answeredElsewhere(notificationID: notificationID)
+        )
+    }
+
+    func testRejectsUnknownVoIPPushDeliveries() {
+        XCTAssertThrowsError(
+            try IncomingCallPushDelivery.decode(
+                Data(#"{"notification_id":"11121314-1516-4718-991a-1b1c1d1e1f20","reason":"unknown"}"#.utf8)
+            )
+        ) { error in
+            XCTAssertEqual(error as? IncomingCallNotificationError, .invalidEnvelope)
+        }
+    }
+
     private let installationID = UUID(
         uuidString: "01900000-0000-7000-8000-000000000101"
     )!

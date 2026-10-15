@@ -125,9 +125,15 @@ final class AppModel {
         guard let installationIdentity else {
             throw VoIPPushError.invalidPayload
         }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let delivery = try decoder.decode(IncomingCallDelivery.self, from: data)
+        let push = try IncomingCallPushDelivery.decode(data)
+        guard case .incoming(let delivery) = push else {
+            if case .answeredElsewhere(let notificationID) = push {
+                callCoordinator.reportIncomingCallAnsweredElsewhere(
+                    notificationID: notificationID
+                )
+            }
+            return
+        }
         let verificationKey = try await serverConnection.eventVerificationKey(
             deviceID: delivery.deviceUUID
         )

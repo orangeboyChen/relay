@@ -171,6 +171,17 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
         provider.reportCall(with: callID, updated: update)
     }
 
+    func reportIncomingCallAnsweredElsewhere(notificationID: UUID) {
+        guard let match = incomingCalls.first(where: { $0.value.notificationID == notificationID }) else {
+            return
+        }
+        let callID = match.key
+        provider.reportCall(with: callID, endedAt: .now, reason: .answeredElsewhere)
+        transport.discardIncomingCall(callID: callID)
+        incomingCalls.removeValue(forKey: callID)
+        finishCall(callID: callID)
+    }
+
     func endCall() async throws {
         guard let activeCall else { return }
         if incomingCalls[activeCall.id] != nil {
@@ -323,6 +334,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
         activeCall = nil
         isSpeakerEnabled = false
         pendingOutgoing.removeValue(forKey: callID)
+        incomingCalls.removeValue(forKey: callID)
         if let completion = startCompletions.removeValue(forKey: callID) {
             completion(.failure(CallLifecycleError.endedBeforeStart))
         }

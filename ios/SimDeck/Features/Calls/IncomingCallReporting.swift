@@ -20,5 +20,6 @@ struct IncomingCallPresentation: Equatable, Sendable {
 @MainActor
 protocol IncomingCallReporting: AnyObject {
     func reportIncomingCall(_ call: IncomingCallPresentation) async throws
+    func reportIncomingCallAnsweredElsewhere(notificationID: UUID)
     func updateIncomingCallName(_ name: String?, callID: UUID)
 }

@@ -166,6 +166,41 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertNil(coordinator.activeCall)
     }
 
+    func testRemoteClaimEndsTheMatchingIncomingCallAsAnsweredElsewhere() async throws {
+        let provider = RecordingSystemCallProvider()
+        let transport = RecordingCallTransport()
+        let coordinator = CallKitCoordinator(
+            transport: transport,
+            provider: provider,
+            integratesWithSystem: false
+        )
+        let call = makeIncomingCall(contactName: nil)
+        try await coordinator.reportIncomingCall(call)
+
+        coordinator.reportIncomingCallAnsweredElsewhere(notificationID: call.notificationID)
+
+        XCTAssertEqual(provider.endedCallID, call.callID)
+        XCTAssertEqual(provider.endedReason, .answeredElsewhere)
+        XCTAssertEqual(transport.discardedIncomingCallIDs, [call.callID])
+        XCTAssertNil(coordinator.activeCall)
+    }
+
+    func testRemoteClaimForAnotherNotificationLeavesIncomingCallRinging() async throws {
+        let provider = RecordingSystemCallProvider()
+        let coordinator = CallKitCoordinator(
+            transport: RecordingCallTransport(),
+            provider: provider,
+            integratesWithSystem: false
+        )
+        let call = makeIncomingCall(contactName: nil)
+        try await coordinator.reportIncomingCall(call)
+
+        coordinator.reportIncomingCallAnsweredElsewhere(notificationID: UUID())
+
+        XCTAssertNil(provider.endedReason)
+        XCTAssertEqual(coordinator.activeCall?.status, .ringing)
+    }
+
     private func makeCoordinator(callID: UUID) -> CallKitCoordinator {
         let call = ActiveCallSession(
             id: callID,
@@ -200,6 +235,7 @@ private final class RecordingSystemCallProvider: SystemCallProviding {
     private let reportError: Error?
     private(set) var incomingCallID: UUID?
     private(set) var incomingUpdate: CXCallUpdate?
+    private(set) var endedCallID: UUID?
     private(set) var endedReason: CXCallEndedReason?
 
     init(reportError: Error? = nil) {
@@ -220,6 +256,7 @@ private final class RecordingSystemCallProvider: SystemCallProviding {
 
     func reportCall(with UUID: UUID, updated update: CXCallUpdate) {}
     func reportCall(with UUID: UUID, endedAt dateEnded: Date?, reason endedReason: CXCallEndedReason) {
+        endedCallID = UUID
         self.endedReason = endedReason
     }
     func reportOutgoingCall(with UUID: UUID, startedConnectingAt dateStartedConnecting: Date?) {}

@@ -158,6 +158,37 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(database.RotateSession(context.Background(), first.RefreshToken, newPair(), now)).To(MatchError(pgx.ErrNoRows))
 	})
 
+	It("approves only the first app installation and makes retries idempotent", func() {
+		owner := createOwner()
+		first := AppInstallationRegistration{
+			ID:                "01900000-0000-7000-8000-000000000101",
+			IdentityPublicKey: bytes.Repeat([]byte{9}, 32),
+			WrappedVaultKey:   []byte("first wrapped key"),
+		}
+		firstRecord, created, err := database.RegisterAppInstallation(context.Background(), owner.ID, first, now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
+		Expect(firstRecord.ApprovedAt).NotTo(BeNil())
+
+		retried, created, err := database.RegisterAppInstallation(context.Background(), owner.ID, first, now.Add(time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeFalse())
+		Expect(retried).To(Equal(firstRecord))
+
+		second := AppInstallationRegistration{
+			ID:                "01900000-0000-7000-8000-000000000102",
+			IdentityPublicKey: bytes.Repeat([]byte{10}, 32),
+		}
+		secondRecord, created, err := database.RegisterAppInstallation(context.Background(), owner.ID, second, now.Add(2*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
+		Expect(secondRecord.ApprovedAt).To(BeNil())
+
+		first.IdentityPublicKey = bytes.Repeat([]byte{11}, 32)
+		_, _, err = database.RegisterAppInstallation(context.Background(), owner.ID, first, now)
+		Expect(err).To(MatchError(domain.ErrInstallationConflict))
+	})
+
 	It("rejects malformed bearer credentials before querying PostgreSQL", func() {
 		owner := createOwner()
 		invalidPair := auth.TokenPair{AccessToken: "bad", RefreshToken: "bad"}

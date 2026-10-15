@@ -39,6 +39,7 @@ type Repository interface {
 	CompleteCommand(context.Context, string, string, domain.EncryptedCommandResult, time.Time) error
 	CommandStatus(context.Context, string, string, time.Time) (domain.CommandStatus, error)
 	UpdateDeviceCommandPublicKey(context.Context, string, []byte) error
+	RegisterAppInstallation(context.Context, string, store.AppInstallationRegistration, time.Time) (store.AppInstallationRecord, bool, error)
 }
 
 // Config describes public endpoints advertised to clients.
@@ -58,6 +59,7 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("GET /v1/devices", router.requireOwner(router.listDevices))
 	mux.HandleFunc("PATCH /v1/devices/{deviceID}/numeric-id", router.requireOwner(router.updateNumericID))
 	mux.HandleFunc("POST /v1/device-pairing-tokens", router.requireOwner(router.createPairingToken))
+	mux.HandleFunc("POST /v1/app-installations", router.requireOwner(router.registerAppInstallation))
 	mux.HandleFunc("POST /v1/device-pairings", router.pairDevice)
 	mux.HandleFunc("POST /v1/events", router.insertEvent)
 	mux.HandleFunc("GET /v1/events", router.requireOwner(router.listEvents))
@@ -80,19 +82,64 @@ type router struct {
 type ownerContextKey struct{}
 
 const (
-	pairingTokenLifetime      = 10 * time.Minute
-	maxProfileCiphertextBytes = 64 << 10
-	maxWrappedVaultKeyBytes   = 16 << 10
-	eventRetention            = 365 * 24 * time.Hour
-	maxEventFutureSkew        = 5 * time.Minute
-	commandLease              = 30 * time.Second
-	maxCommandLifetime        = 5 * time.Minute
-	commandPublicKeyBytes     = 32
-	commandNonceBytes         = 12
-	maxCommandCiphertextBytes = 64 << 10
-	defaultEventPageSize      = 100
-	maxEventPageSize          = 500
+	pairingTokenLifetime       = 10 * time.Minute
+	maxProfileCiphertextBytes  = 64 << 10
+	maxWrappedVaultKeyBytes    = 16 << 10
+	installationPublicKeyBytes = 32
+	eventRetention             = 365 * 24 * time.Hour
+	maxEventFutureSkew         = 5 * time.Minute
+	commandLease               = 30 * time.Second
+	maxCommandLifetime         = 5 * time.Minute
+	commandPublicKeyBytes      = 32
+	commandNonceBytes          = 12
+	maxCommandCiphertextBytes  = 64 << 10
+	defaultEventPageSize       = 100
+	maxEventPageSize           = 500
 )
+
+func (router *router) registerAppInstallation(writer http.ResponseWriter, request *http.Request) {
+	ownerID, ok := request.Context().Value(ownerContextKey{}).(string)
+	if !ok || ownerID == "" {
+		writeError(writer, http.StatusUnauthorized, "invalid_access_token", "Access token is invalid or expired.")
+		return
+	}
+	var body struct {
+		InstallationID    string `json:"installation_id"`
+		IdentityPublicKey []byte `json:"identity_public_key"`
+		WrappedVaultKey   []byte `json:"wrapped_vault_key"`
+	}
+	if err := decodeJSON(request, &body); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if !validUUID(body.InstallationID) || len(body.IdentityPublicKey) != installationPublicKeyBytes || len(body.WrappedVaultKey) > maxWrappedVaultKeyBytes {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_installation", "Installation identity or wrapped vault key is invalid.")
+		return
+	}
+	record, created, err := router.repository.RegisterAppInstallation(
+		request.Context(),
+		ownerID,
+		store.AppInstallationRegistration{
+			ID:                body.InstallationID,
+			IdentityPublicKey: body.IdentityPublicKey,
+			WrappedVaultKey:   body.WrappedVaultKey,
+		},
+		router.now(),
+	)
+	if err != nil {
+		if errors.Is(err, domain.ErrInstallationConflict) {
+			writeError(writer, http.StatusConflict, "installation_conflict", err.Error())
+			return
+		}
+		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to register the app installation.")
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	writeJSON(writer, status, map[string]any{"installation": record, "created": created})
+}
 
 func (router *router) health(writer http.ResponseWriter, _ *http.Request) {
 	writeJSON(writer, http.StatusOK, map[string]string{"status": "ok"})

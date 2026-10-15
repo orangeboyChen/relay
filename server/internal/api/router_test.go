@@ -75,6 +75,12 @@ type fakeRepository struct {
 	updatedCommandKeyDevice string
 	updatedCommandKey       []byte
 	updateCommandKeyError   error
+	installationOwnerID     string
+	installation            store.AppInstallationRegistration
+	installationRecord      store.AppInstallationRecord
+	installationCreated     bool
+	installationNow         time.Time
+	installationError       error
 }
 
 func (fake *fakeRepository) ListDevices(context.Context) ([]store.DeviceRecord, error) {
@@ -181,6 +187,13 @@ func (fake *fakeRepository) UpdateDeviceCommandPublicKey(_ context.Context, devi
 	fake.updatedCommandKeyDevice = deviceID
 	fake.updatedCommandKey = append([]byte(nil), publicKey...)
 	return fake.updateCommandKeyError
+}
+
+func (fake *fakeRepository) RegisterAppInstallation(_ context.Context, ownerID string, registration store.AppInstallationRegistration, now time.Time) (store.AppInstallationRecord, bool, error) {
+	fake.installationOwnerID = ownerID
+	fake.installation = registration
+	fake.installationNow = now
+	return fake.installationRecord, fake.installationCreated, fake.installationError
 }
 
 var _ = Describe("HTTP API", func() {

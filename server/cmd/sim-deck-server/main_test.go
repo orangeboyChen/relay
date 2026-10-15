@@ -82,6 +82,16 @@ func (repository *memoryRepository) CommandStatus(context.Context, string, strin
 func (repository *memoryRepository) UpdateDeviceCommandPublicKey(context.Context, string, []byte) error {
 	return nil
 }
+func (repository *memoryRepository) RegisterAppInstallation(_ context.Context, _ string, registration store.AppInstallationRegistration, now time.Time) (store.AppInstallationRecord, bool, error) {
+	approvedAt := now.UTC()
+	return store.AppInstallationRecord{
+		ID:                registration.ID,
+		IdentityPublicKey: append([]byte(nil), registration.IdentityPublicKey...),
+		WrappedVaultKey:   append([]byte(nil), registration.WrappedVaultKey...),
+		ApprovedAt:        &approvedAt,
+		CreatedAt:         approvedAt,
+	}, true, nil
+}
 
 type memoryHTTPServer struct {
 	listenError   error

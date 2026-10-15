@@ -12,11 +12,12 @@ const (
 )
 
 var (
-	ErrInvalidNumericID    = errors.New("numeric id must be between 1 and 99")
-	ErrDuplicateNumericID  = errors.New("numeric id is already in use")
-	ErrNoNumericID         = errors.New("no numeric id is available")
-	ErrInvalidPairingToken = errors.New("pairing token is invalid, expired, or already used")
-	ErrDeviceExists        = errors.New("device is already paired")
+	ErrInvalidNumericID     = errors.New("numeric id must be between 1 and 99")
+	ErrDuplicateNumericID   = errors.New("numeric id is already in use")
+	ErrNoNumericID          = errors.New("no numeric id is available")
+	ErrInvalidPairingToken  = errors.New("pairing token is invalid, expired, or already used")
+	ErrDeviceExists         = errors.New("device is already paired")
+	ErrInstallationConflict = errors.New("installation id is already registered with different identity data")
 )
 
 // DeviceLineIdentity is the public identity of one modem and SIM line.

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"errors"
@@ -52,6 +53,23 @@ type DevicePairing struct {
 	CommandPublicKey  []byte
 	WrappedVaultKey   []byte
 	CredentialHash    []byte
+}
+
+// AppInstallationRegistration contains public identity material supplied by one iPhone install.
+type AppInstallationRegistration struct {
+	ID                string
+	IdentityPublicKey []byte
+	WrappedVaultKey   []byte
+}
+
+// AppInstallationRecord is the server-readable trust state for one iPhone install.
+type AppInstallationRecord struct {
+	ID                string     `json:"installation_id"`
+	IdentityPublicKey []byte     `json:"identity_public_key"`
+	WrappedVaultKey   []byte     `json:"wrapped_vault_key,omitempty"`
+	ApprovedAt        *time.Time `json:"approved_at,omitempty"`
+	RevokedAt         *time.Time `json:"revoked_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
 }
 
 // Open connects to PostgreSQL and verifies that the server is reachable.
@@ -250,6 +268,87 @@ func (store *Postgres) CreatePairingToken(ctx context.Context, ownerID string, t
 		return fmt.Errorf("create pairing token: %w", err)
 	}
 	return nil
+}
+
+// RegisterAppInstallation atomically approves the first iPhone and leaves later installs pending.
+func (store *Postgres) RegisterAppInstallation(ctx context.Context, ownerID string, registration AppInstallationRegistration, now time.Time) (AppInstallationRecord, bool, error) {
+	tx, err := store.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return AppInstallationRecord{}, false, fmt.Errorf("begin app installation registration: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", int64(0x53494d49)); err != nil {
+		return AppInstallationRecord{}, false, fmt.Errorf("lock app installation registration: %w", err)
+	}
+
+	var existing AppInstallationRecord
+	var existingOwnerID string
+	err = tx.QueryRow(ctx, `
+		SELECT id, owner_id, identity_public_key, wrapped_vault_key,
+		       approved_at, revoked_at, created_at
+		FROM app_installations
+		WHERE id = $1`, registration.ID).Scan(
+		&existing.ID,
+		&existingOwnerID,
+		&existing.IdentityPublicKey,
+		&existing.WrappedVaultKey,
+		&existing.ApprovedAt,
+		&existing.RevokedAt,
+		&existing.CreatedAt,
+	)
+	if err == nil {
+		if existingOwnerID != ownerID || existing.RevokedAt != nil ||
+			!bytes.Equal(existing.IdentityPublicKey, registration.IdentityPublicKey) ||
+			!bytes.Equal(existing.WrappedVaultKey, registration.WrappedVaultKey) {
+			return AppInstallationRecord{}, false, domain.ErrInstallationConflict
+		}
+		return existing, false, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return AppInstallationRecord{}, false, fmt.Errorf("read app installation retry: %w", err)
+	}
+
+	var hasApprovedInstallation bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM app_installations
+			WHERE owner_id = $1 AND approved_at IS NOT NULL AND revoked_at IS NULL
+		)`, ownerID).Scan(&hasApprovedInstallation); err != nil {
+		return AppInstallationRecord{}, false, fmt.Errorf("check approved app installations: %w", err)
+	}
+
+	record := AppInstallationRecord{
+		ID:                registration.ID,
+		IdentityPublicKey: append([]byte(nil), registration.IdentityPublicKey...),
+		WrappedVaultKey:   append([]byte(nil), registration.WrappedVaultKey...),
+	}
+	if !hasApprovedInstallation {
+		approvedAt := now.UTC()
+		record.ApprovedAt = &approvedAt
+	}
+	err = tx.QueryRow(ctx, `
+		INSERT INTO app_installations (
+			id, owner_id, identity_public_key, wrapped_vault_key, approved_at
+		) VALUES ($1, $2, $3, $4, $5)
+		RETURNING created_at`,
+		registration.ID,
+		ownerID,
+		registration.IdentityPublicKey,
+		registration.WrappedVaultKey,
+		record.ApprovedAt,
+	).Scan(&record.CreatedAt)
+	if err != nil {
+		var postgresError *pgconn.PgError
+		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
+			return AppInstallationRecord{}, false, domain.ErrInstallationConflict
+		}
+		return AppInstallationRecord{}, false, fmt.Errorf("insert app installation: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AppInstallationRecord{}, false, fmt.Errorf("commit app installation registration: %w", err)
+	}
+	return record, true, nil
 }
 
 // ConsumePairingToken atomically consumes a pairing token, allocates a SIM ID, and stores a device credential hash.

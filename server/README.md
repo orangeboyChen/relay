@@ -6,6 +6,21 @@
 
 ```sh
 go test ./...
+./scripts/test-coverage.sh
+```
+
+The default suite uses in-memory repositories for API and lifecycle behavior.
+It enforces at least 90% statement coverage for that unit-test scope without a
+database. PostgreSQL-specific migrations, constraints, and transaction behavior
+remain in the focused integration suite because an in-memory repository cannot
+prove those database semantics.
+
+Set `TEST_DATABASE_URL` to run the PostgreSQL integration suite and enforce at
+least 90% statement coverage across the complete repository:
+
+```sh
+TEST_DATABASE_URL='postgres://postgres:postgres@localhost:5432/sim_deck_test?sslmode=disable' \
+  ./scripts/test-coverage.sh
 ```
 
 ## Containers

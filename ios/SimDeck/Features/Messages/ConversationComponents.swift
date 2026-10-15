@@ -54,6 +54,31 @@ struct MessageBubble: View {
     let message: MessageItem
     let line: DeviceLineIdentity
     let openAttachment: () -> Void
+    let replyAction: () -> Void
+    let copyAction: () -> Void
+    let forwardAction: () -> Void
+    let detailsAction: () -> Void
+    let deleteAction: () -> Void
+
+    init(
+        message: MessageItem,
+        line: DeviceLineIdentity,
+        openAttachment: @escaping () -> Void = {},
+        replyAction: @escaping () -> Void = {},
+        copyAction: @escaping () -> Void = {},
+        forwardAction: @escaping () -> Void = {},
+        detailsAction: @escaping () -> Void = {},
+        deleteAction: @escaping () -> Void = {}
+    ) {
+        self.message = message
+        self.line = line
+        self.openAttachment = openAttachment
+        self.replyAction = replyAction
+        self.copyAction = copyAction
+        self.forwardAction = forwardAction
+        self.detailsAction = detailsAction
+        self.deleteAction = deleteAction
+    }
 
     var body: some View {
         HStack {
@@ -89,6 +114,21 @@ struct MessageBubble: View {
         .padding(.horizontal, 13)
         .padding(.vertical, 9)
         .background(bubbleColor, in: bubbleShape)
+        .contentShape(.contextMenuPreview, bubbleShape)
+        .contextMenu {
+            MessageContextMenu(
+                canCopy: !message.body.isEmpty,
+                canForward: !message.body.isEmpty,
+                replyAction: replyAction,
+                copyAction: copyAction,
+                forwardAction: forwardAction,
+                detailsAction: detailsAction,
+                deleteAction: deleteAction
+            )
+        } preview: {
+            MessageContextPreview(message: message, bubbleColor: bubbleColor)
+                .clipShape(bubbleShape)
+        }
     }
 
     private var messageMetadata: some View {
@@ -134,6 +174,26 @@ struct MessageBubble: View {
         case .delivered: "Delivered"
         case .failed: "Failed"
         }
+    }
+}
+
+private struct MessageContextPreview: View {
+    let message: MessageItem
+    let bubbleColor: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let attachment = message.attachment {
+                MessageImage(attachment: attachment)
+            }
+            if !message.body.isEmpty {
+                Text(message.body)
+                    .foregroundStyle(message.direction == .sent ? .white : .primary)
+            }
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 9)
+        .background(bubbleColor)
     }
 }
 

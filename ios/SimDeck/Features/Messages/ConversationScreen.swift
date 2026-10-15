@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ConversationScreen: View {
     let conversations: [MessageConversation]
@@ -8,7 +9,10 @@ struct ConversationScreen: View {
 
     @State private var selectedID: ConversationID
     @State private var draft = ""
-    @State private var previewedAttachment: MessageImageAttachment?
+    @State private var replyTarget: MessageItem?
+    @State private var activeSheet: ConversationSheet?
+    @State private var messagePendingDeletion: MessageItem?
+    @State private var deletedMessageIDs: Set<UUID> = []
 
     init(
         initialID: ConversationID,
@@ -24,10 +28,30 @@ struct ConversationScreen: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 12) {
-                    ForEach(conversation.messages) { message in
-                        MessageBubble(message: message, line: line) {
-                            previewedAttachment = message.attachment
-                        }
+                    ForEach(visibleMessages) { message in
+                        MessageBubble(
+                            message: message,
+                            line: line,
+                            openAttachment: {
+                                guard let attachment = message.attachment else { return }
+                                activeSheet = .attachment(attachment)
+                            },
+                            replyAction: {
+                                replyTarget = message
+                            },
+                            copyAction: {
+                                UIPasteboard.general.string = message.body
+                            },
+                            forwardAction: {
+                                activeSheet = .forward(message)
+                            },
+                            detailsAction: {
+                                activeSheet = .details(message)
+                            },
+                            deleteAction: {
+                                messagePendingDeletion = message
+                            }
+                        )
                         .id(message.id)
                     }
                 }
@@ -39,12 +63,21 @@ struct ConversationScreen: View {
             .onChange(of: dynamicTypeSize) {
                 scrollToBottom(using: proxy)
             }
+            .onChange(of: selectedID) {
+                replyTarget = nil
+                messagePendingDeletion = nil
+            }
         }
         .safeAreaInset(edge: .bottom) {
             MessageComposer(
                 draft: $draft,
+                replyPreview: replyTarget.map(messagePreview),
+                cancelReplyAction: {
+                    replyTarget = nil
+                },
                 sendAction: {
                     draft = ""
+                    replyTarget = nil
                 }
             )
         }
@@ -61,8 +94,37 @@ struct ConversationScreen: View {
                 )
             }
         }
-        .sheet(item: $previewedAttachment) { attachment in
-            AttachmentPreview(attachment: attachment)
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case let .attachment(attachment):
+                AttachmentPreview(attachment: attachment)
+            case let .forward(message):
+                NewMessageScreen(
+                    lines: lines,
+                    selectedLineID: line.id,
+                    message: message.body
+                )
+            case let .details(message):
+                MessageDetailsScreen(message: message, line: line)
+            }
+        }
+        .alert(
+            "Delete Message?",
+            isPresented: deletionConfirmationIsPresented
+        ) {
+            Button("Delete", role: .destructive) {
+                guard let messagePendingDeletion else { return }
+                deletedMessageIDs.insert(messagePendingDeletion.id)
+                if replyTarget?.id == messagePendingDeletion.id {
+                    replyTarget = nil
+                }
+                self.messagePendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) {
+                messagePendingDeletion = nil
+            }
+        } message: {
+            Text("This message will be removed from this conversation.")
         }
     }
 
@@ -74,12 +136,51 @@ struct ConversationScreen: View {
         lines.first(where: { $0.id == conversation.lineID }) ?? lines[0]
     }
 
+    private var visibleMessages: [MessageItem] {
+        conversation.messages.filter { !deletedMessageIDs.contains($0.id) }
+    }
+
+    private var deletionConfirmationIsPresented: Binding<Bool> {
+        Binding(
+            get: { messagePendingDeletion != nil },
+            set: { isPresented in
+                if !isPresented {
+                    messagePendingDeletion = nil
+                }
+            }
+        )
+    }
+
+    private func messagePreview(_ message: MessageItem) -> String {
+        if !message.body.isEmpty {
+            return message.body
+        }
+        return String(localized: "Image")
+    }
+
     private func scrollToBottom(using proxy: ScrollViewProxy) {
-        guard let lastID = conversation.messages.last?.id else { return }
+        guard let lastID = visibleMessages.last?.id else { return }
 
         Task { @MainActor in
             await Task.yield()
             proxy.scrollTo(lastID, anchor: .bottom)
+        }
+    }
+}
+
+private enum ConversationSheet: Identifiable {
+    case attachment(MessageImageAttachment)
+    case forward(MessageItem)
+    case details(MessageItem)
+
+    var id: String {
+        switch self {
+        case let .attachment(attachment):
+            "attachment-\(attachment.id)"
+        case let .forward(message):
+            "forward-\(message.id)"
+        case let .details(message):
+            "details-\(message.id)"
         }
     }
 }

@@ -560,6 +560,12 @@
         }
       }
     },
+    "Copy" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "复制" } } } },
+    "Delete" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "删除" } } } },
+    "Delete Message?" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "删除短信？" } } } },
+    "Details" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "详情" } } } },
+    "Direction" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "方向" } } } },
+    "Forward" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "转发" } } } },
     "Choose a SIM" : {
       "localizations" : {
         "zh-Hans" : {
@@ -630,6 +636,7 @@
         }
       }
     },
+    "Message Details" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "短信详情" } } } },
     "Messages sent through sim-deck appear here." : {
       "localizations" : {
         "zh-Hans" : {
@@ -700,6 +707,9 @@
         }
       }
     },
+    "Received" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已接收" } } } },
+    "Reply" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "回复" } } } },
+    "Replying to" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在回复" } } } },
     "Search messages" : {
       "localizations" : {
         "zh-Hans" : {
@@ -760,6 +770,10 @@
         }
       }
     },
+    "Status" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "状态" } } } },
+    "Stop replying" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "停止回复" } } } },
+    "This message will be removed from this conversation." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "这条短信将从当前会话中移除。" } } } },
+    "Time" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "时间" } } } },
     "Add recipient" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加收件人" } } } },
     "Connect a SIM before starting a new message." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "连接 SIM 后才能新建短信。" } } } },
     "From:" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "发件：" } } } },

@@ -210,6 +210,85 @@ final class ServerConnectionManagerTests: XCTestCase {
         XCTAssertEqual(page.events.first?.deviceUUID, deviceID)
     }
 
+    func testRegistersInstallationIdentityWithAuthenticatedRequest() async throws {
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
+        )
+        let installationID = UUID(uuidString: "01900000-0000-7000-8000-000000000101")!
+        let publicKey = Data(repeating: 7, count: 32)
+        let wrappedKey = Data("wrapped vault key".utf8)
+        let network = ScriptedServerNetwork { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/v1/app-installations")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
+            let object = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+            )
+            XCTAssertEqual(
+                (object["installation_id"] as? String).flatMap(UUID.init(uuidString:)),
+                installationID
+            )
+            XCTAssertEqual(object["identity_public_key"] as? String, publicKey.base64EncodedString())
+            XCTAssertEqual(object["wrapped_vault_key"] as? String, wrappedKey.base64EncodedString())
+            return Self.response(
+                status: 201,
+                body: """
+                {"installation":{
+                  "installation_id":"\(installationID.uuidString.lowercased())",
+                  "identity_public_key":"\(publicKey.base64EncodedString())",
+                  "wrapped_vault_key":"\(wrappedKey.base64EncodedString())",
+                  "approved_at":"2026-10-16T13:00:00Z",
+                  "created_at":"2026-10-16T13:00:00Z"
+                },"created":true}
+                """
+            )
+        }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+
+        let trust = try await manager.registerAppInstallation(
+            AppInstallationRegistration(
+                id: installationID,
+                identityPublicKey: publicKey,
+                wrappedVaultKey: wrappedKey
+            )
+        )
+
+        XCTAssertEqual(trust.id, installationID)
+        XCTAssertEqual(trust.identityPublicKey, publicKey)
+        XCTAssertEqual(trust.wrappedVaultKey, wrappedKey)
+        XCTAssertTrue(trust.isApproved)
+    }
+
+    func testRejectsInvalidInstallationPublicKeyBeforeNetworkRequest() async throws {
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
+        )
+        let network = ScriptedServerNetwork { _ in
+            XCTFail("Invalid installation keys must not reach the network")
+            return Self.response(status: 500, body: "{}")
+        }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+
+        do {
+            _ = try await manager.registerAppInstallation(
+                AppInstallationRegistration(
+                    id: UUID(),
+                    identityPublicKey: Data(repeating: 1, count: 31),
+                    wrappedVaultKey: nil
+                )
+            )
+            XCTFail("Expected the malformed key to fail")
+        } catch {
+            XCTAssertEqual(error as? ServerConnectionError, .invalidResponse)
+        }
+
+        XCTAssertTrue(network.requests.isEmpty)
+    }
+
     private func isolatedDefaults() -> UserDefaults {
         let suiteName = "ServerConnectionManagerTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

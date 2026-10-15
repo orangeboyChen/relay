@@ -73,6 +73,32 @@ struct EncryptedEventPage: Decodable, Equatable, Sendable {
     }
 }
 
+struct AppInstallationRegistration: Equatable, Sendable {
+    let id: UUID
+    let identityPublicKey: Data
+    let wrappedVaultKey: Data?
+}
+
+struct AppInstallationTrust: Decodable, Equatable, Sendable {
+    let id: UUID
+    let identityPublicKey: Data
+    let wrappedVaultKey: Data?
+    let approvedAt: Date?
+    let revokedAt: Date?
+    let createdAt: Date
+
+    var isApproved: Bool { approvedAt != nil && revokedAt == nil }
+
+    enum CodingKeys: String, CodingKey {
+        case id = "installation_id"
+        case identityPublicKey = "identity_public_key"
+        case wrappedVaultKey = "wrapped_vault_key"
+        case approvedAt = "approved_at"
+        case revokedAt = "revoked_at"
+        case createdAt = "created_at"
+    }
+}
+
 @MainActor
 protocol EncryptedCallCommandAPI: AnyObject {
     func commandRecipient(deviceID: UUID) async throws -> Data
@@ -314,6 +340,31 @@ final class ServerConnectionManager {
         return try Self.decoder.decode(EncryptedEventPage.self, from: data)
     }
 
+    func registerAppInstallation(
+        _ registration: AppInstallationRegistration
+    ) async throws -> AppInstallationTrust {
+        guard registration.identityPublicKey.count == 32 else {
+            throw ServerConnectionError.invalidResponse
+        }
+        let body = try Self.encoder.encode(
+            AppInstallationRegistrationRequest(
+                installationID: registration.id,
+                identityPublicKey: registration.identityPublicKey,
+                wrappedVaultKey: registration.wrappedVaultKey
+            )
+        )
+        let (data, response) = try await authenticatedRequest(
+            path: "v1/app-installations",
+            method: "POST",
+            body: body
+        )
+        guard response.statusCode == 200 || response.statusCode == 201 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
+        }
+        return try Self.decoder.decode(AppInstallationRegistrationResponse.self, from: data)
+            .installation
+    }
+
     private func authenticatedRequest(
         path: String,
         method: String,
@@ -431,6 +482,22 @@ private struct RefreshRequest: Encodable {
     enum CodingKeys: String, CodingKey {
         case refreshToken = "refresh_token"
     }
+}
+
+private struct AppInstallationRegistrationRequest: Encodable {
+    let installationID: UUID
+    let identityPublicKey: Data
+    let wrappedVaultKey: Data?
+
+    enum CodingKeys: String, CodingKey {
+        case installationID = "installation_id"
+        case identityPublicKey = "identity_public_key"
+        case wrappedVaultKey = "wrapped_vault_key"
+    }
+}
+
+private struct AppInstallationRegistrationResponse: Decodable {
+    let installation: AppInstallationTrust
 }
 
 private struct DeviceListResponse: Decodable {

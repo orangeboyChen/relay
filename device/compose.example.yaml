@@ -1,0 +1,22 @@
+services:
+  device:
+    build: .
+    restart: unless-stopped
+    environment:
+      SIM_DECK_AT_DEVICE: /dev/sim-deck/at
+      SIM_DECK_PCM_DEVICE: /dev/sim-deck/pcm
+      SIM_DECK_SOUND_DEVICE: /dev/snd
+    devices:
+      - /dev/sim-deck/ec20-at:/dev/sim-deck/at
+      - /dev/sim-deck/ec20-pcm:/dev/sim-deck/pcm
+      - /dev/snd:/dev/snd
+    group_add:
+      - "${SIM_DECK_DIALOUT_GID:-20}"
+      - "${SIM_DECK_AUDIO_GID:-29}"
+    ports:
+      - 127.0.0.1:18080:8080
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true

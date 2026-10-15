@@ -191,6 +191,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 			DeviceUUID:        firstDeviceID,
 			ProfileCiphertext: []byte("encrypted profile"),
 			IdentityPublicKey: bytes.Repeat([]byte{5}, ed25519.PublicKeySize),
+			CommandPublicKey:  bytes.Repeat([]byte{6}, 32),
 			WrappedVaultKey:   []byte("wrapped key"),
 			CredentialHash:    credentialHash[:],
 		}

@@ -50,6 +50,23 @@ type fakeRepository struct {
 	deviceAuthError         error
 	authenticatedDeviceID   string
 	authenticatedCredential string
+	enqueuedCommand         domain.EncryptedCommand
+	enqueueCreated          bool
+	enqueueError            error
+	claimedCommand          domain.EncryptedCommand
+	claimDeviceID           string
+	claimNow                time.Time
+	claimLeaseUntil         time.Time
+	claimError              error
+	completedDeviceID       string
+	completedCommandID      string
+	completedResult         domain.EncryptedCommandResult
+	completedAt             time.Time
+	completeError           error
+	commandStatus           domain.CommandStatus
+	statusDeviceID          string
+	statusCommandID         string
+	statusError             error
 }
 
 func (fake *fakeRepository) ListDevices(context.Context) ([]store.DeviceRecord, error) {
@@ -117,6 +134,32 @@ func (fake *fakeRepository) AuthenticateDevice(_ context.Context, deviceID strin
 		return nil, fake.deviceAuthError
 	}
 	return append([]byte(nil), fake.devicePublicKey...), nil
+}
+
+func (fake *fakeRepository) EnqueueCommand(_ context.Context, encrypted domain.EncryptedCommand) (bool, error) {
+	fake.enqueuedCommand = encrypted
+	return fake.enqueueCreated, fake.enqueueError
+}
+
+func (fake *fakeRepository) ClaimCommand(_ context.Context, deviceID string, now time.Time, leaseUntil time.Time) (domain.EncryptedCommand, error) {
+	fake.claimDeviceID = deviceID
+	fake.claimNow = now
+	fake.claimLeaseUntil = leaseUntil
+	return fake.claimedCommand, fake.claimError
+}
+
+func (fake *fakeRepository) CompleteCommand(_ context.Context, deviceID string, commandID string, result domain.EncryptedCommandResult, completedAt time.Time) error {
+	fake.completedDeviceID = deviceID
+	fake.completedCommandID = commandID
+	fake.completedResult = result
+	fake.completedAt = completedAt
+	return fake.completeError
+}
+
+func (fake *fakeRepository) CommandStatus(_ context.Context, deviceID string, commandID string, _ time.Time) (domain.CommandStatus, error) {
+	fake.statusDeviceID = deviceID
+	fake.statusCommandID = commandID
+	return fake.commandStatus, fake.statusError
 }
 
 var _ = Describe("HTTP API", func() {

@@ -31,6 +31,7 @@ type DeviceRecord struct {
 	NumericID         int        `json:"numeric_id"`
 	ProfileCiphertext []byte     `json:"profile_ciphertext"`
 	IdentityPublicKey []byte     `json:"identity_public_key"`
+	CommandPublicKey  []byte     `json:"command_public_key,omitempty"`
 	WrappedVaultKey   []byte     `json:"wrapped_vault_key,omitempty"`
 	PairedAt          time.Time  `json:"paired_at"`
 	LastSeenAt        *time.Time `json:"last_seen_at,omitempty"`
@@ -48,6 +49,7 @@ type DevicePairing struct {
 	DeviceUUID        string
 	ProfileCiphertext []byte
 	IdentityPublicKey []byte
+	CommandPublicKey  []byte
 	WrappedVaultKey   []byte
 	CredentialHash    []byte
 }
@@ -280,7 +282,7 @@ func (store *Postgres) ConsumePairingToken(ctx context.Context, tokenHash []byte
 		var record DeviceRecord
 		err := tx.QueryRow(ctx, `
 			SELECT devices.id, devices.numeric_id, devices.profile_ciphertext,
-			       devices.identity_public_key, devices.wrapped_vault_key,
+			       devices.identity_public_key, devices.command_public_key, devices.wrapped_vault_key,
 			       devices.paired_at, devices.last_seen_at
 			FROM devices
 			JOIN device_credentials ON device_credentials.device_id = devices.id
@@ -292,6 +294,7 @@ func (store *Postgres) ConsumePairingToken(ctx context.Context, tokenHash []byte
 			&record.NumericID,
 			&record.ProfileCiphertext,
 			&record.IdentityPublicKey,
+			&record.CommandPublicKey,
 			&record.WrappedVaultKey,
 			&record.PairedAt,
 			&record.LastSeenAt,
@@ -329,12 +332,13 @@ func (store *Postgres) ConsumePairingToken(ctx context.Context, tokenHash []byte
 		NumericID:         numericID,
 		ProfileCiphertext: pairing.ProfileCiphertext,
 		IdentityPublicKey: pairing.IdentityPublicKey,
+		CommandPublicKey:  pairing.CommandPublicKey,
 		WrappedVaultKey:   pairing.WrappedVaultKey,
 	}
 	err = tx.QueryRow(ctx, `
-		INSERT INTO devices (id, numeric_id, profile_ciphertext, identity_public_key, wrapped_vault_key)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING paired_at`, pairing.DeviceUUID, numericID, pairing.ProfileCiphertext, pairing.IdentityPublicKey, pairing.WrappedVaultKey).Scan(&record.PairedAt)
+		INSERT INTO devices (id, numeric_id, profile_ciphertext, identity_public_key, command_public_key, wrapped_vault_key)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING paired_at`, pairing.DeviceUUID, numericID, pairing.ProfileCiphertext, pairing.IdentityPublicKey, pairing.CommandPublicKey, pairing.WrappedVaultKey).Scan(&record.PairedAt)
 	if err != nil {
 		var postgresError *pgconn.PgError
 		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
@@ -453,7 +457,7 @@ func (store *Postgres) UpdateNumericID(ctx context.Context, deviceID string, num
 // ListDevices returns active devices without decrypting their line profiles.
 func (store *Postgres) ListDevices(ctx context.Context) ([]DeviceRecord, error) {
 	rows, err := store.pool.Query(ctx, `
-		SELECT id, numeric_id, profile_ciphertext, identity_public_key, wrapped_vault_key, paired_at, last_seen_at
+		SELECT id, numeric_id, profile_ciphertext, identity_public_key, command_public_key, wrapped_vault_key, paired_at, last_seen_at
 		FROM devices
 		WHERE revoked_at IS NULL
 		ORDER BY numeric_id`)
@@ -465,7 +469,7 @@ func (store *Postgres) ListDevices(ctx context.Context) ([]DeviceRecord, error) 
 	records := make([]DeviceRecord, 0)
 	for rows.Next() {
 		var record DeviceRecord
-		if err := rows.Scan(&record.ID, &record.NumericID, &record.ProfileCiphertext, &record.IdentityPublicKey, &record.WrappedVaultKey, &record.PairedAt, &record.LastSeenAt); err != nil {
+		if err := rows.Scan(&record.ID, &record.NumericID, &record.ProfileCiphertext, &record.IdentityPublicKey, &record.CommandPublicKey, &record.WrappedVaultKey, &record.PairedAt, &record.LastSeenAt); err != nil {
 			return nil, fmt.Errorf("scan device: %w", err)
 		}
 		records = append(records, record)
@@ -509,6 +513,170 @@ func (store *Postgres) InsertEvent(ctx context.Context, envelope domain.EventEnv
 		return 0, false, fmt.Errorf("insert event: %w", err)
 	}
 	return sequence, true, nil
+}
+
+// EnqueueCommand stores one opaque command while preserving client idempotency.
+func (store *Postgres) EnqueueCommand(ctx context.Context, encrypted domain.EncryptedCommand) (bool, error) {
+	command, err := store.pool.Exec(ctx, `
+		INSERT INTO encrypted_device_commands (
+			id, device_id, sender_public_key, nonce, ciphertext, created_at, expires_at
+		)
+		SELECT $1, $2, $3, $4, $5, $6, $7
+		FROM devices
+		WHERE id = $2 AND revoked_at IS NULL
+		ON CONFLICT (id) DO NOTHING`,
+		encrypted.ID,
+		encrypted.DeviceUUID,
+		encrypted.SenderPublicKey,
+		encrypted.Nonce,
+		encrypted.Ciphertext,
+		encrypted.CreatedAt.UTC(),
+		encrypted.ExpiresAt.UTC(),
+	)
+	if err != nil {
+		return false, fmt.Errorf("enqueue encrypted command: %w", err)
+	}
+	if command.RowsAffected() == 1 {
+		return true, nil
+	}
+
+	var matches bool
+	err = store.pool.QueryRow(ctx, `
+		SELECT device_id = $2
+		   AND sender_public_key = $3
+		   AND nonce = $4
+		   AND ciphertext = $5
+		   AND created_at = $6
+		   AND expires_at = $7
+		FROM encrypted_device_commands
+		WHERE id = $1`,
+		encrypted.ID,
+		encrypted.DeviceUUID,
+		encrypted.SenderPublicKey,
+		encrypted.Nonce,
+		encrypted.Ciphertext,
+		encrypted.CreatedAt.UTC(),
+		encrypted.ExpiresAt.UTC(),
+	).Scan(&matches)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, pgx.ErrNoRows
+	}
+	if err != nil {
+		return false, fmt.Errorf("read existing encrypted command: %w", err)
+	}
+	if !matches {
+		return false, domain.ErrIdempotencyConflict
+	}
+	return false, nil
+}
+
+// ClaimCommand leases the oldest deliverable command to one authenticated device.
+func (store *Postgres) ClaimCommand(ctx context.Context, deviceID string, now time.Time, leaseUntil time.Time) (domain.EncryptedCommand, error) {
+	var encrypted domain.EncryptedCommand
+	err := store.pool.QueryRow(ctx, `
+		WITH next_command AS (
+			SELECT id
+			FROM encrypted_device_commands
+			WHERE device_id = $1
+			  AND completed_at IS NULL
+			  AND expires_at > $2
+			  AND (leased_until IS NULL OR leased_until <= $2)
+			ORDER BY created_at, id
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE encrypted_device_commands
+		SET leased_until = $3, delivery_attempts = delivery_attempts + 1
+		FROM next_command
+		WHERE encrypted_device_commands.id = next_command.id
+		RETURNING encrypted_device_commands.id,
+		          encrypted_device_commands.device_id,
+		          encrypted_device_commands.sender_public_key,
+		          encrypted_device_commands.nonce,
+		          encrypted_device_commands.ciphertext,
+		          encrypted_device_commands.created_at,
+		          encrypted_device_commands.expires_at`,
+		deviceID,
+		now.UTC(),
+		leaseUntil.UTC(),
+	).Scan(
+		&encrypted.ID,
+		&encrypted.DeviceUUID,
+		&encrypted.SenderPublicKey,
+		&encrypted.Nonce,
+		&encrypted.Ciphertext,
+		&encrypted.CreatedAt,
+		&encrypted.ExpiresAt,
+	)
+	if err != nil {
+		return domain.EncryptedCommand{}, err
+	}
+	return encrypted, nil
+}
+
+// CompleteCommand stores only the encrypted device response and closes the lease.
+func (store *Postgres) CompleteCommand(ctx context.Context, deviceID string, commandID string, result domain.EncryptedCommandResult, completedAt time.Time) error {
+	command, err := store.pool.Exec(ctx, `
+		UPDATE encrypted_device_commands
+		SET result_nonce = $3,
+		    result_ciphertext = $4,
+		    completed_at = $5,
+		    leased_until = NULL
+		WHERE id = $1
+		  AND device_id = $2
+		  AND completed_at IS NULL
+		  AND expires_at > $5`,
+		commandID,
+		deviceID,
+		result.Nonce,
+		result.Ciphertext,
+		completedAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("complete encrypted command: %w", err)
+	}
+	if command.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+// CommandStatus returns routing state and an opaque result to the authenticated owner.
+func (store *Postgres) CommandStatus(ctx context.Context, deviceID string, commandID string, now time.Time) (domain.CommandStatus, error) {
+	var status domain.CommandStatus
+	var leasedUntil *time.Time
+	var resultNonce []byte
+	var resultCiphertext []byte
+	err := store.pool.QueryRow(ctx, `
+		SELECT id, device_id, leased_until, result_nonce, result_ciphertext, completed_at
+		FROM encrypted_device_commands
+		WHERE id = $1 AND device_id = $2 AND expires_at > $3`,
+		commandID,
+		deviceID,
+		now.UTC(),
+	).Scan(
+		&status.ID,
+		&status.DeviceUUID,
+		&leasedUntil,
+		&resultNonce,
+		&resultCiphertext,
+		&status.CompletedAt,
+	)
+	if err != nil {
+		return domain.CommandStatus{}, err
+	}
+	status.State = "pending"
+	if leasedUntil != nil && leasedUntil.After(now) {
+		status.State = "processing"
+	}
+	if status.CompletedAt != nil {
+		status.State = "completed"
+		status.Result = &domain.EncryptedCommandResult{
+			Nonce:      resultNonce,
+			Ciphertext: resultCiphertext,
+		}
+	}
+	return status, nil
 }
 
 // InitialMigration returns the schema for validation and packaging tests.

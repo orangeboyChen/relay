@@ -64,6 +64,18 @@ func (repository *memoryRepository) ConsumePairingToken(context.Context, []byte,
 func (repository *memoryRepository) AuthenticateDevice(context.Context, string, string, time.Time) ([]byte, error) {
 	return make([]byte, ed25519.PublicKeySize), nil
 }
+func (repository *memoryRepository) EnqueueCommand(context.Context, domain.EncryptedCommand) (bool, error) {
+	return true, nil
+}
+func (repository *memoryRepository) ClaimCommand(context.Context, string, time.Time, time.Time) (domain.EncryptedCommand, error) {
+	return domain.EncryptedCommand{}, pgx.ErrNoRows
+}
+func (repository *memoryRepository) CompleteCommand(context.Context, string, string, domain.EncryptedCommandResult, time.Time) error {
+	return nil
+}
+func (repository *memoryRepository) CommandStatus(context.Context, string, string, time.Time) (domain.CommandStatus, error) {
+	return domain.CommandStatus{}, pgx.ErrNoRows
+}
 
 type memoryHTTPServer struct {
 	listenError   error

@@ -90,6 +90,7 @@ var _ = Describe("Device pairing API", func() {
 			"device_uuid":         repository.pairingRecord.ID,
 			"profile_ciphertext":  []byte{},
 			"identity_public_key": bytes.Repeat([]byte{7}, ed25519.PublicKeySize),
+			"command_public_key":  bytes.Repeat([]byte{6}, commandPublicKeyBytes),
 			"wrapped_vault_key":   []byte("wrapped vault key"),
 			"device_credential":   credential,
 		})
@@ -109,6 +110,7 @@ var _ = Describe("Device pairing API", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(repository.pairing.CredentialHash).To(Equal(credentialHash[:]))
 		Expect(repository.pairing.IdentityPublicKey).To(HaveLen(ed25519.PublicKeySize))
+		Expect(repository.pairing.CommandPublicKey).To(HaveLen(commandPublicKeyBytes))
 		Expect(repository.pairing.ProfileCiphertext).To(BeEmpty())
 	})
 
@@ -141,6 +143,7 @@ var _ = Describe("Device pairing API", func() {
 			"pairing_token":       "not-an-opaque-token",
 			"device_uuid":         "01900000-0000-7000-8000-000000000001",
 			"identity_public_key": bytes.Repeat([]byte{7}, ed25519.PublicKeySize),
+			"command_public_key":  bytes.Repeat([]byte{6}, commandPublicKeyBytes),
 		})
 		Expect(err).NotTo(HaveOccurred())
 		invalidToken := httptest.NewRequest(http.MethodPost, "/v1/device-pairings", bytes.NewReader(invalidTokenBody))
@@ -154,6 +157,7 @@ var _ = Describe("Device pairing API", func() {
 			"pairing_token":       pairingToken,
 			"device_uuid":         "01900000-0000-7000-8000-000000000001",
 			"identity_public_key": bytes.Repeat([]byte{7}, ed25519.PublicKeySize),
+			"command_public_key":  bytes.Repeat([]byte{6}, commandPublicKeyBytes),
 			"device_credential":   "invalid",
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -176,6 +180,7 @@ var _ = Describe("Device pairing API", func() {
 				"device_uuid":         "01900000-0000-7000-8000-000000000001",
 				"profile_ciphertext":  []byte("encrypted"),
 				"identity_public_key": bytes.Repeat([]byte{7}, ed25519.PublicKeySize),
+				"command_public_key":  bytes.Repeat([]byte{6}, commandPublicKeyBytes),
 				"device_credential":   credential,
 			})
 			Expect(err).NotTo(HaveOccurred())

@@ -33,6 +33,10 @@ type Repository interface {
 	CreatePairingToken(context.Context, string, []byte, time.Time) error
 	ConsumePairingToken(context.Context, []byte, time.Time, store.DevicePairing) (store.DeviceRecord, error)
 	AuthenticateDevice(context.Context, string, string, time.Time) ([]byte, error)
+	EnqueueCommand(context.Context, domain.EncryptedCommand) (bool, error)
+	ClaimCommand(context.Context, string, time.Time, time.Time) (domain.EncryptedCommand, error)
+	CompleteCommand(context.Context, string, string, domain.EncryptedCommandResult, time.Time) error
+	CommandStatus(context.Context, string, string, time.Time) (domain.CommandStatus, error)
 }
 
 // Config describes public endpoints advertised to clients.
@@ -54,6 +58,10 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("POST /v1/device-pairing-tokens", router.requireOwner(router.createPairingToken))
 	mux.HandleFunc("POST /v1/device-pairings", router.pairDevice)
 	mux.HandleFunc("POST /v1/events", router.insertEvent)
+	mux.HandleFunc("POST /v1/devices/{deviceID}/commands", router.requireOwner(router.enqueueCommand))
+	mux.HandleFunc("GET /v1/devices/{deviceID}/commands/{commandID}", router.requireOwner(router.commandStatus))
+	mux.HandleFunc("GET /v1/device-commands/next", router.claimCommand)
+	mux.HandleFunc("POST /v1/device-commands/{commandID}/complete", router.completeCommand)
 	mux.HandleFunc("POST /v1/auth/bootstrap", router.bootstrapLogin)
 	mux.HandleFunc("POST /v1/auth/refresh", router.refreshSession)
 	mux.HandleFunc("POST /v1/auth/logout", router.logout)
@@ -73,6 +81,11 @@ const (
 	maxWrappedVaultKeyBytes   = 16 << 10
 	eventRetention            = 365 * 24 * time.Hour
 	maxEventFutureSkew        = 5 * time.Minute
+	commandLease              = 30 * time.Second
+	maxCommandLifetime        = 5 * time.Minute
+	commandPublicKeyBytes     = 32
+	commandNonceBytes         = 12
+	maxCommandCiphertextBytes = 64 << 10
 )
 
 func (router *router) health(writer http.ResponseWriter, _ *http.Request) {
@@ -157,6 +170,7 @@ func (router *router) pairDevice(writer http.ResponseWriter, request *http.Reque
 		DeviceUUID        string `json:"device_uuid"`
 		ProfileCiphertext []byte `json:"profile_ciphertext"`
 		IdentityPublicKey []byte `json:"identity_public_key"`
+		CommandPublicKey  []byte `json:"command_public_key"`
 		WrappedVaultKey   []byte `json:"wrapped_vault_key"`
 		DeviceCredential  string `json:"device_credential"`
 	}
@@ -169,7 +183,7 @@ func (router *router) pairDevice(writer http.ResponseWriter, request *http.Reque
 		writeError(writer, http.StatusUnauthorized, "invalid_pairing_token", domain.ErrInvalidPairingToken.Error())
 		return
 	}
-	if !validUUID(body.DeviceUUID) || len(body.IdentityPublicKey) != ed25519.PublicKeySize || len(body.ProfileCiphertext) > maxProfileCiphertextBytes || len(body.WrappedVaultKey) > maxWrappedVaultKeyBytes {
+	if !validUUID(body.DeviceUUID) || len(body.IdentityPublicKey) != ed25519.PublicKeySize || len(body.CommandPublicKey) != commandPublicKeyBytes || len(body.ProfileCiphertext) > maxProfileCiphertextBytes || len(body.WrappedVaultKey) > maxWrappedVaultKeyBytes {
 		writeError(writer, http.StatusUnprocessableEntity, "invalid_device", "Device identity or encrypted profile is invalid.")
 		return
 	}
@@ -182,6 +196,7 @@ func (router *router) pairDevice(writer http.ResponseWriter, request *http.Reque
 		DeviceUUID:        body.DeviceUUID,
 		ProfileCiphertext: body.ProfileCiphertext,
 		IdentityPublicKey: body.IdentityPublicKey,
+		CommandPublicKey:  body.CommandPublicKey,
 		WrappedVaultKey:   body.WrappedVaultKey,
 		CredentialHash:    credentialHash[:],
 	})
@@ -254,6 +269,126 @@ func (router *router) insertEvent(writer http.ResponseWriter, request *http.Requ
 		status = http.StatusCreated
 	}
 	writeJSON(writer, status, map[string]any{"sequence": sequence, "created": created})
+}
+
+func (router *router) enqueueCommand(writer http.ResponseWriter, request *http.Request) {
+	var encrypted domain.EncryptedCommand
+	if err := decodeJSON(request, &encrypted); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	encrypted.DeviceUUID = request.PathValue("deviceID")
+	now := router.now()
+	if !validUUID(encrypted.ID) || !validUUID(encrypted.DeviceUUID) ||
+		len(encrypted.SenderPublicKey) != commandPublicKeyBytes ||
+		len(encrypted.Nonce) != commandNonceBytes ||
+		len(encrypted.Ciphertext) == 0 || len(encrypted.Ciphertext) > maxCommandCiphertextBytes ||
+		encrypted.CreatedAt.After(now.Add(maxEventFutureSkew)) ||
+		encrypted.CreatedAt.Before(now.Add(-maxEventFutureSkew)) ||
+		!encrypted.ExpiresAt.After(now) ||
+		encrypted.ExpiresAt.After(encrypted.CreatedAt.Add(maxCommandLifetime)) {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_command", "Encrypted command metadata is invalid.")
+		return
+	}
+	created, err := router.repository.EnqueueCommand(request.Context(), encrypted)
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrIdempotencyConflict):
+			writeError(writer, http.StatusConflict, "idempotency_conflict", err.Error())
+		case errors.Is(err, pgx.ErrNoRows):
+			writeError(writer, http.StatusNotFound, "device_not_found", "Device not found.")
+		default:
+			writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to queue the encrypted command.")
+		}
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	writeJSON(writer, status, map[string]any{"id": encrypted.ID, "created": created})
+}
+
+func (router *router) claimCommand(writer http.ResponseWriter, request *http.Request) {
+	deviceID := request.URL.Query().Get("device_uuid")
+	token, ok := bearerToken(request.Header.Get("Authorization"))
+	if !ok || !validUUID(deviceID) {
+		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is required.")
+		return
+	}
+	if _, err := router.repository.AuthenticateDevice(request.Context(), deviceID, token, router.now()); err != nil {
+		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is invalid or revoked.")
+		return
+	}
+	now := router.now()
+	encrypted, err := router.repository.ClaimCommand(request.Context(), deviceID, now, now.Add(commandLease))
+	if errors.Is(err, pgx.ErrNoRows) {
+		writer.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to claim an encrypted command.")
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"command": encrypted})
+}
+
+func (router *router) completeCommand(writer http.ResponseWriter, request *http.Request) {
+	var body struct {
+		DeviceUUID string                        `json:"device_uuid"`
+		Result     domain.EncryptedCommandResult `json:"result"`
+	}
+	if err := decodeJSON(request, &body); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	token, ok := bearerToken(request.Header.Get("Authorization"))
+	if !ok || !validUUID(body.DeviceUUID) || !validUUID(request.PathValue("commandID")) {
+		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is required.")
+		return
+	}
+	if len(body.Result.Nonce) != commandNonceBytes || len(body.Result.Ciphertext) == 0 || len(body.Result.Ciphertext) > maxCommandCiphertextBytes {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_command_result", "Encrypted command result is invalid.")
+		return
+	}
+	if _, err := router.repository.AuthenticateDevice(request.Context(), body.DeviceUUID, token, router.now()); err != nil {
+		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is invalid or revoked.")
+		return
+	}
+	err := router.repository.CompleteCommand(
+		request.Context(),
+		body.DeviceUUID,
+		request.PathValue("commandID"),
+		body.Result,
+		router.now(),
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(writer, http.StatusNotFound, "command_not_found", "Encrypted command was not found or has expired.")
+		return
+	}
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to complete the encrypted command.")
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (router *router) commandStatus(writer http.ResponseWriter, request *http.Request) {
+	status, err := router.repository.CommandStatus(
+		request.Context(),
+		request.PathValue("deviceID"),
+		request.PathValue("commandID"),
+		router.now(),
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(writer, http.StatusNotFound, "command_not_found", "Encrypted command was not found or has expired.")
+		return
+	}
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to read encrypted command status.")
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"command": status})
 }
 
 func (router *router) bootstrapLogin(writer http.ResponseWriter, request *http.Request) {

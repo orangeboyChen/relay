@@ -3,38 +3,46 @@ package api
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"sim-deck-server/internal/auth"
 	"sim-deck-server/internal/domain"
-	"sim-deck-server/internal/e2ee"
 	"sim-deck-server/internal/store"
 )
 
 type fakeRepository struct {
 	devices                 []store.DeviceRecord
+	listDevicesError        error
 	updatedDeviceID         string
 	updatedNumericID        int
+	updateNumericIDError    error
 	insertSequence          int64
 	insertCreated           bool
 	insertError             error
 	insertedEnvelope        domain.EventEnvelope
 	insertedExpiry          time.Time
 	credential              store.OwnerCredential
+	credentialError         error
 	sessionPair             auth.TokenPair
+	createSessionError      error
 	rotatedRefresh          string
+	rotateSessionError      error
 	revokedAccess           string
+	revokeSessionError      error
 	ownerID                 string
 	ownerAuthError          error
 	pairingOwnerID          string
 	pairingTokenHash        []byte
 	pairingExpiresAt        time.Time
+	pairingTokenError       error
 	pairing                 store.DevicePairing
 	pairingRecord           store.DeviceRecord
 	pairingError            error
@@ -45,13 +53,13 @@ type fakeRepository struct {
 }
 
 func (fake *fakeRepository) ListDevices(context.Context) ([]store.DeviceRecord, error) {
-	return fake.devices, nil
+	return fake.devices, fake.listDevicesError
 }
 
 func (fake *fakeRepository) UpdateNumericID(_ context.Context, deviceID string, numericID int) error {
 	fake.updatedDeviceID = deviceID
 	fake.updatedNumericID = numericID
-	return nil
+	return fake.updateNumericIDError
 }
 
 func (fake *fakeRepository) InsertEvent(_ context.Context, envelope domain.EventEnvelope, expiresAt time.Time) (int64, bool, error) {
@@ -61,23 +69,23 @@ func (fake *fakeRepository) InsertEvent(_ context.Context, envelope domain.Event
 }
 
 func (fake *fakeRepository) OwnerCredentialByUsername(context.Context, string) (store.OwnerCredential, error) {
-	return fake.credential, nil
+	return fake.credential, fake.credentialError
 }
 
 func (fake *fakeRepository) CreateSession(_ context.Context, _ string, pair auth.TokenPair) error {
 	fake.sessionPair = pair
-	return nil
+	return fake.createSessionError
 }
 
 func (fake *fakeRepository) RotateSession(_ context.Context, refresh string, pair auth.TokenPair, _ time.Time) error {
 	fake.rotatedRefresh = refresh
 	fake.sessionPair = pair
-	return nil
+	return fake.rotateSessionError
 }
 
 func (fake *fakeRepository) RevokeSession(_ context.Context, access string, _ time.Time) error {
 	fake.revokedAccess = access
-	return nil
+	return fake.revokeSessionError
 }
 
 func (fake *fakeRepository) AuthenticateOwnerSession(_ context.Context, _ string, _ time.Time) (string, error) {
@@ -94,7 +102,7 @@ func (fake *fakeRepository) CreatePairingToken(_ context.Context, ownerID string
 	fake.pairingOwnerID = ownerID
 	fake.pairingTokenHash = append([]byte(nil), tokenHash...)
 	fake.pairingExpiresAt = expiresAt
-	return nil
+	return fake.pairingTokenError
 }
 
 func (fake *fakeRepository) ConsumePairingToken(_ context.Context, _ []byte, _ time.Time, pairing store.DevicePairing) (store.DeviceRecord, error) {
@@ -111,124 +119,169 @@ func (fake *fakeRepository) AuthenticateDevice(_ context.Context, deviceID strin
 	return append([]byte(nil), fake.devicePublicKey...), nil
 }
 
-func TestDiscovery(t *testing.T) {
-	handler := Handler(&fakeRepository{}, Config{PublicBaseURL: "https://deck.example", MediaUDPPort: 49152, MediaTCPPort: 49153})
-	request := httptest.NewRequest(http.MethodGet, "/.well-known/sim-deck", nil)
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
+var _ = Describe("HTTP API", func() {
+	var (
+		repository *fakeRepository
+		handler    http.Handler
+	)
 
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", response.Code)
-	}
-	var body map[string]any
-	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
-		t.Fatalf("Unmarshal() error = %v", err)
-	}
-	if body["api_version"] != "v1" {
-		t.Fatalf("api_version = %v, want v1", body["api_version"])
-	}
-}
+	BeforeEach(func() {
+		repository = &fakeRepository{ownerID: "owner-1"}
+		handler = Handler(repository, Config{
+			PublicBaseURL: "https://deck.example/",
+			MediaUDPPort:  49152,
+			MediaTCPPort:  49153,
+		})
+	})
 
-func TestUpdateNumericID(t *testing.T) {
-	repository := &fakeRepository{}
-	handler := Handler(repository, Config{})
-	request := httptest.NewRequest(http.MethodPatch, "/v1/devices/device-1/numeric-id", bytes.NewBufferString(`{"numeric_id":2}`))
-	request.Header.Set("Authorization", "Bearer access-token")
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-
-	if response.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204", response.Code)
-	}
-	if repository.updatedDeviceID != "device-1" || repository.updatedNumericID != 2 {
-		t.Fatalf("update = (%q, %d), want (device-1, 2)", repository.updatedDeviceID, repository.updatedNumericID)
-	}
-}
-
-func TestInsertEventIsIdempotent(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	vaultKey := make([]byte, 32)
-	eventTime := time.Date(2026, 10, 15, 10, 0, 0, 0, time.UTC)
-	envelope, err := e2ee.Seal(vaultKey, privateKey, e2ee.NewEnvelope(
-		"01900000-0000-7000-8000-000000000001",
-		99,
-		"message.received",
-		"01900000-0000-7000-8000-000000000002",
-		eventTime,
-		1,
-	), []byte("encrypted payload"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, err := json.Marshal(map[string]any{"envelope": envelope})
-	if err != nil {
-		t.Fatal(err)
-	}
-	repository := &fakeRepository{insertSequence: 42, insertCreated: false, devicePublicKey: publicKey}
-	handler := Handler(repository, Config{Now: func() time.Time { return eventTime.Add(time.Hour) }})
-	request := httptest.NewRequest(http.MethodPost, "/v1/events", bytes.NewReader(body))
-	request.Header.Set("Authorization", "Bearer device-credential")
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body = %s", response.Code, response.Body.String())
-	}
-	if repository.insertedEnvelope.Sequence != 0 {
-		t.Fatalf("stored sequence = %d, want 0", repository.insertedEnvelope.Sequence)
-	}
-	if repository.insertedExpiry != eventTime.Add(365*24*time.Hour) {
-		t.Fatalf("stored expiry = %s", repository.insertedExpiry)
-	}
-}
-
-func TestBootstrapLoginCreatesSession(t *testing.T) {
-	passwordHash, err := auth.HashPassword("correct horse battery staple")
-	if err != nil {
-		t.Fatal(err)
-	}
-	repository := &fakeRepository{credential: store.OwnerCredential{ID: "owner-1", PasswordHash: passwordHash}}
-	handler := Handler(repository, Config{})
-	request := httptest.NewRequest(http.MethodPost, "/v1/auth/bootstrap", bytes.NewBufferString(`{"username":"admin","password":"correct horse battery staple"}`))
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-
-	if response.Code != http.StatusCreated || repository.sessionPair.AccessToken == "" {
-		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
-	}
-}
-
-func TestBootstrapLoginRejectsDisabledPassword(t *testing.T) {
-	disabledAt := time.Now()
-	repository := &fakeRepository{credential: store.OwnerCredential{ID: "owner-1", PasswordHash: "unused", PasswordDisabledAt: &disabledAt}}
-	handler := Handler(repository, Config{})
-	request := httptest.NewRequest(http.MethodPost, "/v1/auth/bootstrap", bytes.NewBufferString(`{"username":"admin","password":"password"}`))
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-
-	if response.Code != http.StatusUnauthorized || repository.sessionPair.AccessToken != "" {
-		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
-	}
-}
-
-func TestRefreshAndLogoutRotateCredentials(t *testing.T) {
-	repository := &fakeRepository{}
-	handler := Handler(repository, Config{})
-	refreshRequest := httptest.NewRequest(http.MethodPost, "/v1/auth/refresh", bytes.NewBufferString(`{"refresh_token":"old-refresh"}`))
-	refreshResponse := httptest.NewRecorder()
-	handler.ServeHTTP(refreshResponse, refreshRequest)
-	if refreshResponse.Code != http.StatusOK || repository.rotatedRefresh != "old-refresh" {
-		t.Fatalf("refresh status = %d body = %s", refreshResponse.Code, refreshResponse.Body.String())
+	perform := func(method string, path string, body string, accessToken string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+		if accessToken != "" {
+			request.Header.Set("Authorization", "Bearer "+accessToken)
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
 	}
 
-	logoutRequest := httptest.NewRequest(http.MethodPost, "/v1/auth/logout", nil)
-	logoutRequest.Header.Set("Authorization", "Bearer access-token")
-	logoutResponse := httptest.NewRecorder()
-	handler.ServeHTTP(logoutResponse, logoutRequest)
-	if logoutResponse.Code != http.StatusNoContent || repository.revokedAccess != "access-token" {
-		t.Fatalf("logout status = %d body = %s", logoutResponse.Code, logoutResponse.Body.String())
-	}
-}
+	It("reports health and discovery metadata", func() {
+		health := perform(http.MethodGet, "/healthz", "", "")
+		Expect(health.Code).To(Equal(http.StatusOK))
+		Expect(health.Body.String()).To(MatchJSON(`{"status":"ok"}`))
+
+		discovery := perform(http.MethodGet, "/.well-known/sim-deck", "", "")
+		Expect(discovery.Code).To(Equal(http.StatusOK))
+		var body map[string]any
+		Expect(json.Unmarshal(discovery.Body.Bytes(), &body)).To(Succeed())
+		Expect(body["api_version"]).To(Equal("v1"))
+		Expect(body["websocket_url"]).To(Equal("https://deck.example/v1/events/ws"))
+		Expect(body["media"]).To(Equal(map[string]any{"udp_port": float64(49152), "tcp_port": float64(49153)}))
+	})
+
+	It("lists devices for an authenticated owner", func() {
+		repository.devices = []store.DeviceRecord{{ID: "device-1", NumericID: 1}}
+
+		response := perform(http.MethodGet, "/v1/devices", "", "access-token")
+
+		Expect(response.Code).To(Equal(http.StatusOK))
+		Expect(response.Body.String()).To(ContainSubstring(`"device_uuid":"device-1"`))
+	})
+
+	It("rejects missing and invalid owner sessions", func() {
+		Expect(perform(http.MethodGet, "/v1/devices", "", "").Code).To(Equal(http.StatusUnauthorized))
+		repository.ownerAuthError = errors.New("expired")
+		Expect(perform(http.MethodGet, "/v1/devices", "", "access-token").Code).To(Equal(http.StatusUnauthorized))
+	})
+
+	It("maps a device-list storage failure", func() {
+		repository.listDevicesError = errors.New("database unavailable")
+
+		response := perform(http.MethodGet, "/v1/devices", "", "access-token")
+
+		Expect(response.Code).To(Equal(http.StatusInternalServerError))
+		Expect(response.Body.String()).To(ContainSubstring("storage_error"))
+	})
+
+	It("updates a device numeric ID", func() {
+		response := perform(http.MethodPatch, "/v1/devices/device-1/numeric-id", `{"numeric_id":2}`, "access-token")
+
+		Expect(response.Code).To(Equal(http.StatusNoContent))
+		Expect(repository.updatedDeviceID).To(Equal("device-1"))
+		Expect(repository.updatedNumericID).To(Equal(2))
+	})
+
+	DescribeTable("maps numeric-ID update failures",
+		func(body string, repositoryError error, expectedStatus int, expectedCode string) {
+			repository.updateNumericIDError = repositoryError
+			response := perform(http.MethodPatch, "/v1/devices/device-1/numeric-id", body, "access-token")
+			Expect(response.Code).To(Equal(expectedStatus))
+			Expect(response.Body.String()).To(ContainSubstring(expectedCode))
+		},
+		Entry("malformed JSON", `{`, nil, http.StatusBadRequest, "invalid_request"),
+		Entry("invalid identifier", `{"numeric_id":0}`, domain.ErrInvalidNumericID, http.StatusUnprocessableEntity, "invalid_numeric_id"),
+		Entry("duplicate identifier", `{"numeric_id":2}`, domain.ErrDuplicateNumericID, http.StatusConflict, "duplicate_numeric_id"),
+		Entry("missing device", `{"numeric_id":2}`, pgx.ErrNoRows, http.StatusNotFound, "device_not_found"),
+		Entry("storage failure", `{"numeric_id":2}`, errors.New("database unavailable"), http.StatusInternalServerError, "storage_error"),
+	)
+
+	It("creates a bootstrap session", func() {
+		passwordHash, err := auth.HashPassword("correct horse battery staple")
+		Expect(err).NotTo(HaveOccurred())
+		repository.credential = store.OwnerCredential{ID: "owner-1", PasswordHash: passwordHash}
+
+		response := perform(http.MethodPost, "/v1/auth/bootstrap", `{"username":"admin","password":"correct horse battery staple"}`, "")
+
+		Expect(response.Code).To(Equal(http.StatusCreated))
+		Expect(repository.sessionPair.AccessToken).NotTo(BeEmpty())
+		Expect(repository.sessionPair.RefreshToken).NotTo(BeEmpty())
+	})
+
+	DescribeTable("rejects invalid bootstrap logins",
+		func(credential store.OwnerCredential, credentialError error, requestBody string) {
+			repository.credential = credential
+			repository.credentialError = credentialError
+			response := perform(http.MethodPost, "/v1/auth/bootstrap", requestBody, "")
+			Expect(response.Code).To(Equal(http.StatusUnauthorized))
+			Expect(repository.sessionPair.AccessToken).To(BeEmpty())
+		},
+		Entry("unknown owner", store.OwnerCredential{}, pgx.ErrNoRows, `{"username":"admin","password":"password"}`),
+		Entry("missing password hash", store.OwnerCredential{ID: "owner-1"}, nil, `{"username":"admin","password":"password"}`),
+		Entry("malformed password hash", store.OwnerCredential{ID: "owner-1", PasswordHash: "invalid"}, nil, `{"username":"admin","password":"password"}`),
+		Entry("wrong password", store.OwnerCredential{ID: "owner-1", PasswordHash: "$argon2id$v=19$m=8192,t=1,p=1$MTIzNDU2Nzg$MTIzNDU2Nzg5MDEyMzQ1Ng"}, nil, `{"username":"admin","password":"wrong"}`),
+		Entry("disabled password", func() store.OwnerCredential {
+			disabledAt := time.Now()
+			return store.OwnerCredential{ID: "owner-1", PasswordHash: "unused", PasswordDisabledAt: &disabledAt}
+		}(), nil, `{"username":"admin","password":"password"}`),
+	)
+
+	It("rejects malformed bootstrap JSON and session storage failures", func() {
+		Expect(perform(http.MethodPost, "/v1/auth/bootstrap", `{`, "").Code).To(Equal(http.StatusBadRequest))
+		passwordHash, err := auth.HashPassword("correct horse battery staple")
+		Expect(err).NotTo(HaveOccurred())
+		repository.credential = store.OwnerCredential{ID: "owner-1", PasswordHash: passwordHash}
+		repository.createSessionError = errors.New("database unavailable")
+		Expect(perform(http.MethodPost, "/v1/auth/bootstrap", `{"username":"admin","password":"correct horse battery staple"}`, "").Code).To(Equal(http.StatusInternalServerError))
+	})
+
+	It("refreshes and revokes session credentials", func() {
+		refresh := perform(http.MethodPost, "/v1/auth/refresh", `{"refresh_token":"old-refresh"}`, "")
+		Expect(refresh.Code).To(Equal(http.StatusOK))
+		Expect(repository.rotatedRefresh).To(Equal("old-refresh"))
+
+		logout := perform(http.MethodPost, "/v1/auth/logout", "", "access-token")
+		Expect(logout.Code).To(Equal(http.StatusNoContent))
+		Expect(repository.revokedAccess).To(Equal("access-token"))
+	})
+
+	It("rejects malformed or failed session refreshes", func() {
+		Expect(perform(http.MethodPost, "/v1/auth/refresh", `{`, "").Code).To(Equal(http.StatusBadRequest))
+		repository.rotateSessionError = pgx.ErrNoRows
+		response := perform(http.MethodPost, "/v1/auth/refresh", `{"refresh_token":"expired"}`, "")
+		Expect(response.Code).To(Equal(http.StatusUnauthorized))
+		Expect(response.Body.String()).To(ContainSubstring("invalid_refresh_token"))
+	})
+
+	It("requires a valid access token for logout", func() {
+		Expect(perform(http.MethodPost, "/v1/auth/logout", "", "").Code).To(Equal(http.StatusUnauthorized))
+		repository.revokeSessionError = pgx.ErrNoRows
+		Expect(perform(http.MethodPost, "/v1/auth/logout", "", "expired").Code).To(Equal(http.StatusUnauthorized))
+	})
+
+	DescribeTable("parses configured ports",
+		func(value string, fallback int, expected int, succeeds bool) {
+			port, err := ParsePort(value, fallback)
+			if succeeds {
+				Expect(err).NotTo(HaveOccurred())
+				Expect(port).To(Equal(expected))
+				return
+			}
+			Expect(err).To(HaveOccurred())
+			Expect(port).To(BeZero())
+		},
+		Entry("fallback", " ", 8080, 8080, true),
+		Entry("configured", "49152", 0, 49152, true),
+		Entry("not numeric", "udp", 0, 0, false),
+		Entry("below range", "0", 0, 0, false),
+		Entry("above range", "65536", 0, 0, false),
+	)
+})

@@ -66,6 +66,17 @@ var _ = Describe("Encrypted event ingestion", func() {
 		Expect(repository.insertedEnvelope.ID).To(BeEmpty())
 	})
 
+	It("rejects a malformed request before device authentication", func() {
+		malformed := httptest.NewRequest(http.MethodPost, "/v1/events", bytes.NewBufferString(`{`))
+		malformed.Header.Set("Authorization", "Bearer device-credential")
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, malformed)
+
+		Expect(response.Code).To(Equal(http.StatusBadRequest))
+		Expect(repository.authenticatedDeviceID).To(BeEmpty())
+	})
+
 	It("authenticates the device, verifies its signature, and assigns retention metadata", func() {
 		response := httptest.NewRecorder()
 
@@ -76,6 +87,17 @@ var _ = Describe("Encrypted event ingestion", func() {
 		Expect(repository.authenticatedCredential).To(Equal("device-credential"))
 		Expect(repository.insertedEnvelope.Sequence).To(BeZero())
 		Expect(repository.insertedExpiry).To(Equal(envelope.OccurredAt.Add(365 * 24 * time.Hour)))
+	})
+
+	It("returns the existing sequence for an idempotent retry", func() {
+		repository.insertCreated = false
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, request("device-credential", envelope))
+
+		Expect(response.Code).To(Equal(http.StatusOK))
+		Expect(response.Body.String()).To(ContainSubstring(`"sequence":42`))
+		Expect(response.Body.String()).To(ContainSubstring(`"created":false`))
 	})
 
 	It("rejects a credential belonging to another or revoked device", func() {
@@ -144,5 +166,16 @@ var _ = Describe("Encrypted event ingestion", func() {
 
 		Expect(response.Code).To(Equal(http.StatusConflict))
 		Expect(response.Body.String()).To(ContainSubstring("idempotency_conflict"))
+	})
+
+	It("maps an event storage failure without exposing its details", func() {
+		repository.insertError = errors.New("database unavailable")
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, request("device-credential", envelope))
+
+		Expect(response.Code).To(Equal(http.StatusInternalServerError))
+		Expect(response.Body.String()).To(ContainSubstring("storage_error"))
+		Expect(response.Body.String()).NotTo(ContainSubstring("database unavailable"))
 	})
 })

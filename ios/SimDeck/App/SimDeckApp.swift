@@ -22,6 +22,7 @@ struct SimDeckApp: App {
             RootTabView(model: model)
                 .task {
                     model.bootstrapInstallation()
+                    model.startVoIPPushes()
                     await model.refreshDevices()
                 }
         }

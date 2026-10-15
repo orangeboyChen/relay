@@ -18,6 +18,7 @@ final class AppModel {
     let installationBootstrapper: any InstallationBootstrapping
     @ObservationIgnored private var installationIdentity: InstallationIdentity?
     @ObservationIgnored private var recoveredVaultKey: VaultKey?
+    @ObservationIgnored private var voipPushCoordinator: VoIPPushCoordinator?
 
     init(
         devices: [DeviceLineIdentity] = [],
@@ -68,6 +69,7 @@ final class AppModel {
         do {
             try await registerInstallationIfNeeded()
             devices = try await serverConnection.loadDevices()
+            try? await voipPushCoordinator?.uploadPendingToken()
         } catch {
             devices = devices.map { device in
                 var offlineDevice = device
@@ -81,6 +83,20 @@ final class AppModel {
         try await serverConnection.signIn(password: password)
         try await registerInstallationIfNeeded()
         devices = try await serverConnection.loadDevices()
+        try? await voipPushCoordinator?.uploadPendingToken()
+    }
+
+    func startVoIPPushes() {
+        guard let installationIdentity else { return }
+        if voipPushCoordinator == nil {
+            voipPushCoordinator = VoIPPushCoordinator(
+                tokenRegistrar: serverConnection,
+                environment: Self.pushEnvironment
+            ) { [weak self] data in
+                try await self?.processIncomingCallPush(data)
+            }
+        }
+        voipPushCoordinator?.start(installationID: installationIdentity.id)
     }
 
     func testServerConnection() async throws {
@@ -103,6 +119,44 @@ final class AppModel {
                 wrappedVaultKey: nil
             )
         )
+    }
+
+    private func processIncomingCallPush(_ data: Data) async throws {
+        guard let installationIdentity else {
+            throw VoIPPushError.invalidPayload
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let delivery = try decoder.decode(IncomingCallDelivery.self, from: data)
+        let verificationKey = try await serverConnection.eventVerificationKey(
+            deviceID: delivery.deviceUUID
+        )
+        let opened = try IncomingCallNotificationCodec.open(
+            data,
+            installationIdentity: installationIdentity,
+            deviceVerificationKey: verificationKey
+        )
+        try await callCoordinator.reportIncomingCall(
+            IncomingCallPresentation(
+                notificationID: opened.delivery.notificationID,
+                callID: opened.payload.callID,
+                lineID: opened.payload.deviceUUID,
+                installationID: installationIdentity.id,
+                numericID: opened.payload.numericID,
+                remoteNumber: opened.payload.remoteNumber,
+                contactName: nil,
+                callSecret: opened.payload.callSecret,
+                deviceVerificationKey: verificationKey
+            )
+        )
+    }
+
+    private static var pushEnvironment: PushEnvironment {
+#if DEBUG
+        .sandbox
+#else
+        .production
+#endif
     }
 }
 

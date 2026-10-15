@@ -112,6 +112,33 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(model.devices.isEmpty)
         XCTAssertNil(sessionStore.storedValue)
     }
+
+    @MainActor
+    func testRefreshRegistersBootstrappedInstallationBeforeLoadingDevices() async throws {
+        let session = Data("""
+        {"access_token":"access","refresh_token":"refresh","access_expires_at":"2098-01-01T00:00:00Z","refresh_expires_at":"2099-01-01T00:00:00Z"}
+        """.utf8)
+        let identity = InstallationIdentity.generate()
+        let network = AppModelInstallationNetwork(identity: identity)
+        let defaults = UserDefaults(suiteName: "AppModelInstallationTests.\(UUID().uuidString)")!
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let connection = ServerConnectionManager(
+            network: network,
+            sessionStore: AppModelSessionStore(value: session),
+            defaults: defaults
+        )
+        let model = AppModel(
+            serverConnection: connection,
+            installationBootstrapper: AppModelInstallationBootstrapper(identity: identity)
+        )
+
+        model.bootstrapInstallation()
+        await model.refreshDevices()
+
+        XCTAssertEqual(network.requestPaths, ["/v1/app-installations", "/v1/devices"])
+        XCTAssertEqual(model.installationID, identity.id)
+        XCTAssertTrue(model.installationTrust?.isApproved == true)
+    }
 }
 
 @MainActor
@@ -154,6 +181,75 @@ private final class AppModelSessionStore: SecureValueStoring, @unchecked Sendabl
     func read() -> Data? { lock.withLock { value } }
     func write(_ value: Data) { lock.withLock { self.value = value } }
     func delete() { lock.withLock { value = nil } }
+}
+
+private struct AppModelInstallationBootstrapper: InstallationBootstrapping {
+    let identity: InstallationIdentity
+
+    func bootstrap() throws -> InstallationBootstrapResult {
+        InstallationBootstrapResult(
+            identity: identity,
+            recoveredVaultKey: try VaultKey(data: Data(repeating: 3, count: VaultKey.length)),
+            pendingRevocationIDs: []
+        )
+    }
+
+    func saveVaultKey(_: VaultKey) throws {}
+    func markInstallationRevoked(_: UUID) throws {}
+}
+
+@MainActor
+private final class AppModelInstallationNetwork: ServerNetworking {
+    let identity: InstallationIdentity
+    private(set) var requestPaths: [String] = []
+
+    init(identity: InstallationIdentity) {
+        self.identity = identity
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let path = request.url?.path ?? ""
+        requestPaths.append(path)
+        let body: Data
+        let status: Int
+        switch (request.httpMethod, path) {
+        case ("POST", "/v1/app-installations"):
+            let object = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+            )
+            XCTAssertEqual(
+                (object["installation_id"] as? String).flatMap(UUID.init(uuidString:)),
+                identity.id
+            )
+            XCTAssertEqual(
+                object["identity_public_key"] as? String,
+                try identity.signingPublicKey().base64EncodedString()
+            )
+            body = Data("""
+            {"installation":{
+              "installation_id":"\(identity.id.uuidString.lowercased())",
+              "identity_public_key":"\(try identity.signingPublicKey().base64EncodedString())",
+              "approved_at":"2026-10-16T13:00:00Z",
+              "created_at":"2026-10-16T13:00:00Z"
+            },"created":true}
+            """.utf8)
+            status = 201
+        case ("GET", "/v1/devices"):
+            body = Data("{\"devices\":[]}".utf8)
+            status = 200
+        default:
+            XCTFail("Unexpected request: \(request.httpMethod ?? "") \(path)")
+            body = Data("{}".utf8)
+            status = 500
+        }
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: status,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+        return (body, response)
+    }
 }
 
 @MainActor

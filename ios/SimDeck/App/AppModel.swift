@@ -11,10 +11,13 @@ final class AppModel {
     var selectedTab: AppTab
     var keyRecoveryState: KeyRecoveryState
     var installationID: UUID?
+    private(set) var installationTrust: AppInstallationTrust?
     var pendingInstallationRevocationIDs: [UUID]
     let serverConnection: ServerConnectionManager
     let callCoordinator: CallKitCoordinator
     let installationBootstrapper: any InstallationBootstrapping
+    @ObservationIgnored private var installationIdentity: InstallationIdentity?
+    @ObservationIgnored private var recoveredVaultKey: VaultKey?
 
     init(
         devices: [DeviceLineIdentity] = [],
@@ -34,6 +37,7 @@ final class AppModel {
         self.lastSuccessfulDialLineID = lastSuccessfulDialLineID
         self.selectedTab = selectedTab
         self.keyRecoveryState = keyRecoveryState
+        self.installationTrust = nil
         self.pendingInstallationRevocationIDs = []
         self.serverConnection = resolvedServerConnection
         self.callCoordinator = callCoordinator ?? CallKitCoordinator(
@@ -45,6 +49,8 @@ final class AppModel {
     func bootstrapInstallation() {
         do {
             let result = try installationBootstrapper.bootstrap()
+            installationIdentity = result.identity
+            recoveredVaultKey = result.recoveredVaultKey
             installationID = result.identity.id
             pendingInstallationRevocationIDs = result.pendingRevocationIDs
             keyRecoveryState = result.recoveredVaultKey == nil ? .approvalRequired : .available
@@ -59,6 +65,7 @@ final class AppModel {
             return
         }
         do {
+            try await registerInstallationIfNeeded()
             devices = try await serverConnection.loadDevices()
         } catch {
             devices = devices.map { device in
@@ -71,6 +78,7 @@ final class AppModel {
 
     func signInToServer(password: String) async throws {
         try await serverConnection.signIn(password: password)
+        try await registerInstallationIfNeeded()
         devices = try await serverConnection.loadDevices()
     }
 
@@ -81,6 +89,18 @@ final class AppModel {
     func signOutFromServer() throws {
         try serverConnection.signOut()
         devices = []
+        installationTrust = nil
+    }
+
+    private func registerInstallationIfNeeded() async throws {
+        guard installationTrust == nil, let installationIdentity else { return }
+        installationTrust = try await serverConnection.registerAppInstallation(
+            AppInstallationRegistration(
+                id: installationIdentity.id,
+                identityPublicKey: try installationIdentity.signingPublicKey(),
+                wrappedVaultKey: nil
+            )
+        )
     }
 }
 

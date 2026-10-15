@@ -64,6 +64,27 @@ func (calls *fakeCalls) Dial(_ context.Context, value string) error {
 	}
 	return calls.error
 }
+func (calls *fakeCalls) Answer(context.Context) error {
+	calls.operations = append(calls.operations, "answer")
+	if calls.error == nil {
+		calls.state = call.StateActive
+	}
+	return calls.error
+}
+func (calls *fakeCalls) AnswerWaiting(context.Context) error {
+	calls.operations = append(calls.operations, "answer-waiting")
+	if calls.error == nil {
+		calls.state = call.StateActive
+	}
+	return calls.error
+}
+func (calls *fakeCalls) Reject(context.Context) error {
+	calls.operations = append(calls.operations, "reject")
+	if calls.error == nil {
+		calls.state = call.StateEnded
+	}
+	return calls.error
+}
 func (calls *fakeCalls) Hangup(context.Context) error {
 	calls.operations = append(calls.operations, "hangup")
 	return calls.error
@@ -167,12 +188,41 @@ var _ = Describe("Encrypted command runtime", func() {
 			Expect(result.Success).To(BeTrue())
 		},
 		Entry("start", Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "+8613500000000", MediaOffer: "offer-sdp"}, "dial:+8613500000000"),
+		Entry("answer", Payload{Version: 1, Operation: "call.answer", CallID: "call-1", MediaOffer: "offer-sdp"}, "answer"),
+		Entry("reject", Payload{Version: 1, Operation: "call.reject", CallID: "call-1"}, "reject"),
 		Entry("end", Payload{Version: 1, Operation: "call.end", CallID: "call-1"}, "hangup"),
 		Entry("hold", Payload{Version: 1, Operation: "call.hold", CallID: "call-1"}, "hold"),
 		Entry("resume", Payload{Version: 1, Operation: "call.resume", CallID: "call-1"}, "resume"),
 		Entry("swap", Payload{Version: 1, Operation: "call.swap", CallID: "call-1"}, "swap"),
 		Entry("DTMF", Payload{Version: 1, Operation: "call.dtmf", CallID: "call-1", Digits: "#"}, "dtmf:#"),
 	)
+
+	It("answers a waiting call through the modem call-waiting action", func() {
+		calls.state = call.StateWaiting
+		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{
+			Version: 1, Operation: "call.answer", CallID: "call-1", MediaOffer: "offer-sdp",
+		})
+
+		Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+
+		Expect(calls.operations).To(Equal([]string{"answer-waiting"}))
+		Expect(openResult(sharedSecret, envelope, remote.result).MediaAnswer).To(Equal("answer-sdp"))
+	})
+
+	It("stops incoming media when the modem rejects an answer", func() {
+		calls.state = call.StateRinging
+		calls.error = errors.New("AT answer failed")
+		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{
+			Version: 1, Operation: "call.answer", CallID: "call-1", MediaOffer: "offer-sdp",
+		})
+
+		Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+
+		result := openResult(sharedSecret, envelope, remote.result)
+		Expect(result.Success).To(BeFalse())
+		Expect(result.ErrorCode).To(Equal("modem_rejected"))
+		Expect(media.stopped).To(Equal([]string{"call-1"}))
+	})
 
 	It("returns an encrypted generic modem error", func() {
 		calls.error = errors.New("ATD exposed detail")

@@ -70,6 +70,9 @@ type Remote interface {
 // Calls is the modem call capability used by encrypted commands.
 type Calls interface {
 	Dial(context.Context, string) error
+	Answer(context.Context) error
+	AnswerWaiting(context.Context) error
+	Reject(context.Context) error
 	Hangup(context.Context) error
 	Hold(context.Context) error
 	Resume(context.Context) error
@@ -194,6 +197,26 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload) (string, e
 			return "", err
 		}
 		return answer, nil
+	case "call.answer":
+		if strings.TrimSpace(payload.MediaOffer) == "" {
+			return "", errInvalidCommand
+		}
+		answer, err := runtime.media.Negotiate(ctx, payload.CallID, payload.MediaOffer)
+		if err != nil {
+			return "", fmt.Errorf("%w: %v", errMediaUnavailable, err)
+		}
+		if runtime.calls.State() == call.StateWaiting {
+			err = runtime.calls.AnswerWaiting(ctx)
+		} else {
+			err = runtime.calls.Answer(ctx)
+		}
+		if err != nil {
+			_ = runtime.media.Stop(payload.CallID)
+			return "", err
+		}
+		return answer, nil
+	case "call.reject":
+		return "", runtime.calls.Reject(ctx)
 	case "call.end":
 		if err := runtime.calls.Hangup(ctx); err != nil {
 			return "", err

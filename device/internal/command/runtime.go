@@ -44,19 +44,21 @@ type EncryptedResult struct {
 
 // Payload is the command plaintext visible only to the iPhone and target device.
 type Payload struct {
-	Version   int    `json:"version"`
-	Operation string `json:"operation"`
-	CallID    string `json:"call_id"`
-	Number    string `json:"number,omitempty"`
-	Digits    string `json:"digits,omitempty"`
+	Version    int    `json:"version"`
+	Operation  string `json:"operation"`
+	CallID     string `json:"call_id"`
+	Number     string `json:"number,omitempty"`
+	Digits     string `json:"digits,omitempty"`
+	MediaOffer string `json:"media_offer,omitempty"`
 }
 
 // Result is the encrypted execution outcome consumed by the initiating iPhone.
 type Result struct {
-	Version   int        `json:"version"`
-	Success   bool       `json:"success"`
-	ErrorCode string     `json:"error_code,omitempty"`
-	CallState call.State `json:"call_state"`
+	Version     int        `json:"version"`
+	Success     bool       `json:"success"`
+	ErrorCode   string     `json:"error_code,omitempty"`
+	CallState   call.State `json:"call_state"`
+	MediaAnswer string     `json:"media_answer,omitempty"`
 }
 
 // Remote provides authenticated opaque command delivery.

@@ -1,6 +1,7 @@
 package command
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -160,6 +161,30 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(result.Success).To(BeFalse())
 		Expect(result.ErrorCode).To(Equal("modem_rejected"))
 		Expect(string(remote.result.Ciphertext)).NotTo(ContainSubstring("ATD exposed detail"))
+	})
+
+	It("round trips encrypted WebRTC negotiation without exposing SDP", func() {
+		payload := Payload{
+			Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086",
+			MediaOffer: "v=0\r\na=fingerprint:sha-256 phone\r\n",
+		}
+		envelope, sharedSecret := sealCommand(state, senderKey, commandID, payload)
+
+		opened, openedSecret, err := open(state, envelope)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(opened).To(Equal(payload))
+		Expect(openedSecret).To(Equal(sharedSecret))
+		Expect(string(envelope.Ciphertext)).NotTo(ContainSubstring("fingerprint"))
+
+		encrypted, err := sealResult(bytes.NewReader(make([]byte, nonceBytes)), sharedSecret, envelope, Result{
+			Version: 1, Success: true, CallState: call.StateDialing,
+			MediaAnswer: "v=0\r\na=fingerprint:sha-256 device\r\n",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		result := openResult(sharedSecret, envelope, encrypted)
+		Expect(result.MediaAnswer).To(ContainSubstring("fingerprint:sha-256 device"))
+		Expect(string(encrypted.Ciphertext)).NotTo(ContainSubstring("fingerprint"))
 	})
 
 	It("registers the outgoing call secret before dialing", func() {

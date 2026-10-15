@@ -82,19 +82,13 @@ final class CallLifecycleTests: XCTestCase {
 
     func testReportsIncomingCallWithRemoteNumberAndSIMIdentity() async throws {
         let provider = RecordingSystemCallProvider()
+        let transport = RecordingCallTransport()
         let coordinator = CallKitCoordinator(
-            transport: UnavailableCallTransport(),
+            transport: transport,
             provider: provider,
             integratesWithSystem: false
         )
-        let call = IncomingCallPresentation(
-            notificationID: UUID(),
-            callID: UUID(),
-            lineID: UUID(),
-            numericID: 2,
-            remoteNumber: "+8613500000000",
-            contactName: "Home"
-        )
+        let call = makeIncomingCall(contactName: "Home")
 
         try await coordinator.reportIncomingCall(call)
 
@@ -106,32 +100,69 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertEqual(provider.incomingUpdate?.supportsDTMF, true)
         XCTAssertEqual(coordinator.activeCall?.status, .ringing)
         XCTAssertEqual(coordinator.activeCall?.lineID, call.lineID)
+        XCTAssertEqual(transport.registeredIncomingCalls.first?.callSecret, call.callSecret)
     }
 
     func testIncomingCallReportFailureClearsVisibleCall() async {
         let provider = RecordingSystemCallProvider(reportError: TestCallError.failed)
+        let transport = RecordingCallTransport()
         let coordinator = CallKitCoordinator(
-            transport: UnavailableCallTransport(),
+            transport: transport,
             provider: provider,
             integratesWithSystem: false
         )
+        let call = makeIncomingCall(contactName: nil)
 
         do {
-            try await coordinator.reportIncomingCall(
-                IncomingCallPresentation(
-                    notificationID: UUID(),
-                    callID: UUID(),
-                    lineID: UUID(),
-                    numericID: 1,
-                    remoteNumber: "10086",
-                    contactName: nil
-                )
-            )
+            try await coordinator.reportIncomingCall(call)
             XCTFail("Expected reportIncomingCall to throw")
         } catch {
             XCTAssertEqual(error as? TestCallError, .failed)
         }
 
+        XCTAssertNil(coordinator.activeCall)
+        XCTAssertEqual(transport.discardedIncomingCallIDs, [call.callID])
+    }
+
+    func testIncomingAnswerClaimsBeforeStartingMedia() async throws {
+        let provider = RecordingSystemCallProvider()
+        let transport = RecordingCallTransport()
+        let claimer = RecordingIncomingCallClaimer(won: true)
+        let coordinator = CallKitCoordinator(
+            transport: transport,
+            incomingCallClaimer: claimer,
+            provider: provider,
+            integratesWithSystem: false
+        )
+        let call = makeIncomingCall(contactName: nil)
+        try await coordinator.reportIncomingCall(call)
+
+        let answered = try await coordinator.answerIncomingCall(callID: call.callID)
+
+        XCTAssertTrue(answered)
+        XCTAssertEqual(claimer.claims, [.init(call.notificationID, call.installationID)])
+        XCTAssertEqual(transport.answeredIncomingCallIDs, [call.callID])
+        XCTAssertEqual(coordinator.activeCall?.status, .connecting)
+    }
+
+    func testIncomingAnswerEndsAsAnsweredElsewhereWhenClaimLoses() async throws {
+        let provider = RecordingSystemCallProvider()
+        let transport = RecordingCallTransport()
+        let coordinator = CallKitCoordinator(
+            transport: transport,
+            incomingCallClaimer: RecordingIncomingCallClaimer(won: false),
+            provider: provider,
+            integratesWithSystem: false
+        )
+        let call = makeIncomingCall(contactName: nil)
+        try await coordinator.reportIncomingCall(call)
+
+        let answered = try await coordinator.answerIncomingCall(callID: call.callID)
+
+        XCTAssertFalse(answered)
+        XCTAssertEqual(provider.endedReason, .answeredElsewhere)
+        XCTAssertEqual(transport.discardedIncomingCallIDs, [call.callID])
+        XCTAssertTrue(transport.answeredIncomingCallIDs.isEmpty)
         XCTAssertNil(coordinator.activeCall)
     }
 
@@ -149,12 +180,27 @@ final class CallLifecycleTests: XCTestCase {
             initialCall: call
         )
     }
+
+    private func makeIncomingCall(contactName: String?) -> IncomingCallPresentation {
+        IncomingCallPresentation(
+            notificationID: UUID(),
+            callID: UUID(),
+            lineID: UUID(),
+            installationID: UUID(),
+            numericID: 2,
+            remoteNumber: "+8613500000000",
+            contactName: contactName,
+            callSecret: Data(repeating: 1, count: 32),
+            deviceVerificationKey: Data(repeating: 2, count: 32)
+        )
+    }
 }
 
 private final class RecordingSystemCallProvider: SystemCallProviding {
     private let reportError: Error?
     private(set) var incomingCallID: UUID?
     private(set) var incomingUpdate: CXCallUpdate?
+    private(set) var endedReason: CXCallEndedReason?
 
     init(reportError: Error? = nil) {
         self.reportError = reportError
@@ -173,7 +219,9 @@ private final class RecordingSystemCallProvider: SystemCallProviding {
     }
 
     func reportCall(with UUID: UUID, updated update: CXCallUpdate) {}
-    func reportCall(with UUID: UUID, endedAt dateEnded: Date?, reason endedReason: CXCallEndedReason) {}
+    func reportCall(with UUID: UUID, endedAt dateEnded: Date?, reason endedReason: CXCallEndedReason) {
+        self.endedReason = endedReason
+    }
     func reportOutgoingCall(with UUID: UUID, startedConnectingAt dateStartedConnecting: Date?) {}
     func reportOutgoingCall(with UUID: UUID, connectedAt dateConnected: Date?) {}
 }
@@ -206,6 +254,9 @@ private final class RecordingCallTransport: CallTransport {
     private(set) var holdUpdates: [BooleanUpdate] = []
     private(set) var muteUpdates: [BooleanUpdate] = []
     private(set) var dtmfUpdates: [DTMFUpdate] = []
+    private(set) var registeredIncomingCalls: [IncomingCallRegistration] = []
+    private(set) var discardedIncomingCallIDs: [UUID] = []
+    private(set) var answeredIncomingCallIDs: [UUID] = []
 
     init(startError: Error? = nil) {
         self.startError = startError
@@ -215,7 +266,13 @@ private final class RecordingCallTransport: CallTransport {
         eventHandler = handler
     }
 
-    func registerIncomingCall(_ call: IncomingCallRegistration) throws {}
+    func registerIncomingCall(_ call: IncomingCallRegistration) throws {
+        registeredIncomingCalls.append(call)
+    }
+
+    func discardIncomingCall(callID: UUID) {
+        discardedIncomingCallIDs.append(callID)
+    }
 
     func startOutgoingCall(callID: UUID, number: String, lineID: UUID) async throws {
         if let startError {
@@ -226,7 +283,9 @@ private final class RecordingCallTransport: CallTransport {
         eventHandler?(.connected(callID: callID, at: connectedAt))
     }
 
-    func answerIncomingCall(callID: UUID) async throws {}
+    func answerIncomingCall(callID: UUID) async throws {
+        answeredIncomingCallIDs.append(callID)
+    }
     func rejectIncomingCall(callID: UUID) async throws {}
 
     func endCall(callID: UUID) async throws {
@@ -249,6 +308,39 @@ private final class RecordingCallTransport: CallTransport {
     func audioSessionDidActivate(_ audioSession: AVAudioSession) async {}
     func audioSessionDidDeactivate(_ audioSession: AVAudioSession) async {}
     func reset() async {}
+}
+
+@MainActor
+private final class RecordingIncomingCallClaimer: IncomingCallClaiming {
+    struct Claim: Equatable {
+        let notificationID: UUID
+        let installationID: UUID
+
+        init(_ notificationID: UUID, _ installationID: UUID) {
+            self.notificationID = notificationID
+            self.installationID = installationID
+        }
+    }
+
+    private let won: Bool
+    private(set) var claims: [Claim] = []
+
+    init(won: Bool) {
+        self.won = won
+    }
+
+    func claimIncomingCall(
+        notificationID: UUID,
+        installationID: UUID
+    ) async throws -> IncomingCallClaim {
+        claims.append(.init(notificationID, installationID))
+        return IncomingCallClaim(
+            notificationID: notificationID,
+            installationID: installationID,
+            claimedAt: Date(timeIntervalSince1970: 1_000),
+            won: won
+        )
+    }
 }
 
 private enum TestCallError: Error, Equatable {

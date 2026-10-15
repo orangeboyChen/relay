@@ -84,6 +84,13 @@ final class LiveCallTransport: CallTransport {
         }
     }
 
+    func discardIncomingCall(callID: UUID) {
+        mediaSessions.removeValue(forKey: callID)?.close()
+        callLines.removeValue(forKey: callID)
+        callEvents.removeValue(forKey: callID)
+        stopEventLoopIfIdle()
+    }
+
     func startOutgoingCall(callID: UUID, number: String, lineID: UUID) async throws {
         let verificationKey = try await api.eventVerificationKey(deviceID: lineID)
         guard verificationKey.count == 32 else { throw LiveCallTransportError.invalidDeviceKey }
@@ -158,10 +165,7 @@ final class LiveCallTransport: CallTransport {
             throw LiveCallTransportError.invalidResponse
         }
         _ = try await send(operation: "call.reject", callID: callID, lineID: lineID)
-        mediaSessions.removeValue(forKey: callID)?.close()
-        callLines.removeValue(forKey: callID)
-        callEvents.removeValue(forKey: callID)
-        stopEventLoopIfIdle()
+        discardIncomingCall(callID: callID)
     }
 
     func endCall(callID: UUID) async throws {

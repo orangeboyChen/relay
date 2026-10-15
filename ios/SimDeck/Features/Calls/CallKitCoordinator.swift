@@ -14,6 +14,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
     @ObservationIgnored private let provider: any SystemCallProviding
     @ObservationIgnored private let controller: CXCallController
     @ObservationIgnored private let transport: any CallTransport
+    @ObservationIgnored private let incomingCallClaimer: (any IncomingCallClaiming)?
     @ObservationIgnored private let integratesWithSystem: Bool
     @ObservationIgnored private var pendingOutgoing: [UUID: OutgoingCallRequest] = [:]
     @ObservationIgnored private var incomingCalls: [UUID: IncomingCallPresentation] = [:]
@@ -21,6 +22,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
 
     init(
         transport: any CallTransport = UnavailableCallTransport(),
+        incomingCallClaimer: (any IncomingCallClaiming)? = nil,
         provider: (any SystemCallProviding)? = nil,
         controller: CXCallController = CXCallController(),
         integratesWithSystem: Bool = true,
@@ -28,6 +30,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
     ) {
         activeCall = initialCall
         self.transport = transport
+        self.incomingCallClaimer = incomingCallClaimer
         self.controller = controller
         self.integratesWithSystem = integratesWithSystem
         capabilities = transport.capabilities
@@ -91,6 +94,14 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
 
     func reportIncomingCall(_ call: IncomingCallPresentation) async throws {
         let update = incomingCallUpdate(for: call)
+        try transport.registerIncomingCall(
+            IncomingCallRegistration(
+                callID: call.callID,
+                lineID: call.lineID,
+                callSecret: call.callSecret,
+                verificationKey: call.deviceVerificationKey
+            )
+        )
         activeCall = ActiveCallSession(
             id: call.callID,
             lineID: call.lineID,
@@ -113,7 +124,38 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
                 }
             }
         } catch {
+            transport.discardIncomingCall(callID: call.callID)
             finishCall(callID: call.callID)
+            throw error
+        }
+    }
+
+    @discardableResult
+    func answerIncomingCall(callID: UUID) async throws -> Bool {
+        guard let call = incomingCalls[callID], let incomingCallClaimer else {
+            throw CallLifecycleError.incomingCallUnavailable
+        }
+        let claim = try await incomingCallClaimer.claimIncomingCall(
+            notificationID: call.notificationID,
+            installationID: call.installationID
+        )
+        guard claim.won else {
+            provider.reportCall(with: callID, endedAt: .now, reason: .answeredElsewhere)
+            transport.discardIncomingCall(callID: callID)
+            finishCall(callID: callID)
+            return false
+        }
+
+        activeCall?.status = .connecting
+        do {
+            if integratesWithSystem {
+                try configureAudioSession()
+            }
+            try await transport.answerIncomingCall(callID: callID)
+            incomingCalls.removeValue(forKey: callID)
+            return true
+        } catch {
+            activeCall?.status = .ringing
             throw error
         }
     }
@@ -131,6 +173,11 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
 
     func endCall() async throws {
         guard let activeCall else { return }
+        if incomingCalls[activeCall.id] != nil {
+            try await transport.rejectIncomingCall(callID: activeCall.id)
+            finishCall(callID: activeCall.id)
+            return
+        }
         guard integratesWithSystem else {
             try await transport.endCall(callID: activeCall.id)
             finishCall(callID: activeCall.id)
@@ -318,7 +365,11 @@ extension CallKitCoordinator: @preconcurrency CXProviderDelegate {
 
         Task {
             do {
-                try await transport.endCall(callID: action.callUUID)
+                if incomingCalls[action.callUUID] != nil {
+                    try await transport.rejectIncomingCall(callID: action.callUUID)
+                } else {
+                    try await transport.endCall(callID: action.callUUID)
+                }
                 action.fulfill()
                 finishCall(callID: action.callUUID)
             } catch {
@@ -326,6 +377,27 @@ extension CallKitCoordinator: @preconcurrency CXProviderDelegate {
                 if let previousStatus {
                     activeCall?.status = previousStatus
                 }
+            }
+        }
+    }
+
+    func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
+        Task {
+            do {
+                if try await answerIncomingCall(callID: action.callUUID) {
+                    action.fulfill()
+                } else {
+                    action.fail()
+                }
+            } catch {
+                action.fail()
+                self.provider.reportCall(
+                    with: action.callUUID,
+                    endedAt: .now,
+                    reason: .failed
+                )
+                transport.discardIncomingCall(callID: action.callUUID)
+                finishCall(callID: action.callUUID)
             }
         }
     }
@@ -390,6 +462,7 @@ private struct OutgoingCallRequest {
 
 enum CallLifecycleError: Error {
     case endedBeforeStart
+    case incomingCallUnavailable
 }
 
 private extension CallEndReason {

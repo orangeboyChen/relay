@@ -40,6 +40,7 @@ protocol CallTransport: AnyObject {
 
     func setEventHandler(_ handler: @escaping @MainActor (CallTransportEvent) -> Void)
     func registerIncomingCall(_ call: IncomingCallRegistration) throws
+    func discardIncomingCall(callID: UUID)
     func startOutgoingCall(callID: UUID, number: String, lineID: UUID) async throws
     func answerIncomingCall(callID: UUID) async throws
     func rejectIncomingCall(callID: UUID) async throws
@@ -73,6 +74,8 @@ final class UnavailableCallTransport: CallTransport {
         throw CallTransportError.notConfigured
     }
 
+    func discardIncomingCall(callID: UUID) {}
+
     func startOutgoingCall(callID: UUID, number: String, lineID: UUID) async throws {
         throw CallTransportError.notConfigured
     }
@@ -99,6 +102,7 @@ final class PreviewCallTransport: CallTransport {
     }
 
     func registerIncomingCall(_ call: IncomingCallRegistration) throws {}
+    func discardIncomingCall(callID: UUID) {}
 
     func startOutgoingCall(callID: UUID, number: String, lineID: UUID) async throws {
         eventHandler?(.ringing(callID: callID))

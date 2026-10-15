@@ -41,7 +41,8 @@ final class AppModel {
         self.pendingInstallationRevocationIDs = []
         self.serverConnection = resolvedServerConnection
         self.callCoordinator = callCoordinator ?? CallKitCoordinator(
-            transport: LiveCallTransport(api: resolvedServerConnection)
+            transport: LiveCallTransport(api: resolvedServerConnection),
+            incomingCallClaimer: resolvedServerConnection
         )
         self.installationBootstrapper = installationBootstrapper
     }

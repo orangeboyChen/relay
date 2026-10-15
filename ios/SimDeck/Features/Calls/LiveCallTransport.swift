@@ -30,11 +30,13 @@ final class LiveCallTransport: CallTransport {
     private let now: () -> Date
     private let makeCommandID: () -> UUID
     private let makeSenderKey: () -> Curve25519.KeyAgreement.PrivateKey
+    private let makeMediaSession: @MainActor () throws -> any CallMediaSession
     private let waitBeforePollingAgain: () async throws -> Void
     private let automaticallyPollEvents: Bool
     private var eventHandler: (@MainActor (CallTransportEvent) -> Void)?
     private var callLines: [UUID: UUID] = [:]
     private var callEvents: [UUID: CallEventContext] = [:]
+    private var mediaSessions: [UUID: any CallMediaSession] = [:]
     private var eventCursor: Int64 = 0
     private var eventTask: Task<Void, Never>?
 
@@ -45,6 +47,9 @@ final class LiveCallTransport: CallTransport {
         makeSenderKey: @escaping () -> Curve25519.KeyAgreement.PrivateKey = {
             Curve25519.KeyAgreement.PrivateKey()
         },
+        makeMediaSession: @escaping @MainActor () throws -> any CallMediaSession = {
+            try WebRTCCallMediaSession()
+        },
         waitBeforePollingAgain: @escaping () async throws -> Void = {
             try await Task.sleep(for: .milliseconds(500))
         },
@@ -54,6 +59,7 @@ final class LiveCallTransport: CallTransport {
         self.now = now
         self.makeCommandID = makeCommandID
         self.makeSenderKey = makeSenderKey
+        self.makeMediaSession = makeMediaSession
         self.waitBeforePollingAgain = waitBeforePollingAgain
         self.automaticallyPollEvents = automaticallyPollEvents
     }
@@ -65,27 +71,47 @@ final class LiveCallTransport: CallTransport {
     func startOutgoingCall(callID: UUID, number: String, lineID: UUID) async throws {
         let verificationKey = try await api.eventVerificationKey(deviceID: lineID)
         guard verificationKey.count == 32 else { throw LiveCallTransportError.invalidDeviceKey }
-        let sharedSecret = try await send(
-            operation: "call.start",
-            callID: callID,
-            lineID: lineID,
-            number: number
-        )
-        callLines[callID] = lineID
-        callEvents[callID] = CallEventContext(
-            lineID: lineID,
-            sharedSecret: sharedSecret,
-            verificationKey: verificationKey,
-            hasConnected: false
-        )
-        if automaticallyPollEvents {
-            startEventLoopIfNeeded()
+        let mediaSession = try makeMediaSession()
+        var remoteCallStarted = false
+        do {
+            let offer = try await mediaSession.makeOffer()
+            let exchange = try await send(
+                operation: "call.start",
+                callID: callID,
+                lineID: lineID,
+                number: number,
+                mediaOffer: offer
+            )
+            remoteCallStarted = true
+            guard let answer = exchange.result.mediaAnswer else {
+                throw LiveCallTransportError.invalidResponse
+            }
+            try await mediaSession.applyAnswer(answer)
+
+            callLines[callID] = lineID
+            callEvents[callID] = CallEventContext(
+                lineID: lineID,
+                sharedSecret: exchange.sharedSecret,
+                verificationKey: verificationKey,
+                hasConnected: false
+            )
+            mediaSessions[callID] = mediaSession
+            if automaticallyPollEvents {
+                startEventLoopIfNeeded()
+            }
+        } catch {
+            mediaSession.close()
+            if remoteCallStarted {
+                _ = try? await send(operation: "call.end", callID: callID, lineID: lineID)
+            }
+            throw error
         }
     }
 
     func endCall(callID: UUID) async throws {
         guard let lineID = callLines[callID] else { throw LiveCallTransportError.invalidResponse }
         _ = try await send(operation: "call.end", callID: callID, lineID: lineID)
+        mediaSessions.removeValue(forKey: callID)?.close()
         callLines.removeValue(forKey: callID)
         callEvents.removeValue(forKey: callID)
         stopEventLoopIfIdle()
@@ -96,18 +122,37 @@ final class LiveCallTransport: CallTransport {
         _ = try await send(operation: isHeld ? "call.hold" : "call.resume", callID: callID, lineID: lineID)
     }
 
-    func setMuted(_ isMuted: Bool, callID: UUID) async throws {}
+    func setMuted(_ isMuted: Bool, callID: UUID) async throws {
+        guard let mediaSession = mediaSessions[callID] else {
+            throw LiveCallTransportError.invalidResponse
+        }
+        mediaSession.setMuted(isMuted)
+    }
 
     func playDTMF(_ digits: String, callID: UUID) async throws {
         guard let lineID = callLines[callID] else { throw LiveCallTransportError.invalidResponse }
         _ = try await send(operation: "call.dtmf", callID: callID, lineID: lineID, digits: digits)
     }
 
-    func audioSessionDidActivate(_ audioSession: AVAudioSession) async {}
-    func audioSessionDidDeactivate(_ audioSession: AVAudioSession) async {}
+    func audioSessionDidActivate(_ audioSession: AVAudioSession) async {
+        for mediaSession in mediaSessions.values {
+            mediaSession.audioSessionDidActivate(audioSession)
+        }
+    }
+
+    func audioSessionDidDeactivate(_ audioSession: AVAudioSession) async {
+        for mediaSession in mediaSessions.values {
+            mediaSession.audioSessionDidDeactivate(audioSession)
+        }
+    }
+
     func reset() async {
         eventTask?.cancel()
         eventTask = nil
+        for mediaSession in mediaSessions.values {
+            mediaSession.close()
+        }
+        mediaSessions.removeAll()
         callLines.removeAll()
         callEvents.removeAll()
     }
@@ -117,8 +162,9 @@ final class LiveCallTransport: CallTransport {
         callID: UUID,
         lineID: UUID,
         number: String? = nil,
-        digits: String? = nil
-    ) async throws -> SharedSecret {
+        digits: String? = nil,
+        mediaOffer: String? = nil
+    ) async throws -> CallCommandExchange {
         let deviceKeyData = try await api.commandRecipient(deviceID: lineID)
         let commandID = makeCommandID()
         let senderKey = makeSenderKey()
@@ -127,7 +173,8 @@ final class LiveCallTransport: CallTransport {
             operation: operation,
             callID: callID.uuidString.lowercased(),
             number: number,
-            digits: digits
+            digits: digits,
+            mediaOffer: mediaOffer
         )
         let sealed: SealedCallCommand
         do {
@@ -165,7 +212,10 @@ final class LiveCallTransport: CallTransport {
                 guard result.success else {
                     throw LiveCallTransportError.modemRejected(result.errorCode ?? "unknown")
                 }
-                return sealed.sharedSecret
+                return CallCommandExchange(
+                    sharedSecret: sealed.sharedSecret,
+                    result: result
+                )
             }
             if attempt < 59 {
                 try await waitBeforePollingAgain()
@@ -236,6 +286,7 @@ final class LiveCallTransport: CallTransport {
                 eventHandler?(.connected(callID: callID, at: envelope.occurredAt))
             case "ended":
                 let reason: CallEndReason = context.hasConnected ? .remoteEnded : .unanswered
+                mediaSessions.removeValue(forKey: callID)?.close()
                 callEvents.removeValue(forKey: callID)
                 callLines.removeValue(forKey: callID)
                 eventHandler?(.ended(callID: callID, reason: reason))
@@ -251,6 +302,10 @@ final class LiveCallTransport: CallTransport {
 
     private func failActiveCalls() {
         let callIDs = Array(callEvents.keys)
+        for mediaSession in mediaSessions.values {
+            mediaSession.close()
+        }
+        mediaSessions.removeAll()
         callEvents.removeAll()
         callLines.removeAll()
         for callID in callIDs {
@@ -264,6 +319,11 @@ final class LiveCallTransport: CallTransport {
         eventTask?.cancel()
         eventTask = nil
     }
+}
+
+private struct CallCommandExchange {
+    let sharedSecret: SharedSecret
+    let result: CallCommandResult
 }
 
 private struct CallEventContext {

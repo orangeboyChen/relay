@@ -1,3 +1,4 @@
+import AVFAudio
 import CryptoKit
 import Foundation
 import XCTest
@@ -112,8 +113,10 @@ final class LiveCallTransportTests: XCTestCase {
 
     func testCallControlsMapToEncryptedDeviceOperations() async throws {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let media = CallMediaSessionFake()
         let transport = LiveCallTransport(
             api: api,
+            makeMediaSession: { media },
             waitBeforePollingAgain: {},
             automaticallyPollEvents: false
         )
@@ -123,6 +126,8 @@ final class LiveCallTransportTests: XCTestCase {
         try await transport.startOutgoingCall(callID: callID, number: "13500000000", lineID: deviceID)
         try await transport.setHeld(true, callID: callID)
         try await transport.setHeld(false, callID: callID)
+        try await transport.setMuted(true, callID: callID)
+        try await transport.setMuted(false, callID: callID)
         try await transport.playDTMF("#", callID: callID)
         try await transport.endCall(callID: callID)
 
@@ -130,7 +135,11 @@ final class LiveCallTransportTests: XCTestCase {
             "call.start", "call.hold", "call.resume", "call.dtmf", "call.end",
         ])
         XCTAssertEqual(api.payloads.first?.number, "13500000000")
+        XCTAssertEqual(api.payloads.first?.mediaOffer, media.offer)
         XCTAssertEqual(api.payloads[3].digits, "#")
+        XCTAssertEqual(media.appliedAnswers, [CallMediaSessionFake.answer])
+        XCTAssertEqual(media.muteChanges, [true, false])
+        XCTAssertTrue(media.isClosed)
         XCTAssertTrue(events.isEmpty)
 
         for request in api.requests {
@@ -144,6 +153,7 @@ final class LiveCallTransportTests: XCTestCase {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .modemRejected)
         let transport = LiveCallTransport(
             api: api,
+            makeMediaSession: { CallMediaSessionFake() },
             waitBeforePollingAgain: {},
             automaticallyPollEvents: false
         )
@@ -165,6 +175,7 @@ final class LiveCallTransportTests: XCTestCase {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .tampered)
         let transport = LiveCallTransport(
             api: api,
+            makeMediaSession: { CallMediaSessionFake() },
             waitBeforePollingAgain: {},
             automaticallyPollEvents: false
         )
@@ -182,6 +193,7 @@ final class LiveCallTransportTests: XCTestCase {
         api.recipientKeyOverride = Data(repeating: 1, count: 31)
         let transport = LiveCallTransport(
             api: api,
+            makeMediaSession: { CallMediaSessionFake() },
             waitBeforePollingAgain: {},
             automaticallyPollEvents: false
         )
@@ -200,6 +212,7 @@ final class LiveCallTransportTests: XCTestCase {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
         let transport = LiveCallTransport(
             api: api,
+            makeMediaSession: { CallMediaSessionFake() },
             waitBeforePollingAgain: {},
             automaticallyPollEvents: false
         )
@@ -225,6 +238,7 @@ final class LiveCallTransportTests: XCTestCase {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
         let transport = LiveCallTransport(
             api: api,
+            makeMediaSession: { CallMediaSessionFake() },
             waitBeforePollingAgain: {},
             automaticallyPollEvents: false
         )
@@ -237,6 +251,92 @@ final class LiveCallTransportTests: XCTestCase {
         try await transport.synchronizeEvents()
 
         XCTAssertTrue(events.isEmpty)
+    }
+
+    func testMissingMediaAnswerClosesLocalMediaAndEndsRemoteCall() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        api.omitMediaAnswer = true
+        let media = CallMediaSessionFake()
+        let transport = LiveCallTransport(
+            api: api,
+            makeMediaSession: { media },
+            waitBeforePollingAgain: {},
+            automaticallyPollEvents: false
+        )
+
+        do {
+            try await transport.startOutgoingCall(
+                callID: callID,
+                number: "10086",
+                lineID: deviceID
+            )
+            XCTFail("Expected the missing media answer to fail")
+        } catch {
+            XCTAssertEqual(error as? LiveCallTransportError, .invalidResponse)
+        }
+
+        XCTAssertEqual(api.payloads.map(\.operation), ["call.start", "call.end"])
+        XCTAssertTrue(media.isClosed)
+        XCTAssertTrue(media.appliedAnswers.isEmpty)
+    }
+
+    func testInvalidMediaAnswerClosesLocalMediaAndEndsRemoteCall() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let media = CallMediaSessionFake()
+        media.applyAnswerError = CallMediaSessionError.invalidAnswer
+        let transport = LiveCallTransport(
+            api: api,
+            makeMediaSession: { media },
+            waitBeforePollingAgain: {},
+            automaticallyPollEvents: false
+        )
+
+        do {
+            try await transport.startOutgoingCall(
+                callID: callID,
+                number: "10086",
+                lineID: deviceID
+            )
+            XCTFail("Expected the invalid media answer to fail")
+        } catch {
+            XCTAssertEqual(error as? CallMediaSessionError, .invalidAnswer)
+        }
+
+        XCTAssertEqual(api.payloads.map(\.operation), ["call.start", "call.end"])
+        XCTAssertTrue(media.isClosed)
+    }
+}
+
+@MainActor
+private final class CallMediaSessionFake: CallMediaSession {
+    static let answer = "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 0\r\na=rtpmap:0 PCMU/8000\r\n"
+
+    let offer = "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 0\r\na=rtpmap:0 PCMU/8000\r\n"
+    var applyAnswerError: Error?
+    private(set) var appliedAnswers: [String] = []
+    private(set) var muteChanges: [Bool] = []
+    private(set) var isClosed = false
+
+    func makeOffer() async throws -> String {
+        offer
+    }
+
+    func applyAnswer(_ answer: String) async throws {
+        if let applyAnswerError {
+            throw applyAnswerError
+        }
+        appliedAnswers.append(answer)
+    }
+
+    func setMuted(_ isMuted: Bool) {
+        muteChanges.append(isMuted)
+    }
+
+    func audioSessionDidActivate(_ audioSession: AVAudioSession) {}
+    func audioSessionDidDeactivate(_ audioSession: AVAudioSession) {}
+
+    func close() {
+        isClosed = true
     }
 }
 
@@ -256,6 +356,7 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
     private var callSharedSecret: SharedSecret?
 
     var recipientKeyOverride: Data?
+    var omitMediaAnswer = false
     private(set) var requests: [EncryptedCallCommandRequest] = []
     private(set) var payloads: [CallCommandPayload] = []
     private(set) var events: [EncryptedEventEnvelope] = []
@@ -313,13 +414,17 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
                 deviceID: deviceID
             )
         )
-        payloads.append(try JSONDecoder().decode(CallCommandPayload.self, from: plaintext))
+        let payload = try JSONDecoder().decode(CallCommandPayload.self, from: plaintext)
+        payloads.append(payload)
 
         let result = CallCommandResult(
             version: 1,
             success: outcome != .modemRejected,
             errorCode: outcome == .modemRejected ? "modem_rejected" : nil,
-            callState: "dialing"
+            callState: "dialing",
+            mediaAnswer: payload.operation == "call.start" && !omitMediaAnswer
+                ? CallMediaSessionFake.answer
+                : nil
         )
         let resultKey = Self.key(
             sharedSecret: sharedSecret,

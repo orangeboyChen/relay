@@ -44,9 +44,57 @@ final class LiveCallTransportTests: XCTestCase {
         )
     }
 
+    func testCallEventDecryptionMatchesGoCompatibilityVector() throws {
+        let devicePrivateKey = try Curve25519.KeyAgreement.PrivateKey(
+            rawRepresentation: Data((1...32).map(UInt8.init))
+        )
+        let senderPrivateKey = try Curve25519.KeyAgreement.PrivateKey(
+            rawRepresentation: Data((33...64).map(UInt8.init))
+        )
+        let identityPrivateKey = try Curve25519.Signing.PrivateKey(
+            rawRepresentation: Data((65...96).map(UInt8.init))
+        )
+        let sharedSecret = try senderPrivateKey.sharedSecretFromKeyAgreement(
+            with: devicePrivateKey.publicKey
+        )
+        let envelope = EncryptedEventEnvelope(
+            id: UUID(uuidString: "01900000-0000-7000-8000-000000000011")!,
+            sequence: 0,
+            type: "call.state",
+            deviceUUID: deviceID,
+            occurredAt: Date(timeIntervalSince1970: 1_792_138_150),
+            keyEpoch: 1,
+            nonce: Data(repeating: 0, count: 12),
+            ciphertext: Data(base64Encoded: "r7ZfXWX5iFdtSt7NFmMawU9ANd92JPGaOC9VbXwQ1JfXcNVloVdhs82ohy9chIWeACMGiKQxY6Z6qXHp7ZHqdDAlOIyuOkd4odiqTyBWk2kp/1Xo09yHgiqYroKoTc2ngTF1QJKjhj877JI8joks7dhKZ4hyp4O8NZa4r9YAZ5YbuAv9EOJLnjyO")!,
+            signature: Data(base64Encoded: "WxQ9bm1NtcF3JSTvIXwIY27QcxJpqcYeLy+x5Ra9+3m1feoBsBOIIdYwmBlEJsuCV92qKFRlN3V2eiyofIHNCQ==")!
+        )
+
+        let payload = try EncryptedCallEventCodec.open(
+            envelope,
+            sharedSecret: sharedSecret,
+            verificationKey: identityPrivateKey.publicKey.rawRepresentation
+        )
+
+        XCTAssertEqual(
+            payload,
+            CallStateEventPayload(
+                version: 1,
+                callID: callID,
+                state: "active",
+                active: true,
+                held: false,
+                waiting: false
+            )
+        )
+    }
+
     func testCallControlsMapToEncryptedDeviceOperations() async throws {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
-        let transport = LiveCallTransport(api: api, waitBeforePollingAgain: {})
+        let transport = LiveCallTransport(
+            api: api,
+            waitBeforePollingAgain: {},
+            automaticallyPollEvents: false
+        )
         var events: [CallTransportEvent] = []
         transport.setEventHandler { events.append($0) }
 
@@ -61,10 +109,7 @@ final class LiveCallTransportTests: XCTestCase {
         ])
         XCTAssertEqual(api.payloads.first?.number, "13500000000")
         XCTAssertEqual(api.payloads[3].digits, "#")
-        XCTAssertEqual(events, [
-            .ringing(callID: callID),
-            .ended(callID: callID, reason: .remoteEnded),
-        ])
+        XCTAssertTrue(events.isEmpty)
 
         for request in api.requests {
             let encoded = try JSONEncoder().encode(request)
@@ -75,7 +120,11 @@ final class LiveCallTransportTests: XCTestCase {
 
     func testEncryptedModemFailureIsSurfacedWithoutLeakingModemDetails() async throws {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .modemRejected)
-        let transport = LiveCallTransport(api: api, waitBeforePollingAgain: {})
+        let transport = LiveCallTransport(
+            api: api,
+            waitBeforePollingAgain: {},
+            automaticallyPollEvents: false
+        )
 
         do {
             try await transport.startOutgoingCall(callID: callID, number: "10086", lineID: deviceID)
@@ -92,7 +141,11 @@ final class LiveCallTransportTests: XCTestCase {
 
     func testTamperedEncryptedResultIsRejected() async throws {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .tampered)
-        let transport = LiveCallTransport(api: api, waitBeforePollingAgain: {})
+        let transport = LiveCallTransport(
+            api: api,
+            waitBeforePollingAgain: {},
+            automaticallyPollEvents: false
+        )
 
         do {
             try await transport.startOutgoingCall(callID: callID, number: "10086", lineID: deviceID)
@@ -105,7 +158,11 @@ final class LiveCallTransportTests: XCTestCase {
     func testMissingOrInvalidDeviceKeyDoesNotQueueACommand() async throws {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
         api.recipientKeyOverride = Data(repeating: 1, count: 31)
-        let transport = LiveCallTransport(api: api, waitBeforePollingAgain: {})
+        let transport = LiveCallTransport(
+            api: api,
+            waitBeforePollingAgain: {},
+            automaticallyPollEvents: false
+        )
 
         do {
             try await transport.startOutgoingCall(callID: callID, number: "10086", lineID: deviceID)
@@ -115,6 +172,49 @@ final class LiveCallTransportTests: XCTestCase {
         }
 
         XCTAssertTrue(api.requests.isEmpty)
+    }
+
+    func testSignedEncryptedModemEventsDriveTheCallLifecycle() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let transport = LiveCallTransport(
+            api: api,
+            waitBeforePollingAgain: {},
+            automaticallyPollEvents: false
+        )
+        var events: [CallTransportEvent] = []
+        transport.setEventHandler { events.append($0) }
+        try await transport.startOutgoingCall(callID: callID, number: "10086", lineID: deviceID)
+        let connectedAt = Date(timeIntervalSince1970: 1_792_108_923)
+        try api.appendCallEvent(callID: callID, state: "ringing", occurredAt: connectedAt.addingTimeInterval(-2))
+        try api.appendCallEvent(callID: callID, state: "active", occurredAt: connectedAt)
+        try api.appendCallEvent(callID: callID, state: "ended", occurredAt: connectedAt.addingTimeInterval(5))
+
+        try await transport.synchronizeEvents()
+
+        XCTAssertEqual(events, [
+            .ringing(callID: callID),
+            .connected(callID: callID, at: connectedAt),
+            .ended(callID: callID, reason: .remoteEnded),
+        ])
+        XCTAssertEqual(api.requestedEventCursors, [0])
+    }
+
+    func testTamperedOrWrongCallEventsAreNotAccepted() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let transport = LiveCallTransport(
+            api: api,
+            waitBeforePollingAgain: {},
+            automaticallyPollEvents: false
+        )
+        var events: [CallTransportEvent] = []
+        transport.setEventHandler { events.append($0) }
+        try await transport.startOutgoingCall(callID: callID, number: "10086", lineID: deviceID)
+        try api.appendCallEvent(callID: UUID(), state: "active", occurredAt: .now)
+        try api.appendCallEvent(callID: callID, state: "active", occurredAt: .now, tampered: true)
+
+        try await transport.synchronizeEvents()
+
+        XCTAssertTrue(events.isEmpty)
     }
 }
 
@@ -128,12 +228,16 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
 
     private let deviceID: UUID
     private let devicePrivateKey: Curve25519.KeyAgreement.PrivateKey
+    private let identityPrivateKey: Curve25519.Signing.PrivateKey
     private let outcome: Outcome
     private var results: [UUID: EncryptedCallCommandResult] = [:]
+    private var callSharedSecret: SharedSecret?
 
     var recipientKeyOverride: Data?
     private(set) var requests: [EncryptedCallCommandRequest] = []
     private(set) var payloads: [CallCommandPayload] = []
+    private(set) var events: [EncryptedEventEnvelope] = []
+    private(set) var requestedEventCursors: [Int64] = []
 
     init(deviceID: UUID, outcome: Outcome) throws {
         self.deviceID = deviceID
@@ -141,11 +245,19 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
         devicePrivateKey = try Curve25519.KeyAgreement.PrivateKey(
             rawRepresentation: Data((1...32).map(UInt8.init))
         )
+        identityPrivateKey = try Curve25519.Signing.PrivateKey(
+            rawRepresentation: Data((65...96).map(UInt8.init))
+        )
     }
 
     func commandRecipient(deviceID: UUID) async throws -> Data {
         XCTAssertEqual(deviceID, self.deviceID)
         return recipientKeyOverride ?? devicePrivateKey.publicKey.rawRepresentation
+    }
+
+    func eventVerificationKey(deviceID: UUID) async throws -> Data {
+        XCTAssertEqual(deviceID, self.deviceID)
+        return identityPrivateKey.publicKey.rawRepresentation
     }
 
     func enqueueCommand(deviceID: UUID, command: EncryptedCallCommandRequest) async throws {
@@ -156,6 +268,9 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
             rawRepresentation: command.senderPublicKey
         )
         let sharedSecret = try devicePrivateKey.sharedSecretFromKeyAgreement(with: senderPublicKey)
+        if payloads.count == 0 {
+            callSharedSecret = sharedSecret
+        }
         let commandKey = Self.key(
             sharedSecret: sharedSecret,
             commandID: command.id,
@@ -220,6 +335,86 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
             state: "completed",
             result: results[commandID]
         )
+    }
+
+    func encryptedEvents(afterSequence: Int64) async throws -> EncryptedEventPage {
+        requestedEventCursors.append(afterSequence)
+        let pageEvents = events.filter { $0.sequence > afterSequence }
+        return EncryptedEventPage(
+            events: pageEvents,
+            nextSequence: pageEvents.last?.sequence ?? afterSequence
+        )
+    }
+
+    func appendCallEvent(
+        callID: UUID,
+        state: String,
+        occurredAt: Date,
+        tampered: Bool = false
+    ) throws {
+        let sharedSecret = try XCTUnwrap(callSharedSecret)
+        let eventID = UUID()
+        let sequence = Int64(events.count + 1)
+        let payload = CallStateEventPayload(
+            version: 1,
+            callID: callID,
+            state: state,
+            active: state == "active",
+            held: state == "held",
+            waiting: state == "waiting"
+        )
+        var envelope = EncryptedEventEnvelope(
+            id: eventID,
+            sequence: sequence,
+            type: "call.state",
+            deviceUUID: deviceID,
+            occurredAt: occurredAt,
+            keyEpoch: 1,
+            nonce: Data(repeating: UInt8(sequence), count: 12),
+            ciphertext: Data(),
+            signature: Data()
+        )
+        let key = sharedSecret.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: Data("\(eventID.uuidString.lowercased())\0\(deviceID.uuidString.lowercased())".utf8),
+            sharedInfo: Data("sim-deck-call-event-v1".utf8),
+            outputByteCount: 32
+        )
+        let nonce = try AES.GCM.Nonce(data: envelope.nonce)
+        let sealed = try AES.GCM.seal(
+            JSONEncoder().encode(payload),
+            using: key,
+            nonce: nonce,
+            authenticating: EncryptedCallEventCodec.associatedData(envelope)
+        )
+        envelope = EncryptedEventEnvelope(
+            id: envelope.id,
+            sequence: envelope.sequence,
+            type: envelope.type,
+            deviceUUID: envelope.deviceUUID,
+            occurredAt: envelope.occurredAt,
+            keyEpoch: envelope.keyEpoch,
+            nonce: envelope.nonce,
+            ciphertext: sealed.ciphertext + sealed.tag,
+            signature: Data()
+        )
+        var signature = try identityPrivateKey.signature(
+            for: EncryptedCallEventCodec.signedData(envelope)
+        )
+        if tampered {
+            signature[signature.startIndex] ^= 0xff
+        }
+        events.append(EncryptedEventEnvelope(
+            id: envelope.id,
+            sequence: envelope.sequence,
+            type: envelope.type,
+            deviceUUID: envelope.deviceUUID,
+            occurredAt: envelope.occurredAt,
+            keyEpoch: envelope.keyEpoch,
+            nonce: envelope.nonce,
+            ciphertext: envelope.ciphertext,
+            signature: signature
+        ))
     }
 
     private static func key(

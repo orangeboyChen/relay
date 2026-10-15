@@ -39,11 +39,47 @@ struct EncryptedCallCommandStatus: Decodable, Equatable, Sendable {
     }
 }
 
+struct EncryptedEventEnvelope: Decodable, Equatable, Sendable {
+    let id: UUID
+    let sequence: Int64
+    let type: String
+    let deviceUUID: UUID
+    let occurredAt: Date
+    let keyEpoch: Int
+    let nonce: Data
+    let ciphertext: Data
+    let signature: Data
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case sequence
+        case type
+        case deviceUUID = "device_uuid"
+        case occurredAt = "occurred_at"
+        case keyEpoch = "key_epoch"
+        case nonce
+        case ciphertext
+        case signature
+    }
+}
+
+struct EncryptedEventPage: Decodable, Equatable, Sendable {
+    let events: [EncryptedEventEnvelope]
+    let nextSequence: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case events
+        case nextSequence = "next_sequence"
+    }
+}
+
 @MainActor
 protocol EncryptedCallCommandAPI: AnyObject {
     func commandRecipient(deviceID: UUID) async throws -> Data
+    func eventVerificationKey(deviceID: UUID) async throws -> Data
     func enqueueCommand(deviceID: UUID, command: EncryptedCallCommandRequest) async throws
     func commandStatus(deviceID: UUID, commandID: UUID) async throws -> EncryptedCallCommandStatus
+    func encryptedEvents(afterSequence: Int64) async throws -> EncryptedEventPage
 }
 
 enum ServerConnectionState: Equatable, Sendable {
@@ -116,6 +152,7 @@ final class ServerConnectionManager {
     @ObservationIgnored private let sessionStore: any SecureValueStoring
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var session: ServerSession?
+    @ObservationIgnored private var deviceIdentityKeys: [UUID: Data] = [:]
 
     private static let addressKey = "sim-deck.server-address.v1"
 
@@ -187,6 +224,12 @@ final class ServerConnectionManager {
                 throw ServerConnectionError.requestFailed(response.statusCode)
             }
             let body = try Self.decoder.decode(DeviceListResponse.self, from: data)
+            deviceIdentityKeys = Dictionary(
+                uniqueKeysWithValues: body.devices.compactMap { device in
+                    guard device.identityPublicKey.count == 32 else { return nil }
+                    return (device.deviceUUID, device.identityPublicKey)
+                }
+            )
             let devices = body.devices.map { device in
                 let recentlySeen = device.lastSeenAt.map {
                     let age = now.timeIntervalSince($0)
@@ -222,6 +265,17 @@ final class ServerConnectionManager {
         return publicKey
     }
 
+    func eventVerificationKey(deviceID: UUID) async throws -> Data {
+        if let publicKey = deviceIdentityKeys[deviceID], publicKey.count == 32 {
+            return publicKey
+        }
+        _ = try await loadDevices()
+        guard let publicKey = deviceIdentityKeys[deviceID], publicKey.count == 32 else {
+            throw ServerConnectionError.deviceUnavailable
+        }
+        return publicKey
+    }
+
     func enqueueCommand(deviceID: UUID, command: EncryptedCallCommandRequest) async throws {
         let body = try Self.encoder.encode(command)
         let (_, response) = try await authenticatedRequest(
@@ -245,10 +299,26 @@ final class ServerConnectionManager {
         return try Self.decoder.decode(CommandStatusResponse.self, from: data).command
     }
 
+    func encryptedEvents(afterSequence: Int64) async throws -> EncryptedEventPage {
+        let (data, response) = try await authenticatedRequest(
+            path: "v1/events",
+            method: "GET",
+            queryItems: [
+                URLQueryItem(name: "after_sequence", value: String(afterSequence)),
+                URLQueryItem(name: "limit", value: "100"),
+            ]
+        )
+        guard response.statusCode == 200 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
+        }
+        return try Self.decoder.decode(EncryptedEventPage.self, from: data)
+    }
+
     private func authenticatedRequest(
         path: String,
         method: String,
-        body: Data? = nil
+        body: Data? = nil,
+        queryItems: [URLQueryItem] = []
     ) async throws -> (Data, HTTPURLResponse) {
         let baseURL = try validatedBaseURL()
         var activeSession = try await validSession(baseURL: baseURL)
@@ -257,6 +327,7 @@ final class ServerConnectionManager {
             path: path,
             method: method,
             body: body,
+            queryItems: queryItems,
             accessToken: activeSession.accessToken
         )
         var result = try await network.data(for: urlRequest)
@@ -267,6 +338,7 @@ final class ServerConnectionManager {
                 path: path,
                 method: method,
                 body: body,
+                queryItems: queryItems,
                 accessToken: activeSession.accessToken
             )
             result = try await network.data(for: urlRequest)
@@ -312,8 +384,18 @@ final class ServerConnectionManager {
         return url
     }
 
-    private func request(baseURL: URL, path: String, method: String, body: Data?, accessToken: String) -> URLRequest {
-        var request = URLRequest(url: baseURL.appending(path: path))
+    private func request(
+        baseURL: URL,
+        path: String,
+        method: String,
+        body: Data?,
+        queryItems: [URLQueryItem],
+        accessToken: String
+    ) -> URLRequest {
+        let url = baseURL.appending(path: path)
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.queryItems = queryItems.isEmpty ? nil : queryItems
+        var request = URLRequest(url: components?.url ?? url)
         request.httpMethod = method
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         if let body {
@@ -358,12 +440,14 @@ private struct DeviceListResponse: Decodable {
 private struct ServerDeviceRecord: Decodable {
     let deviceUUID: UUID
     let numericID: Int
+    let identityPublicKey: Data
     let commandPublicKey: Data?
     let lastSeenAt: Date?
 
     enum CodingKeys: String, CodingKey {
         case deviceUUID = "device_uuid"
         case numericID = "numeric_id"
+        case identityPublicKey = "identity_public_key"
         case commandPublicKey = "command_public_key"
         case lastSeenAt = "last_seen_at"
     }

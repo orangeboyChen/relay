@@ -8,6 +8,7 @@ final class ServerConnectionManagerTests: XCTestCase {
         let deviceID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!
         let futureDeviceID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-ffffffffffff")!
         let commandKey = Data(repeating: 7, count: 32)
+        let identityKey = Data(repeating: 8, count: 32)
         let network = ScriptedServerNetwork { request in
             switch (request.httpMethod, request.url?.path) {
             case ("POST", "/v1/auth/bootstrap"):
@@ -26,7 +27,7 @@ final class ServerConnectionManagerTests: XCTestCase {
                       "device_uuid":"\(deviceID.uuidString.lowercased())",
                       "numeric_id":2,
                       "profile_ciphertext":"",
-                      "identity_public_key":"",
+                      "identity_public_key":"\(identityKey.base64EncodedString())",
                       "command_public_key":"\(commandKey.base64EncodedString())",
                       "paired_at":"2026-10-16T00:00:00Z",
                       "last_seen_at":"2026-10-16T00:00:30Z"
@@ -34,7 +35,7 @@ final class ServerConnectionManagerTests: XCTestCase {
                       "device_uuid":"\(futureDeviceID.uuidString.lowercased())",
                       "numeric_id":4,
                       "profile_ciphertext":"",
-                      "identity_public_key":"",
+                      "identity_public_key":"\(identityKey.base64EncodedString())",
                       "command_public_key":"\(commandKey.base64EncodedString())",
                       "paired_at":"2026-10-16T00:00:00Z",
                       "last_seen_at":"2026-10-16T00:02:00Z"
@@ -63,6 +64,8 @@ final class ServerConnectionManagerTests: XCTestCase {
         XCTAssertEqual(devices[0].id, deviceID)
         XCTAssertEqual(devices[0].numericID, 2)
         XCTAssertEqual(devices[0].commandPublicKey, commandKey)
+        let loadedIdentityKey = try await manager.eventVerificationKey(deviceID: deviceID)
+        XCTAssertEqual(loadedIdentityKey, identityKey)
         XCTAssertTrue(devices[0].isOnline)
         XCTAssertFalse(devices[1].isOnline)
     }
@@ -167,6 +170,44 @@ final class ServerConnectionManagerTests: XCTestCase {
 
         XCTAssertEqual(manager.state, .failed)
         XCTAssertNotNil(manager.lastErrorDescription)
+    }
+
+    func testEncryptedEventCursorIsAuthenticatedAndDecoded() async throws {
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
+        )
+        let eventID = UUID(uuidString: "01900000-0000-7000-8000-000000000011")!
+        let deviceID = UUID(uuidString: "01900000-0000-7000-8000-000000000001")!
+        let network = ScriptedServerNetwork { request in
+            XCTAssertEqual(request.url?.path, "/v1/events")
+            XCTAssertEqual(request.url?.query, "after_sequence=41&limit=100")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
+            return Self.response(
+                status: 200,
+                body: """
+                {"events":[{
+                  "id":"\(eventID.uuidString.lowercased())",
+                  "sequence":42,
+                  "type":"call.state",
+                  "device_uuid":"\(deviceID.uuidString.lowercased())",
+                  "occurred_at":"2026-10-16T08:09:10Z",
+                  "key_epoch":1,
+                  "nonce":"AAAAAAAAAAAAAAAA",
+                  "ciphertext":"AQID",
+                  "signature":"BAUG"
+                }],"next_sequence":42}
+                """
+            )
+        }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+
+        let page = try await manager.encryptedEvents(afterSequence: 41)
+
+        XCTAssertEqual(page.nextSequence, 42)
+        XCTAssertEqual(page.events.first?.id, eventID)
+        XCTAssertEqual(page.events.first?.deviceUUID, deviceID)
     }
 
     private func isolatedDefaults() -> UserDefaults {

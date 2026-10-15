@@ -16,7 +16,7 @@ const (
 	incomingCallType          = "call.incoming"
 	maxIncomingCallRecipients = 64
 	keyAgreementPublicBytes   = 32
-	maxIncomingCiphertext     = 64 << 10
+	maxIncomingCiphertext     = 3 << 10
 )
 
 // VerifyIncomingCallNotification validates canonical recipient routing and the device signature.

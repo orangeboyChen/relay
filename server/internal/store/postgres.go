@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -405,6 +406,149 @@ func (store *Postgres) ListApprovedAppInstallationRecipients(ctx context.Context
 		return nil, fmt.Errorf("iterate approved app installation recipients: %w", err)
 	}
 	return recipients, nil
+}
+
+// InsertIncomingCall stores recipient ciphertexts and queues one opaque VoIP delivery per approved iPhone.
+func (store *Postgres) InsertIncomingCall(ctx context.Context, notification domain.IncomingCallNotification, expiresAt time.Time) (bool, error) {
+	tx, err := store.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return false, fmt.Errorf("begin incoming call insert: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	command, err := tx.Exec(ctx, `
+		INSERT INTO incoming_call_notifications (id, type, device_id, occurred_at, key_epoch, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (id) DO NOTHING`,
+		notification.ID,
+		notification.Type,
+		notification.DeviceUUID,
+		notification.OccurredAt,
+		notification.KeyEpoch,
+		expiresAt,
+	)
+	if err != nil {
+		return false, fmt.Errorf("insert incoming call notification: %w", err)
+	}
+	if command.RowsAffected() == 0 {
+		matches, err := incomingCallMatches(ctx, tx, notification, expiresAt)
+		if err != nil {
+			return false, err
+		}
+		if !matches {
+			return false, domain.ErrIdempotencyConflict
+		}
+		return false, nil
+	}
+
+	for _, recipient := range notification.Recipients {
+		command, err := tx.Exec(ctx, `
+			INSERT INTO incoming_call_recipients (
+				notification_id, installation_id, sender_public_key, nonce, ciphertext, signature
+			)
+			SELECT $1, id, $3, $4, $5, $6
+			FROM app_installations
+			WHERE id = $2 AND approved_at IS NOT NULL AND revoked_at IS NULL`,
+			notification.ID,
+			recipient.InstallationID,
+			recipient.SenderPublicKey,
+			recipient.Nonce,
+			recipient.Ciphertext,
+			recipient.Signature,
+		)
+		if err != nil {
+			return false, fmt.Errorf("insert incoming call recipient: %w", err)
+		}
+		if command.RowsAffected() == 0 {
+			return false, domain.ErrUntrustedInstallationRecipient
+		}
+		delivery, err := json.Marshal(domain.IncomingCallDelivery{
+			NotificationID: notification.ID,
+			Type:           notification.Type,
+			DeviceUUID:     notification.DeviceUUID,
+			OccurredAt:     notification.OccurredAt,
+			KeyEpoch:       notification.KeyEpoch,
+			Recipient:      recipient,
+		})
+		if err != nil {
+			return false, fmt.Errorf("encode incoming call delivery: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO outbox_jobs (kind, routing_key, payload, available_at)
+			VALUES ('voip.incoming_call', $1, $2, now())`, recipient.InstallationID, delivery); err != nil {
+			return false, fmt.Errorf("enqueue incoming call delivery: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit incoming call insert: %w", err)
+	}
+	return true, nil
+}
+
+func incomingCallMatches(ctx context.Context, tx pgx.Tx, notification domain.IncomingCallNotification, expiresAt time.Time) (bool, error) {
+	var existing domain.IncomingCallNotification
+	var existingExpiry time.Time
+	err := tx.QueryRow(ctx, `
+		SELECT id, type, device_id, occurred_at, key_epoch, expires_at
+		FROM incoming_call_notifications
+		WHERE id = $1`, notification.ID).Scan(
+		&existing.ID,
+		&existing.Type,
+		&existing.DeviceUUID,
+		&existing.OccurredAt,
+		&existing.KeyEpoch,
+		&existingExpiry,
+	)
+	if err != nil {
+		return false, fmt.Errorf("read existing incoming call notification: %w", err)
+	}
+	if existing.Type != notification.Type ||
+		existing.DeviceUUID != notification.DeviceUUID ||
+		!existing.OccurredAt.Equal(notification.OccurredAt) ||
+		existing.KeyEpoch != notification.KeyEpoch ||
+		!existingExpiry.Equal(expiresAt) {
+		return false, nil
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT installation_id, sender_public_key, nonce, ciphertext, signature
+		FROM incoming_call_recipients
+		WHERE notification_id = $1
+		ORDER BY installation_id`, notification.ID)
+	if err != nil {
+		return false, fmt.Errorf("list existing incoming call recipients: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var recipient domain.IncomingCallRecipient
+		if err := rows.Scan(
+			&recipient.InstallationID,
+			&recipient.SenderPublicKey,
+			&recipient.Nonce,
+			&recipient.Ciphertext,
+			&recipient.Signature,
+		); err != nil {
+			return false, fmt.Errorf("scan existing incoming call recipient: %w", err)
+		}
+		existing.Recipients = append(existing.Recipients, recipient)
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate existing incoming call recipients: %w", err)
+	}
+	if len(existing.Recipients) != len(notification.Recipients) {
+		return false, nil
+	}
+	for index := range existing.Recipients {
+		left := existing.Recipients[index]
+		right := notification.Recipients[index]
+		if left.InstallationID != right.InstallationID ||
+			!bytes.Equal(left.SenderPublicKey, right.SenderPublicKey) ||
+			!bytes.Equal(left.Nonce, right.Nonce) ||
+			!bytes.Equal(left.Ciphertext, right.Ciphertext) ||
+			!bytes.Equal(left.Signature, right.Signature) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // ConsumePairingToken atomically consumes a pairing token, allocates a SIM ID, and stores a device credential hash.

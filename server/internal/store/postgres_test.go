@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"os"
 	"time"
@@ -50,6 +51,7 @@ var _ = Describe("Embedded migrations", func() {
 		Entry("device credentials", "migrations/004_device_pairing.sql", "device_credentials"),
 		Entry("pairing retries", "migrations/005_pairing_retry.sql", "paired_device_id"),
 		Entry("installation agreement keys", "migrations/007_installation_key_agreement.sql", "key_agreement_public_key"),
+		Entry("incoming call notifications", "migrations/008_incoming_call_notifications.sql", "incoming_call_recipients"),
 	)
 })
 
@@ -386,6 +388,100 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		envelope.Ciphertext = []byte("different")
 		_, _, err = database.InsertEvent(context.Background(), envelope, expiresAt)
 		Expect(errors.Is(err, domain.ErrIdempotencyConflict)).To(BeTrue())
+	})
+
+	It("atomically stores incoming call ciphertexts and one VoIP outbox job per approved recipient", func() {
+		owner := createOwner()
+		installation := AppInstallationRegistration{
+			ID:                    "01900000-0000-7000-8000-000000000101",
+			IdentityPublicKey:     bytes.Repeat([]byte{9}, 32),
+			KeyAgreementPublicKey: bytes.Repeat([]byte{10}, 32),
+		}
+		_, created, err := database.RegisterAppInstallation(context.Background(), owner.ID, installation, now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
+		device := createDevice(firstDeviceID)
+		notification := domain.IncomingCallNotification{
+			ID:         "01900000-0000-7000-8000-000000000040",
+			Type:       "call.incoming",
+			DeviceUUID: device.ID,
+			OccurredAt: now,
+			KeyEpoch:   1,
+			Recipients: []domain.IncomingCallRecipient{{
+				InstallationID:  installation.ID,
+				SenderPublicKey: bytes.Repeat([]byte{11}, 32),
+				Nonce:           bytes.Repeat([]byte{12}, 12),
+				Ciphertext:      []byte("opaque incoming call"),
+				Signature:       bytes.Repeat([]byte{13}, ed25519.SignatureSize),
+			}},
+		}
+		expiresAt := now.Add(365 * 24 * time.Hour)
+
+		inserted, err := database.InsertIncomingCall(context.Background(), notification, expiresAt)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(inserted).To(BeTrue())
+		inserted, err = database.InsertIncomingCall(context.Background(), notification, expiresAt)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(inserted).To(BeFalse())
+
+		var kind string
+		var routingKey string
+		var payload []byte
+		Expect(database.pool.QueryRow(context.Background(), `
+			SELECT kind, routing_key, payload
+			FROM outbox_jobs
+			WHERE kind = 'voip.incoming_call'`).Scan(&kind, &routingKey, &payload)).To(Succeed())
+		Expect(kind).To(Equal("voip.incoming_call"))
+		Expect(routingKey).To(Equal(installation.ID))
+		var delivery domain.IncomingCallDelivery
+		Expect(json.Unmarshal(payload, &delivery)).To(Succeed())
+		Expect(delivery.NotificationID).To(Equal(notification.ID))
+		Expect(delivery.Recipient).To(Equal(notification.Recipients[0]))
+		var jobs int
+		Expect(database.pool.QueryRow(context.Background(), `
+			SELECT count(*) FROM outbox_jobs WHERE kind = 'voip.incoming_call'`).Scan(&jobs)).To(Succeed())
+		Expect(jobs).To(Equal(1))
+
+		notification.Recipients[0].Ciphertext = []byte("different ciphertext")
+		_, err = database.InsertIncomingCall(context.Background(), notification, expiresAt)
+		Expect(errors.Is(err, domain.ErrIdempotencyConflict)).To(BeTrue())
+	})
+
+	It("rolls back an incoming call batch containing an unapproved recipient", func() {
+		owner := createOwner()
+		pending := AppInstallationRegistration{
+			ID:                    "01900000-0000-7000-8000-000000000102",
+			IdentityPublicKey:     bytes.Repeat([]byte{9}, 32),
+			KeyAgreementPublicKey: bytes.Repeat([]byte{10}, 32),
+		}
+		approved := pending
+		approved.ID = "01900000-0000-7000-8000-000000000101"
+		_, _, err := database.RegisterAppInstallation(context.Background(), owner.ID, approved, now)
+		Expect(err).NotTo(HaveOccurred())
+		_, _, err = database.RegisterAppInstallation(context.Background(), owner.ID, pending, now.Add(time.Second))
+		Expect(err).NotTo(HaveOccurred())
+		device := createDevice(firstDeviceID)
+		notification := domain.IncomingCallNotification{
+			ID:         "01900000-0000-7000-8000-000000000041",
+			Type:       "call.incoming",
+			DeviceUUID: device.ID,
+			OccurredAt: now,
+			KeyEpoch:   1,
+			Recipients: []domain.IncomingCallRecipient{{
+				InstallationID:  pending.ID,
+				SenderPublicKey: bytes.Repeat([]byte{11}, 32),
+				Nonce:           bytes.Repeat([]byte{12}, 12),
+				Ciphertext:      []byte("opaque incoming call"),
+				Signature:       bytes.Repeat([]byte{13}, ed25519.SignatureSize),
+			}},
+		}
+
+		_, err = database.InsertIncomingCall(context.Background(), notification, now.Add(time.Hour))
+		Expect(errors.Is(err, domain.ErrUntrustedInstallationRecipient)).To(BeTrue())
+		var count int
+		Expect(database.pool.QueryRow(context.Background(), `
+			SELECT count(*) FROM incoming_call_notifications WHERE id = $1`, notification.ID).Scan(&count)).To(Succeed())
+		Expect(count).To(BeZero())
 	})
 
 	It("lists only unexpired encrypted events after a sequence cursor", func() {

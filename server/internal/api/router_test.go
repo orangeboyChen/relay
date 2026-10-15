@@ -83,6 +83,10 @@ type fakeRepository struct {
 	installationError       error
 	installationRecipients  []store.AppInstallationRecipient
 	installationListError   error
+	incomingCall            domain.IncomingCallNotification
+	incomingCallExpiry      time.Time
+	incomingCallCreated     bool
+	incomingCallError       error
 }
 
 func (fake *fakeRepository) ListDevices(context.Context) ([]store.DeviceRecord, error) {
@@ -99,6 +103,12 @@ func (fake *fakeRepository) InsertEvent(_ context.Context, envelope domain.Event
 	fake.insertedEnvelope = envelope
 	fake.insertedExpiry = expiresAt
 	return fake.insertSequence, fake.insertCreated, fake.insertError
+}
+
+func (fake *fakeRepository) InsertIncomingCall(_ context.Context, notification domain.IncomingCallNotification, expiresAt time.Time) (bool, error) {
+	fake.incomingCall = notification
+	fake.incomingCallExpiry = expiresAt
+	return fake.incomingCallCreated, fake.incomingCallError
 }
 
 func (fake *fakeRepository) ListEvents(_ context.Context, afterSequence int64, limit int, now time.Time) ([]domain.EventEnvelope, error) {

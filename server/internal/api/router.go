@@ -41,6 +41,7 @@ type Repository interface {
 	UpdateDeviceCommandPublicKey(context.Context, string, []byte) error
 	RegisterAppInstallation(context.Context, string, store.AppInstallationRegistration, time.Time) (store.AppInstallationRecord, bool, error)
 	ListApprovedAppInstallationRecipients(context.Context) ([]store.AppInstallationRecipient, error)
+	InsertIncomingCall(context.Context, domain.IncomingCallNotification, time.Time) (bool, error)
 }
 
 // Config describes public endpoints advertised to clients.
@@ -62,6 +63,7 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("POST /v1/device-pairing-tokens", router.requireOwner(router.createPairingToken))
 	mux.HandleFunc("POST /v1/app-installations", router.requireOwner(router.registerAppInstallation))
 	mux.HandleFunc("GET /v1/device-installations", router.listDeviceInstallationRecipients)
+	mux.HandleFunc("POST /v1/incoming-calls", router.insertIncomingCall)
 	mux.HandleFunc("POST /v1/device-pairings", router.pairDevice)
 	mux.HandleFunc("POST /v1/events", router.insertEvent)
 	mux.HandleFunc("GET /v1/events", router.requireOwner(router.listEvents))
@@ -165,6 +167,61 @@ func (router *router) listDeviceInstallationRecipients(writer http.ResponseWrite
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"installations": recipients})
+}
+
+func (router *router) insertIncomingCall(writer http.ResponseWriter, request *http.Request) {
+	var body struct {
+		Notification domain.IncomingCallNotification `json:"notification"`
+	}
+	if err := decodeJSON(request, &body); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	token, ok := bearerToken(request.Header.Get("Authorization"))
+	if !ok {
+		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is required.")
+		return
+	}
+	publicKey, err := router.repository.AuthenticateDevice(request.Context(), body.Notification.DeviceUUID, token, router.now())
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is invalid or revoked.")
+		return
+	}
+	if err := e2ee.VerifyIncomingCallNotification(ed25519.PublicKey(publicKey), body.Notification); err != nil {
+		if errors.Is(err, e2ee.ErrInvalidIncomingCall) {
+			writeError(writer, http.StatusUnprocessableEntity, "invalid_incoming_call", err.Error())
+			return
+		}
+		writeError(writer, http.StatusUnauthorized, "invalid_incoming_call_signature", "Incoming call signature is invalid.")
+		return
+	}
+	now := router.now()
+	if body.Notification.OccurredAt.After(now.Add(maxEventFutureSkew)) {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_incoming_call_time", "Incoming call timestamp is too far in the future.")
+		return
+	}
+	expiresAt := body.Notification.OccurredAt.Add(eventRetention)
+	if !expiresAt.After(now) {
+		writeError(writer, http.StatusUnprocessableEntity, "incoming_call_expired", "Incoming call is outside the retention window.")
+		return
+	}
+	created, err := router.repository.InsertIncomingCall(request.Context(), body.Notification, expiresAt)
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrIdempotencyConflict):
+			writeError(writer, http.StatusConflict, "idempotency_conflict", err.Error())
+		case errors.Is(err, domain.ErrUntrustedInstallationRecipient):
+			writeError(writer, http.StatusConflict, "untrusted_installation_recipient", err.Error())
+		default:
+			writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to store the incoming call.")
+		}
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	writeJSON(writer, status, map[string]bool{"created": created})
 }
 
 func (router *router) health(writer http.ResponseWriter, _ *http.Request) {

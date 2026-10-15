@@ -96,6 +96,9 @@ func (repository *memoryRepository) RegisterAppInstallation(_ context.Context, _
 func (repository *memoryRepository) ListApprovedAppInstallationRecipients(context.Context) ([]store.AppInstallationRecipient, error) {
 	return nil, nil
 }
+func (repository *memoryRepository) InsertIncomingCall(context.Context, domain.IncomingCallNotification, time.Time) (bool, error) {
+	return true, nil
+}
 
 type memoryHTTPServer struct {
 	listenError   error

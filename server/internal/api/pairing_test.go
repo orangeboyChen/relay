@@ -66,8 +66,10 @@ var _ = Describe("Device pairing API", func() {
 		Expect(repository.pairingTokenHash).NotTo(Equal([]byte(body.PairingToken)))
 	})
 
-	It("pairs one device and returns a credential that the repository only sees hashed", func() {
+	It("pairs one device while the repository sees only its credential hash", func() {
 		pairingToken, err := auth.NewOpaqueToken()
+		Expect(err).NotTo(HaveOccurred())
+		credential, err := auth.NewOpaqueToken()
 		Expect(err).NotTo(HaveOccurred())
 		repository.pairingRecord = store.DeviceRecord{ID: "01900000-0000-7000-8000-000000000001", NumericID: 1, PairedAt: now}
 		requestBody, err := json.Marshal(map[string]any{
@@ -76,6 +78,7 @@ var _ = Describe("Device pairing API", func() {
 			"profile_ciphertext":  []byte{},
 			"identity_public_key": bytes.Repeat([]byte{7}, ed25519.PublicKeySize),
 			"wrapped_vault_key":   []byte("wrapped vault key"),
+			"device_credential":   credential,
 		})
 		Expect(err).NotTo(HaveOccurred())
 		request := httptest.NewRequest(http.MethodPost, "/v1/device-pairings", bytes.NewReader(requestBody))
@@ -85,13 +88,11 @@ var _ = Describe("Device pairing API", func() {
 
 		Expect(response.Code).To(Equal(http.StatusCreated))
 		var body struct {
-			Device     store.DeviceRecord `json:"device"`
-			Credential string             `json:"credential"`
+			Device store.DeviceRecord `json:"device"`
 		}
 		Expect(json.Unmarshal(response.Body.Bytes(), &body)).To(Succeed())
 		Expect(body.Device.NumericID).To(Equal(1))
-		Expect(body.Credential).NotTo(BeEmpty())
-		credentialHash, err := auth.TokenHash(body.Credential)
+		credentialHash, err := auth.TokenHash(credential)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(repository.pairing.CredentialHash).To(Equal(credentialHash[:]))
 		Expect(repository.pairing.IdentityPublicKey).To(HaveLen(ed25519.PublicKeySize))
@@ -121,12 +122,15 @@ var _ = Describe("Device pairing API", func() {
 		func(repositoryError error, expectedStatus int) {
 			pairingToken, err := auth.NewOpaqueToken()
 			Expect(err).NotTo(HaveOccurred())
+			credential, err := auth.NewOpaqueToken()
+			Expect(err).NotTo(HaveOccurred())
 			repository.pairingError = repositoryError
 			requestBody, err := json.Marshal(map[string]any{
 				"pairing_token":       pairingToken,
 				"device_uuid":         "01900000-0000-7000-8000-000000000001",
 				"profile_ciphertext":  []byte("encrypted"),
 				"identity_public_key": bytes.Repeat([]byte{7}, ed25519.PublicKeySize),
+				"device_credential":   credential,
 			})
 			Expect(err).NotTo(HaveOccurred())
 			request := httptest.NewRequest(http.MethodPost, "/v1/device-pairings", bytes.NewReader(requestBody))

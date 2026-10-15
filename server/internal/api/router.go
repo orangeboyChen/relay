@@ -158,6 +158,7 @@ func (router *router) pairDevice(writer http.ResponseWriter, request *http.Reque
 		ProfileCiphertext []byte `json:"profile_ciphertext"`
 		IdentityPublicKey []byte `json:"identity_public_key"`
 		WrappedVaultKey   []byte `json:"wrapped_vault_key"`
+		DeviceCredential  string `json:"device_credential"`
 	}
 	if err := decodeJSON(request, &body); err != nil {
 		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
@@ -172,14 +173,9 @@ func (router *router) pairDevice(writer http.ResponseWriter, request *http.Reque
 		writeError(writer, http.StatusUnprocessableEntity, "invalid_device", "Device identity or encrypted profile is invalid.")
 		return
 	}
-	credential, err := auth.NewOpaqueToken()
+	credentialHash, err := auth.TokenHash(body.DeviceCredential)
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "pairing_error", "Unable to create a device credential.")
-		return
-	}
-	credentialHash, err := auth.TokenHash(credential)
-	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "pairing_error", "Unable to create a device credential.")
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_device", "Device credential is invalid.")
 		return
 	}
 	record, err := router.repository.ConsumePairingToken(request.Context(), tokenHash[:], router.now(), store.DevicePairing{
@@ -203,8 +199,7 @@ func (router *router) pairDevice(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 	writeJSON(writer, http.StatusCreated, map[string]any{
-		"device":     record,
-		"credential": credential,
+		"device": record,
 	})
 }
 

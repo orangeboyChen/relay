@@ -258,17 +258,51 @@ func (store *Postgres) ConsumePairingToken(ctx context.Context, tokenHash []byte
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var ownerID string
+	var consumedAt *time.Time
+	var pairedDeviceID *string
 	err = tx.QueryRow(ctx, `
-		UPDATE pairing_tokens
-		SET consumed_at = $2
-		WHERE token_hash = $1 AND owner_id IS NOT NULL AND consumed_at IS NULL AND expires_at > $2
-		RETURNING owner_id`, tokenHash, now.UTC()).Scan(&ownerID)
+		SELECT consumed_at, paired_device_id::text
+		FROM pairing_tokens
+		WHERE token_hash = $1
+		  AND owner_id IS NOT NULL
+		  AND (expires_at > $2 OR consumed_at IS NOT NULL)
+		FOR UPDATE`, tokenHash, now.UTC()).Scan(&consumedAt, &pairedDeviceID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeviceRecord{}, domain.ErrInvalidPairingToken
 	}
 	if err != nil {
-		return DeviceRecord{}, fmt.Errorf("consume pairing token: %w", err)
+		return DeviceRecord{}, fmt.Errorf("lock pairing token: %w", err)
+	}
+	if consumedAt != nil {
+		if pairedDeviceID == nil || *pairedDeviceID != pairing.DeviceUUID {
+			return DeviceRecord{}, domain.ErrInvalidPairingToken
+		}
+		var record DeviceRecord
+		err := tx.QueryRow(ctx, `
+			SELECT devices.id, devices.numeric_id, devices.profile_ciphertext,
+			       devices.identity_public_key, devices.wrapped_vault_key,
+			       devices.paired_at, devices.last_seen_at
+			FROM devices
+			JOIN device_credentials ON device_credentials.device_id = devices.id
+			WHERE devices.id = $1
+			  AND device_credentials.credential_hash = $2
+			  AND devices.revoked_at IS NULL
+			  AND device_credentials.revoked_at IS NULL`, pairing.DeviceUUID, pairing.CredentialHash).Scan(
+			&record.ID,
+			&record.NumericID,
+			&record.ProfileCiphertext,
+			&record.IdentityPublicKey,
+			&record.WrappedVaultKey,
+			&record.PairedAt,
+			&record.LastSeenAt,
+		)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return DeviceRecord{}, domain.ErrInvalidPairingToken
+		}
+		if err != nil {
+			return DeviceRecord{}, fmt.Errorf("read paired device retry: %w", err)
+		}
+		return record, nil
 	}
 
 	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", int64(0x53494d44)); err != nil {
@@ -312,6 +346,12 @@ func (store *Postgres) ConsumePairingToken(ctx context.Context, tokenHash []byte
 		INSERT INTO device_credentials (device_id, credential_hash)
 		VALUES ($1, $2)`, pairing.DeviceUUID, pairing.CredentialHash); err != nil {
 		return DeviceRecord{}, fmt.Errorf("insert device credential: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE pairing_tokens
+		SET consumed_at = $2, paired_device_id = $3
+		WHERE token_hash = $1`, tokenHash, now.UTC(), pairing.DeviceUUID); err != nil {
+		return DeviceRecord{}, fmt.Errorf("complete pairing token: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return DeviceRecord{}, fmt.Errorf("commit device pairing: %w", err)

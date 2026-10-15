@@ -61,3 +61,13 @@ func TestDevicePairingMigrationContainsCredentialStorage(t *testing.T) {
 		}
 	}
 }
+
+func TestPairingRetryMigrationLinksConsumedTokenToDevice(t *testing.T) {
+	schema, err := migrations.ReadFile("migrations/005_pairing_retry.sql")
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	if !bytes.Contains(schema, []byte("paired_device_id")) {
+		t.Fatal("pairing retry migration does not link a token to its paired device")
+	}
+}

@@ -10,43 +10,56 @@ import (
 )
 
 const (
-	defaultATDevice    = "/dev/sim-deck/at"
-	defaultPCMDevice   = "/dev/sim-deck/pcm"
-	defaultSoundDevice = "/dev/snd"
-	defaultHealthAddr  = ":8080"
-	defaultBaud        = 115200
-	defaultStateDir    = "/var/lib/sim-deck"
-	defaultPairingFile = "/run/secrets/sim_deck_pairing_token"
+	defaultATDevice           = "/dev/sim-deck/at"
+	defaultPCMDevice          = "/dev/sim-deck/pcm"
+	defaultALSACaptureDevice  = "hw:0,0"
+	defaultALSAPlaybackDevice = "hw:0,0"
+	defaultHealthAddr         = ":8080"
+	defaultBaud               = 115200
+	defaultStateDir           = "/var/lib/sim-deck"
+	defaultPairingFile        = "/run/secrets/sim_deck_pairing_token"
+)
+
+// AudioMode selects the modem audio transport exposed to the media peer.
+type AudioMode string
+
+const (
+	AudioModeALSA   AudioMode = "alsa"
+	AudioModeRawPCM AudioMode = "raw-pcm"
 )
 
 // Config describes the host devices and local health endpoint used by one agent instance.
 type Config struct {
-	ATDevice          string
-	PCMDevice         string
-	SoundDevice       string
-	HealthAddress     string
-	Baud              int
-	CommandTimeout    time.Duration
-	CommandPoll       time.Duration
-	ServerURL         string
-	StateDirectory    string
-	PairingTokenFile  string
-	AllowInsecureHTTP bool
+	ATDevice           string
+	AudioMode          AudioMode
+	ALSACaptureDevice  string
+	ALSAPlaybackDevice string
+	PCMDevice          string
+	HealthAddress      string
+	Baud               int
+	CommandTimeout     time.Duration
+	CommandPoll        time.Duration
+	ServerURL          string
+	StateDirectory     string
+	PairingTokenFile   string
+	AllowInsecureHTTP  bool
 }
 
 // LoadConfig reads agent configuration from an environment lookup function.
 func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 	config := Config{
-		ATDevice:         valueOrDefault(lookup, "SIM_DECK_AT_DEVICE", defaultATDevice),
-		PCMDevice:        valueOrDefault(lookup, "SIM_DECK_PCM_DEVICE", defaultPCMDevice),
-		SoundDevice:      valueOrDefault(lookup, "SIM_DECK_SOUND_DEVICE", defaultSoundDevice),
-		HealthAddress:    valueOrDefault(lookup, "SIM_DECK_HEALTH_ADDRESS", defaultHealthAddr),
-		Baud:             defaultBaud,
-		CommandTimeout:   5 * time.Second,
-		CommandPoll:      time.Second,
-		ServerURL:        strings.TrimRight(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_SERVER_URL", "")), "/"),
-		StateDirectory:   valueOrDefault(lookup, "SIM_DECK_STATE_DIRECTORY", defaultStateDir),
-		PairingTokenFile: valueOrDefault(lookup, "SIM_DECK_PAIRING_TOKEN_FILE", defaultPairingFile),
+		ATDevice:           valueOrDefault(lookup, "SIM_DECK_AT_DEVICE", defaultATDevice),
+		AudioMode:          AudioMode(strings.ToLower(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_AUDIO_MODE", string(AudioModeALSA))))),
+		ALSACaptureDevice:  valueOrDefault(lookup, "SIM_DECK_ALSA_CAPTURE_DEVICE", defaultALSACaptureDevice),
+		ALSAPlaybackDevice: valueOrDefault(lookup, "SIM_DECK_ALSA_PLAYBACK_DEVICE", defaultALSAPlaybackDevice),
+		PCMDevice:          valueOrDefault(lookup, "SIM_DECK_PCM_DEVICE", defaultPCMDevice),
+		HealthAddress:      valueOrDefault(lookup, "SIM_DECK_HEALTH_ADDRESS", defaultHealthAddr),
+		Baud:               defaultBaud,
+		CommandTimeout:     5 * time.Second,
+		CommandPoll:        time.Second,
+		ServerURL:          strings.TrimRight(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_SERVER_URL", "")), "/"),
+		StateDirectory:     valueOrDefault(lookup, "SIM_DECK_STATE_DIRECTORY", defaultStateDir),
+		PairingTokenFile:   valueOrDefault(lookup, "SIM_DECK_PAIRING_TOKEN_FILE", defaultPairingFile),
 	}
 	if value, ok := lookup("SIM_DECK_ALLOW_INSECURE_HTTP"); ok && strings.TrimSpace(value) != "" {
 		allow, err := strconv.ParseBool(value)
@@ -79,6 +92,18 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 	}
 	if strings.TrimSpace(config.ATDevice) == "" {
 		return Config{}, fmt.Errorf("SIM_DECK_AT_DEVICE must not be empty")
+	}
+	switch config.AudioMode {
+	case AudioModeALSA:
+		if strings.TrimSpace(config.ALSACaptureDevice) == "" || strings.TrimSpace(config.ALSAPlaybackDevice) == "" {
+			return Config{}, fmt.Errorf("SIM_DECK_ALSA_CAPTURE_DEVICE and SIM_DECK_ALSA_PLAYBACK_DEVICE must not be empty in ALSA mode")
+		}
+	case AudioModeRawPCM:
+		if strings.TrimSpace(config.PCMDevice) == "" {
+			return Config{}, fmt.Errorf("SIM_DECK_PCM_DEVICE must not be empty in raw-pcm mode")
+		}
+	default:
+		return Config{}, fmt.Errorf("SIM_DECK_AUDIO_MODE must be alsa or raw-pcm")
 	}
 	serverURL, err := url.Parse(config.ServerURL)
 	if err != nil || serverURL.Host == "" || serverURL.User != nil || serverURL.RawQuery != "" || serverURL.Fragment != "" {

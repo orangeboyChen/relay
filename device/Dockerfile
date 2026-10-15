@@ -11,7 +11,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/sim-deck-device ./cmd/sim-deck-device
 
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates \
+RUN apk add --no-cache alsa-utils ca-certificates \
     && addgroup -S -g 65532 simdeck \
     && adduser -S -D -H -u 65532 -G simdeck simdeck \
     && install -d -o simdeck -g simdeck -m 0700 /var/lib/sim-deck

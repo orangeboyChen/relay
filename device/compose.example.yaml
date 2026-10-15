@@ -1,16 +1,16 @@
+x-device-environment: &device-environment
+  SIM_DECK_SERVER_URL: "${SIM_DECK_SERVER_URL:?set SIM_DECK_SERVER_URL}"
+  SIM_DECK_AT_DEVICE: /dev/sim-deck/at
+  SIM_DECK_PCM_DEVICE: /dev/sim-deck/pcm
+  SIM_DECK_STATE_DIRECTORY: /var/lib/sim-deck
+  SIM_DECK_PAIRING_TOKEN_FILE: /run/secrets/sim_deck_pairing_token
+  SIM_DECK_COMMAND_POLL_INTERVAL: 1s
+
 x-device-defaults: &device-defaults
   image: sim-deck/device:dev
   build:
     context: .
   restart: unless-stopped
-  environment:
-    SIM_DECK_SERVER_URL: "${SIM_DECK_SERVER_URL:?set SIM_DECK_SERVER_URL}"
-    SIM_DECK_AT_DEVICE: /dev/sim-deck/at
-    SIM_DECK_PCM_DEVICE: /dev/sim-deck/pcm
-    SIM_DECK_SOUND_DEVICE: /dev/snd
-    SIM_DECK_STATE_DIRECTORY: /var/lib/sim-deck
-    SIM_DECK_PAIRING_TOKEN_FILE: /run/secrets/sim_deck_pairing_token
-    SIM_DECK_COMMAND_POLL_INTERVAL: 1s
   group_add:
     - "${SIM_DECK_DIALOUT_GID:-20}"
     - "${SIM_DECK_AUDIO_GID:-29}"
@@ -26,6 +26,11 @@ services:
   modem-1:
     <<: *device-defaults
     hostname: sim-deck-modem-1
+    environment:
+      <<: *device-environment
+      SIM_DECK_AUDIO_MODE: "${SIM_DECK_MODEM_1_AUDIO_MODE:-alsa}"
+      SIM_DECK_ALSA_CAPTURE_DEVICE: "${SIM_DECK_MODEM_1_ALSA_CAPTURE_DEVICE:-hw:0,0}"
+      SIM_DECK_ALSA_PLAYBACK_DEVICE: "${SIM_DECK_MODEM_1_ALSA_PLAYBACK_DEVICE:-hw:0,0}"
     devices:
       - "${SIM_DECK_MODEM_1_AT_DEVICE:-/dev/sim-deck/modem-1-at}:/dev/sim-deck/at"
       - "${SIM_DECK_MODEM_1_PCM_DEVICE:-/dev/sim-deck/modem-1-pcm}:/dev/sim-deck/pcm"
@@ -43,6 +48,11 @@ services:
   modem-2:
     <<: *device-defaults
     hostname: sim-deck-modem-2
+    environment:
+      <<: *device-environment
+      SIM_DECK_AUDIO_MODE: "${SIM_DECK_MODEM_2_AUDIO_MODE:-alsa}"
+      SIM_DECK_ALSA_CAPTURE_DEVICE: "${SIM_DECK_MODEM_2_ALSA_CAPTURE_DEVICE:-hw:0,0}"
+      SIM_DECK_ALSA_PLAYBACK_DEVICE: "${SIM_DECK_MODEM_2_ALSA_PLAYBACK_DEVICE:-hw:0,0}"
     devices:
       - "${SIM_DECK_MODEM_2_AT_DEVICE:-/dev/sim-deck/modem-2-at}:/dev/sim-deck/at"
       - "${SIM_DECK_MODEM_2_PCM_DEVICE:-/dev/sim-deck/modem-2-pcm}:/dev/sim-deck/pcm"

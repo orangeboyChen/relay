@@ -157,8 +157,10 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	logger.Info(
 		"device agent ready",
 		"at_device", config.ATDevice,
+		"audio_mode", config.AudioMode,
+		"alsa_capture_device", config.ALSACaptureDevice,
+		"alsa_playback_device", config.ALSAPlaybackDevice,
 		"pcm_device", config.PCMDevice,
-		"sound_device", config.SoundDevice,
 		"device_uuid", deviceIdentity.DeviceUUID,
 		"numeric_id", deviceIdentity.NumericID,
 	)

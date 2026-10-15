@@ -34,7 +34,22 @@ modem is appropriate when replacing a host.
 The image contains CA certificates for HTTPS and runs as UID/GID 65532 with a
 read-only root filesystem in the Compose example. It does not need
 `--privileged` or Linux capabilities. Only the required character devices are
-mapped into each container.
+mapped into each container. The image includes `alsa-utils` for its `arecord`
+and `aplay` PCM bridges.
+
+## Audio backends
+
+`SIM_DECK_AUDIO_MODE=alsa` is the default. The agent captures and plays signed
+16-bit little-endian, 8 kHz, mono PCM through the ALSA names configured by
+`SIM_DECK_ALSA_CAPTURE_DEVICE` and `SIM_DECK_ALSA_PLAYBACK_DEVICE`. Both default
+to `hw:0,0`. The Compose example maps only one modem's control, capture, and
+playback nodes into each container as card zero, so identical ALSA names remain
+isolated even when several containers run on one host.
+
+Use `SIM_DECK_AUDIO_MODE=raw-pcm` only when the modem firmware exposes a tested
+full-duplex raw PCM character device. That mode opens `SIM_DECK_PCM_DEVICE`,
+which defaults to `/dev/sim-deck/pcm`, directly. Audio mode is configured per
+container; one modem may use UAC/ALSA while another uses raw PCM.
 
 ## Stable Linux device paths
 

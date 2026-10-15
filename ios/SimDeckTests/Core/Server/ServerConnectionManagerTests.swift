@@ -147,6 +147,28 @@ final class ServerConnectionManagerTests: XCTestCase {
         XCTAssertEqual(manager.state, .disconnected)
     }
 
+    func testDeviceLoadFailureUpdatesVisibleConnectionState() async throws {
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
+        )
+        let network = ScriptedServerNetwork { _ in
+            Self.response(status: 503, body: "{}")
+        }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+
+        do {
+            _ = try await manager.loadDevices()
+            XCTFail("Expected the device request to fail")
+        } catch {
+            XCTAssertEqual(error as? ServerConnectionError, .requestFailed(503))
+        }
+
+        XCTAssertEqual(manager.state, .failed)
+        XCTAssertNotNil(manager.lastErrorDescription)
+    }
+
     private func isolatedDefaults() -> UserDefaults {
         let suiteName = "ServerConnectionManagerTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

@@ -181,25 +181,34 @@ final class ServerConnectionManager {
     }
 
     func loadDevices(now: Date = .now) async throws -> [DeviceLineIdentity] {
-        let (data, response) = try await authenticatedRequest(path: "v1/devices", method: "GET")
-        guard response.statusCode == 200 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
-        }
-        let body = try Self.decoder.decode(DeviceListResponse.self, from: data)
-        return body.devices.map { device in
-            let recentlySeen = device.lastSeenAt.map {
-                let age = now.timeIntervalSince($0)
-                return age >= 0 && age < 60
-            } ?? false
-            return DeviceLineIdentity(
-                id: device.deviceUUID,
-                numericID: device.numericID,
-                deviceName: "",
-                lineName: "",
-                phoneNumber: "",
-                isOnline: recentlySeen && device.commandPublicKey?.count == 32,
-                commandPublicKey: device.commandPublicKey
-            )
+        do {
+            let (data, response) = try await authenticatedRequest(path: "v1/devices", method: "GET")
+            guard response.statusCode == 200 else {
+                throw ServerConnectionError.requestFailed(response.statusCode)
+            }
+            let body = try Self.decoder.decode(DeviceListResponse.self, from: data)
+            let devices = body.devices.map { device in
+                let recentlySeen = device.lastSeenAt.map {
+                    let age = now.timeIntervalSince($0)
+                    return age >= 0 && age < 60
+                } ?? false
+                return DeviceLineIdentity(
+                    id: device.deviceUUID,
+                    numericID: device.numericID,
+                    deviceName: "",
+                    lineName: "",
+                    phoneNumber: "",
+                    isOnline: recentlySeen && device.commandPublicKey?.count == 32,
+                    commandPublicKey: device.commandPublicKey
+                )
+            }
+            state = .connected
+            lastErrorDescription = nil
+            return devices
+        } catch {
+            state = .failed
+            lastErrorDescription = error.localizedDescription
+            throw error
         }
     }
 

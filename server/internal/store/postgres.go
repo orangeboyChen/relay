@@ -408,6 +408,38 @@ func (store *Postgres) ListApprovedAppInstallationRecipients(ctx context.Context
 	return recipients, nil
 }
 
+// UpsertPushToken binds one APNs route to an approved installation owned by the caller.
+func (store *Postgres) UpsertPushToken(
+	ctx context.Context,
+	ownerID string,
+	installationID string,
+	environment string,
+	kind string,
+	token []byte,
+	now time.Time,
+) error {
+	command, err := store.pool.Exec(ctx, `
+		INSERT INTO push_tokens (installation_id, environment, kind, token_ciphertext, updated_at)
+		SELECT id, $3, $4, $5, $6
+		FROM app_installations
+		WHERE id = $1
+		  AND owner_id = $2
+		  AND approved_at IS NOT NULL
+		  AND revoked_at IS NULL
+		ON CONFLICT (installation_id, environment, kind)
+		DO UPDATE SET token_ciphertext = EXCLUDED.token_ciphertext,
+		              updated_at = EXCLUDED.updated_at`,
+		installationID, ownerID, environment, kind, token, now.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("upsert push token: %w", err)
+	}
+	if command.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
 // InsertIncomingCall stores recipient ciphertexts and queues one opaque VoIP delivery per approved iPhone.
 func (store *Postgres) InsertIncomingCall(ctx context.Context, notification domain.IncomingCallNotification, expiresAt time.Time) (bool, error) {
 	tx, err := store.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})

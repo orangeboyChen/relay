@@ -83,6 +83,13 @@ type fakeRepository struct {
 	installationError           error
 	installationRecipients      []store.AppInstallationRecipient
 	installationListError       error
+	pushTokenOwnerID            string
+	pushTokenInstallationID     string
+	pushTokenEnvironment        string
+	pushTokenKind               string
+	pushToken                   []byte
+	pushTokenNow                time.Time
+	pushTokenError              error
 	incomingCall                domain.IncomingCallNotification
 	incomingCallExpiry          time.Time
 	incomingCallCreated         bool
@@ -93,6 +100,24 @@ type fakeRepository struct {
 	incomingClaimInstallationID string
 	incomingClaimNow            time.Time
 	incomingClaimError          error
+}
+
+func (fake *fakeRepository) UpsertPushToken(
+	_ context.Context,
+	ownerID string,
+	installationID string,
+	environment string,
+	kind string,
+	token []byte,
+	now time.Time,
+) error {
+	fake.pushTokenOwnerID = ownerID
+	fake.pushTokenInstallationID = installationID
+	fake.pushTokenEnvironment = environment
+	fake.pushTokenKind = kind
+	fake.pushToken = append([]byte(nil), token...)
+	fake.pushTokenNow = now
+	return fake.pushTokenError
 }
 
 func (fake *fakeRepository) ListDevices(context.Context) ([]store.DeviceRecord, error) {

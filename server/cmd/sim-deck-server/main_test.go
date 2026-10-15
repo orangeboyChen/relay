@@ -93,6 +93,18 @@ func (repository *memoryRepository) RegisterAppInstallation(_ context.Context, _
 		CreatedAt:             approvedAt,
 	}, true, nil
 }
+
+func (repository *memoryRepository) UpsertPushToken(
+	context.Context,
+	string,
+	string,
+	string,
+	string,
+	[]byte,
+	time.Time,
+) error {
+	return nil
+}
 func (repository *memoryRepository) ListApprovedAppInstallationRecipients(context.Context) ([]store.AppInstallationRecipient, error) {
 	return nil, nil
 }

@@ -40,6 +40,7 @@ type Repository interface {
 	CommandStatus(context.Context, string, string, time.Time) (domain.CommandStatus, error)
 	UpdateDeviceCommandPublicKey(context.Context, string, []byte) error
 	RegisterAppInstallation(context.Context, string, store.AppInstallationRegistration, time.Time) (store.AppInstallationRecord, bool, error)
+	UpsertPushToken(context.Context, string, string, string, string, []byte, time.Time) error
 	ListApprovedAppInstallationRecipients(context.Context) ([]store.AppInstallationRecipient, error)
 	InsertIncomingCall(context.Context, domain.IncomingCallNotification, time.Time) (bool, error)
 	ClaimIncomingCall(context.Context, string, string, string, time.Time) (domain.IncomingCallClaim, error)
@@ -63,6 +64,7 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("PATCH /v1/devices/{deviceID}/numeric-id", router.requireOwner(router.updateNumericID))
 	mux.HandleFunc("POST /v1/device-pairing-tokens", router.requireOwner(router.createPairingToken))
 	mux.HandleFunc("POST /v1/app-installations", router.requireOwner(router.registerAppInstallation))
+	mux.HandleFunc("PUT /v1/app-installations/{installationID}/push-tokens/{kind}", router.requireOwner(router.upsertPushToken))
 	mux.HandleFunc("GET /v1/device-installations", router.listDeviceInstallationRecipients)
 	mux.HandleFunc("POST /v1/incoming-calls", router.insertIncomingCall)
 	mux.HandleFunc("POST /v1/incoming-calls/{notificationID}/claim", router.requireOwner(router.claimIncomingCall))
@@ -91,6 +93,7 @@ const (
 	pairingTokenLifetime       = 10 * time.Minute
 	maxProfileCiphertextBytes  = 64 << 10
 	maxWrappedVaultKeyBytes    = 16 << 10
+	maxPushTokenBytes          = 256
 	installationPublicKeyBytes = 32
 	eventRetention             = 365 * 24 * time.Hour
 	maxEventFutureSkew         = 5 * time.Minute
@@ -102,6 +105,41 @@ const (
 	defaultEventPageSize       = 100
 	maxEventPageSize           = 500
 )
+
+func (router *router) upsertPushToken(writer http.ResponseWriter, request *http.Request) {
+	ownerID, ok := request.Context().Value(ownerContextKey{}).(string)
+	if !ok || ownerID == "" {
+		writeError(writer, http.StatusUnauthorized, "invalid_access_token", "Access token is invalid or expired.")
+		return
+	}
+	installationID := request.PathValue("installationID")
+	kind := request.PathValue("kind")
+	var body struct {
+		Environment string `json:"environment"`
+		Token       []byte `json:"token"`
+	}
+	if err := decodeJSON(request, &body); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if !validUUID(installationID) || (kind != "alert" && kind != "voip") ||
+		(body.Environment != "sandbox" && body.Environment != "production") ||
+		len(body.Token) == 0 || len(body.Token) > maxPushTokenBytes {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_push_token", "Push token registration is invalid.")
+		return
+	}
+	if err := router.repository.UpsertPushToken(
+		request.Context(), ownerID, installationID, body.Environment, kind, body.Token, router.now(),
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(writer, http.StatusNotFound, "installation_unavailable", "The app installation is not approved.")
+			return
+		}
+		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to register the push token.")
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
 
 func (router *router) registerAppInstallation(writer http.ResponseWriter, request *http.Request) {
 	ownerID, ok := request.Context().Value(ownerContextKey{}).(string)

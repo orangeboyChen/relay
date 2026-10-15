@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -188,4 +189,78 @@ var _ = Describe("App installation API", func() {
 		Expect(response.Code).To(Equal(http.StatusInternalServerError))
 		Expect(response.Body.String()).To(ContainSubstring("storage_error"))
 	})
+
+	It("registers a VoIP token for the authenticated approved installation", func() {
+		token := bytes.Repeat([]byte{0x7a}, 32)
+		body, err := json.Marshal(map[string]any{
+			"environment": "sandbox",
+			"token":       token,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		request := httptest.NewRequest(
+			http.MethodPut,
+			"/v1/app-installations/"+installationID+"/push-tokens/voip",
+			bytes.NewReader(body),
+		)
+		request.Header.Set("Authorization", "Bearer owner-token")
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, request)
+
+		Expect(response.Code).To(Equal(http.StatusNoContent))
+		Expect(repository.pushTokenOwnerID).To(Equal("owner-1"))
+		Expect(repository.pushTokenInstallationID).To(Equal(installationID))
+		Expect(repository.pushTokenEnvironment).To(Equal("sandbox"))
+		Expect(repository.pushTokenKind).To(Equal("voip"))
+		Expect(repository.pushToken).To(Equal(token))
+		Expect(repository.pushTokenNow).To(Equal(now))
+	})
+
+	DescribeTable("rejects invalid push token registrations before storage",
+		func(id string, kind string, environment string, token []byte, expectedStatus int) {
+			body, err := json.Marshal(map[string]any{"environment": environment, "token": token})
+			Expect(err).NotTo(HaveOccurred())
+			request := httptest.NewRequest(
+				http.MethodPut,
+				"/v1/app-installations/"+id+"/push-tokens/"+kind,
+				bytes.NewReader(body),
+			)
+			request.Header.Set("Authorization", "Bearer owner-token")
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			Expect(response.Code).To(Equal(expectedStatus))
+			Expect(repository.pushTokenInstallationID).To(BeEmpty())
+		},
+		Entry("invalid installation", "invalid", "voip", "sandbox", []byte{1}, http.StatusUnprocessableEntity),
+		Entry("invalid kind", installationID, "email", "sandbox", []byte{1}, http.StatusUnprocessableEntity),
+		Entry("invalid environment", installationID, "voip", "staging", []byte{1}, http.StatusUnprocessableEntity),
+		Entry("empty token", installationID, "voip", "sandbox", nil, http.StatusUnprocessableEntity),
+	)
+
+	DescribeTable("maps push token storage failures",
+		func(repositoryError error, expectedStatus int, expectedCode string) {
+			repository.pushTokenError = repositoryError
+			body, err := json.Marshal(map[string]any{
+				"environment": "production",
+				"token":       bytes.Repeat([]byte{3}, 32),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			request := httptest.NewRequest(
+				http.MethodPut,
+				"/v1/app-installations/"+installationID+"/push-tokens/voip",
+				bytes.NewReader(body),
+			)
+			request.Header.Set("Authorization", "Bearer owner-token")
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			Expect(response.Code).To(Equal(expectedStatus))
+			Expect(response.Body.String()).To(ContainSubstring(expectedCode))
+		},
+		Entry("unapproved installation", pgx.ErrNoRows, http.StatusNotFound, "installation_unavailable"),
+		Entry("storage failure", errors.New("database unavailable"), http.StatusInternalServerError, "storage_error"),
+	)
 })

@@ -11,7 +11,7 @@ struct CallsTabScreen: View {
             state: model.callHistory,
             lines: model.devices,
             referenceDate: .now,
-            callStarter: model.callStarter
+            callStarter: model.callCoordinator
         ) { lineID in
             model.lastSuccessfulDialLineID = lineID
         }
@@ -24,7 +24,7 @@ struct CallsTabScreen: View {
             DialerScreen(
                 lines: model.devices,
                 initialLineID: preferredLineID,
-                callStarter: model.callStarter
+                callStarter: model.callCoordinator
             ) { lineID in
                 model.lastSuccessfulDialLineID = lineID
             }

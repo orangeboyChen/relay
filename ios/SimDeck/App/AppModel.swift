@@ -12,7 +12,7 @@ final class AppModel {
     var keyRecoveryState: KeyRecoveryState
     var installationID: UUID?
     var pendingInstallationRevocationIDs: [UUID]
-    let callStarter: any CallStarting
+    let callCoordinator: CallKitCoordinator
     let installationBootstrapper: any InstallationBootstrapping
 
     init(
@@ -22,7 +22,7 @@ final class AppModel {
         lastSuccessfulDialLineID: UUID? = nil,
         selectedTab: AppTab = .calls,
         keyRecoveryState: KeyRecoveryState = .checking,
-        callStarter: any CallStarting = CallKitCallStarter(),
+        callCoordinator: CallKitCoordinator = CallKitCoordinator(),
         installationBootstrapper: any InstallationBootstrapping = InstallationBootstrapper.live()
     ) {
         self.devices = devices
@@ -32,7 +32,7 @@ final class AppModel {
         self.selectedTab = selectedTab
         self.keyRecoveryState = keyRecoveryState
         self.pendingInstallationRevocationIDs = []
-        self.callStarter = callStarter
+        self.callCoordinator = callCoordinator
         self.installationBootstrapper = installationBootstrapper
     }
 

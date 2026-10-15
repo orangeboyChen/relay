@@ -120,7 +120,7 @@ struct DialerScreen: View {
     DialerScreen(
         lines: PreviewFixtures.devices,
         initialLineID: PreviewFixtures.devices[0].id,
-        callStarter: PreviewCallStarter(),
+        callStarter: CallKitCoordinator(transport: PreviewCallTransport()),
         onStarted: { _ in }
     )
 }
@@ -133,7 +133,7 @@ struct DialerScreen: View {
             return line
         },
         initialLineID: nil,
-        callStarter: PreviewCallStarter(),
+        callStarter: CallKitCoordinator(transport: PreviewCallTransport()),
         onStarted: { _ in }
     )
     .preferredColorScheme(.dark)

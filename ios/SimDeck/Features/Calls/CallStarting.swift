@@ -1,4 +1,3 @@
-import CallKit
 import Foundation
 
 @MainActor
@@ -7,24 +6,10 @@ protocol CallStarting: AnyObject {
 }
 
 @MainActor
-final class CallKitCallStarter: CallStarting {
-    private let controller = CXCallController()
-
-    func startCall(to number: String, using lineID: UUID) async throws {
-        let handle = CXHandle(type: .phoneNumber, value: number)
-        let action = CXStartCallAction(call: UUID(), handle: handle)
-        action.isVideo = false
-        try await controller.request(CXTransaction(action: action))
-    }
+protocol CallControlling: AnyObject {
+    func endCall() async throws
+    func setHeld(_ isHeld: Bool) async throws
+    func setMuted(_ isMuted: Bool) async throws
+    func playDTMF(_ digits: String) async throws
+    func setSpeakerEnabled(_ isEnabled: Bool) throws
 }
-
-#if DEBUG
-@MainActor
-final class PreviewCallStarter: CallStarting {
-    private(set) var requests: [(number: String, lineID: UUID)] = []
-
-    func startCall(to number: String, using lineID: UUID) async throws {
-        requests.append((number, lineID))
-    }
-}
-#endif

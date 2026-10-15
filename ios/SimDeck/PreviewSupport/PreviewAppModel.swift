@@ -8,7 +8,7 @@ extension AppModel {
             lastSuccessfulDialLineID: PreviewFixtures.devices[0].id,
             selectedTab: selectedTab,
             keyRecoveryState: .available,
-            callStarter: PreviewCallStarter(),
+            callCoordinator: CallKitCoordinator(transport: PreviewCallTransport()),
             installationBootstrapper: PreviewInstallationBootstrapper()
         )
     }

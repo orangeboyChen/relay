@@ -40,3 +40,35 @@ enum CallHistoryState: Equatable, Sendable {
     case loaded([CallRecord])
     case failed
 }
+
+struct ActiveCallSession: Identifiable, Equatable, Sendable {
+    let id: UUID
+    let lineID: UUID
+    let remoteNumber: String
+    var displayName: String?
+    var status: ActiveCallStatus
+    var isMuted: Bool
+
+    var title: String {
+        guard let displayName, !displayName.isEmpty else { return remoteNumber }
+        return displayName
+    }
+}
+
+enum ActiveCallStatus: Equatable, Sendable {
+    case requesting
+    case connecting
+    case ringing
+    case active(connectedAt: Date)
+    case held(connectedAt: Date)
+    case ending
+
+    var connectedAt: Date? {
+        switch self {
+        case .active(let connectedAt), .held(let connectedAt):
+            connectedAt
+        case .requesting, .connecting, .ringing, .ending:
+            nil
+        }
+    }
+}

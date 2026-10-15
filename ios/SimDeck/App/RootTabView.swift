@@ -29,6 +29,20 @@ struct RootTabView: View {
             }
             .tag(AppTab.profile)
         }
+        .fullScreenCover(item: activeCall) { _ in
+            InCallScreen(
+                coordinator: model.callCoordinator,
+                lines: model.devices,
+                referenceDate: nil
+            )
+        }
+    }
+
+    private var activeCall: Binding<ActiveCallSession?> {
+        Binding(
+            get: { model.callCoordinator.activeCall },
+            set: { _ in }
+        )
     }
 }
 

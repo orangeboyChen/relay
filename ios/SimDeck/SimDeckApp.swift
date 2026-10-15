@@ -7,6 +7,9 @@ struct SimDeckApp: App {
     var body: some Scene {
         WindowGroup {
             RootTabView(model: model)
+                .task {
+                    model.bootstrapInstallation()
+                }
         }
     }
 }

@@ -22,7 +22,7 @@ struct RootTabView: View {
             .tag(AppTab.messages)
 
             NavigationStack {
-                ProfileScreen(devices: model.devices)
+                ProfileScreen(devices: model.devices, keyRecoveryState: model.keyRecoveryState)
             }
             .tabItem {
                 Label("Me", systemImage: "person.crop.circle.fill")

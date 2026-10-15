@@ -3,19 +3,20 @@ import UIKit
 
 struct ProfileScreen: View {
     let devices: [DeviceLineIdentity]
+    let keyRecoveryState: KeyRecoveryState
 
     var body: some View {
         List {
             AccountSummarySection()
             DeviceSummarySection(devices: devices)
-            SecuritySummarySection()
+            SecuritySummarySection(keyRecoveryState: keyRecoveryState)
 
             Section {
                 NavigationLink("Device Management") {
                     DeviceManagementScreen(devices: devices)
                 }
                 NavigationLink("Settings") {
-                    SettingsScreen(devices: devices)
+                    SettingsScreen(devices: devices, keyRecoveryState: keyRecoveryState)
                 }
             }
         }
@@ -47,6 +48,8 @@ private struct DeviceSummarySection: View {
 }
 
 private struct SecuritySummarySection: View {
+    let keyRecoveryState: KeyRecoveryState
+
     var body: some View {
         Section("Security") {
             LabeledContent("End-to-end encryption") {
@@ -54,9 +57,29 @@ private struct SecuritySummarySection: View {
                     .foregroundStyle(.green)
             }
             LabeledContent("iCloud Keychain recovery") {
-                Label("Available", systemImage: "icloud.fill")
-                    .foregroundStyle(.blue)
+                KeyRecoveryStatusLabel(state: keyRecoveryState)
             }
+        }
+    }
+}
+
+private struct KeyRecoveryStatusLabel: View {
+    let state: KeyRecoveryState
+
+    var body: some View {
+        switch state {
+        case .checking:
+            Label("Checking", systemImage: "icloud")
+                .foregroundStyle(.secondary)
+        case .available:
+            Label("Available", systemImage: "icloud.fill")
+                .foregroundStyle(.blue)
+        case .approvalRequired:
+            Label("Approval required", systemImage: "person.badge.key")
+                .foregroundStyle(.orange)
+        case .unavailable:
+            Label("Unavailable", systemImage: "exclamationmark.icloud")
+                .foregroundStyle(.red)
         }
     }
 }
@@ -152,6 +175,7 @@ private struct MMSSettingsScreen: View {
 
 struct SettingsScreen: View {
     let devices: [DeviceLineIdentity]
+    let keyRecoveryState: KeyRecoveryState
 
     var body: some View {
         List {
@@ -169,7 +193,7 @@ struct SettingsScreen: View {
                     ContactsSettingsScreen()
                 }
                 SettingsLink("Security", symbol: "lock.shield") {
-                    SecuritySettingsScreen()
+                    SecuritySettingsScreen(keyRecoveryState: keyRecoveryState)
                 }
                 SettingsLink("Messages & Storage", symbol: "externaldrive") {
                     StorageSettingsScreen()
@@ -306,6 +330,8 @@ private struct ContactsSettingsScreen: View {
 }
 
 private struct SecuritySettingsScreen: View {
+    let keyRecoveryState: KeyRecoveryState
+
     var body: some View {
         List {
             Section("Authentication") {
@@ -316,7 +342,9 @@ private struct SecuritySettingsScreen: View {
             }
             Section("Encryption") {
                 LabeledContent("End-to-end encryption", value: "Active")
-                LabeledContent("Recovery", value: "iCloud Keychain")
+                LabeledContent("Recovery") {
+                    KeyRecoveryStatusLabel(state: keyRecoveryState)
+                }
             }
             Section {
                 Button("Revoke This Session", role: .destructive) { }
@@ -416,13 +444,13 @@ private struct DataDeletionScreen: View {
 #if DEBUG
 #Preview("Me") {
     NavigationStack {
-        ProfileScreen(devices: PreviewFixtures.devices)
+        ProfileScreen(devices: PreviewFixtures.devices, keyRecoveryState: .available)
     }
 }
 
 #Preview("Settings") {
     NavigationStack {
-        SettingsScreen(devices: PreviewFixtures.devices)
+        SettingsScreen(devices: PreviewFixtures.devices, keyRecoveryState: .available)
     }
 }
 
@@ -447,7 +475,7 @@ private struct DataDeletionScreen: View {
 
 #Preview("Settings - Accessibility Chinese") {
     NavigationStack {
-        SettingsScreen(devices: PreviewFixtures.devices)
+        SettingsScreen(devices: PreviewFixtures.devices, keyRecoveryState: .approvalRequired)
     }
     .environment(\.dynamicTypeSize, .accessibility5)
     .environment(\.locale, Locale(identifier: "zh-Hans"))
@@ -470,7 +498,7 @@ private struct DataDeletionScreen: View {
 }
 
 #Preview("Security Settings") {
-    NavigationStack { SecuritySettingsScreen() }
+    NavigationStack { SecuritySettingsScreen(keyRecoveryState: .available) }
 }
 
 #Preview("Trusted iPhones") {

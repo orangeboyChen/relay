@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,6 +29,12 @@ import (
 type blockingTransport struct {
 	done      chan struct{}
 	closeOnce sync.Once
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
 }
 
 func newBlockingTransport() *blockingTransport {
@@ -331,7 +339,28 @@ var _ = Describe("Device command runtime", func() {
 	})
 
 	It("constructs all production dependency functions", func() {
-		dependencies := productionDependencies()
+		var expectedState identity.State
+		httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			Expect(request.Method).To(Equal(http.MethodPut))
+			Expect(request.URL.String()).To(Equal("https://deck.example/v1/device-command-key"))
+			Expect(request.Header.Get("Authorization")).To(HavePrefix("Bearer "))
+			Expect(request.Header.Get("Content-Type")).To(Equal("application/json"))
+			body, err := io.ReadAll(request.Body)
+			Expect(err).NotTo(HaveOccurred())
+			var payload struct {
+				DeviceUUID       string `json:"device_uuid"`
+				CommandPublicKey []byte `json:"command_public_key"`
+			}
+			Expect(json.Unmarshal(body, &payload)).To(Succeed())
+			Expect(payload.DeviceUUID).To(Equal(expectedState.DeviceUUID))
+			Expect(payload.CommandPublicKey).To(Equal(expectedState.CommandPublicKey()))
+			return &http.Response{
+				StatusCode: http.StatusNoContent,
+				Body:       io.NopCloser(strings.NewReader("")),
+				Header:     make(http.Header),
+			}, nil
+		})}
+		dependencies := productionDependencies(httpClient)
 		Expect(dependencies.openTransport).NotTo(BeNil())
 		Expect(dependencies.bindIdentity).NotTo(BeNil())
 		Expect(dependencies.openInbox).NotTo(BeNil())
@@ -339,5 +368,41 @@ var _ = Describe("Device command runtime", func() {
 		Expect(dependencies.syncCommandKey).NotTo(BeNil())
 		Expect(dependencies.newCallEvents).NotTo(BeNil())
 		Expect(dependencies.newCommands).NotTo(BeNil())
+
+		stateDirectory := GinkgoT().TempDir()
+		_, err := dependencies.openTransport(filepath.Join(stateDirectory, "missing-at"), 115200)
+		Expect(err).To(HaveOccurred())
+		_, err = dependencies.openInbox(filepath.Join(stateDirectory, "wired-inbox.json"), time.Hour)
+		Expect(err).NotTo(HaveOccurred())
+		stateStore := identity.NewStore(stateDirectory)
+		state, err := stateStore.LoadOrCreate()
+		Expect(err).NotTo(HaveOccurred())
+		state, err = stateStore.PreparePairing(state)
+		Expect(err).NotTo(HaveOccurred())
+		state, err = stateStore.Bind(state, "https://deck.example", 1)
+		Expect(err).NotTo(HaveOccurred())
+		expectedState = state
+		config := testConfig(stateDirectory)
+		config.ServerURL = "https://deck.example"
+		bound, err := dependencies.bindIdentity(context.Background(), config, stateStore, state)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(bound.DeviceUUID).To(Equal(state.DeviceUUID))
+		Expect(dependencies.syncCommandKey(context.Background(), config, state)).To(Succeed())
+		transport := newBlockingTransport()
+		client := at.NewClient(transport)
+		DeferCleanup(func() { _ = client.Close() })
+		session, err := dependencies.newSession(
+			client,
+			sms.NewInbox(time.Hour),
+			modem.MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }),
+			logger,
+			time.Second,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		events, err := dependencies.newCallEvents(config, state, session.Calls().Events())
+		Expect(err).NotTo(HaveOccurred())
+		commands, err := dependencies.newCommands(config, state, session.Calls(), events)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(commands).NotTo(BeNil())
 	})
 })

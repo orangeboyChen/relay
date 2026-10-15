@@ -56,7 +56,7 @@ func run(ctx context.Context, config agent.Config, logger *slog.Logger) error {
 		defer cancel()
 		_ = server.Shutdown(shutdownContext)
 	}()
-	return runDevice(ctx, config, logger, &ready, productionDependencies())
+	return runDevice(ctx, config, logger, &ready, productionDependencies(nil))
 }
 
 type deviceSession interface {
@@ -84,26 +84,26 @@ type deviceDependencies struct {
 	newCommands    func(agent.Config, identity.State, command.Calls, command.CallEventRegistrar) (commandRuntime, error)
 }
 
-func productionDependencies() deviceDependencies {
+func productionDependencies(httpClient *http.Client) deviceDependencies {
 	return deviceDependencies{
 		openTransport: func(path string, baud int) (io.ReadWriteCloser, error) {
 			return serialport.Open(path, baud)
 		},
 		bindIdentity: func(ctx context.Context, config agent.Config, store identity.Store, state identity.State) (identity.State, error) {
-			return agent.EnsureBinding(ctx, config, store, state, serverapi.NewClient(config.ServerURL, nil))
+			return agent.EnsureBinding(ctx, config, store, state, serverapi.NewClient(config.ServerURL, httpClient))
 		},
 		openInbox: sms.NewPersistentInbox,
 		newSession: func(client *at.Client, inbox *sms.Inbox, sink modem.MessageSink, logger *slog.Logger, timeout time.Duration) (deviceSession, error) {
 			return modem.NewSession(client, inbox, sink, logger, timeout)
 		},
 		syncCommandKey: func(ctx context.Context, config agent.Config, state identity.State) error {
-			return serverapi.NewClient(config.ServerURL, nil).UpdateCommandKey(ctx, state)
+			return serverapi.NewClient(config.ServerURL, httpClient).UpdateCommandKey(ctx, state)
 		},
 		newCallEvents: func(config agent.Config, state identity.State, snapshots <-chan call.Snapshot) (callEventRuntime, error) {
-			return callevent.NewPublisher(serverapi.NewClient(config.ServerURL, nil), state, snapshots)
+			return callevent.NewPublisher(serverapi.NewClient(config.ServerURL, httpClient), state, snapshots)
 		},
 		newCommands: func(config agent.Config, state identity.State, calls command.Calls, events command.CallEventRegistrar) (commandRuntime, error) {
-			return command.NewRuntime(serverapi.NewClient(config.ServerURL, nil), state, calls, config.CommandPoll, events)
+			return command.NewRuntime(serverapi.NewClient(config.ServerURL, httpClient), state, calls, config.CommandPoll, events)
 		},
 	}
 }

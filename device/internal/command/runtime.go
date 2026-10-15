@@ -84,6 +84,18 @@ type CallEventRegistrar interface {
 	Unregister(string)
 }
 
+// CallMedia negotiates and owns encrypted audio for one cellular call.
+type CallMedia interface {
+	Negotiate(context.Context, string, string) (string, error)
+	Stop(string) error
+}
+
+// Dependencies contains the endpoint capabilities used by the command runtime.
+type Dependencies struct {
+	Events CallEventRegistrar
+	Media  CallMedia
+}
+
 // Runtime polls, decrypts, executes, and acknowledges commands for one modem.
 type Runtime struct {
 	remote       Remote
@@ -92,21 +104,21 @@ type Runtime struct {
 	pollInterval time.Duration
 	random       io.Reader
 	events       CallEventRegistrar
+	media        CallMedia
 }
 
 // NewRuntime creates a command runtime with a bounded idle polling interval.
-func NewRuntime(remote Remote, state identity.State, calls Calls, pollInterval time.Duration, eventRegistrars ...CallEventRegistrar) (*Runtime, error) {
+func NewRuntime(remote Remote, state identity.State, calls Calls, pollInterval time.Duration, dependencies Dependencies) (*Runtime, error) {
 	if remote == nil || calls == nil || state.Credential == "" || len(state.CommandPrivateKey) != keyBytes || pollInterval <= 0 {
 		return nil, errors.New("command runtime requires a bound identity, remote, call controller, and positive poll interval")
 	}
-	if len(eventRegistrars) > 1 || len(eventRegistrars) == 1 && eventRegistrars[0] == nil {
-		return nil, errors.New("command runtime accepts at most one call event registrar")
+	if dependencies.Events == nil || dependencies.Media == nil {
+		return nil, errors.New("command runtime requires call event and media dependencies")
 	}
-	runtime := &Runtime{remote: remote, identity: state, calls: calls, pollInterval: pollInterval, random: rand.Reader}
-	if len(eventRegistrars) == 1 {
-		runtime.events = eventRegistrars[0]
-	}
-	return runtime, nil
+	return &Runtime{
+		remote: remote, identity: state, calls: calls, pollInterval: pollInterval,
+		random: rand.Reader, events: dependencies.Events, media: dependencies.Media,
+	}, nil
 }
 
 // Run processes commands until cancellation or a server transport failure.
@@ -136,22 +148,23 @@ func (runtime *Runtime) process(ctx context.Context, envelope Envelope) error {
 	if err != nil {
 		return fmt.Errorf("decrypt command %s: %w", envelope.ID, err)
 	}
-	registered := false
-	if runtime.events != nil && payload.Version == protocolVersion && payload.Operation == "call.start" && strings.TrimSpace(payload.CallID) != "" {
+	registered := payload.Version == protocolVersion && payload.Operation == "call.start" && strings.TrimSpace(payload.CallID) != "" && strings.TrimSpace(payload.MediaOffer) != ""
+	if registered {
 		if err := runtime.events.RegisterOutgoing(payload.CallID, sharedSecret); err != nil {
 			return fmt.Errorf("register call events for command %s: %w", envelope.ID, err)
 		}
-		registered = true
 	}
-	if err := runtime.execute(ctx, payload); err != nil {
+	mediaAnswer, executionError := runtime.execute(ctx, payload)
+	if executionError != nil {
 		if registered {
 			runtime.events.Unregister(payload.CallID)
 		}
-		result.ErrorCode = commandErrorCode(err)
+		result.ErrorCode = commandErrorCode(executionError)
 		result.CallState = runtime.calls.State()
 	} else {
 		result.Success = true
 		result.CallState = runtime.calls.State()
+		result.MediaAnswer = mediaAnswer
 	}
 	encrypted, err := sealResult(runtime.random, sharedSecret, envelope, result)
 	if err != nil {
@@ -163,33 +176,54 @@ func (runtime *Runtime) process(ctx context.Context, envelope Envelope) error {
 	return nil
 }
 
-func (runtime *Runtime) execute(ctx context.Context, payload Payload) error {
+func (runtime *Runtime) execute(ctx context.Context, payload Payload) (string, error) {
 	if payload.Version != protocolVersion || strings.TrimSpace(payload.CallID) == "" {
-		return errInvalidCommand
+		return "", errInvalidCommand
 	}
 	switch payload.Operation {
 	case "call.start":
-		return runtime.calls.Dial(ctx, payload.Number)
+		if strings.TrimSpace(payload.MediaOffer) == "" {
+			return "", errInvalidCommand
+		}
+		answer, err := runtime.media.Negotiate(ctx, payload.CallID, payload.MediaOffer)
+		if err != nil {
+			return "", fmt.Errorf("%w: %v", errMediaUnavailable, err)
+		}
+		if err := runtime.calls.Dial(ctx, payload.Number); err != nil {
+			_ = runtime.media.Stop(payload.CallID)
+			return "", err
+		}
+		return answer, nil
 	case "call.end":
-		return runtime.calls.Hangup(ctx)
+		if err := runtime.calls.Hangup(ctx); err != nil {
+			return "", err
+		}
+		_ = runtime.media.Stop(payload.CallID)
+		return "", nil
 	case "call.hold":
-		return runtime.calls.Hold(ctx)
+		return "", runtime.calls.Hold(ctx)
 	case "call.resume":
-		return runtime.calls.Resume(ctx)
+		return "", runtime.calls.Resume(ctx)
 	case "call.swap":
-		return runtime.calls.Swap(ctx)
+		return "", runtime.calls.Swap(ctx)
 	case "call.dtmf":
-		return runtime.calls.SendDTMF(ctx, payload.Digits)
+		return "", runtime.calls.SendDTMF(ctx, payload.Digits)
 	default:
-		return errInvalidCommand
+		return "", errInvalidCommand
 	}
 }
 
-var errInvalidCommand = errors.New("invalid command payload")
+var (
+	errInvalidCommand   = errors.New("invalid command payload")
+	errMediaUnavailable = errors.New("call media unavailable")
+)
 
 func commandErrorCode(err error) string {
 	if errors.Is(err, errInvalidCommand) {
 		return "invalid_command"
+	}
+	if errors.Is(err, errMediaUnavailable) {
+		return "media_unavailable"
 	}
 	return "modem_rejected"
 }

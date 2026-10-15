@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -29,6 +30,23 @@ import (
 type blockingTransport struct {
 	done      chan struct{}
 	closeOnce sync.Once
+}
+
+type synchronizedBuffer struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (buffer *synchronizedBuffer) Write(value []byte) (int, error) {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.buffer.Write(value)
+}
+
+func (buffer *synchronizedBuffer) String() string {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.buffer.String()
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -76,6 +94,25 @@ type fakeCallEventRuntime struct {
 func (*fakeCallEventRuntime) RegisterOutgoing(string, []byte) error { return nil }
 func (*fakeCallEventRuntime) Unregister(string)                     {}
 
+type fakeCallMediaRuntime struct {
+	failures   chan error
+	closeError error
+	closed     bool
+}
+
+func (*fakeCallMediaRuntime) Negotiate(context.Context, string, string) (string, error) {
+	return "answer-sdp", nil
+}
+
+func (*fakeCallMediaRuntime) Stop(string) error { return nil }
+
+func (runtime *fakeCallMediaRuntime) Errors() <-chan error { return runtime.failures }
+
+func (runtime *fakeCallMediaRuntime) Close() error {
+	runtime.closed = true
+	return runtime.closeError
+}
+
 func (runtime *fakeCommandRuntime) Run(ctx context.Context) error {
 	if runtime.runStarted != nil {
 		close(runtime.runStarted)
@@ -104,19 +141,23 @@ func (session *fakeDeviceSession) Run(ctx context.Context) error {
 
 func testConfig(stateDirectory string) agent.Config {
 	return agent.Config{
-		ATDevice:         "/dev/sim-deck/at",
-		Baud:             115200,
-		CommandTimeout:   time.Second,
-		CommandPoll:      time.Millisecond,
-		StateDirectory:   stateDirectory,
-		ServerURL:        "https://deck.example",
-		PairingTokenFile: filepath.Join(stateDirectory, "pairing-token"),
+		ATDevice:           "/dev/sim-deck/at",
+		AudioMode:          agent.AudioModeALSA,
+		ALSACaptureDevice:  "hw:0,0",
+		ALSAPlaybackDevice: "hw:0,0",
+		Baud:               115200,
+		CommandTimeout:     time.Second,
+		CommandPoll:        time.Millisecond,
+		StateDirectory:     stateDirectory,
+		ServerURL:          "https://deck.example",
+		PairingTokenFile:   filepath.Join(stateDirectory, "pairing-token"),
 	}
 }
 
 func testDependencies(transport io.ReadWriteCloser, session deviceSession) deviceDependencies {
 	commandRunner := &fakeCommandRuntime{}
 	eventRunner := &fakeCallEventRuntime{}
+	mediaRunner := &fakeCallMediaRuntime{failures: make(chan error, 1)}
 	if fake, ok := session.(*fakeDeviceSession); ok && fake.calls == nil {
 		fake.calls = call.NewController(&testCallCommander{})
 	}
@@ -135,7 +176,8 @@ func testDependencies(transport io.ReadWriteCloser, session deviceSession) devic
 		newCallEvents: func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error) {
 			return eventRunner, nil
 		},
-		newCommands: func(agent.Config, identity.State, command.Calls, command.CallEventRegistrar) (commandRuntime, error) {
+		newCallMedia: func(agent.Config) (callMediaRuntime, error) { return mediaRunner, nil },
+		newCommands: func(agent.Config, identity.State, command.Calls, command.Dependencies) (commandRuntime, error) {
 			return commandRunner, nil
 		},
 	}
@@ -260,7 +302,7 @@ var _ = Describe("Device command runtime", func() {
 	It("returns a command runtime construction failure before readiness", func() {
 		transport := newBlockingTransport()
 		dependencies := testDependencies(transport, &fakeDeviceSession{})
-		dependencies.newCommands = func(agent.Config, identity.State, command.Calls, command.CallEventRegistrar) (commandRuntime, error) {
+		dependencies.newCommands = func(agent.Config, identity.State, command.Calls, command.Dependencies) (commandRuntime, error) {
 			return nil, errors.New("command runtime unavailable")
 		}
 
@@ -281,6 +323,18 @@ var _ = Describe("Device command runtime", func() {
 		Expect(err).To(MatchError("create encrypted call event runtime: event runtime unavailable"))
 	})
 
+	It("returns a call media runtime construction failure before readiness", func() {
+		transport := newBlockingTransport()
+		dependencies := testDependencies(transport, &fakeDeviceSession{})
+		dependencies.newCallMedia = func(agent.Config) (callMediaRuntime, error) {
+			return nil, errors.New("audio unavailable")
+		}
+
+		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError("create call media runtime: audio unavailable"))
+	})
+
 	It("returns command key registration failure before readiness", func() {
 		transport := newBlockingTransport()
 		dependencies := testDependencies(transport, &fakeDeviceSession{})
@@ -297,7 +351,7 @@ var _ = Describe("Device command runtime", func() {
 		transport := newBlockingTransport()
 		session := &fakeDeviceSession{runStarted: make(chan struct{})}
 		dependencies := testDependencies(transport, session)
-		dependencies.newCommands = func(agent.Config, identity.State, command.Calls, command.CallEventRegistrar) (commandRuntime, error) {
+		dependencies.newCommands = func(agent.Config, identity.State, command.Calls, command.Dependencies) (commandRuntime, error) {
 			return &fakeCommandRuntime{runError: errors.New("command server unavailable")}, nil
 		}
 
@@ -338,6 +392,24 @@ var _ = Describe("Device command runtime", func() {
 		Expect(recorder.Body.String()).To(MatchJSON(`{"ready":true}`))
 	})
 
+	It("logs media failures until the device stops", func() {
+		var output synchronizedBuffer
+		mediaLogger := slog.New(slog.NewTextHandler(&output, nil))
+		failures := make(chan error, 1)
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			logMediaErrors(ctx, failures, mediaLogger)
+			close(done)
+		}()
+
+		failures <- errors.New("ICE failed")
+		Eventually(output.String).Should(ContainSubstring("call media stopped"))
+		Eventually(output.String).Should(ContainSubstring("ICE failed"))
+		cancel()
+		Eventually(done).Should(BeClosed())
+	})
+
 	It("constructs all production dependency functions", func() {
 		var expectedState identity.State
 		httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -367,6 +439,7 @@ var _ = Describe("Device command runtime", func() {
 		Expect(dependencies.newSession).NotTo(BeNil())
 		Expect(dependencies.syncCommandKey).NotTo(BeNil())
 		Expect(dependencies.newCallEvents).NotTo(BeNil())
+		Expect(dependencies.newCallMedia).NotTo(BeNil())
 		Expect(dependencies.newCommands).NotTo(BeNil())
 
 		stateDirectory := GinkgoT().TempDir()
@@ -401,7 +474,10 @@ var _ = Describe("Device command runtime", func() {
 		Expect(err).NotTo(HaveOccurred())
 		events, err := dependencies.newCallEvents(config, state, session.Calls().Events())
 		Expect(err).NotTo(HaveOccurred())
-		commands, err := dependencies.newCommands(config, state, session.Calls(), events)
+		callMedia, err := dependencies.newCallMedia(config)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { _ = callMedia.Close() })
+		commands, err := dependencies.newCommands(config, state, session.Calls(), command.Dependencies{Events: events, Media: callMedia})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(commands).NotTo(BeNil())
 	})

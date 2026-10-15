@@ -103,6 +103,25 @@ func (registrar *fakeEventRegistrar) Unregister(callID string) {
 	registrar.unregistered = callID
 }
 
+type fakeCallMedia struct {
+	callID       string
+	offer        string
+	answer       string
+	negotiateErr error
+	stopped      []string
+}
+
+func (media *fakeCallMedia) Negotiate(_ context.Context, callID string, offer string) (string, error) {
+	media.callID = callID
+	media.offer = offer
+	return media.answer, media.negotiateErr
+}
+
+func (media *fakeCallMedia) Stop(callID string) error {
+	media.stopped = append(media.stopped, callID)
+	return nil
+}
+
 var _ = Describe("Encrypted command runtime", func() {
 	const (
 		deviceID  = "01900000-0000-7000-8000-000000000001"
@@ -113,6 +132,8 @@ var _ = Describe("Encrypted command runtime", func() {
 		senderKey *ecdh.PrivateKey
 		remote    *fakeRemote
 		calls     *fakeCalls
+		events    *fakeEventRegistrar
+		media     *fakeCallMedia
 		runtime   *Runtime
 	)
 
@@ -126,7 +147,9 @@ var _ = Describe("Encrypted command runtime", func() {
 		}
 		remote = &fakeRemote{}
 		calls = &fakeCalls{state: call.StateIdle}
-		runtime, err = NewRuntime(remote, state, calls, time.Millisecond)
+		events = &fakeEventRegistrar{}
+		media = &fakeCallMedia{answer: "answer-sdp"}
+		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: events, Media: media})
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -143,7 +166,7 @@ var _ = Describe("Encrypted command runtime", func() {
 			result := openResult(sharedSecret, envelope, remote.result)
 			Expect(result.Success).To(BeTrue())
 		},
-		Entry("start", Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "+8613500000000"}, "dial:+8613500000000"),
+		Entry("start", Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "+8613500000000", MediaOffer: "offer-sdp"}, "dial:+8613500000000"),
 		Entry("end", Payload{Version: 1, Operation: "call.end", CallID: "call-1"}, "hangup"),
 		Entry("hold", Payload{Version: 1, Operation: "call.hold", CallID: "call-1"}, "hold"),
 		Entry("resume", Payload{Version: 1, Operation: "call.resume", CallID: "call-1"}, "resume"),
@@ -153,7 +176,7 @@ var _ = Describe("Encrypted command runtime", func() {
 
 	It("returns an encrypted generic modem error", func() {
 		calls.error = errors.New("ATD exposed detail")
-		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086"})
+		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086", MediaOffer: "offer-sdp"})
 
 		Expect(runtime.process(context.Background(), envelope)).To(Succeed())
 
@@ -161,6 +184,48 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(result.Success).To(BeFalse())
 		Expect(result.ErrorCode).To(Equal("modem_rejected"))
 		Expect(string(remote.result.Ciphertext)).NotTo(ContainSubstring("ATD exposed detail"))
+		Expect(media.stopped).To(Equal([]string{"call-1"}))
+		Expect(events.unregistered).To(Equal("call-1"))
+	})
+
+	It("returns the encrypted SDP answer only after media negotiation and dialing succeed", func() {
+		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{
+			Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086", MediaOffer: "offer-sdp",
+		})
+
+		Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+
+		result := openResult(sharedSecret, envelope, remote.result)
+		Expect(result.Success).To(BeTrue())
+		Expect(result.MediaAnswer).To(Equal("answer-sdp"))
+		Expect(media.callID).To(Equal("call-1"))
+		Expect(media.offer).To(Equal("offer-sdp"))
+		Expect(calls.operations).To(Equal([]string{"dial:10086"}))
+	})
+
+	It("returns a generic encrypted media error without dialing", func() {
+		media.negotiateErr = errors.New("ALSA device exposed detail")
+		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{
+			Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086", MediaOffer: "offer-sdp",
+		})
+
+		Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+
+		result := openResult(sharedSecret, envelope, remote.result)
+		Expect(result.Success).To(BeFalse())
+		Expect(result.ErrorCode).To(Equal("media_unavailable"))
+		Expect(calls.operations).To(BeEmpty())
+		Expect(events.unregistered).To(Equal("call-1"))
+		Expect(string(remote.result.Ciphertext)).NotTo(ContainSubstring("ALSA"))
+	})
+
+	It("stops media after the modem accepts hangup", func() {
+		envelope, _ := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.end", CallID: "call-1"})
+
+		Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+
+		Expect(calls.operations).To(Equal([]string{"hangup"}))
+		Expect(media.stopped).To(Equal([]string{"call-1"}))
 	})
 
 	It("round trips encrypted WebRTC negotiation without exposing SDP", func() {
@@ -190,9 +255,9 @@ var _ = Describe("Encrypted command runtime", func() {
 	It("registers the outgoing call secret before dialing", func() {
 		registrar := &fakeEventRegistrar{}
 		var err error
-		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, registrar)
+		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: registrar, Media: media})
 		Expect(err).NotTo(HaveOccurred())
-		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086"})
+		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086", MediaOffer: "offer-sdp"})
 
 		Expect(runtime.process(context.Background(), envelope)).To(Succeed())
 
@@ -205,9 +270,9 @@ var _ = Describe("Encrypted command runtime", func() {
 		registrar := &fakeEventRegistrar{}
 		calls.error = errors.New("modem rejected")
 		var err error
-		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, registrar)
+		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: registrar, Media: media})
 		Expect(err).NotTo(HaveOccurred())
-		envelope, _ := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086"})
+		envelope, _ := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086", MediaOffer: "offer-sdp"})
 
 		Expect(runtime.process(context.Background(), envelope)).To(Succeed())
 
@@ -217,9 +282,9 @@ var _ = Describe("Encrypted command runtime", func() {
 	It("fails closed when outgoing event registration fails", func() {
 		registrar := &fakeEventRegistrar{err: errors.New("event key unavailable")}
 		var err error
-		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, registrar)
+		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: registrar, Media: media})
 		Expect(err).NotTo(HaveOccurred())
-		envelope, _ := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086"})
+		envelope, _ := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086", MediaOffer: "offer-sdp"})
 
 		Expect(runtime.process(context.Background(), envelope)).To(MatchError(ContainSubstring("register call events")))
 		Expect(calls.operations).To(BeEmpty())
@@ -230,6 +295,7 @@ var _ = Describe("Encrypted command runtime", func() {
 		for _, payload := range []Payload{
 			{Version: 2, Operation: "call.end", CallID: "call-1"},
 			{Version: 1, Operation: "call.end"},
+			{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086"},
 			{Version: 1, Operation: "unknown", CallID: "call-1"},
 		} {
 			envelope, sharedSecret := sealCommand(state, senderKey, commandID, payload)
@@ -270,17 +336,18 @@ var _ = Describe("Encrypted command runtime", func() {
 	})
 
 	It("validates runtime dependencies", func() {
-		_, err := NewRuntime(nil, state, calls, time.Second)
+		dependencies := Dependencies{Events: events, Media: media}
+		_, err := NewRuntime(nil, state, calls, time.Second, dependencies)
 		Expect(err).To(HaveOccurred())
-		_, err = NewRuntime(remote, identity.State{}, calls, time.Second)
+		_, err = NewRuntime(remote, identity.State{}, calls, time.Second, dependencies)
 		Expect(err).To(HaveOccurred())
-		_, err = NewRuntime(remote, state, nil, time.Second)
+		_, err = NewRuntime(remote, state, nil, time.Second, dependencies)
 		Expect(err).To(HaveOccurred())
-		_, err = NewRuntime(remote, state, calls, 0)
+		_, err = NewRuntime(remote, state, calls, 0, dependencies)
 		Expect(err).To(HaveOccurred())
-		_, err = NewRuntime(remote, state, calls, time.Second, nil)
+		_, err = NewRuntime(remote, state, calls, time.Second, Dependencies{Media: media})
 		Expect(err).To(HaveOccurred())
-		_, err = NewRuntime(remote, state, calls, time.Second, &fakeEventRegistrar{}, &fakeEventRegistrar{})
+		_, err = NewRuntime(remote, state, calls, time.Second, Dependencies{Events: events})
 		Expect(err).To(HaveOccurred())
 	})
 })

@@ -21,6 +21,7 @@ import (
 	"sim-deck-device/internal/callevent"
 	"sim-deck-device/internal/command"
 	"sim-deck-device/internal/identity"
+	"sim-deck-device/internal/media"
 	"sim-deck-device/internal/modem"
 	"sim-deck-device/internal/serialport"
 	"sim-deck-device/internal/serverapi"
@@ -74,6 +75,12 @@ type callEventRuntime interface {
 	command.CallEventRegistrar
 }
 
+type callMediaRuntime interface {
+	command.CallMedia
+	Errors() <-chan error
+	Close() error
+}
+
 type deviceDependencies struct {
 	openTransport  func(string, int) (io.ReadWriteCloser, error)
 	bindIdentity   func(context.Context, agent.Config, identity.Store, identity.State) (identity.State, error)
@@ -81,7 +88,8 @@ type deviceDependencies struct {
 	newSession     func(*at.Client, *sms.Inbox, modem.MessageSink, *slog.Logger, time.Duration) (deviceSession, error)
 	syncCommandKey func(context.Context, agent.Config, identity.State) error
 	newCallEvents  func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error)
-	newCommands    func(agent.Config, identity.State, command.Calls, command.CallEventRegistrar) (commandRuntime, error)
+	newCallMedia   func(agent.Config) (callMediaRuntime, error)
+	newCommands    func(agent.Config, identity.State, command.Calls, command.Dependencies) (commandRuntime, error)
 }
 
 func productionDependencies(httpClient *http.Client) deviceDependencies {
@@ -102,8 +110,20 @@ func productionDependencies(httpClient *http.Client) deviceDependencies {
 		newCallEvents: func(config agent.Config, state identity.State, snapshots <-chan call.Snapshot) (callEventRuntime, error) {
 			return callevent.NewPublisher(serverapi.NewClient(config.ServerURL, httpClient), state, snapshots)
 		},
-		newCommands: func(config agent.Config, state identity.State, calls command.Calls, events command.CallEventRegistrar) (commandRuntime, error) {
-			return command.NewRuntime(serverapi.NewClient(config.ServerURL, httpClient), state, calls, config.CommandPoll, events)
+		newCallMedia: func(config agent.Config) (callMediaRuntime, error) {
+			return media.NewManager(func(ctx context.Context) (media.DuplexPCM, error) {
+				switch config.AudioMode {
+				case agent.AudioModeALSA:
+					return media.OpenALSAEndpoint(ctx, config.ALSACaptureDevice, config.ALSAPlaybackDevice)
+				case agent.AudioModeRawPCM:
+					return media.OpenRawPCMEndpoint(config.PCMDevice)
+				default:
+					return nil, fmt.Errorf("unsupported audio mode %q", config.AudioMode)
+				}
+			})
+		},
+		newCommands: func(config agent.Config, state identity.State, calls command.Calls, dependencies command.Dependencies) (commandRuntime, error) {
+			return command.NewRuntime(serverapi.NewClient(config.ServerURL, httpClient), state, calls, config.CommandPoll, dependencies)
 		},
 	}
 }
@@ -147,7 +167,12 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	if err != nil {
 		return fmt.Errorf("create encrypted call event runtime: %w", err)
 	}
-	commands, err := dependencies.newCommands(config, deviceIdentity, session.Calls(), events)
+	callMedia, err := dependencies.newCallMedia(config)
+	if err != nil {
+		return fmt.Errorf("create call media runtime: %w", err)
+	}
+	defer callMedia.Close()
+	commands, err := dependencies.newCommands(config, deviceIdentity, session.Calls(), command.Dependencies{Events: events, Media: callMedia})
 	if err != nil {
 		return fmt.Errorf("create encrypted command runtime: %w", err)
 	}
@@ -166,6 +191,7 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	)
 	runContext, cancel := context.WithCancel(ctx)
 	defer cancel()
+	go logMediaErrors(runContext, callMedia.Errors(), logger)
 	results := make(chan error, 3)
 	go func() { results <- session.Run(runContext) }()
 	go func() { results <- commands.Run(runContext) }()
@@ -181,6 +207,20 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 		return second
 	}
 	return third
+}
+
+func logMediaErrors(ctx context.Context, failures <-chan error, logger *slog.Logger) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case err, ok := <-failures:
+			if !ok {
+				return
+			}
+			logger.Error("call media stopped", "error", err)
+		}
+	}
 }
 
 func healthServer(address string, ready *atomic.Bool) *http.Server {

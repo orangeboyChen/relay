@@ -21,6 +21,7 @@ import (
 	"sim-deck-device/internal/callevent"
 	"sim-deck-device/internal/command"
 	"sim-deck-device/internal/identity"
+	"sim-deck-device/internal/incomingcall"
 	"sim-deck-device/internal/media"
 	"sim-deck-device/internal/modem"
 	"sim-deck-device/internal/serialport"
@@ -73,6 +74,7 @@ type commandRuntime interface {
 type callEventRuntime interface {
 	Run(context.Context) error
 	command.CallEventRegistrar
+	incomingcall.EventRegistrar
 }
 
 type callMediaRuntime interface {
@@ -82,14 +84,15 @@ type callMediaRuntime interface {
 }
 
 type deviceDependencies struct {
-	openTransport  func(string, int) (io.ReadWriteCloser, error)
-	bindIdentity   func(context.Context, agent.Config, identity.Store, identity.State) (identity.State, error)
-	openInbox      func(string, time.Duration) (*sms.Inbox, error)
-	newSession     func(*at.Client, *sms.Inbox, modem.MessageSink, *slog.Logger, time.Duration) (deviceSession, error)
-	syncCommandKey func(context.Context, agent.Config, identity.State) error
-	newCallEvents  func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error)
-	newCallMedia   func(agent.Config) (callMediaRuntime, error)
-	newCommands    func(agent.Config, identity.State, command.Calls, command.Dependencies) (commandRuntime, error)
+	openTransport    func(string, int) (io.ReadWriteCloser, error)
+	bindIdentity     func(context.Context, agent.Config, identity.Store, identity.State) (identity.State, error)
+	openInbox        func(string, time.Duration) (*sms.Inbox, error)
+	newSession       func(*at.Client, *sms.Inbox, modem.MessageSink, *slog.Logger, time.Duration) (deviceSession, error)
+	syncCommandKey   func(context.Context, agent.Config, identity.State) error
+	newCallEvents    func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error)
+	newIncomingCalls func(agent.Config, identity.State, <-chan call.Snapshot, incomingcall.EventRegistrar) (commandRuntime, error)
+	newCallMedia     func(agent.Config) (callMediaRuntime, error)
+	newCommands      func(agent.Config, identity.State, command.Calls, command.Dependencies) (commandRuntime, error)
 }
 
 func productionDependencies(httpClient *http.Client) deviceDependencies {
@@ -109,6 +112,9 @@ func productionDependencies(httpClient *http.Client) deviceDependencies {
 		},
 		newCallEvents: func(config agent.Config, state identity.State, snapshots <-chan call.Snapshot) (callEventRuntime, error) {
 			return callevent.NewPublisher(serverapi.NewClient(config.ServerURL, httpClient), state, snapshots)
+		},
+		newIncomingCalls: func(config agent.Config, state identity.State, snapshots <-chan call.Snapshot, events incomingcall.EventRegistrar) (commandRuntime, error) {
+			return incomingcall.NewRuntime(serverapi.NewClient(config.ServerURL, httpClient), state, snapshots, events)
 		},
 		newCallMedia: func(config agent.Config) (callMediaRuntime, error) {
 			return media.NewManager(func(ctx context.Context) (media.DuplexPCM, error) {
@@ -167,6 +173,10 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	if err != nil {
 		return fmt.Errorf("create encrypted call event runtime: %w", err)
 	}
+	incomingCalls, err := dependencies.newIncomingCalls(config, deviceIdentity, session.Calls().Subscribe(), events)
+	if err != nil {
+		return fmt.Errorf("create incoming call runtime: %w", err)
+	}
 	callMedia, err := dependencies.newCallMedia(config)
 	if err != nil {
 		return fmt.Errorf("create call media runtime: %w", err)
@@ -192,21 +202,23 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	runContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go logMediaErrors(runContext, callMedia.Errors(), logger)
-	results := make(chan error, 3)
+	results := make(chan error, 4)
 	go func() { results <- session.Run(runContext) }()
 	go func() { results <- commands.Run(runContext) }()
 	go func() { results <- events.Run(runContext) }()
+	go func() { results <- incomingCalls.Run(runContext) }()
 	first := <-results
 	cancel()
-	second := <-results
-	third := <-results
-	if first != nil && !errors.Is(first, context.Canceled) {
-		return first
+	resultsToCheck := []error{first}
+	for count := 1; count < 4; count++ {
+		resultsToCheck = append(resultsToCheck, <-results)
 	}
-	if second != nil && !errors.Is(second, context.Canceled) {
-		return second
+	for _, result := range resultsToCheck {
+		if result != nil && !errors.Is(result, context.Canceled) {
+			return result
+		}
 	}
-	return third
+	return resultsToCheck[len(resultsToCheck)-1]
 }
 
 func logMediaErrors(ctx context.Context, failures <-chan error, logger *slog.Logger) {

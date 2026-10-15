@@ -23,6 +23,7 @@ import (
 	"sim-deck-device/internal/call"
 	"sim-deck-device/internal/command"
 	"sim-deck-device/internal/identity"
+	"sim-deck-device/internal/incomingcall"
 	"sim-deck-device/internal/modem"
 	"sim-deck-device/internal/sms"
 )
@@ -92,6 +93,7 @@ type fakeCallEventRuntime struct {
 }
 
 func (*fakeCallEventRuntime) RegisterOutgoing(string, []byte) error { return nil }
+func (*fakeCallEventRuntime) RegisterIncoming(string, []byte) error { return nil }
 func (*fakeCallEventRuntime) Unregister(string)                     {}
 
 type fakeCallMediaRuntime struct {
@@ -175,6 +177,9 @@ func testDependencies(transport io.ReadWriteCloser, session deviceSession) devic
 		syncCommandKey: func(context.Context, agent.Config, identity.State) error { return nil },
 		newCallEvents: func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error) {
 			return eventRunner, nil
+		},
+		newIncomingCalls: func(agent.Config, identity.State, <-chan call.Snapshot, incomingcall.EventRegistrar) (commandRuntime, error) {
+			return &fakeCommandRuntime{}, nil
 		},
 		newCallMedia: func(agent.Config) (callMediaRuntime, error) { return mediaRunner, nil },
 		newCommands: func(agent.Config, identity.State, command.Calls, command.Dependencies) (commandRuntime, error) {
@@ -323,6 +328,18 @@ var _ = Describe("Device command runtime", func() {
 		Expect(err).To(MatchError("create encrypted call event runtime: event runtime unavailable"))
 	})
 
+	It("returns an incoming call runtime construction failure before readiness", func() {
+		transport := newBlockingTransport()
+		dependencies := testDependencies(transport, &fakeDeviceSession{})
+		dependencies.newIncomingCalls = func(agent.Config, identity.State, <-chan call.Snapshot, incomingcall.EventRegistrar) (commandRuntime, error) {
+			return nil, errors.New("incoming call runtime unavailable")
+		}
+
+		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError("create incoming call runtime: incoming call runtime unavailable"))
+	})
+
 	It("returns a call media runtime construction failure before readiness", func() {
 		transport := newBlockingTransport()
 		dependencies := testDependencies(transport, &fakeDeviceSession{})
@@ -372,6 +389,20 @@ var _ = Describe("Device command runtime", func() {
 		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
 
 		Expect(err).To(MatchError("event server unavailable"))
+		Expect(session.runStarted).To(BeClosed())
+	})
+
+	It("stops the device when incoming call delivery fails", func() {
+		transport := newBlockingTransport()
+		session := &fakeDeviceSession{runStarted: make(chan struct{})}
+		dependencies := testDependencies(transport, session)
+		dependencies.newIncomingCalls = func(agent.Config, identity.State, <-chan call.Snapshot, incomingcall.EventRegistrar) (commandRuntime, error) {
+			return &fakeCommandRuntime{runError: errors.New("incoming call server unavailable")}, nil
+		}
+
+		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError("incoming call server unavailable"))
 		Expect(session.runStarted).To(BeClosed())
 	})
 
@@ -439,6 +470,7 @@ var _ = Describe("Device command runtime", func() {
 		Expect(dependencies.newSession).NotTo(BeNil())
 		Expect(dependencies.syncCommandKey).NotTo(BeNil())
 		Expect(dependencies.newCallEvents).NotTo(BeNil())
+		Expect(dependencies.newIncomingCalls).NotTo(BeNil())
 		Expect(dependencies.newCallMedia).NotTo(BeNil())
 		Expect(dependencies.newCommands).NotTo(BeNil())
 
@@ -474,6 +506,9 @@ var _ = Describe("Device command runtime", func() {
 		Expect(err).NotTo(HaveOccurred())
 		events, err := dependencies.newCallEvents(config, state, session.Calls().Events())
 		Expect(err).NotTo(HaveOccurred())
+		incomingCalls, err := dependencies.newIncomingCalls(config, state, session.Calls().Subscribe(), events)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(incomingCalls).NotTo(BeNil())
 		callMedia, err := dependencies.newCallMedia(config)
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { _ = callMedia.Close() })

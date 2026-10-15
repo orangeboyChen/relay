@@ -4,6 +4,12 @@ struct CallHistoryScreen: View {
     let state: CallHistoryState
     let lines: [DeviceLineIdentity]
     let referenceDate: Date
+    let callStarter: any CallStarting
+    let onStarted: (UUID) -> Void
+
+    @State private var startingRecordID: UUID?
+    @State private var presentedError: CallHistoryPresentedError?
+    @State private var selectedDetail: CallDetailSelection?
 
     var body: some View {
         Group {
@@ -19,14 +25,37 @@ struct CallHistoryScreen: View {
             case .loaded(let records):
                 List(records) { record in
                     if let line = lines.first(where: { $0.id == record.lineID }) {
-                        NavigationLink {
-                            CallDetailScreen(record: record, line: line)
-                        } label: {
-                            CallHistoryRow(
-                                record: record,
-                                line: line,
-                                referenceDate: referenceDate
-                            )
+                        HStack(spacing: 0) {
+                            Button {
+                                startCall(from: record)
+                            } label: {
+                                CallHistoryRow(
+                                    record: record,
+                                    line: line,
+                                    referenceDate: referenceDate
+                                )
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(startingRecordID != nil)
+                            .accessibilityHint("Calls this number using the displayed SIM")
+
+                            if startingRecordID == record.id {
+                                ProgressView()
+                                    .frame(width: 44, height: 44)
+                            } else {
+                                Button {
+                                    selectedDetail = CallDetailSelection(record: record, line: line)
+                                } label: {
+                                    Image(systemName: "info.circle")
+                                        .font(.title3)
+                                        .foregroundStyle(.blue)
+                                        .frame(width: 44, height: 44)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Call details")
+                            }
                         }
                     }
                 }
@@ -40,7 +69,95 @@ struct CallHistoryScreen: View {
             }
         }
         .navigationTitle("Calls")
+        .navigationDestination(isPresented: detailIsPresented) {
+            if let selectedDetail {
+                CallDetailScreen(record: selectedDetail.record, line: selectedDetail.line)
+            }
+        }
+        .alert(item: $presentedError) { error in
+            Alert(
+                title: Text("Unable to Call"),
+                message: Text(error.message),
+                dismissButton: .default(Text("OK"))
+            )
+        }
     }
+
+    private var detailIsPresented: Binding<Bool> {
+        Binding(
+            get: { selectedDetail != nil },
+            set: { isPresented in
+                if !isPresented {
+                    selectedDetail = nil
+                }
+            }
+        )
+    }
+
+    private func startCall(from record: CallRecord) {
+        Task {
+            do {
+                let plan = try CallHistoryDialPlan(record: record, lines: lines)
+                startingRecordID = record.id
+                try await callStarter.startCall(to: plan.number, using: plan.lineID)
+                onStarted(plan.lineID)
+                startingRecordID = nil
+            } catch let error as CallHistoryDialPlanError {
+                startingRecordID = nil
+                presentedError = CallHistoryPresentedError(message: error.message)
+            } catch {
+                startingRecordID = nil
+                presentedError = CallHistoryPresentedError(message: "Could not start the call.")
+            }
+        }
+    }
+}
+
+struct CallHistoryDialPlan: Equatable {
+    let number: String
+    let lineID: UUID
+
+    init(record: CallRecord, lines: [DeviceLineIdentity]) throws {
+        guard let line = lines.first(where: { $0.id == record.lineID }) else {
+            throw CallHistoryDialPlanError.lineUnavailable
+        }
+        guard line.isOnline else {
+            throw CallHistoryDialPlanError.lineOffline
+        }
+        guard DialString.isValid(record.remoteNumber) else {
+            throw CallHistoryDialPlanError.invalidNumber
+        }
+
+        number = DialString.normalized(record.remoteNumber)
+        lineID = line.id
+    }
+}
+
+enum CallHistoryDialPlanError: Error, Equatable {
+    case lineUnavailable
+    case lineOffline
+    case invalidNumber
+
+    var message: LocalizedStringResource {
+        switch self {
+        case .lineUnavailable:
+            "This SIM is no longer available."
+        case .lineOffline:
+            "This SIM is offline."
+        case .invalidNumber:
+            "This call record does not contain a valid phone number."
+        }
+    }
+}
+
+private struct CallHistoryPresentedError: Identifiable {
+    let id = UUID()
+    let message: LocalizedStringResource
+}
+
+private struct CallDetailSelection {
+    let record: CallRecord
+    let line: DeviceLineIdentity
 }
 
 private struct CallHistoryRow: View {
@@ -125,7 +242,9 @@ struct DurationText: View {
         CallHistoryScreen(
             state: .loaded(PreviewFixtures.calls),
             lines: PreviewFixtures.devices,
-            referenceDate: PreviewFixtures.now
+            referenceDate: PreviewFixtures.now,
+            callStarter: PreviewCallStarter(),
+            onStarted: { _ in }
         )
     }
 }
@@ -135,7 +254,9 @@ struct DurationText: View {
         CallHistoryScreen(
             state: .loaded([]),
             lines: PreviewFixtures.devices,
-            referenceDate: PreviewFixtures.now
+            referenceDate: PreviewFixtures.now,
+            callStarter: PreviewCallStarter(),
+            onStarted: { _ in }
         )
     }
 }
@@ -145,7 +266,9 @@ struct DurationText: View {
         CallHistoryScreen(
             state: .loading,
             lines: PreviewFixtures.devices,
-            referenceDate: PreviewFixtures.now
+            referenceDate: PreviewFixtures.now,
+            callStarter: PreviewCallStarter(),
+            onStarted: { _ in }
         )
     }
 }
@@ -155,7 +278,9 @@ struct DurationText: View {
         CallHistoryScreen(
             state: .failed,
             lines: PreviewFixtures.devices,
-            referenceDate: PreviewFixtures.now
+            referenceDate: PreviewFixtures.now,
+            callStarter: PreviewCallStarter(),
+            onStarted: { _ in }
         )
     }
     .preferredColorScheme(.dark)

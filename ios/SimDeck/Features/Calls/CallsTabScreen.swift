@@ -10,8 +10,11 @@ struct CallsTabScreen: View {
         CallHistoryScreen(
             state: model.callHistory,
             lines: model.devices,
-            referenceDate: .now
-        )
+            referenceDate: .now,
+            callStarter: model.callStarter
+        ) { lineID in
+            model.lastSuccessfulDialLineID = lineID
+        }
         .safeAreaInset(edge: .bottom) {
             DialerLauncherButton {
                 isDialerPresented = true

@@ -26,6 +26,14 @@ const (
 	StateEnded   State = "ended"
 )
 
+// Snapshot represents simultaneous active, held, and waiting cellular call legs.
+type Snapshot struct {
+	State   State
+	Active  bool
+	Held    bool
+	Waiting bool
+}
+
 // Commander is the AT command capability required by the call controller.
 type Commander interface {
 	Send(context.Context, string) (at.Response, error)
@@ -34,20 +42,25 @@ type Commander interface {
 // Controller maps application call actions to Quectel AT commands.
 type Controller struct {
 	commander Commander
-	state     State
+	snapshot  Snapshot
 	mu        sync.RWMutex
 }
 
 // NewController creates an idle call controller.
 func NewController(commander Commander) *Controller {
-	return &Controller{commander: commander, state: StateIdle}
+	return &Controller{commander: commander, snapshot: Snapshot{State: StateIdle}}
 }
 
 // State returns the last state accepted by the controller.
 func (controller *Controller) State() State {
+	return controller.Snapshot().State
+}
+
+// Snapshot returns all concurrently known call-leg states.
+func (controller *Controller) Snapshot() Snapshot {
 	controller.mu.RLock()
 	defer controller.mu.RUnlock()
-	return controller.state
+	return controller.snapshot
 }
 
 // Dial starts an outgoing voice call.
@@ -61,7 +74,7 @@ func (controller *Controller) Dial(ctx context.Context, number string) error {
 	if err := controller.command(ctx, "ATD"+number+";"); err != nil {
 		return err
 	}
-	controller.setState(StateDialing)
+	controller.setSnapshot(Snapshot{State: StateDialing})
 	return nil
 }
 
@@ -73,20 +86,27 @@ func (controller *Controller) Answer(ctx context.Context) error {
 	if err := controller.command(ctx, "ATA"); err != nil {
 		return err
 	}
-	controller.setState(StateActive)
+	controller.setSnapshot(Snapshot{State: StateActive, Active: true})
 	return nil
 }
 
 // Reject rejects an incoming call without affecting an unrelated held call.
 func (controller *Controller) Reject(ctx context.Context) error {
 	command := "ATH"
-	if controller.State() == StateWaiting {
+	snapshot := controller.Snapshot()
+	if snapshot.Waiting {
 		command = "AT+CHLD=0"
 	}
 	if err := controller.command(ctx, command); err != nil {
 		return err
 	}
-	controller.setState(StateEnded)
+	if snapshot.Waiting {
+		snapshot.Waiting = false
+		snapshot.State = remainingState(snapshot)
+		controller.setSnapshot(snapshot)
+	} else {
+		controller.setSnapshot(Snapshot{State: StateEnded})
+	}
 	return nil
 }
 
@@ -95,26 +115,60 @@ func (controller *Controller) Hangup(ctx context.Context) error {
 	if err := controller.command(ctx, "ATH"); err != nil {
 		return err
 	}
-	controller.setState(StateEnded)
+	controller.setSnapshot(Snapshot{State: StateEnded})
 	return nil
 }
 
 // AnswerWaiting holds the active call and accepts the waiting call.
 func (controller *Controller) AnswerWaiting(ctx context.Context) error {
-	if controller.State() != StateWaiting {
+	snapshot := controller.Snapshot()
+	if !snapshot.Waiting {
 		return fmt.Errorf("cannot answer waiting call while state is %s", controller.State())
 	}
 	if err := controller.command(ctx, "AT+CHLD=2"); err != nil {
 		return err
 	}
-	controller.setState(StateActive)
+	if snapshot.Active {
+		snapshot.Held = true
+	}
+	snapshot.Active = true
+	snapshot.Waiting = false
+	snapshot.State = StateActive
+	controller.setSnapshot(snapshot)
+	return nil
+}
+
+// Hold places the only active call on hold.
+func (controller *Controller) Hold(ctx context.Context) error {
+	snapshot := controller.Snapshot()
+	if !snapshot.Active || snapshot.Held || snapshot.Waiting {
+		return fmt.Errorf("cannot hold while call state is %s", snapshot.State)
+	}
+	if err := controller.command(ctx, "AT+CHLD=2"); err != nil {
+		return err
+	}
+	controller.setSnapshot(Snapshot{State: StateHeld, Held: true})
+	return nil
+}
+
+// Resume makes the only held call active again.
+func (controller *Controller) Resume(ctx context.Context) error {
+	snapshot := controller.Snapshot()
+	if snapshot.Active || !snapshot.Held || snapshot.Waiting {
+		return fmt.Errorf("cannot resume while call state is %s", snapshot.State)
+	}
+	if err := controller.command(ctx, "AT+CHLD=2"); err != nil {
+		return err
+	}
+	controller.setSnapshot(Snapshot{State: StateActive, Active: true})
 	return nil
 }
 
 // Swap toggles between the active and held calls.
 func (controller *Controller) Swap(ctx context.Context) error {
-	if state := controller.State(); state != StateActive && state != StateHeld {
-		return fmt.Errorf("cannot swap while call state is %s", state)
+	snapshot := controller.Snapshot()
+	if !snapshot.Active || !snapshot.Held || snapshot.Waiting {
+		return fmt.Errorf("cannot swap while call state is %s", snapshot.State)
 	}
 	return controller.command(ctx, "AT+CHLD=2")
 }
@@ -124,7 +178,7 @@ func (controller *Controller) SendDTMF(ctx context.Context, digit string) error 
 	if len(digit) != 1 || !strings.Contains("0123456789*#", digit) {
 		return errors.New("DTMF digit must be 0-9, star, or hash")
 	}
-	if controller.State() != StateActive {
+	if !controller.Snapshot().Active {
 		return fmt.Errorf("cannot send DTMF while call state is %s", controller.State())
 	}
 	return controller.command(ctx, fmt.Sprintf("AT+VTS=\"%s\"", digit))
@@ -132,18 +186,30 @@ func (controller *Controller) SendDTMF(ctx context.Context, digit string) error 
 
 // ApplyURC updates call state from one unsolicited modem notification.
 func (controller *Controller) ApplyURC(urc string) {
+	snapshot := controller.Snapshot()
 	switch {
 	case urc == "RING":
-		if controller.State() == StateActive || controller.State() == StateHeld {
-			controller.setState(StateWaiting)
+		if snapshot.Active || snapshot.Held {
+			snapshot.Waiting = true
+			snapshot.State = StateWaiting
 		} else {
-			controller.setState(StateRinging)
+			snapshot = Snapshot{State: StateRinging}
 		}
 	case strings.HasPrefix(urc, "+CCWA:"):
-		controller.setState(StateWaiting)
+		snapshot.Waiting = true
+		snapshot.State = StateWaiting
 	case urc == "NO CARRIER", urc == "NO ANSWER", urc == "BUSY":
-		controller.setState(StateEnded)
+		if snapshot.Held {
+			snapshot.Active = false
+			snapshot.Waiting = false
+			snapshot.State = StateHeld
+		} else {
+			snapshot = Snapshot{State: StateEnded}
+		}
+	default:
+		return
 	}
+	controller.setSnapshot(snapshot)
 }
 
 func (controller *Controller) command(ctx context.Context, command string) error {
@@ -157,8 +223,18 @@ func (controller *Controller) command(ctx context.Context, command string) error
 	return nil
 }
 
-func (controller *Controller) setState(state State) {
+func (controller *Controller) setSnapshot(snapshot Snapshot) {
 	controller.mu.Lock()
 	defer controller.mu.Unlock()
-	controller.state = state
+	controller.snapshot = snapshot
+}
+
+func remainingState(snapshot Snapshot) State {
+	if snapshot.Active {
+		return StateActive
+	}
+	if snapshot.Held {
+		return StateHeld
+	}
+	return StateEnded
 }

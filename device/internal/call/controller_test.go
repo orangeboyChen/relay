@@ -2,7 +2,10 @@ package call
 
 import (
 	"context"
-	"testing"
+	"errors"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"sim-deck-device/internal/at"
 )
@@ -10,63 +13,222 @@ import (
 type fakeCommander struct {
 	commands []string
 	response at.Response
+	err      error
 }
 
 func (fake *fakeCommander) Send(_ context.Context, command string) (at.Response, error) {
 	fake.commands = append(fake.commands, command)
-	return fake.response, nil
+	return fake.response, fake.err
 }
 
-func TestDialAndHangup(t *testing.T) {
-	commander := &fakeCommander{response: at.Response{Terminal: "OK"}}
-	controller := NewController(commander)
-	if err := controller.Dial(context.Background(), "+8613500000000"); err != nil {
-		t.Fatalf("Dial() error = %v", err)
-	}
-	if controller.State() != StateDialing {
-		t.Fatalf("State() = %s", controller.State())
-	}
-	if err := controller.Hangup(context.Background()); err != nil {
-		t.Fatalf("Hangup() error = %v", err)
-	}
-	if got := commander.commands; len(got) != 2 || got[0] != "ATD+8613500000000;" || got[1] != "ATH" {
-		t.Fatalf("commands = %#v", got)
-	}
-}
+var _ = Describe("Cellular call controller", func() {
+	var (
+		commander  *fakeCommander
+		controller *Controller
+	)
 
-func TestIncomingAndWaitingCalls(t *testing.T) {
-	commander := &fakeCommander{response: at.Response{Terminal: "OK"}}
-	controller := NewController(commander)
-	controller.ApplyURC("RING")
-	if controller.State() != StateRinging {
-		t.Fatalf("State() = %s, want ringing", controller.State())
-	}
-	if err := controller.Answer(context.Background()); err != nil {
-		t.Fatalf("Answer() error = %v", err)
-	}
-	controller.ApplyURC(`+CCWA: "10086",129,1`)
-	if controller.State() != StateWaiting {
-		t.Fatalf("State() = %s, want waiting", controller.State())
-	}
-	if err := controller.AnswerWaiting(context.Background()); err != nil {
-		t.Fatalf("AnswerWaiting() error = %v", err)
-	}
-	if got := commander.commands; len(got) != 2 || got[0] != "ATA" || got[1] != "AT+CHLD=2" {
-		t.Fatalf("commands = %#v", got)
-	}
-}
+	BeforeEach(func() {
+		commander = &fakeCommander{response: at.Response{Terminal: "OK"}}
+		controller = NewController(commander)
+	})
 
-func TestSendDTMF(t *testing.T) {
-	commander := &fakeCommander{response: at.Response{Terminal: "OK"}}
-	controller := NewController(commander)
-	controller.ApplyURC("RING")
-	if err := controller.Answer(context.Background()); err != nil {
-		t.Fatalf("Answer() error = %v", err)
-	}
-	if err := controller.SendDTMF(context.Background(), "#"); err != nil {
-		t.Fatalf("SendDTMF() error = %v", err)
-	}
-	if got := commander.commands[1]; got != `AT+VTS="#"` {
-		t.Fatalf("DTMF command = %q", got)
-	}
-}
+	It("dials and hangs up a valid number", func() {
+		Expect(controller.Dial(context.Background(), "+8613500000000")).To(Succeed())
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateDialing}))
+		Expect(controller.Hangup(context.Background())).To(Succeed())
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateEnded}))
+		Expect(commander.commands).To(Equal([]string{"ATD+8613500000000;", "ATH"}))
+	})
+
+	DescribeTable("rejects invalid dial attempts without contacting the modem",
+		func(number string) {
+			Expect(controller.Dial(context.Background(), number)).To(MatchError(ContainSubstring("phone number")))
+			Expect(commander.commands).To(BeEmpty())
+		},
+		Entry("empty", ""),
+		Entry("letters", "12A"),
+		Entry("embedded plus", "1+2"),
+		Entry("too long", "+123456789012345678901"),
+	)
+
+	It("does not dial while another call is in progress", func() {
+		controller.ApplyURC("RING")
+		Expect(controller.Dial(context.Background(), "10086")).To(MatchError("cannot dial while call state is ringing"))
+		Expect(commander.commands).To(BeEmpty())
+	})
+
+	It("answers an incoming call", func() {
+		controller.ApplyURC("RING")
+		Expect(controller.State()).To(Equal(StateRinging))
+
+		Expect(controller.Answer(context.Background())).To(Succeed())
+
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateActive, Active: true}))
+		Expect(commander.commands).To(Equal([]string{"ATA"}))
+	})
+
+	It("preserves the active call when rejecting a waiting call", func() {
+		controller.ApplyURC("RING")
+		Expect(controller.Answer(context.Background())).To(Succeed())
+		controller.ApplyURC(`+CCWA: "10086",129,1`)
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateWaiting, Active: true, Waiting: true}))
+
+		Expect(controller.Reject(context.Background())).To(Succeed())
+
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateActive, Active: true}))
+		Expect(commander.commands).To(Equal([]string{"ATA", "AT+CHLD=0"}))
+	})
+
+	It("preserves a held call when rejecting a waiting call", func() {
+		controller.ApplyURC("RING")
+		Expect(controller.Answer(context.Background())).To(Succeed())
+		Expect(controller.Hold(context.Background())).To(Succeed())
+		controller.ApplyURC("RING")
+
+		Expect(controller.Reject(context.Background())).To(Succeed())
+
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateHeld, Held: true}))
+	})
+
+	It("ends an orphan waiting indication when it is rejected", func() {
+		controller.ApplyURC(`+CCWA: "10086",129,1`)
+
+		Expect(controller.Reject(context.Background())).To(Succeed())
+
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateEnded}))
+	})
+
+	It("holds the active call when answering a waiting call", func() {
+		controller.ApplyURC("RING")
+		Expect(controller.Answer(context.Background())).To(Succeed())
+		controller.ApplyURC(`+CCWA: "10086",129,1`)
+
+		Expect(controller.AnswerWaiting(context.Background())).To(Succeed())
+
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateActive, Active: true, Held: true}))
+		Expect(commander.commands).To(Equal([]string{"ATA", "AT+CHLD=2"}))
+	})
+
+	It("allows DTMF on the active leg while another call waits", func() {
+		controller.ApplyURC("RING")
+		Expect(controller.Answer(context.Background())).To(Succeed())
+		controller.ApplyURC(`+CCWA: "10010",129,1`)
+
+		Expect(controller.SendDTMF(context.Background(), "#")).To(Succeed())
+
+		Expect(commander.commands).To(HaveLen(2))
+		Expect(commander.commands[1]).To(Equal(`AT+VTS="#"`))
+	})
+
+	It("holds and resumes a single active call", func() {
+		controller.ApplyURC("RING")
+		Expect(controller.Answer(context.Background())).To(Succeed())
+
+		Expect(controller.Hold(context.Background())).To(Succeed())
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateHeld, Held: true}))
+		Expect(controller.Resume(context.Background())).To(Succeed())
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateActive, Active: true}))
+		Expect(commander.commands).To(Equal([]string{"ATA", "AT+CHLD=2", "AT+CHLD=2"}))
+	})
+
+	It("swaps only when active and held call legs both exist", func() {
+		Expect(controller.Swap(context.Background())).To(MatchError("cannot swap while call state is idle"))
+		controller.ApplyURC("RING")
+		Expect(controller.Answer(context.Background())).To(Succeed())
+		controller.ApplyURC(`+CCWA: "10010",129,1`)
+		Expect(controller.AnswerWaiting(context.Background())).To(Succeed())
+
+		Expect(controller.Swap(context.Background())).To(Succeed())
+
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateActive, Active: true, Held: true}))
+		Expect(commander.commands).To(HaveLen(3))
+		Expect(commander.commands[2]).To(Equal("AT+CHLD=2"))
+	})
+
+	It("keeps a held leg when the foreground call ends", func() {
+		controller.ApplyURC("RING")
+		Expect(controller.Answer(context.Background())).To(Succeed())
+		controller.ApplyURC(`+CCWA: "10010",129,1`)
+		Expect(controller.AnswerWaiting(context.Background())).To(Succeed())
+
+		controller.ApplyURC("NO CARRIER")
+
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateHeld, Held: true}))
+	})
+
+	It("marks the call ended for terminal network notifications", func() {
+		for _, notification := range []string{"NO CARRIER", "NO ANSWER", "BUSY"} {
+			controller.ApplyURC("RING")
+			controller.ApplyURC(notification)
+			Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateEnded}))
+		}
+	})
+
+	It("ignores unrelated notifications", func() {
+		controller.ApplyURC("+CMTI: \"ME\",1")
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateIdle}))
+	})
+
+	DescribeTable("rejects actions that do not match call state",
+		func(action func() error, expected string) {
+			Expect(action()).To(MatchError(ContainSubstring(expected)))
+			Expect(commander.commands).To(BeEmpty())
+		},
+		Entry("answer", func() error { return controller.Answer(context.Background()) }, "cannot answer"),
+		Entry("answer waiting", func() error { return controller.AnswerWaiting(context.Background()) }, "cannot answer waiting"),
+		Entry("hold", func() error { return controller.Hold(context.Background()) }, "cannot hold"),
+		Entry("resume", func() error { return controller.Resume(context.Background()) }, "cannot resume"),
+		Entry("DTMF", func() error { return controller.SendDTMF(context.Background(), "1") }, "cannot send DTMF"),
+	)
+
+	DescribeTable("rejects invalid DTMF digits",
+		func(digit string) {
+			Expect(controller.SendDTMF(context.Background(), digit)).To(MatchError("DTMF digit must be 0-9, star, or hash"))
+		},
+		Entry("empty", ""),
+		Entry("multiple", "12"),
+		Entry("letter", "A"),
+	)
+
+	It("does not change state when the modem transport fails", func() {
+		controller.ApplyURC("RING")
+		commander.err = errors.New("serial disconnected")
+
+		Expect(controller.Answer(context.Background())).To(MatchError("serial disconnected"))
+		Expect(controller.State()).To(Equal(StateRinging))
+	})
+
+	It("does not mark a call ended when hangup fails", func() {
+		controller.ApplyURC("RING")
+		commander.err = errors.New("serial disconnected")
+
+		Expect(controller.Hangup(context.Background())).To(MatchError("serial disconnected"))
+
+		Expect(controller.State()).To(Equal(StateRinging))
+	})
+
+	It("allows a new dial after the prior call ended", func() {
+		controller.ApplyURC("BUSY")
+
+		Expect(controller.Dial(context.Background(), "10086")).To(Succeed())
+
+		Expect(controller.State()).To(Equal(StateDialing))
+	})
+
+	It("returns a contextual error when the modem rejects a command", func() {
+		controller.ApplyURC("RING")
+		commander.response = at.Response{Terminal: "+CME ERROR: 3"}
+
+		Expect(controller.Answer(context.Background())).To(MatchError("modem rejected ATA: +CME ERROR: 3"))
+		Expect(controller.State()).To(Equal(StateRinging))
+	})
+
+	It("rejects a normal incoming call and clears all call legs", func() {
+		controller.ApplyURC("RING")
+
+		Expect(controller.Reject(context.Background())).To(Succeed())
+
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateEnded}))
+		Expect(commander.commands).To(Equal([]string{"ATH"}))
+	})
+})

@@ -12,6 +12,7 @@ final class AppModel {
     var keyRecoveryState: KeyRecoveryState
     var installationID: UUID?
     var pendingInstallationRevocationIDs: [UUID]
+    let serverConnection: ServerConnectionManager
     let callCoordinator: CallKitCoordinator
     let installationBootstrapper: any InstallationBootstrapping
 
@@ -22,9 +23,11 @@ final class AppModel {
         lastSuccessfulDialLineID: UUID? = nil,
         selectedTab: AppTab = .calls,
         keyRecoveryState: KeyRecoveryState = .checking,
-        callCoordinator: CallKitCoordinator = CallKitCoordinator(),
+        serverConnection: ServerConnectionManager? = nil,
+        callCoordinator: CallKitCoordinator? = nil,
         installationBootstrapper: any InstallationBootstrapping = InstallationBootstrapper.live()
     ) {
+        let resolvedServerConnection = serverConnection ?? .live()
         self.devices = devices
         self.callHistory = callHistory
         self.messages = messages
@@ -32,7 +35,10 @@ final class AppModel {
         self.selectedTab = selectedTab
         self.keyRecoveryState = keyRecoveryState
         self.pendingInstallationRevocationIDs = []
-        self.callCoordinator = callCoordinator
+        self.serverConnection = resolvedServerConnection
+        self.callCoordinator = callCoordinator ?? CallKitCoordinator(
+            transport: LiveCallTransport(api: resolvedServerConnection)
+        )
         self.installationBootstrapper = installationBootstrapper
     }
 
@@ -44,6 +50,22 @@ final class AppModel {
             keyRecoveryState = result.recoveredVaultKey == nil ? .approvalRequired : .available
         } catch {
             keyRecoveryState = .unavailable
+        }
+    }
+
+    func refreshDevices() async {
+        guard serverConnection.isSignedIn else {
+            devices = []
+            return
+        }
+        do {
+            devices = try await serverConnection.loadDevices()
+        } catch {
+            devices = devices.map { device in
+                var offlineDevice = device
+                offlineDevice.isOnline = false
+                return offlineDevice
+            }
         }
     }
 }

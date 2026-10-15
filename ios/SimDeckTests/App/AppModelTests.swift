@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import SimDeck
 
@@ -60,4 +61,68 @@ final class AppModelTests: XCTestCase {
 
         XCTAssertNotEqual(first, second)
     }
+
+    @MainActor
+    func testRefreshDevicesPublishesServerDeviceLines() async throws {
+        let deviceID = UUID(uuidString: "01900000-0000-7000-8000-000000000001")!
+        let session = Data("""
+        {"access_token":"access","refresh_token":"refresh","access_expires_at":"2098-01-01T00:00:00Z","refresh_expires_at":"2099-01-01T00:00:00Z"}
+        """.utf8)
+        let network = AppModelServerNetwork(deviceID: deviceID)
+        let defaults = UserDefaults(suiteName: "AppModelTests.\(UUID().uuidString)")!
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let connection = ServerConnectionManager(
+            network: network,
+            sessionStore: AppModelSessionStore(value: session),
+            defaults: defaults
+        )
+        let model = AppModel(serverConnection: connection)
+
+        await model.refreshDevices()
+
+        XCTAssertEqual(model.devices.map(\.id), [deviceID])
+        XCTAssertEqual(model.devices.map(\.numericID), [3])
+        XCTAssertEqual(model.devices.map(\.commandPublicKey), [Data(repeating: 4, count: 32)])
+        XCTAssertEqual(network.requestCount, 1)
+    }
+}
+
+@MainActor
+private final class AppModelServerNetwork: ServerNetworking {
+    private let deviceID: UUID
+    private(set) var requestCount = 0
+
+    init(deviceID: UUID) {
+        self.deviceID = deviceID
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        requestCount += 1
+        XCTAssertEqual(request.url?.path, "/v1/devices")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
+        let key = Data(repeating: 4, count: 32).base64EncodedString()
+        let body = Data("""
+        {"devices":[{"device_uuid":"\(deviceID.uuidString.lowercased())","numeric_id":3,"profile_ciphertext":"","identity_public_key":"","command_public_key":"\(key)","paired_at":"2026-10-16T00:00:00Z"}]}
+        """.utf8)
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+        return (body, response)
+    }
+}
+
+private final class AppModelSessionStore: SecureValueStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Data?
+
+    init(value: Data?) {
+        self.value = value
+    }
+
+    func read() -> Data? { lock.withLock { value } }
+    func write(_ value: Data) { lock.withLock { self.value = value } }
+    func delete() { lock.withLock { value = nil } }
 }

@@ -98,6 +98,7 @@ final class AppModel {
             AppInstallationRegistration(
                 id: installationIdentity.id,
                 identityPublicKey: try installationIdentity.signingPublicKey(),
+                keyAgreementPublicKey: try installationIdentity.keyAgreementPublicKey(),
                 wrappedVaultKey: nil
             )
         )

@@ -76,12 +76,14 @@ struct EncryptedEventPage: Decodable, Equatable, Sendable {
 struct AppInstallationRegistration: Equatable, Sendable {
     let id: UUID
     let identityPublicKey: Data
+    let keyAgreementPublicKey: Data
     let wrappedVaultKey: Data?
 }
 
 struct AppInstallationTrust: Decodable, Equatable, Sendable {
     let id: UUID
     let identityPublicKey: Data
+    let keyAgreementPublicKey: Data
     let wrappedVaultKey: Data?
     let approvedAt: Date?
     let revokedAt: Date?
@@ -92,6 +94,7 @@ struct AppInstallationTrust: Decodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id = "installation_id"
         case identityPublicKey = "identity_public_key"
+        case keyAgreementPublicKey = "key_agreement_public_key"
         case wrappedVaultKey = "wrapped_vault_key"
         case approvedAt = "approved_at"
         case revokedAt = "revoked_at"
@@ -343,13 +346,15 @@ final class ServerConnectionManager {
     func registerAppInstallation(
         _ registration: AppInstallationRegistration
     ) async throws -> AppInstallationTrust {
-        guard registration.identityPublicKey.count == 32 else {
+        guard registration.identityPublicKey.count == 32,
+              registration.keyAgreementPublicKey.count == 32 else {
             throw ServerConnectionError.invalidResponse
         }
         let body = try Self.encoder.encode(
             AppInstallationRegistrationRequest(
                 installationID: registration.id,
                 identityPublicKey: registration.identityPublicKey,
+                keyAgreementPublicKey: registration.keyAgreementPublicKey,
                 wrappedVaultKey: registration.wrappedVaultKey
             )
         )
@@ -487,11 +492,13 @@ private struct RefreshRequest: Encodable {
 private struct AppInstallationRegistrationRequest: Encodable {
     let installationID: UUID
     let identityPublicKey: Data
+    let keyAgreementPublicKey: Data
     let wrappedVaultKey: Data?
 
     enum CodingKeys: String, CodingKey {
         case installationID = "installation_id"
         case identityPublicKey = "identity_public_key"
+        case keyAgreementPublicKey = "key_agreement_public_key"
         case wrappedVaultKey = "wrapped_vault_key"
     }
 }

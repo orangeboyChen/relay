@@ -225,10 +225,15 @@ private final class AppModelInstallationNetwork: ServerNetworking {
                 object["identity_public_key"] as? String,
                 try identity.signingPublicKey().base64EncodedString()
             )
+            XCTAssertEqual(
+                object["key_agreement_public_key"] as? String,
+                try identity.keyAgreementPublicKey().base64EncodedString()
+            )
             body = Data("""
             {"installation":{
               "installation_id":"\(identity.id.uuidString.lowercased())",
               "identity_public_key":"\(try identity.signingPublicKey().base64EncodedString())",
+              "key_agreement_public_key":"\(try identity.keyAgreementPublicKey().base64EncodedString())",
               "approved_at":"2026-10-16T13:00:00Z",
               "created_at":"2026-10-16T13:00:00Z"
             },"created":true}

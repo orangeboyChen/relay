@@ -216,6 +216,7 @@ final class ServerConnectionManagerTests: XCTestCase {
         )
         let installationID = UUID(uuidString: "01900000-0000-7000-8000-000000000101")!
         let publicKey = Data(repeating: 7, count: 32)
+        let keyAgreementPublicKey = Data(repeating: 8, count: 32)
         let wrappedKey = Data("wrapped vault key".utf8)
         let network = ScriptedServerNetwork { request in
             XCTAssertEqual(request.httpMethod, "POST")
@@ -229,6 +230,10 @@ final class ServerConnectionManagerTests: XCTestCase {
                 installationID
             )
             XCTAssertEqual(object["identity_public_key"] as? String, publicKey.base64EncodedString())
+            XCTAssertEqual(
+                object["key_agreement_public_key"] as? String,
+                keyAgreementPublicKey.base64EncodedString()
+            )
             XCTAssertEqual(object["wrapped_vault_key"] as? String, wrappedKey.base64EncodedString())
             return Self.response(
                 status: 201,
@@ -236,6 +241,7 @@ final class ServerConnectionManagerTests: XCTestCase {
                 {"installation":{
                   "installation_id":"\(installationID.uuidString.lowercased())",
                   "identity_public_key":"\(publicKey.base64EncodedString())",
+                  "key_agreement_public_key":"\(keyAgreementPublicKey.base64EncodedString())",
                   "wrapped_vault_key":"\(wrappedKey.base64EncodedString())",
                   "approved_at":"2026-10-16T13:00:00Z",
                   "created_at":"2026-10-16T13:00:00Z"
@@ -251,12 +257,14 @@ final class ServerConnectionManagerTests: XCTestCase {
             AppInstallationRegistration(
                 id: installationID,
                 identityPublicKey: publicKey,
+                keyAgreementPublicKey: keyAgreementPublicKey,
                 wrappedVaultKey: wrappedKey
             )
         )
 
         XCTAssertEqual(trust.id, installationID)
         XCTAssertEqual(trust.identityPublicKey, publicKey)
+        XCTAssertEqual(trust.keyAgreementPublicKey, keyAgreementPublicKey)
         XCTAssertEqual(trust.wrappedVaultKey, wrappedKey)
         XCTAssertTrue(trust.isApproved)
     }
@@ -278,10 +286,25 @@ final class ServerConnectionManagerTests: XCTestCase {
                 AppInstallationRegistration(
                     id: UUID(),
                     identityPublicKey: Data(repeating: 1, count: 31),
+                    keyAgreementPublicKey: Data(repeating: 2, count: 32),
                     wrappedVaultKey: nil
                 )
             )
             XCTFail("Expected the malformed key to fail")
+        } catch {
+            XCTAssertEqual(error as? ServerConnectionError, .invalidResponse)
+        }
+
+        do {
+            _ = try await manager.registerAppInstallation(
+                AppInstallationRegistration(
+                    id: UUID(),
+                    identityPublicKey: Data(repeating: 1, count: 32),
+                    keyAgreementPublicKey: Data(repeating: 2, count: 31),
+                    wrappedVaultKey: nil
+                )
+            )
+            XCTFail("Expected the malformed agreement key to fail")
         } catch {
             XCTAssertEqual(error as? ServerConnectionError, .invalidResponse)
         }

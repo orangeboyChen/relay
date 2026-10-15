@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -16,8 +18,10 @@ import (
 	"sim-deck-device/internal/agent"
 	"sim-deck-device/internal/at"
 	"sim-deck-device/internal/identity"
+	"sim-deck-device/internal/modem"
 	"sim-deck-device/internal/serialport"
 	"sim-deck-device/internal/serverapi"
+	"sim-deck-device/internal/sms"
 )
 
 func main() {
@@ -49,8 +53,38 @@ func run(ctx context.Context, config agent.Config, logger *slog.Logger) error {
 		defer cancel()
 		_ = server.Shutdown(shutdownContext)
 	}()
+	return runDevice(ctx, config, logger, &ready, productionDependencies())
+}
 
-	transport, err := serialport.Open(config.ATDevice, config.Baud)
+type deviceSession interface {
+	Initialize(context.Context) error
+	Run(context.Context) error
+}
+
+type deviceDependencies struct {
+	openTransport func(string, int) (io.ReadWriteCloser, error)
+	bindIdentity  func(context.Context, agent.Config, identity.Store, identity.State) (identity.State, error)
+	openInbox     func(string, time.Duration) (*sms.Inbox, error)
+	newSession    func(*at.Client, *sms.Inbox, modem.MessageSink, *slog.Logger, time.Duration) (deviceSession, error)
+}
+
+func productionDependencies() deviceDependencies {
+	return deviceDependencies{
+		openTransport: func(path string, baud int) (io.ReadWriteCloser, error) {
+			return serialport.Open(path, baud)
+		},
+		bindIdentity: func(ctx context.Context, config agent.Config, store identity.Store, state identity.State) (identity.State, error) {
+			return agent.EnsureBinding(ctx, config, store, state, serverapi.NewClient(config.ServerURL, nil))
+		},
+		openInbox: sms.NewPersistentInbox,
+		newSession: func(client *at.Client, inbox *sms.Inbox, sink modem.MessageSink, logger *slog.Logger, timeout time.Duration) (deviceSession, error) {
+			return modem.NewSession(client, inbox, sink, logger, timeout)
+		},
+	}
+}
+
+func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, ready *atomic.Bool, dependencies deviceDependencies) error {
+	transport, err := dependencies.openTransport(config.ATDevice, config.Baud)
 	if err != nil {
 		return err
 	}
@@ -62,18 +96,22 @@ func run(ctx context.Context, config agent.Config, logger *slog.Logger) error {
 		return fmt.Errorf("load device identity: %w", err)
 	}
 
-	for _, command := range []string{"ATE0", "AT+CMEE=2", "AT+CMGF=0"} {
-		commandContext, cancel := context.WithTimeout(ctx, config.CommandTimeout)
-		response, commandError := client.Send(commandContext, command)
-		cancel()
-		if commandError != nil {
-			return commandError
-		}
-		if !response.OK() {
-			return errors.New("modem rejected initialization command " + command)
-		}
+	inbox, err := dependencies.openInbox(filepath.Join(config.StateDirectory, "sms-inbox.json"), 365*24*time.Hour)
+	if err != nil {
+		return fmt.Errorf("open SMS inbox: %w", err)
 	}
-	deviceIdentity, err = agent.EnsureBinding(ctx, config, identityStore, deviceIdentity, serverapi.NewClient(config.ServerURL, nil))
+	messageSink := modem.MessageSinkFunc(func(_ context.Context, message sms.ReceivedMessage) error {
+		logger.Info("SMS ready for encrypted synchronization", "message_id", message.ID, "segments", message.Segments)
+		return nil
+	})
+	session, err := dependencies.newSession(client, inbox, messageSink, logger, config.CommandTimeout)
+	if err != nil {
+		return err
+	}
+	if err := session.Initialize(ctx); err != nil {
+		return err
+	}
+	deviceIdentity, err = dependencies.bindIdentity(ctx, config, identityStore, deviceIdentity)
 	if err != nil {
 		return fmt.Errorf("bind device to server: %w", err)
 	}
@@ -88,16 +126,7 @@ func run(ctx context.Context, config agent.Config, logger *slog.Logger) error {
 		"device_uuid", deviceIdentity.DeviceUUID,
 		"numeric_id", deviceIdentity.NumericID,
 	)
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case readError := <-client.Errors():
-			return readError
-		case urc := <-client.URCs():
-			logger.Info("modem notification", "urc", urc)
-		}
-	}
+	return session.Run(ctx)
 }
 
 func healthServer(address string, ready *atomic.Bool) *http.Server {

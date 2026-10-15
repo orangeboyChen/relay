@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS push_tokens (
 
 CREATE TABLE IF NOT EXISTS devices (
     id UUID PRIMARY KEY,
-    numeric_id SMALLINT NOT NULL UNIQUE CHECK (numeric_id BETWEEN 1 AND 99),
+    numeric_id SMALLINT NOT NULL CHECK (numeric_id BETWEEN 1 AND 99),
     profile_ciphertext BYTEA NOT NULL,
     identity_public_key BYTEA NOT NULL,
     wrapped_vault_key BYTEA,
@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS devices (
     last_seen_at TIMESTAMPTZ,
     revoked_at TIMESTAMPTZ
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS devices_active_numeric_id_idx ON devices(numeric_id) WHERE revoked_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS device_certificates (
     serial TEXT PRIMARY KEY,

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"sim-deck-server/internal/domain"
@@ -23,13 +24,13 @@ type Postgres struct {
 
 // DeviceRecord is the server-readable portion of a paired device.
 type DeviceRecord struct {
-	ID                string
-	NumericID         int
-	ProfileCiphertext []byte
-	IdentityPublicKey []byte
-	WrappedVaultKey   []byte
-	PairedAt          time.Time
-	LastSeenAt        *time.Time
+	ID                string     `json:"device_uuid"`
+	NumericID         int        `json:"numeric_id"`
+	ProfileCiphertext []byte     `json:"profile_ciphertext"`
+	IdentityPublicKey []byte     `json:"identity_public_key"`
+	WrappedVaultKey   []byte     `json:"wrapped_vault_key,omitempty"`
+	PairedAt          time.Time  `json:"paired_at"`
+	LastSeenAt        *time.Time `json:"last_seen_at,omitempty"`
 }
 
 // Open connects to PostgreSQL and verifies that the server is reachable.
@@ -118,12 +119,42 @@ func (store *Postgres) UpdateNumericID(ctx context.Context, deviceID string, num
 		UPDATE devices SET numeric_id = $2
 		WHERE id = $1 AND revoked_at IS NULL`, deviceID, numericID)
 	if err != nil {
+		var postgresError *pgconn.PgError
+		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
+			return domain.ErrDuplicateNumericID
+		}
 		return fmt.Errorf("update numeric id: %w", err)
 	}
 	if command.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
 	return nil
+}
+
+// ListDevices returns active devices without decrypting their line profiles.
+func (store *Postgres) ListDevices(ctx context.Context) ([]DeviceRecord, error) {
+	rows, err := store.pool.Query(ctx, `
+		SELECT id, numeric_id, profile_ciphertext, identity_public_key, wrapped_vault_key, paired_at, last_seen_at
+		FROM devices
+		WHERE revoked_at IS NULL
+		ORDER BY numeric_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list devices: %w", err)
+	}
+	defer rows.Close()
+
+	records := make([]DeviceRecord, 0)
+	for rows.Next() {
+		var record DeviceRecord
+		if err := rows.Scan(&record.ID, &record.NumericID, &record.ProfileCiphertext, &record.IdentityPublicKey, &record.WrappedVaultKey, &record.PairedAt, &record.LastSeenAt); err != nil {
+			return nil, fmt.Errorf("scan device: %w", err)
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate devices: %w", err)
+	}
+	return records, nil
 }
 
 // InsertEvent stores an encrypted event once and returns its server sequence.

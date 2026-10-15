@@ -102,6 +102,26 @@ struct AppInstallationTrust: Decodable, Equatable, Sendable {
     }
 }
 
+struct IncomingCallClaim: Decodable, Equatable, Sendable {
+    let notificationID: UUID
+    let installationID: UUID
+    let claimedAt: Date
+    let won: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case notificationID = "notification_id"
+        case installationID = "installation_id"
+        case claimedAt = "claimed_at"
+        case won
+    }
+}
+
+@MainActor
+protocol IncomingCallClaiming: AnyObject {
+    func claimIncomingCall(notificationID: UUID, installationID: UUID) async throws
+        -> IncomingCallClaim
+}
+
 @MainActor
 protocol EncryptedCallCommandAPI: AnyObject {
     func commandRecipient(deviceID: UUID) async throws -> Data
@@ -370,6 +390,24 @@ final class ServerConnectionManager {
             .installation
     }
 
+    func claimIncomingCall(
+        notificationID: UUID,
+        installationID: UUID
+    ) async throws -> IncomingCallClaim {
+        let body = try Self.encoder.encode(
+            IncomingCallClaimRequest(installationID: installationID)
+        )
+        let (data, response) = try await authenticatedRequest(
+            path: "v1/incoming-calls/\(notificationID.uuidString.lowercased())/claim",
+            method: "POST",
+            body: body
+        )
+        guard response.statusCode == 200 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
+        }
+        return try Self.decoder.decode(IncomingCallClaimResponse.self, from: data).claim
+    }
+
     private func authenticatedRequest(
         path: String,
         method: String,
@@ -475,6 +513,7 @@ final class ServerConnectionManager {
 }
 
 extension ServerConnectionManager: EncryptedCallCommandAPI {}
+extension ServerConnectionManager: IncomingCallClaiming {}
 
 private struct BootstrapRequest: Encodable {
     let username: String
@@ -505,6 +544,18 @@ private struct AppInstallationRegistrationRequest: Encodable {
 
 private struct AppInstallationRegistrationResponse: Decodable {
     let installation: AppInstallationTrust
+}
+
+private struct IncomingCallClaimRequest: Encodable {
+    let installationID: UUID
+
+    enum CodingKeys: String, CodingKey {
+        case installationID = "installation_id"
+    }
+}
+
+private struct IncomingCallClaimResponse: Decodable {
+    let claim: IncomingCallClaim
 }
 
 private struct DeviceListResponse: Decodable {

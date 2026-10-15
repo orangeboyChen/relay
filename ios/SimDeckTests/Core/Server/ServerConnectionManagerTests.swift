@@ -312,6 +312,74 @@ final class ServerConnectionManagerTests: XCTestCase {
         XCTAssertTrue(network.requests.isEmpty)
     }
 
+    func testClaimsIncomingCallForCurrentInstallation() async throws {
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
+        )
+        let notificationID = UUID(uuidString: "01900000-0000-7000-8000-000000000010")!
+        let installationID = UUID(uuidString: "01900000-0000-7000-8000-000000000101")!
+        let network = ScriptedServerNetwork { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(
+                request.url?.path,
+                "/v1/incoming-calls/\(notificationID.uuidString.lowercased())/claim"
+            )
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
+            let object = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+            )
+            XCTAssertEqual(
+                (object["installation_id"] as? String).flatMap(UUID.init(uuidString:)),
+                installationID
+            )
+            return Self.response(
+                status: 200,
+                body: """
+                {"claim":{
+                  "notification_id":"\(notificationID.uuidString.lowercased())",
+                  "installation_id":"\(installationID.uuidString.lowercased())",
+                  "claimed_at":"2026-10-16T13:00:00Z",
+                  "won":true
+                }}
+                """
+            )
+        }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+
+        let claim = try await manager.claimIncomingCall(
+            notificationID: notificationID,
+            installationID: installationID
+        )
+
+        XCTAssertEqual(claim.notificationID, notificationID)
+        XCTAssertEqual(claim.installationID, installationID)
+        XCTAssertTrue(claim.won)
+    }
+
+    func testMapsIncomingCallClaimFailure() async throws {
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
+        )
+        let network = ScriptedServerNetwork { _ in
+            Self.response(status: 404, body: "{}")
+        }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+
+        do {
+            _ = try await manager.claimIncomingCall(
+                notificationID: UUID(),
+                installationID: UUID()
+            )
+            XCTFail("Expected the unavailable call to fail")
+        } catch {
+            XCTAssertEqual(error as? ServerConnectionError, .requestFailed(404))
+        }
+    }
+
     private func isolatedDefaults() -> UserDefaults {
         let suiteName = "ServerConnectionManagerTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

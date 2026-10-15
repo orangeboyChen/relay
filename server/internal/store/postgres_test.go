@@ -25,3 +25,13 @@ func TestInitialMigrationContainsRequiredTables(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrationsEnforceSingleOwner(t *testing.T) {
+	schema, err := migrations.ReadFile("migrations/002_single_owner.sql")
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	if !bytes.Contains(schema, []byte("owner_accounts_singleton_idx")) {
+		t.Fatal("single-owner migration does not contain its unique index")
+	}
+}

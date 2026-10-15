@@ -29,9 +29,11 @@ services:
       MEDIA_UDP_PORT: ${MEDIA_UDP_PORT:-49152}
       MEDIA_TCP_PORT: ${MEDIA_TCP_PORT:-49153}
       ADMIN_PASSWORD_FILE: /run/secrets/admin_password
+      RECOVERY_PUBLIC_KEY_FILE: /run/secrets/recovery_public_key
       ATTACHMENT_ROOT: /var/lib/sim-deck/attachments
     secrets:
       - admin_password
+      - recovery_public_key
     ports:
       - "${HTTPS_PORT:-8443}:8080"
       - "${MEDIA_UDP_PORT:-49152}:${MEDIA_UDP_PORT:-49152}/udp"
@@ -42,6 +44,8 @@ services:
 secrets:
   admin_password:
     file: ${ADMIN_PASSWORD_FILE:-./secrets/admin_password.txt}
+  recovery_public_key:
+    file: ${RECOVERY_PUBLIC_KEY_FILE:-./secrets/recovery_public_key.txt}
 
 volumes:
   postgres-data:

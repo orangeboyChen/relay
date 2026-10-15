@@ -5,6 +5,8 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"io/fs"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -53,14 +55,59 @@ func (store *Postgres) Close() {
 
 // Migrate applies the embedded idempotent schema.
 func (store *Postgres) Migrate(ctx context.Context) error {
-	schema, err := migrations.ReadFile("migrations/001_initial.sql")
+	paths, err := fs.Glob(migrations, "migrations/*.sql")
 	if err != nil {
-		return fmt.Errorf("read initial migration: %w", err)
+		return fmt.Errorf("list migrations: %w", err)
 	}
-	if _, err := store.pool.Exec(ctx, string(schema)); err != nil {
-		return fmt.Errorf("apply initial migration: %w", err)
+	sort.Strings(paths)
+	for _, path := range paths {
+		schema, err := migrations.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read migration %s: %w", path, err)
+		}
+		if _, err := store.pool.Exec(ctx, string(schema)); err != nil {
+			return fmt.Errorf("apply migration %s: %w", path, err)
+		}
 	}
 	return nil
+}
+
+// OwnerExists reports whether the single owner account has already been created.
+func (store *Postgres) OwnerExists(ctx context.Context) (bool, error) {
+	var exists bool
+	if err := store.pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM owner_accounts)").Scan(&exists); err != nil {
+		return false, fmt.Errorf("check owner account: %w", err)
+	}
+	return exists, nil
+}
+
+// CreateOwner creates the single owner while serializing concurrent bootstrap attempts.
+func (store *Postgres) CreateOwner(ctx context.Context, passwordHash string, recoveryPublicKey []byte) (bool, error) {
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin owner bootstrap: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", int64(0x53494d4f)); err != nil {
+		return false, fmt.Errorf("lock owner bootstrap: %w", err)
+	}
+	var exists bool
+	if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM owner_accounts)").Scan(&exists); err != nil {
+		return false, fmt.Errorf("check owner during bootstrap: %w", err)
+	}
+	if exists {
+		return false, nil
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO owner_accounts (id, username, password_hash, recovery_public_key)
+		VALUES (gen_random_uuid(), 'admin', $1, $2)`, []byte(passwordHash), recoveryPublicKey); err != nil {
+		return false, fmt.Errorf("create owner account: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit owner bootstrap: %w", err)
+	}
+	return true, nil
 }
 
 // CreateDevice atomically allocates the smallest free numeric identifier.

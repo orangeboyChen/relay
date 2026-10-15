@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"sim-deck-server/internal/api"
+	"sim-deck-server/internal/bootstrap"
 	"sim-deck-server/internal/store"
 )
 
@@ -37,6 +38,16 @@ func run() error {
 	defer repository.Close()
 	if err := repository.Migrate(ctx); err != nil {
 		return err
+	}
+	bootstrapResult, err := bootstrap.Owner(ctx, repository, bootstrap.Config{
+		PasswordFile:          envOrDefault("ADMIN_PASSWORD_FILE", "/run/secrets/sim_deck_admin_password"),
+		RecoveryPublicKeyFile: envOrDefault("RECOVERY_PUBLIC_KEY_FILE", "/run/secrets/sim_deck_recovery_public_key"),
+	})
+	if err != nil {
+		return fmt.Errorf("bootstrap owner: %w", err)
+	}
+	if bootstrapResult.GeneratedPassword != "" {
+		slog.Warn("generated initial admin password; save it now because it will not be shown again", "username", "admin", "password", bootstrapResult.GeneratedPassword)
 	}
 
 	udpPort, err := api.ParsePort(os.Getenv("MEDIA_UDP_PORT"), 49152)

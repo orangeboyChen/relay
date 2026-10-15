@@ -1,0 +1,48 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: simdeck
+      POSTGRES_USER: simdeck
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U simdeck -d simdeck"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  server:
+    build:
+      context: .
+    image: sim-deck/server:dev
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://simdeck:${POSTGRES_PASSWORD}@postgres:5432/simdeck?sslmode=disable
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL}
+      HTTP_ADDR: :8080
+      MEDIA_UDP_PORT: ${MEDIA_UDP_PORT:-49152}
+      MEDIA_TCP_PORT: ${MEDIA_TCP_PORT:-49153}
+      ADMIN_PASSWORD_FILE: /run/secrets/admin_password
+      ATTACHMENT_ROOT: /var/lib/sim-deck/attachments
+    secrets:
+      - admin_password
+    ports:
+      - "${HTTPS_PORT:-8443}:8080"
+      - "${MEDIA_UDP_PORT:-49152}:${MEDIA_UDP_PORT:-49152}/udp"
+      - "${MEDIA_TCP_PORT:-49153}:${MEDIA_TCP_PORT:-49153}/tcp"
+    volumes:
+      - attachment-data:/var/lib/sim-deck/attachments
+
+secrets:
+  admin_password:
+    file: ${ADMIN_PASSWORD_FILE:-./secrets/admin_password.txt}
+
+volumes:
+  postgres-data:
+  attachment-data:

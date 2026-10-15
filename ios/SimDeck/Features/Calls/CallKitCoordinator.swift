@@ -34,7 +34,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling {
         if let provider {
             self.provider = provider
         } else {
-            let configuration = CXProviderConfiguration(localizedName: "sim-deck")
+            let configuration = CXProviderConfiguration()
             configuration.supportsVideo = false
             configuration.maximumCallsPerCallGroup = 2
             configuration.maximumCallGroups = 1

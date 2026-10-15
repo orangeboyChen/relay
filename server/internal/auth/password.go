@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"golang.org/x/crypto/argon2"
@@ -23,11 +24,15 @@ var ErrInvalidPasswordHash = errors.New("password hash is invalid")
 
 // HashPassword encodes an Argon2id password hash with all verification parameters.
 func HashPassword(password string) (string, error) {
+	return hashPassword(password, rand.Reader)
+}
+
+func hashPassword(password string, source io.Reader) (string, error) {
 	if password == "" {
 		return "", errors.New("password must not be empty")
 	}
 	salt := make([]byte, saltLength)
-	if _, err := rand.Read(salt); err != nil {
+	if _, err := io.ReadFull(source, salt); err != nil {
 		return "", fmt.Errorf("generate password salt: %w", err)
 	}
 	hash := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
@@ -63,8 +68,12 @@ func VerifyPassword(password string, encoded string) (bool, error) {
 
 // GenerateInitialPassword creates a printable one-time bootstrap password.
 func GenerateInitialPassword() (string, error) {
+	return generateInitialPassword(rand.Reader)
+}
+
+func generateInitialPassword(source io.Reader) (string, error) {
 	randomBytes := make([]byte, 24)
-	if _, err := rand.Read(randomBytes); err != nil {
+	if _, err := io.ReadFull(source, randomBytes); err != nil {
 		return "", fmt.Errorf("generate initial password: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(randomBytes), nil

@@ -348,6 +348,33 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(errors.Is(err, domain.ErrIdempotencyConflict)).To(BeTrue())
 	})
 
+	It("lists only unexpired encrypted events after a sequence cursor", func() {
+		device := createDevice(firstDeviceID)
+		first := domain.EventEnvelope{
+			ID: "01900000-0000-7000-8000-000000000030", Type: "call.state", DeviceUUID: device.ID,
+			OccurredAt: now, KeyEpoch: 1, Nonce: bytes.Repeat([]byte{1}, 12), Ciphertext: []byte("first"), Signature: bytes.Repeat([]byte{2}, ed25519.SignatureSize),
+		}
+		second := first
+		second.ID = "01900000-0000-7000-8000-000000000031"
+		second.Ciphertext = []byte("second")
+		third := first
+		third.ID = "01900000-0000-7000-8000-000000000032"
+		third.Ciphertext = []byte("expired")
+
+		firstSequence, _, err := database.InsertEvent(context.Background(), first, now.Add(time.Hour))
+		Expect(err).NotTo(HaveOccurred())
+		secondSequence, _, err := database.InsertEvent(context.Background(), second, now.Add(time.Hour))
+		Expect(err).NotTo(HaveOccurred())
+		_, _, err = database.InsertEvent(context.Background(), third, now.Add(-time.Second))
+		Expect(err).NotTo(HaveOccurred())
+
+		events, err := database.ListEvents(context.Background(), firstSequence, 1, now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(events).To(HaveLen(1))
+		Expect(events[0].Sequence).To(Equal(secondSequence))
+		Expect(events[0].Ciphertext).To(Equal([]byte("second")))
+	})
+
 	It("wraps PostgreSQL connection and foreign-key failures", func() {
 		_, err := Open(context.Background(), "://invalid")
 		Expect(err).To(MatchError(ContainSubstring("configure postgres")))

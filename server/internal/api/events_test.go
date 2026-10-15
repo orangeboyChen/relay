@@ -179,3 +179,82 @@ var _ = Describe("Encrypted event ingestion", func() {
 		Expect(response.Body.String()).NotTo(ContainSubstring("database unavailable"))
 	})
 })
+
+var _ = Describe("Encrypted event synchronization", func() {
+	var (
+		now        time.Time
+		repository *fakeRepository
+		handler    http.Handler
+	)
+
+	BeforeEach(func() {
+		now = time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+		repository = &fakeRepository{
+			listedEvents: []domain.EventEnvelope{
+				{ID: "01900000-0000-7000-8000-000000000011", Sequence: 42, Type: "call.state", DeviceUUID: "01900000-0000-7000-8000-000000000002"},
+				{ID: "01900000-0000-7000-8000-000000000012", Sequence: 43, Type: "call.state", DeviceUUID: "01900000-0000-7000-8000-000000000002"},
+			},
+		}
+		handler = Handler(repository, Config{Now: func() time.Time { return now }})
+	})
+
+	request := func(path string) *http.Request {
+		result := httptest.NewRequest(http.MethodGet, path, nil)
+		result.Header.Set("Authorization", "Bearer owner-access-token")
+		return result
+	}
+
+	It("returns opaque events after the requested cursor", func() {
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, request("/v1/events?after_sequence=41&limit=2"))
+
+		Expect(response.Code).To(Equal(http.StatusOK))
+		Expect(repository.listEventsAfter).To(Equal(int64(41)))
+		Expect(repository.listEventsLimit).To(Equal(2))
+		Expect(repository.listEventsNow).To(Equal(now))
+		Expect(response.Body.String()).To(ContainSubstring(`"next_sequence":43`))
+		Expect(response.Body.String()).To(ContainSubstring(`"ciphertext":null`))
+	})
+
+	It("uses bounded defaults and preserves the cursor for an empty page", func() {
+		repository.listedEvents = nil
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, request("/v1/events?after_sequence=9"))
+
+		Expect(response.Code).To(Equal(http.StatusOK))
+		Expect(repository.listEventsLimit).To(Equal(100))
+		Expect(response.Body.String()).To(ContainSubstring(`"next_sequence":9`))
+	})
+
+	DescribeTable("rejects invalid cursor pagination before storage",
+		func(path string, code string) {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request(path))
+			Expect(response.Code).To(Equal(http.StatusBadRequest))
+			Expect(response.Body.String()).To(ContainSubstring(code))
+			Expect(repository.listEventsLimit).To(BeZero())
+		},
+		Entry("negative cursor", "/v1/events?after_sequence=-1", "invalid_cursor"),
+		Entry("non-numeric cursor", "/v1/events?after_sequence=nope", "invalid_cursor"),
+		Entry("zero page", "/v1/events?limit=0", "invalid_limit"),
+		Entry("oversized page", "/v1/events?limit=501", "invalid_limit"),
+	)
+
+	It("requires owner authentication", func() {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/events", nil))
+		Expect(response.Code).To(Equal(http.StatusUnauthorized))
+		Expect(repository.listEventsLimit).To(BeZero())
+	})
+
+	It("maps storage failures without exposing details", func() {
+		repository.listEventsError = errors.New("database unavailable")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request("/v1/events"))
+		Expect(response.Code).To(Equal(http.StatusInternalServerError))
+		Expect(response.Body.String()).To(ContainSubstring("storage_error"))
+		Expect(response.Body.String()).NotTo(ContainSubstring("database unavailable"))
+	})
+})

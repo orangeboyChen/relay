@@ -25,6 +25,7 @@ type Repository interface {
 	ListDevices(context.Context) ([]store.DeviceRecord, error)
 	UpdateNumericID(context.Context, string, int) error
 	InsertEvent(context.Context, domain.EventEnvelope, time.Time) (int64, bool, error)
+	ListEvents(context.Context, int64, int, time.Time) ([]domain.EventEnvelope, error)
 	OwnerCredentialByUsername(context.Context, string) (store.OwnerCredential, error)
 	CreateSession(context.Context, string, auth.TokenPair) error
 	RotateSession(context.Context, string, auth.TokenPair, time.Time) error
@@ -59,6 +60,7 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("POST /v1/device-pairing-tokens", router.requireOwner(router.createPairingToken))
 	mux.HandleFunc("POST /v1/device-pairings", router.pairDevice)
 	mux.HandleFunc("POST /v1/events", router.insertEvent)
+	mux.HandleFunc("GET /v1/events", router.requireOwner(router.listEvents))
 	mux.HandleFunc("POST /v1/devices/{deviceID}/commands", router.requireOwner(router.enqueueCommand))
 	mux.HandleFunc("GET /v1/devices/{deviceID}/commands/{commandID}", router.requireOwner(router.commandStatus))
 	mux.HandleFunc("GET /v1/device-commands/next", router.claimCommand)
@@ -88,6 +90,8 @@ const (
 	commandPublicKeyBytes     = 32
 	commandNonceBytes         = 12
 	maxCommandCiphertextBytes = 64 << 10
+	defaultEventPageSize      = 100
+	maxEventPageSize          = 500
 )
 
 func (router *router) health(writer http.ResponseWriter, _ *http.Request) {
@@ -271,6 +275,48 @@ func (router *router) insertEvent(writer http.ResponseWriter, request *http.Requ
 		status = http.StatusCreated
 	}
 	writeJSON(writer, status, map[string]any{"sequence": sequence, "created": created})
+}
+
+func (router *router) listEvents(writer http.ResponseWriter, request *http.Request) {
+	afterSequence, err := queryInt64(request, "after_sequence", 0)
+	if err != nil || afterSequence < 0 {
+		writeError(writer, http.StatusBadRequest, "invalid_cursor", "Event cursor must be a non-negative integer.")
+		return
+	}
+	limit, err := queryInt(request, "limit", defaultEventPageSize)
+	if err != nil || limit < 1 || limit > maxEventPageSize {
+		writeError(writer, http.StatusBadRequest, "invalid_limit", "Event page size must be between 1 and 500.")
+		return
+	}
+	events, err := router.repository.ListEvents(request.Context(), afterSequence, limit, router.now())
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to read encrypted events.")
+		return
+	}
+	nextSequence := afterSequence
+	if len(events) > 0 {
+		nextSequence = events[len(events)-1].Sequence
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"events":        events,
+		"next_sequence": nextSequence,
+	})
+}
+
+func queryInt64(request *http.Request, name string, fallback int64) (int64, error) {
+	value := request.URL.Query().Get(name)
+	if value == "" {
+		return fallback, nil
+	}
+	return strconv.ParseInt(value, 10, 64)
+}
+
+func queryInt(request *http.Request, name string, fallback int) (int, error) {
+	value := request.URL.Query().Get(name)
+	if value == "" {
+		return fallback, nil
+	}
+	return strconv.Atoi(value)
 }
 
 func (router *router) enqueueCommand(writer http.ResponseWriter, request *http.Request) {

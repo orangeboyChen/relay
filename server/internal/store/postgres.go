@@ -515,6 +515,43 @@ func (store *Postgres) InsertEvent(ctx context.Context, envelope domain.EventEnv
 	return sequence, true, nil
 }
 
+// ListEvents returns unexpired opaque events strictly after the supplied cursor.
+func (store *Postgres) ListEvents(ctx context.Context, afterSequence int64, limit int, now time.Time) ([]domain.EventEnvelope, error) {
+	rows, err := store.pool.Query(ctx, `
+		SELECT id, sequence, type, device_id, occurred_at, key_epoch, nonce, ciphertext, signature
+		FROM events
+		WHERE sequence > $1 AND expires_at > $2
+		ORDER BY sequence ASC
+		LIMIT $3`, afterSequence, now.UTC(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list encrypted events: %w", err)
+	}
+	defer rows.Close()
+
+	events := make([]domain.EventEnvelope, 0)
+	for rows.Next() {
+		var envelope domain.EventEnvelope
+		if err := rows.Scan(
+			&envelope.ID,
+			&envelope.Sequence,
+			&envelope.Type,
+			&envelope.DeviceUUID,
+			&envelope.OccurredAt,
+			&envelope.KeyEpoch,
+			&envelope.Nonce,
+			&envelope.Ciphertext,
+			&envelope.Signature,
+		); err != nil {
+			return nil, fmt.Errorf("scan encrypted event: %w", err)
+		}
+		events = append(events, envelope)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate encrypted events: %w", err)
+	}
+	return events, nil
+}
+
 // EnqueueCommand stores one opaque command while preserving client idempotency.
 func (store *Postgres) EnqueueCommand(ctx context.Context, encrypted domain.EncryptedCommand) (bool, error) {
 	command, err := store.pool.Exec(ctx, `

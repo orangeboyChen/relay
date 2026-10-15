@@ -40,6 +40,9 @@ func (repository *memoryRepository) UpdateNumericID(context.Context, string, int
 func (repository *memoryRepository) InsertEvent(context.Context, domain.EventEnvelope, time.Time) (int64, bool, error) {
 	return 0, false, nil
 }
+func (repository *memoryRepository) ListEvents(context.Context, int64, int, time.Time) ([]domain.EventEnvelope, error) {
+	return nil, nil
+}
 func (repository *memoryRepository) OwnerCredentialByUsername(context.Context, string) (store.OwnerCredential, error) {
 	return store.OwnerCredential{}, pgx.ErrNoRows
 }

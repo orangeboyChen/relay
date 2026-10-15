@@ -29,6 +29,11 @@ type fakeRepository struct {
 	insertError             error
 	insertedEnvelope        domain.EventEnvelope
 	insertedExpiry          time.Time
+	listedEvents            []domain.EventEnvelope
+	listEventsError         error
+	listEventsAfter         int64
+	listEventsLimit         int
+	listEventsNow           time.Time
 	credential              store.OwnerCredential
 	credentialError         error
 	sessionPair             auth.TokenPair
@@ -86,6 +91,13 @@ func (fake *fakeRepository) InsertEvent(_ context.Context, envelope domain.Event
 	fake.insertedEnvelope = envelope
 	fake.insertedExpiry = expiresAt
 	return fake.insertSequence, fake.insertCreated, fake.insertError
+}
+
+func (fake *fakeRepository) ListEvents(_ context.Context, afterSequence int64, limit int, now time.Time) ([]domain.EventEnvelope, error) {
+	fake.listEventsAfter = afterSequence
+	fake.listEventsLimit = limit
+	fake.listEventsNow = now
+	return fake.listedEvents, fake.listEventsError
 }
 
 func (fake *fakeRepository) OwnerCredentialByUsername(context.Context, string) (store.OwnerCredential, error) {

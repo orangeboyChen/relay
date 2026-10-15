@@ -82,6 +82,18 @@ var _ = Describe("Encrypted call event publisher", func() {
 		Expect(payload).To(Equal(Payload{Version: 1, CallID: "call-secret-id", State: call.StateActive, Active: true}))
 	})
 
+	It("registers incoming calls with the same encrypted state channel", func() {
+		Expect(publisher.RegisterIncoming("incoming-call", sharedSecret)).To(Succeed())
+
+		Expect(publisher.publish(context.Background(), call.Snapshot{State: call.StateRinging, IncomingNumber: "13500000000"})).To(Succeed())
+
+		Expect(remote.envelopes).To(HaveLen(1))
+		var payload Payload
+		Expect(json.Unmarshal(openEvent(sharedSecret, remote.envelopes[0]), &payload)).To(Succeed())
+		Expect(payload.CallID).To(Equal("incoming-call"))
+		Expect(payload.State).To(Equal(call.StateRinging))
+	})
+
 	It("matches the iOS call event compatibility vector", func() {
 		seed := make([]byte, ed25519.SeedSize)
 		for index := range seed {

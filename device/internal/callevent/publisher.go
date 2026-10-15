@@ -87,6 +87,15 @@ func NewPublisher(remote Remote, state identity.State, snapshots <-chan call.Sna
 
 // RegisterOutgoing binds future modem transitions to one end-to-end encrypted call.
 func (publisher *Publisher) RegisterOutgoing(callID string, sharedSecret []byte) error {
+	return publisher.register(callID, sharedSecret)
+}
+
+// RegisterIncoming binds future modem transitions to an incoming encrypted call.
+func (publisher *Publisher) RegisterIncoming(callID string, sharedSecret []byte) error {
+	return publisher.register(callID, sharedSecret)
+}
+
+func (publisher *Publisher) register(callID string, sharedSecret []byte) error {
 	if callID == "" || len(sharedSecret) != keyBytes {
 		return errors.New("call id and 32-byte shared secret are required")
 	}

@@ -1,0 +1,95 @@
+package incomingcall
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"sim-deck-device/internal/call"
+	"sim-deck-device/internal/identity"
+)
+
+// Remote provides authenticated recipient discovery and opaque call delivery.
+type Remote interface {
+	ListInstallationRecipients(context.Context, string, string) ([]Recipient, error)
+	UploadIncomingCall(context.Context, string, string, Notification) error
+}
+
+// EventRegistrar binds later modem transitions to the generated call secret.
+type EventRegistrar interface {
+	RegisterIncoming(string, []byte) error
+	Unregister(string)
+}
+
+// Runtime turns incoming modem transitions into recipient-encrypted notifications.
+type Runtime struct {
+	remote       Remote
+	identity     identity.State
+	snapshots    <-chan call.Snapshot
+	events       EventRegistrar
+	builder      *Builder
+	activeCallID string
+}
+
+// NewRuntime creates an incoming call notification runtime for one modem.
+func NewRuntime(remote Remote, state identity.State, snapshots <-chan call.Snapshot, events EventRegistrar) (*Runtime, error) {
+	if remote == nil || snapshots == nil || events == nil || state.Credential == "" {
+		return nil, errors.New("incoming-call runtime requires a bound identity, remote, snapshots, and event registrar")
+	}
+	builder, err := NewBuilder(state)
+	if err != nil {
+		return nil, err
+	}
+	return &Runtime{remote: remote, identity: state, snapshots: snapshots, events: events, builder: builder}, nil
+}
+
+// Run processes call-state transitions until cancellation or a delivery failure.
+func (runtime *Runtime) Run(ctx context.Context) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case snapshot, ok := <-runtime.snapshots:
+			if !ok {
+				return errors.New("incoming-call snapshot stream closed")
+			}
+			if err := runtime.process(ctx, snapshot); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (runtime *Runtime) process(ctx context.Context, snapshot call.Snapshot) error {
+	if snapshot.State == call.StateEnded {
+		if runtime.activeCallID != "" {
+			runtime.events.Unregister(runtime.activeCallID)
+			runtime.activeCallID = ""
+		}
+		return nil
+	}
+	if runtime.activeCallID != "" ||
+		(snapshot.State != call.StateRinging && snapshot.State != call.StateWaiting) ||
+		snapshot.IncomingNumber == "" {
+		return nil
+	}
+	recipients, err := runtime.remote.ListInstallationRecipients(ctx, runtime.identity.DeviceUUID, runtime.identity.Credential)
+	if err != nil {
+		return fmt.Errorf("list incoming call recipients: %w", err)
+	}
+	if len(recipients) == 0 {
+		return nil
+	}
+	notification, callContext, err := runtime.builder.Seal(recipients, snapshot)
+	if err != nil {
+		return fmt.Errorf("encrypt incoming call: %w", err)
+	}
+	if err := runtime.remote.UploadIncomingCall(ctx, runtime.identity.DeviceUUID, runtime.identity.Credential, notification); err != nil {
+		return fmt.Errorf("upload incoming call: %w", err)
+	}
+	if err := runtime.events.RegisterIncoming(callContext.CallID, callContext.SharedSecret); err != nil {
+		return fmt.Errorf("register incoming call events: %w", err)
+	}
+	runtime.activeCallID = callContext.CallID
+	return nil
+}

@@ -190,7 +190,7 @@ final class ServerConnectionManagerTests: XCTestCase {
                   "sequence":42,
                   "type":"call.state",
                   "device_uuid":"\(deviceID.uuidString.lowercased())",
-                  "occurred_at":"2026-10-16T08:09:10Z",
+                  "occurred_at":"2026-10-16T08:09:10.123Z",
                   "key_epoch":1,
                   "nonce":"AAAAAAAAAAAAAAAA",
                   "ciphertext":"AQID",

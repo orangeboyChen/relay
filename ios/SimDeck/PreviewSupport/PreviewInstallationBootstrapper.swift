@@ -7,6 +7,7 @@ struct PreviewInstallationBootstrapper: InstallationBootstrapping {
             identity: InstallationIdentity(
                 id: UUID(uuidString: "30000000-0000-0000-0000-000000000001")!,
                 signingPrivateKey: Data(repeating: 1, count: 32),
+                keyAgreementPrivateKey: Data(repeating: 2, count: 32),
                 pendingRevocationIDs: []
             ),
             recoveredVaultKey: try VaultKey(data: Data(repeating: 2, count: VaultKey.length)),

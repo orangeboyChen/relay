@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import XCTest
 @testable import SimDeck
@@ -40,6 +41,42 @@ final class KeyRecoveryTests: XCTestCase {
             XCTAssertEqual(error as? KeyRecoveryError, .invalidVaultKey)
         }
     }
+
+    func testLegacyInstallationIdentityAddsKeyAgreementKeyWithoutChangingID() throws {
+        let legacyID = UUID(uuidString: "01900000-0000-7000-8000-000000000101")!
+        let signingKey = Curve25519.Signing.PrivateKey().rawRepresentation
+        let identityStore = MemorySecureValueStore()
+        try identityStore.write(
+            JSONEncoder().encode(
+                LegacyInstallationIdentity(
+                    id: legacyID,
+                    signingPrivateKey: signingKey,
+                    pendingRevocationIDs: []
+                )
+            )
+        )
+        let markerStore = MemoryInstallMarkerStore()
+        markerStore.markInstalled()
+        let bootstrapper = InstallationBootstrapper(
+            identityStore: identityStore,
+            vaultStore: MemorySecureValueStore(),
+            markerStore: markerStore
+        )
+
+        let upgraded = try bootstrapper.bootstrap().identity
+        let relaunched = try bootstrapper.bootstrap().identity
+
+        XCTAssertEqual(upgraded.id, legacyID)
+        XCTAssertEqual(upgraded.signingPrivateKey, signingKey)
+        XCTAssertEqual(try upgraded.keyAgreementPublicKey().count, 32)
+        XCTAssertEqual(relaunched.keyAgreementPrivateKey, upgraded.keyAgreementPrivateKey)
+    }
+}
+
+private struct LegacyInstallationIdentity: Encodable {
+    let id: UUID
+    let signingPrivateKey: Data
+    let pendingRevocationIDs: [UUID]
 }
 
 private final class MemorySecureValueStore: SecureValueStoring, @unchecked Sendable {

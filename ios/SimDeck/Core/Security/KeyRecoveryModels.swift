@@ -31,16 +31,24 @@ struct InstallationIdentity: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id
         case signingPrivateKey
+        case keyAgreementPrivateKey
         case pendingRevocationIDs
     }
 
     let id: UUID
     let signingPrivateKey: Data
+    let keyAgreementPrivateKey: Data
     var pendingRevocationIDs: [UUID]
 
-    init(id: UUID, signingPrivateKey: Data, pendingRevocationIDs: [UUID]) {
+    init(
+        id: UUID,
+        signingPrivateKey: Data,
+        keyAgreementPrivateKey: Data,
+        pendingRevocationIDs: [UUID]
+    ) {
         self.id = id
         self.signingPrivateKey = signingPrivateKey
+        self.keyAgreementPrivateKey = keyAgreementPrivateKey
         self.pendingRevocationIDs = pendingRevocationIDs
     }
 
@@ -48,6 +56,10 @@ struct InstallationIdentity: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         signingPrivateKey = try container.decode(Data.self, forKey: .signingPrivateKey)
+        keyAgreementPrivateKey = try container.decodeIfPresent(
+            Data.self,
+            forKey: .keyAgreementPrivateKey
+        ) ?? Data()
         pendingRevocationIDs = try container.decodeIfPresent([UUID].self, forKey: .pendingRevocationIDs) ?? []
     }
 
@@ -55,14 +67,17 @@ struct InstallationIdentity: Codable, Equatable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
         try container.encode(signingPrivateKey, forKey: .signingPrivateKey)
+        try container.encode(keyAgreementPrivateKey, forKey: .keyAgreementPrivateKey)
         try container.encode(pendingRevocationIDs, forKey: .pendingRevocationIDs)
     }
 
     static func generate(pendingRevocationIDs: [UUID] = []) -> InstallationIdentity {
         let privateKey = Curve25519.Signing.PrivateKey()
+        let keyAgreementPrivateKey = Curve25519.KeyAgreement.PrivateKey()
         return InstallationIdentity(
             id: UUID(),
             signingPrivateKey: privateKey.rawRepresentation,
+            keyAgreementPrivateKey: keyAgreementPrivateKey.rawRepresentation,
             pendingRevocationIDs: pendingRevocationIDs
         )
     }
@@ -74,6 +89,25 @@ struct InstallationIdentity: Codable, Equatable, Sendable {
         } catch {
             throw KeyRecoveryError.invalidInstallationIdentity
         }
+    }
+
+    func keyAgreementPublicKey() throws -> Data {
+        do {
+            return try Curve25519.KeyAgreement.PrivateKey(
+                rawRepresentation: keyAgreementPrivateKey
+            ).publicKey.rawRepresentation
+        } catch {
+            throw KeyRecoveryError.invalidInstallationIdentity
+        }
+    }
+
+    func addingKeyAgreementIdentity() -> InstallationIdentity {
+        InstallationIdentity(
+            id: id,
+            signingPrivateKey: signingPrivateKey,
+            keyAgreementPrivateKey: Curve25519.KeyAgreement.PrivateKey().rawRepresentation,
+            pendingRevocationIDs: pendingRevocationIDs
+        )
     }
 }
 

@@ -17,7 +17,13 @@ struct InstallationBootstrapper: InstallationBootstrapping {
     }
 
     func bootstrap() throws -> InstallationBootstrapResult {
-        let previousIdentity = try loadIdentity()
+        var previousIdentity = try loadIdentity()
+        if let loadedIdentity = previousIdentity,
+           loadedIdentity.keyAgreementPrivateKey.isEmpty {
+            let upgradedIdentity = loadedIdentity.addingKeyAgreementIdentity()
+            try saveIdentity(upgradedIdentity)
+            previousIdentity = upgradedIdentity
+        }
         var identity = previousIdentity
 
         if !markerStore.isInstalled(), let previousIdentity {
@@ -64,6 +70,9 @@ struct InstallationBootstrapper: InstallationBootstrapping {
         do {
             let identity = try JSONDecoder().decode(InstallationIdentity.self, from: data)
             _ = try identity.signingPublicKey()
+            if !identity.keyAgreementPrivateKey.isEmpty {
+                _ = try identity.keyAgreementPublicKey()
+            }
             return identity
         } catch let error as KeyRecoveryError {
             throw error

@@ -17,6 +17,7 @@ import (
 	"sim-deck-device/internal/callevent"
 	"sim-deck-device/internal/command"
 	"sim-deck-device/internal/identity"
+	"sim-deck-device/internal/incomingcall"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -112,6 +113,75 @@ var _ = Describe("Installation recipient client", func() {
 		})
 		_, err = serverFailure.ListInstallationRecipients(context.Background(), deviceID, "device-secret")
 		Expect(err).To(MatchError(ContainSubstring("invalid_device_credential")))
+		Expect(err.Error()).NotTo(ContainSubstring("sensitive detail"))
+	})
+})
+
+var _ = Describe("Incoming call client", func() {
+	const deviceID = "01900000-0000-7000-8000-000000000001"
+	var notification incomingcall.Notification
+
+	BeforeEach(func() {
+		notification = incomingcall.Notification{
+			ID:         "01900000-0000-7000-8000-000000000010",
+			Type:       "call.incoming",
+			DeviceUUID: deviceID,
+			OccurredAt: time.Date(2026, 10, 16, 8, 9, 10, 0, time.UTC),
+			KeyEpoch:   1,
+			Recipients: []incomingcall.RecipientEnvelope{{
+				InstallationID:  "01900000-0000-7000-8000-000000000101",
+				SenderPublicKey: bytes.Repeat([]byte{1}, 32),
+				Nonce:           bytes.Repeat([]byte{2}, 12),
+				Ciphertext:      []byte("opaque"),
+				Signature:       bytes.Repeat([]byte{3}, 64),
+			}},
+		}
+	})
+
+	DescribeTable("uploads encrypted fanout with device authentication",
+		func(status int) {
+			client := clientWithHandler(func(request *http.Request) (*http.Response, error) {
+				Expect(request.Method).To(Equal(http.MethodPost))
+				Expect(request.URL.Path).To(Equal("/v1/incoming-calls"))
+				Expect(request.Header.Get("Authorization")).To(Equal("Bearer device-secret"))
+				Expect(request.Header.Get("Content-Type")).To(Equal("application/json"))
+				var body struct {
+					Notification incomingcall.Notification `json:"notification"`
+				}
+				Expect(json.NewDecoder(request.Body).Decode(&body)).To(Succeed())
+				Expect(body.Notification).To(Equal(notification))
+				return response(status, `{}`), nil
+			})
+
+			Expect(client.UploadIncomingCall(context.Background(), deviceID, "device-secret", notification)).To(Succeed())
+		},
+		Entry("new notification", http.StatusCreated),
+		Entry("idempotent retry", http.StatusOK),
+	)
+
+	It("rejects a mismatched device before making a request", func() {
+		Expect(NewClient("http://unused.invalid", nil).UploadIncomingCall(
+			context.Background(), "another-device", "device-secret", notification,
+		)).To(MatchError("incoming call device does not match the authenticated device"))
+	})
+
+	It("maps request, transport, and server failures without response details", func() {
+		Expect(NewClient("://invalid", nil).UploadIncomingCall(
+			context.Background(), deviceID, "device-secret", notification,
+		)).To(MatchError(ContainSubstring("create incoming call request")))
+
+		transportFailure := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("transport unavailable")
+		})
+		Expect(transportFailure.UploadIncomingCall(
+			context.Background(), deviceID, "device-secret", notification,
+		)).To(MatchError(ContainSubstring("upload incoming call")))
+
+		serverFailure := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusConflict, `{"error":{"code":"untrusted_installation_recipient","message":"sensitive detail"}}`), nil
+		})
+		err := serverFailure.UploadIncomingCall(context.Background(), deviceID, "device-secret", notification)
+		Expect(err).To(MatchError(ContainSubstring("untrusted_installation_recipient")))
 		Expect(err.Error()).NotTo(ContainSubstring("sensitive detail"))
 	})
 })

@@ -16,6 +16,7 @@ import (
 	"sim-deck-device/internal/callevent"
 	"sim-deck-device/internal/command"
 	"sim-deck-device/internal/identity"
+	"sim-deck-device/internal/incomingcall"
 )
 
 const maxResponseBytes = 1 << 20
@@ -27,10 +28,7 @@ type Client struct {
 }
 
 // InstallationRecipient identifies one approved iPhone encryption endpoint.
-type InstallationRecipient struct {
-	InstallationID        string `json:"installation_id"`
-	KeyAgreementPublicKey []byte `json:"key_agreement_public_key"`
-}
+type InstallationRecipient = incomingcall.Recipient
 
 // ListInstallationRecipients returns the approved iPhones that can decrypt device events.
 func (client *Client) ListInstallationRecipients(ctx context.Context, deviceID string, credential string) ([]InstallationRecipient, error) {
@@ -69,6 +67,32 @@ func (client *Client) ListInstallationRecipients(ctx context.Context, deviceID s
 		return []InstallationRecipient{}, nil
 	}
 	return body.Installations, nil
+}
+
+// UploadIncomingCall queues independently encrypted VoIP deliveries for approved iPhones.
+func (client *Client) UploadIncomingCall(ctx context.Context, deviceID string, credential string, notification incomingcall.Notification) error {
+	if notification.DeviceUUID != deviceID {
+		return errors.New("incoming call device does not match the authenticated device")
+	}
+	body, err := json.Marshal(map[string]any{"notification": notification})
+	if err != nil {
+		return fmt.Errorf("encode incoming call notification: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+"/v1/incoming-calls", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create incoming call request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+credential)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("upload incoming call: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusCreated && response.StatusCode != http.StatusOK {
+		return responseError("upload incoming call", response.StatusCode, io.LimitReader(response.Body, maxResponseBytes))
+	}
+	return nil
 }
 
 func validUUID(value string) bool {

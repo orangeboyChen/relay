@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"sim-deck-server/internal/auth"
 	"sim-deck-server/internal/domain"
 )
 
@@ -33,6 +34,13 @@ type DeviceRecord struct {
 	WrappedVaultKey   []byte     `json:"wrapped_vault_key,omitempty"`
 	PairedAt          time.Time  `json:"paired_at"`
 	LastSeenAt        *time.Time `json:"last_seen_at,omitempty"`
+}
+
+// OwnerCredential is the password-login state for the single owner.
+type OwnerCredential struct {
+	ID                 string
+	PasswordHash       string
+	PasswordDisabledAt *time.Time
 }
 
 // Open connects to PostgreSQL and verifies that the server is reachable.
@@ -108,6 +116,101 @@ func (store *Postgres) CreateOwner(ctx context.Context, passwordHash string, rec
 		return false, fmt.Errorf("commit owner bootstrap: %w", err)
 	}
 	return true, nil
+}
+
+// OwnerCredentialByUsername loads bootstrap credentials without returning recovery material.
+func (store *Postgres) OwnerCredentialByUsername(ctx context.Context, username string) (OwnerCredential, error) {
+	var credential OwnerCredential
+	var passwordHash []byte
+	err := store.pool.QueryRow(ctx, `
+		SELECT id, password_hash, password_disabled_at
+		FROM owner_accounts
+		WHERE username = $1`, username).Scan(&credential.ID, &passwordHash, &credential.PasswordDisabledAt)
+	if err != nil {
+		return OwnerCredential{}, err
+	}
+	credential.PasswordHash = string(passwordHash)
+	return credential, nil
+}
+
+// CreateSession stores only hashes of newly issued bearer credentials.
+func (store *Postgres) CreateSession(ctx context.Context, ownerID string, pair auth.TokenPair) error {
+	accessHash, err := auth.TokenHash(pair.AccessToken)
+	if err != nil {
+		return err
+	}
+	refreshHash, err := auth.TokenHash(pair.RefreshToken)
+	if err != nil {
+		return err
+	}
+	_, err = store.pool.Exec(ctx, `
+		INSERT INTO auth_sessions (
+			owner_id, access_token_hash, refresh_token_hash, access_expires_at, refresh_expires_at
+		) VALUES ($1, $2, $3, $4, $5)`, ownerID, accessHash[:], refreshHash[:], pair.AccessExpiresAt, pair.RefreshExpiresAt)
+	if err != nil {
+		return fmt.Errorf("create auth session: %w", err)
+	}
+	return nil
+}
+
+// RotateSession atomically consumes a refresh token and creates its replacement.
+func (store *Postgres) RotateSession(ctx context.Context, refreshToken string, pair auth.TokenPair, now time.Time) error {
+	refreshHash, err := auth.TokenHash(refreshToken)
+	if err != nil {
+		return err
+	}
+	accessHash, err := auth.TokenHash(pair.AccessToken)
+	if err != nil {
+		return err
+	}
+	newRefreshHash, err := auth.TokenHash(pair.RefreshToken)
+	if err != nil {
+		return err
+	}
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin session rotation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var ownerID string
+	err = tx.QueryRow(ctx, `
+		UPDATE auth_sessions
+		SET revoked_at = $2
+		WHERE refresh_token_hash = $1 AND revoked_at IS NULL AND refresh_expires_at > $2
+		RETURNING owner_id`, refreshHash[:], now.UTC()).Scan(&ownerID)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO auth_sessions (
+			owner_id, access_token_hash, refresh_token_hash, access_expires_at, refresh_expires_at
+		) VALUES ($1, $2, $3, $4, $5)`, ownerID, accessHash[:], newRefreshHash[:], pair.AccessExpiresAt, pair.RefreshExpiresAt)
+	if err != nil {
+		return fmt.Errorf("insert rotated session: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit session rotation: %w", err)
+	}
+	return nil
+}
+
+// RevokeSession invalidates the session matching an access token.
+func (store *Postgres) RevokeSession(ctx context.Context, accessToken string, now time.Time) error {
+	accessHash, err := auth.TokenHash(accessToken)
+	if err != nil {
+		return err
+	}
+	command, err := store.pool.Exec(ctx, `
+		UPDATE auth_sessions SET revoked_at = $2
+		WHERE access_token_hash = $1 AND revoked_at IS NULL AND access_expires_at > $2`, accessHash[:], now.UTC())
+	if err != nil {
+		return fmt.Errorf("revoke auth session: %w", err)
+	}
+	if command.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }
 
 // CreateDevice atomically allocates the smallest free numeric identifier.

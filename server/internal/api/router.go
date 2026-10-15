@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"sim-deck-server/internal/auth"
 	"sim-deck-server/internal/domain"
 	"sim-deck-server/internal/store"
 )
@@ -21,6 +22,10 @@ type Repository interface {
 	ListDevices(context.Context) ([]store.DeviceRecord, error)
 	UpdateNumericID(context.Context, string, int) error
 	InsertEvent(context.Context, domain.EventEnvelope, time.Time) (int64, bool, error)
+	OwnerCredentialByUsername(context.Context, string) (store.OwnerCredential, error)
+	CreateSession(context.Context, string, auth.TokenPair) error
+	RotateSession(context.Context, string, auth.TokenPair, time.Time) error
+	RevokeSession(context.Context, string, time.Time) error
 }
 
 // Config describes public endpoints advertised to clients.
@@ -39,6 +44,9 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("GET /v1/devices", router.listDevices)
 	mux.HandleFunc("PATCH /v1/devices/{deviceID}/numeric-id", router.updateNumericID)
 	mux.HandleFunc("POST /v1/events", router.insertEvent)
+	mux.HandleFunc("POST /v1/auth/bootstrap", router.bootstrapLogin)
+	mux.HandleFunc("POST /v1/auth/refresh", router.refreshSession)
+	mux.HandleFunc("POST /v1/auth/logout", router.logout)
 	return withJSONContentType(mux)
 }
 
@@ -119,6 +127,75 @@ func (router *router) insertEvent(writer http.ResponseWriter, request *http.Requ
 		status = http.StatusCreated
 	}
 	writeJSON(writer, status, map[string]any{"sequence": sequence, "created": created})
+}
+
+func (router *router) bootstrapLogin(writer http.ResponseWriter, request *http.Request) {
+	var body struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(request, &body); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	credential, err := router.repository.OwnerCredentialByUsername(request.Context(), body.Username)
+	if err != nil || credential.PasswordDisabledAt != nil || credential.PasswordHash == "" {
+		writeError(writer, http.StatusUnauthorized, "invalid_credentials", "Invalid credentials.")
+		return
+	}
+	valid, err := auth.VerifyPassword(body.Password, credential.PasswordHash)
+	if err != nil || !valid {
+		writeError(writer, http.StatusUnauthorized, "invalid_credentials", "Invalid credentials.")
+		return
+	}
+	pair, err := auth.NewTokenPair(time.Now())
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "authentication_error", "Unable to create a session.")
+		return
+	}
+	if err := router.repository.CreateSession(request.Context(), credential.ID, pair); err != nil {
+		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to store the session.")
+		return
+	}
+	writeJSON(writer, http.StatusCreated, pair)
+}
+
+func (router *router) refreshSession(writer http.ResponseWriter, request *http.Request) {
+	var body struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := decodeJSON(request, &body); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	pair, err := auth.NewTokenPair(time.Now())
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "authentication_error", "Unable to refresh the session.")
+		return
+	}
+	if err := router.repository.RotateSession(request.Context(), body.RefreshToken, pair, time.Now()); err != nil {
+		writeError(writer, http.StatusUnauthorized, "invalid_refresh_token", "Refresh token is invalid or expired.")
+		return
+	}
+	writeJSON(writer, http.StatusOK, pair)
+}
+
+func (router *router) logout(writer http.ResponseWriter, request *http.Request) {
+	token, ok := bearerToken(request.Header.Get("Authorization"))
+	if !ok {
+		writeError(writer, http.StatusUnauthorized, "invalid_access_token", "Access token is required.")
+		return
+	}
+	if err := router.repository.RevokeSession(request.Context(), token, time.Now()); err != nil {
+		writeError(writer, http.StatusUnauthorized, "invalid_access_token", "Access token is invalid or expired.")
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func bearerToken(value string) (string, bool) {
+	prefix, token, ok := strings.Cut(value, " ")
+	return token, ok && strings.EqualFold(prefix, "Bearer") && strings.TrimSpace(token) != ""
 }
 
 func decodeJSON(request *http.Request, value any) error {

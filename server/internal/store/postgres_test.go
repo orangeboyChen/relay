@@ -26,6 +26,16 @@ func TestInitialMigrationContainsRequiredTables(t *testing.T) {
 	}
 }
 
+func TestAuthSessionMigrationContainsSessionTable(t *testing.T) {
+	schema, err := migrations.ReadFile("migrations/003_auth_sessions.sql")
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	if !bytes.Contains(schema, []byte("auth_sessions")) {
+		t.Fatal("auth migration does not contain the session table")
+	}
+}
+
 func TestMigrationsEnforceSingleOwner(t *testing.T) {
 	schema, err := migrations.ReadFile("migrations/002_single_owner.sql")
 	if err != nil {

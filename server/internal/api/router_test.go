@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"sim-deck-server/internal/auth"
 	"sim-deck-server/internal/domain"
 	"sim-deck-server/internal/store"
 )
@@ -19,6 +20,10 @@ type fakeRepository struct {
 	updatedNumericID int
 	insertSequence   int64
 	insertCreated    bool
+	credential       store.OwnerCredential
+	sessionPair      auth.TokenPair
+	rotatedRefresh   string
+	revokedAccess    string
 }
 
 func (fake *fakeRepository) ListDevices(context.Context) ([]store.DeviceRecord, error) {
@@ -33,6 +38,26 @@ func (fake *fakeRepository) UpdateNumericID(_ context.Context, deviceID string, 
 
 func (fake *fakeRepository) InsertEvent(context.Context, domain.EventEnvelope, time.Time) (int64, bool, error) {
 	return fake.insertSequence, fake.insertCreated, nil
+}
+
+func (fake *fakeRepository) OwnerCredentialByUsername(context.Context, string) (store.OwnerCredential, error) {
+	return fake.credential, nil
+}
+
+func (fake *fakeRepository) CreateSession(_ context.Context, _ string, pair auth.TokenPair) error {
+	fake.sessionPair = pair
+	return nil
+}
+
+func (fake *fakeRepository) RotateSession(_ context.Context, refresh string, pair auth.TokenPair, _ time.Time) error {
+	fake.rotatedRefresh = refresh
+	fake.sessionPair = pair
+	return nil
+}
+
+func (fake *fakeRepository) RevokeSession(_ context.Context, access string, _ time.Time) error {
+	fake.revokedAccess = access
+	return nil
 }
 
 func TestDiscovery(t *testing.T) {
@@ -78,5 +103,53 @@ func TestInsertEventIsIdempotent(t *testing.T) {
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestBootstrapLoginCreatesSession(t *testing.T) {
+	passwordHash, err := auth.HashPassword("correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &fakeRepository{credential: store.OwnerCredential{ID: "owner-1", PasswordHash: passwordHash}}
+	handler := Handler(repository, Config{})
+	request := httptest.NewRequest(http.MethodPost, "/v1/auth/bootstrap", bytes.NewBufferString(`{"username":"admin","password":"correct horse battery staple"}`))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated || repository.sessionPair.AccessToken == "" {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestBootstrapLoginRejectsDisabledPassword(t *testing.T) {
+	disabledAt := time.Now()
+	repository := &fakeRepository{credential: store.OwnerCredential{ID: "owner-1", PasswordHash: "unused", PasswordDisabledAt: &disabledAt}}
+	handler := Handler(repository, Config{})
+	request := httptest.NewRequest(http.MethodPost, "/v1/auth/bootstrap", bytes.NewBufferString(`{"username":"admin","password":"password"}`))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized || repository.sessionPair.AccessToken != "" {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestRefreshAndLogoutRotateCredentials(t *testing.T) {
+	repository := &fakeRepository{}
+	handler := Handler(repository, Config{})
+	refreshRequest := httptest.NewRequest(http.MethodPost, "/v1/auth/refresh", bytes.NewBufferString(`{"refresh_token":"old-refresh"}`))
+	refreshResponse := httptest.NewRecorder()
+	handler.ServeHTTP(refreshResponse, refreshRequest)
+	if refreshResponse.Code != http.StatusOK || repository.rotatedRefresh != "old-refresh" {
+		t.Fatalf("refresh status = %d body = %s", refreshResponse.Code, refreshResponse.Body.String())
+	}
+
+	logoutRequest := httptest.NewRequest(http.MethodPost, "/v1/auth/logout", nil)
+	logoutRequest.Header.Set("Authorization", "Bearer access-token")
+	logoutResponse := httptest.NewRecorder()
+	handler.ServeHTTP(logoutResponse, logoutRequest)
+	if logoutResponse.Code != http.StatusNoContent || repository.revokedAccess != "access-token" {
+		t.Fatalf("logout status = %d body = %s", logoutResponse.Code, logoutResponse.Body.String())
 	}
 }

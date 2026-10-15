@@ -25,6 +25,7 @@ struct DeviceLineIdentity: Identifiable, Equatable, Sendable {
 final class AppModel {
     var devices: [DeviceLineIdentity]
     var callHistory: CallHistoryState
+    var messages: MessageListState
     var lastSuccessfulDialLineID: UUID?
     var selectedTab: AppTab
     let callStarter: any CallStarting
@@ -32,12 +33,14 @@ final class AppModel {
     init(
         devices: [DeviceLineIdentity] = [],
         callHistory: CallHistoryState = .loaded([]),
+        messages: MessageListState = .loaded([]),
         lastSuccessfulDialLineID: UUID? = nil,
         selectedTab: AppTab = .calls,
         callStarter: any CallStarting = CallKitCallStarter()
     ) {
         self.devices = devices
         self.callHistory = callHistory
+        self.messages = messages
         self.lastSuccessfulDialLineID = lastSuccessfulDialLineID
         self.selectedTab = selectedTab
         self.callStarter = callStarter
@@ -56,6 +59,7 @@ extension AppModel {
         AppModel(
             devices: PreviewFixtures.devices,
             callHistory: .loaded(PreviewFixtures.calls),
+            messages: .loaded(PreviewFixtures.conversations),
             lastSuccessfulDialLineID: PreviewFixtures.devices[0].id,
             selectedTab: selectedTab,
             callStarter: PreviewCallStarter()
@@ -115,6 +119,60 @@ enum PreviewFixtures {
             result: .answered,
             startedAt: now.addingTimeInterval(-172_800),
             endedAt: now.addingTimeInterval(-172_134)
+        )
+    ]
+
+    static let conversations = [
+        MessageConversation(
+            lineID: devices[0].id,
+            remoteNumber: "13800138000",
+            contactName: "Alex",
+            unreadCount: 2,
+            messages: [
+                MessageItem(
+                    id: UUID(uuidString: "20000000-0000-0000-0000-000000000001")!,
+                    direction: .received,
+                    body: "Are you free for dinner?",
+                    attachment: nil,
+                    sentAt: now.addingTimeInterval(-600),
+                    status: .delivered
+                ),
+                MessageItem(
+                    id: UUID(uuidString: "20000000-0000-0000-0000-000000000002")!,
+                    direction: .sent,
+                    body: "Yes, see you at seven.",
+                    attachment: nil,
+                    sentAt: now.addingTimeInterval(-480),
+                    status: .delivered
+                ),
+                MessageItem(
+                    id: UUID(uuidString: "20000000-0000-0000-0000-000000000003")!,
+                    direction: .received,
+                    body: "This is the place.",
+                    attachment: MessageImageAttachment(
+                        id: UUID(uuidString: "21000000-0000-0000-0000-000000000001")!,
+                        systemImageName: "fork.knife"
+                    ),
+                    sentAt: now.addingTimeInterval(-300),
+                    status: .delivered
+                )
+            ]
+        ),
+        MessageConversation(
+            lineID: devices[1].id,
+            remoteNumber: "13800138000",
+            contactName: "Alex",
+            unreadCount: 0,
+            messages: [
+                MessageItem(
+                    id: UUID(uuidString: "20000000-0000-0000-0000-000000000004")!,
+                    direction: .sent,
+                    body: "This thread uses another SIM.",
+                    attachment: nil,
+                    sentAt: now.addingTimeInterval(-86_400),
+                    status: .sent
+                )
+            ]
         )
     ]
 }

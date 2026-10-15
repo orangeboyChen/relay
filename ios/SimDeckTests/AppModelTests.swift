@@ -52,4 +52,12 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(DialString.isValid("135+1041"))
         XCTAssertFalse(DialString.isValid("1"))
     }
+
+    func testConversationIdentitySeparatesLines() {
+        let remoteNumber = "13800138000"
+        let first = ConversationID(deviceUUID: UUID(), remoteNumber: remoteNumber)
+        let second = ConversationID(deviceUUID: UUID(), remoteNumber: remoteNumber)
+
+        XCTAssertNotEqual(first, second)
+    }
 }

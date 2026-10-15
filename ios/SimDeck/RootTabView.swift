@@ -14,10 +14,7 @@ struct RootTabView: View {
             .tag(AppTab.calls)
 
             NavigationStack {
-                PlaceholderScreen(
-                    title: "Messages",
-                    systemImage: "message.fill"
-                )
+                MessagesScreen(state: model.messages, lines: model.devices)
             }
             .tabItem {
                 Label("Messages", systemImage: "message.fill")

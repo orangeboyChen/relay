@@ -76,6 +76,9 @@ func (repository *memoryRepository) CompleteCommand(context.Context, string, str
 func (repository *memoryRepository) CommandStatus(context.Context, string, string, time.Time) (domain.CommandStatus, error) {
 	return domain.CommandStatus{}, pgx.ErrNoRows
 }
+func (repository *memoryRepository) UpdateDeviceCommandPublicKey(context.Context, string, []byte) error {
+	return nil
+}
 
 type memoryHTTPServer struct {
 	listenError   error

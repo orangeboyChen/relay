@@ -679,6 +679,21 @@ func (store *Postgres) CommandStatus(ctx context.Context, deviceID string, comma
 	return status, nil
 }
 
+// UpdateDeviceCommandPublicKey registers the X25519 key used for opaque commands.
+func (store *Postgres) UpdateDeviceCommandPublicKey(ctx context.Context, deviceID string, publicKey []byte) error {
+	command, err := store.pool.Exec(ctx, `
+		UPDATE devices
+		SET command_public_key = $2
+		WHERE id = $1 AND revoked_at IS NULL`, deviceID, publicKey)
+	if err != nil {
+		return fmt.Errorf("update device command public key: %w", err)
+	}
+	if command.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
 // InitialMigration returns the schema for validation and packaging tests.
 func InitialMigration() ([]byte, error) {
 	return migrations.ReadFile("migrations/001_initial.sql")

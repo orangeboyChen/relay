@@ -200,4 +200,28 @@ var _ = Describe("Encrypted device commands", func() {
 		repository.statusError = errors.New("down")
 		Expect(requestJSON(http.MethodGet, "/v1/devices/"+deviceID+"/commands/"+commandID, nil, "owner-token").Code).To(Equal(http.StatusInternalServerError))
 	})
+
+	It("lets an authenticated device register its command encryption key", func() {
+		body := map[string]any{"device_uuid": deviceID, "command_public_key": bytes.Repeat([]byte{8}, 32)}
+		response := requestJSON(http.MethodPut, "/v1/device-command-key", body, "device-token")
+		Expect(response.Code).To(Equal(http.StatusNoContent))
+		Expect(repository.updatedCommandKeyDevice).To(Equal(deviceID))
+		Expect(repository.updatedCommandKey).To(Equal(bytes.Repeat([]byte{8}, 32)))
+	})
+
+	It("validates command key registration authentication and storage outcomes", func() {
+		invalidKey := map[string]any{"device_uuid": deviceID, "command_public_key": []byte{1}}
+		Expect(requestJSON(http.MethodPut, "/v1/device-command-key", invalidKey, "device-token").Code).To(Equal(http.StatusUnprocessableEntity))
+
+		valid := map[string]any{"device_uuid": deviceID, "command_public_key": bytes.Repeat([]byte{8}, 32)}
+		repository.deviceAuthError = errors.New("invalid")
+		Expect(requestJSON(http.MethodPut, "/v1/device-command-key", valid, "bad").Code).To(Equal(http.StatusUnauthorized))
+
+		repository.deviceAuthError = nil
+		repository.updateCommandKeyError = pgx.ErrNoRows
+		Expect(requestJSON(http.MethodPut, "/v1/device-command-key", valid, "device-token").Code).To(Equal(http.StatusNotFound))
+
+		repository.updateCommandKeyError = errors.New("down")
+		Expect(requestJSON(http.MethodPut, "/v1/device-command-key", valid, "device-token").Code).To(Equal(http.StatusInternalServerError))
+	})
 })

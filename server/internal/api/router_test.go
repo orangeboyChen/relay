@@ -67,6 +67,9 @@ type fakeRepository struct {
 	statusDeviceID          string
 	statusCommandID         string
 	statusError             error
+	updatedCommandKeyDevice string
+	updatedCommandKey       []byte
+	updateCommandKeyError   error
 }
 
 func (fake *fakeRepository) ListDevices(context.Context) ([]store.DeviceRecord, error) {
@@ -160,6 +163,12 @@ func (fake *fakeRepository) CommandStatus(_ context.Context, deviceID string, co
 	fake.statusDeviceID = deviceID
 	fake.statusCommandID = commandID
 	return fake.commandStatus, fake.statusError
+}
+
+func (fake *fakeRepository) UpdateDeviceCommandPublicKey(_ context.Context, deviceID string, publicKey []byte) error {
+	fake.updatedCommandKeyDevice = deviceID
+	fake.updatedCommandKey = append([]byte(nil), publicKey...)
+	return fake.updateCommandKeyError
 }
 
 var _ = Describe("HTTP API", func() {

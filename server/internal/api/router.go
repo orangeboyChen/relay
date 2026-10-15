@@ -37,6 +37,7 @@ type Repository interface {
 	ClaimCommand(context.Context, string, time.Time, time.Time) (domain.EncryptedCommand, error)
 	CompleteCommand(context.Context, string, string, domain.EncryptedCommandResult, time.Time) error
 	CommandStatus(context.Context, string, string, time.Time) (domain.CommandStatus, error)
+	UpdateDeviceCommandPublicKey(context.Context, string, []byte) error
 }
 
 // Config describes public endpoints advertised to clients.
@@ -62,6 +63,7 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("GET /v1/devices/{deviceID}/commands/{commandID}", router.requireOwner(router.commandStatus))
 	mux.HandleFunc("GET /v1/device-commands/next", router.claimCommand)
 	mux.HandleFunc("POST /v1/device-commands/{commandID}/complete", router.completeCommand)
+	mux.HandleFunc("PUT /v1/device-command-key", router.updateDeviceCommandKey)
 	mux.HandleFunc("POST /v1/auth/bootstrap", router.bootstrapLogin)
 	mux.HandleFunc("POST /v1/auth/refresh", router.refreshSession)
 	mux.HandleFunc("POST /v1/auth/logout", router.logout)
@@ -389,6 +391,39 @@ func (router *router) commandStatus(writer http.ResponseWriter, request *http.Re
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"command": status})
+}
+
+func (router *router) updateDeviceCommandKey(writer http.ResponseWriter, request *http.Request) {
+	var body struct {
+		DeviceUUID       string `json:"device_uuid"`
+		CommandPublicKey []byte `json:"command_public_key"`
+	}
+	if err := decodeJSON(request, &body); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	token, ok := bearerToken(request.Header.Get("Authorization"))
+	if !ok || !validUUID(body.DeviceUUID) {
+		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is required.")
+		return
+	}
+	if len(body.CommandPublicKey) != commandPublicKeyBytes {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_command_key", "Device command public key is invalid.")
+		return
+	}
+	if _, err := router.repository.AuthenticateDevice(request.Context(), body.DeviceUUID, token, router.now()); err != nil {
+		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is invalid or revoked.")
+		return
+	}
+	if err := router.repository.UpdateDeviceCommandPublicKey(request.Context(), body.DeviceUUID, body.CommandPublicKey); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(writer, http.StatusNotFound, "device_not_found", "Device not found.")
+			return
+		}
+		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to update the device command key.")
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
 }
 
 func (router *router) bootstrapLogin(writer http.ResponseWriter, request *http.Request) {

@@ -2,8 +2,10 @@ package callevent
 
 import (
 	"context"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -80,6 +82,32 @@ var _ = Describe("Encrypted call event publisher", func() {
 		Expect(payload).To(Equal(Payload{Version: 1, CallID: "call-secret-id", State: call.StateActive, Active: true}))
 	})
 
+	It("matches the iOS call event compatibility vector", func() {
+		seed := make([]byte, ed25519.SeedSize)
+		for index := range seed {
+			seed[index] = byte(index + 65)
+		}
+		devicePrivate, err := ecdh.X25519().NewPrivateKey(sequence(1, 32))
+		Expect(err).NotTo(HaveOccurred())
+		senderPrivate, err := ecdh.X25519().NewPrivateKey(sequence(33, 32))
+		Expect(err).NotTo(HaveOccurred())
+		secret, err := senderPrivate.ECDH(devicePrivate.PublicKey())
+		Expect(err).NotTo(HaveOccurred())
+		envelope, err := seal(
+			zeroReader{},
+			secret,
+			ed25519.NewKeyFromSeed(seed),
+			Envelope{
+				ID: "01900000-0000-7000-8000-000000000011", Type: eventType, DeviceUUID: deviceID,
+				OccurredAt: time.Date(2026, 10, 16, 8, 9, 10, 0, time.UTC), KeyEpoch: 1,
+			},
+			[]byte(`{"version":1,"call_id":"018f0000-0000-7000-8000-000000000001","state":"active","active":true,"held":false,"waiting":false}`),
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(base64.StdEncoding.EncodeToString(envelope.Ciphertext)).To(Equal("r7ZfXWX5iFdtSt7NFmMawU9ANd92JPGaOC9VbXwQ1JfXcNVloVdhs82ohy9chIWeACMGiKQxY6Z6qXHp7ZHqdDAlOIyuOkd4odiqTyBWk2kp/1Xo09yHgiqYroKoTc2ngTF1QJKjhj877JI8joks7dhKZ4hyp4O8NZa4r9YAZ5YbuAv9EOJLnjyO"))
+		Expect(base64.StdEncoding.EncodeToString(envelope.Signature)).To(Equal("WxQ9bm1NtcF3JSTvIXwIY27QcxJpqcYeLy+x5Ra9+3m1feoBsBOIIdYwmBlEJsuCV92qKFRlN3V2eiyofIHNCQ=="))
+	})
+
 	It("ignores transitions without a registered outgoing call", func() {
 		Expect(publisher.publish(context.Background(), call.Snapshot{State: call.StateRinging})).To(Succeed())
 		Expect(remote.envelopes).To(BeEmpty())
@@ -142,6 +170,14 @@ func (zeroReader) Read(value []byte) (int, error) {
 type errorReader struct{}
 
 func (errorReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+
+func sequence(start byte, count int) []byte {
+	result := make([]byte, count)
+	for index := range result {
+		result[index] = start + byte(index)
+	}
+	return result
+}
 
 func openEvent(sharedSecret []byte, envelope Envelope) []byte {
 	aead, err := eventAEAD(sharedSecret, envelope.ID, envelope.DeviceUUID)

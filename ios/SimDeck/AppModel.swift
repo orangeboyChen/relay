@@ -24,13 +24,16 @@ struct DeviceLineIdentity: Identifiable, Equatable, Sendable {
 @Observable
 final class AppModel {
     var devices: [DeviceLineIdentity]
+    var callHistory: CallHistoryState
     var selectedTab: AppTab
 
     init(
         devices: [DeviceLineIdentity] = [],
+        callHistory: CallHistoryState = .loaded([]),
         selectedTab: AppTab = .calls
     ) {
         self.devices = devices
+        self.callHistory = callHistory
         self.selectedTab = selectedTab
     }
 }
@@ -46,12 +49,15 @@ extension AppModel {
     static func preview(selectedTab: AppTab = .calls) -> AppModel {
         AppModel(
             devices: PreviewFixtures.devices,
+            callHistory: .loaded(PreviewFixtures.calls),
             selectedTab: selectedTab
         )
     }
 }
 
 enum PreviewFixtures {
+    static let now = Date(timeIntervalSince1970: 1_797_000_000)
+
     static let devices = [
         DeviceLineIdentity(
             id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
@@ -68,6 +74,39 @@ enum PreviewFixtures {
             lineName: "Backup",
             phoneNumber: "",
             isOnline: false
+        )
+    ]
+
+    static let calls = [
+        CallRecord(
+            id: UUID(uuidString: "10000000-0000-0000-0000-000000000001")!,
+            lineID: devices[0].id,
+            remoteNumber: "10086",
+            contactName: "China Mobile",
+            direction: .incoming,
+            result: .answered,
+            startedAt: now.addingTimeInterval(-420),
+            endedAt: now.addingTimeInterval(-301)
+        ),
+        CallRecord(
+            id: UUID(uuidString: "10000000-0000-0000-0000-000000000002")!,
+            lineID: devices[1].id,
+            remoteNumber: "13800138000",
+            contactName: nil,
+            direction: .incoming,
+            result: .missed,
+            startedAt: now.addingTimeInterval(-86_400),
+            endedAt: nil
+        ),
+        CallRecord(
+            id: UUID(uuidString: "10000000-0000-0000-0000-000000000003")!,
+            lineID: devices[0].id,
+            remoteNumber: "0755 1234 5678",
+            contactName: "Service Desk",
+            direction: .outgoing,
+            result: .answered,
+            startedAt: now.addingTimeInterval(-172_800),
+            endedAt: now.addingTimeInterval(-172_134)
         )
     ]
 }

@@ -6,9 +6,10 @@ struct RootTabView: View {
     var body: some View {
         TabView(selection: $model.selectedTab) {
             NavigationStack {
-                PlaceholderScreen(
-                    title: "Calls",
-                    systemImage: "phone.fill"
+                CallHistoryScreen(
+                    state: model.callHistory,
+                    lines: model.devices,
+                    referenceDate: .now
                 )
             }
             .tabItem {

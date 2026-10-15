@@ -1,12 +1,152 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%lld min %lld sec" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld 分 %2$lld 秒"
+          }
+        }
+      }
+    },
+    "Answered" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已接听"
+          }
+        }
+      }
+    },
+    "Call" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通话"
+          }
+        }
+      }
+    },
     "Calls" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "通话"
+          }
+        }
+      }
+    },
+    "Calls made through sim-deck appear here." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通过 sim-deck 拨打或接听的电话会显示在这里。"
+          }
+        }
+      }
+    },
+    "Calls Unavailable" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法加载通话"
+          }
+        }
+      }
+    },
+    "Check the server connection and try again." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请检查后台连接后重试。"
+          }
+        }
+      }
+    },
+    "Contact" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "联系人"
+          }
+        }
+      }
+    },
+    "Duration" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "时长"
+          }
+        }
+      }
+    },
+    "Ended" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "结束时间"
+          }
+        }
+      }
+    },
+    "Failed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "失败"
+          }
+        }
+      }
+    },
+    "Incoming" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "呼入"
+          }
+        }
+      }
+    },
+    "Line" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "线路"
+          }
+        }
+      }
+    },
+    "Loading calls" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加载通话"
+          }
+        }
+      }
+    },
+    "Local number" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本机号码"
           }
         }
       }
@@ -27,6 +167,96 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "短信"
+          }
+        }
+      }
+    },
+    "Missed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未接"
+          }
+        }
+      }
+    },
+    "No Calls" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无通话"
+          }
+        }
+      }
+    },
+    "Not available" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不可用"
+          }
+        }
+      }
+    },
+    "Number" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "号码"
+          }
+        }
+      }
+    },
+    "Outgoing" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "呼出"
+          }
+        }
+      }
+    },
+    "Rejected" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已拒接"
+          }
+        }
+      }
+    },
+    "Remote" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "对方"
+          }
+        }
+      }
+    },
+    "Result" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "结果"
+          }
+        }
+      }
+    },
+    "SIM ID" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SIM ID"
           }
         }
       }
@@ -57,6 +287,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "SIM %1$lld，本机号码 %2$@"
+          }
+        }
+      }
+    },
+    "Started" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开始时间"
           }
         }
       }

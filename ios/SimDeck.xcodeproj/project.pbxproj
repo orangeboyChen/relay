@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		200000000000000000000001 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 200000000000000000000002 /* WebRTC */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		100000000000000000000001 /* SimDeck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SimDeck.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		100000000000000000000002 /* SimDeckTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SimDeckTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -29,6 +33,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				200000000000000000000001 /* WebRTC in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -79,6 +84,9 @@
 				100000000000000000000010 /* SimDeck */,
 			);
 			name = SimDeck;
+			packageProductDependencies = (
+				200000000000000000000002 /* WebRTC */,
+			);
 			productName = SimDeck;
 			productReference = 100000000000000000000001 /* SimDeck.app */;
 			productType = "com.apple.product-type.application";
@@ -130,6 +138,9 @@
 			mainGroup = 100000000000000000000030;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
+			packageReferences = (
+				200000000000000000000003 /* XCRemoteSwiftPackageReference "WebRTC" */,
+			);
 			productRefGroup = 100000000000000000000031 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -178,6 +189,25 @@
 		100000000000000000000071 /* Build configuration list for PBXNativeTarget "SimDeckTests" */ = {isa = XCConfigurationList; buildConfigurations = (100000000000000000000104 /* Debug */, 100000000000000000000105 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
 		100000000000000000000072 /* Build configuration list for PBXProject "SimDeck" */ = {isa = XCConfigurationList; buildConfigurations = (100000000000000000000100 /* Debug */, 100000000000000000000101 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		200000000000000000000003 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/stasel/WebRTC.git";
+			requirement = {
+				kind = exactVersion;
+				version = 154.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		200000000000000000000002 /* WebRTC */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 200000000000000000000003 /* XCRemoteSwiftPackageReference "WebRTC" */;
+			productName = WebRTC;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 100000000000000000000080 /* Project object */;
 }

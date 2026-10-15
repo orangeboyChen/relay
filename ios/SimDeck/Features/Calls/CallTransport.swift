@@ -27,12 +27,22 @@ enum CallEndReason: Equatable, Sendable {
     case unanswered
 }
 
+struct IncomingCallRegistration: Equatable, Sendable {
+    let callID: UUID
+    let lineID: UUID
+    let callSecret: Data
+    let verificationKey: Data
+}
+
 @MainActor
 protocol CallTransport: AnyObject {
     var capabilities: CallCapabilities { get }
 
     func setEventHandler(_ handler: @escaping @MainActor (CallTransportEvent) -> Void)
+    func registerIncomingCall(_ call: IncomingCallRegistration) throws
     func startOutgoingCall(callID: UUID, number: String, lineID: UUID) async throws
+    func answerIncomingCall(callID: UUID) async throws
+    func rejectIncomingCall(callID: UUID) async throws
     func endCall(callID: UUID) async throws
     func setHeld(_ isHeld: Bool, callID: UUID) async throws
     func setMuted(_ isMuted: Bool, callID: UUID) async throws
@@ -59,10 +69,16 @@ final class UnavailableCallTransport: CallTransport {
 
     func setEventHandler(_ handler: @escaping @MainActor (CallTransportEvent) -> Void) {}
 
+    func registerIncomingCall(_ call: IncomingCallRegistration) throws {
+        throw CallTransportError.notConfigured
+    }
+
     func startOutgoingCall(callID: UUID, number: String, lineID: UUID) async throws {
         throw CallTransportError.notConfigured
     }
 
+    func answerIncomingCall(callID: UUID) async throws { throw CallTransportError.notConfigured }
+    func rejectIncomingCall(callID: UUID) async throws { throw CallTransportError.notConfigured }
     func endCall(callID: UUID) async throws {}
     func setHeld(_ isHeld: Bool, callID: UUID) async throws {}
     func setMuted(_ isMuted: Bool, callID: UUID) async throws {}
@@ -82,9 +98,19 @@ final class PreviewCallTransport: CallTransport {
         eventHandler = handler
     }
 
+    func registerIncomingCall(_ call: IncomingCallRegistration) throws {}
+
     func startOutgoingCall(callID: UUID, number: String, lineID: UUID) async throws {
         eventHandler?(.ringing(callID: callID))
         eventHandler?(.connected(callID: callID, at: PreviewFixtures.now))
+    }
+
+    func answerIncomingCall(callID: UUID) async throws {
+        eventHandler?(.connected(callID: callID, at: PreviewFixtures.now))
+    }
+
+    func rejectIncomingCall(callID: UUID) async throws {
+        eventHandler?(.ended(callID: callID, reason: .unanswered))
     }
 
     func endCall(callID: UUID) async throws {

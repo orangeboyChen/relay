@@ -72,7 +72,7 @@ final class LiveCallTransportTests: XCTestCase {
 
         let payload = try EncryptedCallEventCodec.open(
             envelope,
-            sharedSecret: sharedSecret,
+            sharedSecret: sharedSecret.withUnsafeBytes { Data($0) },
             verificationKey: identityPrivateKey.publicKey.rawRepresentation
         )
 
@@ -109,6 +109,57 @@ final class LiveCallTransportTests: XCTestCase {
         )
         let result = try JSONDecoder().decode(CallCommandResult.self, from: resultData)
         XCTAssertEqual(result.mediaAnswer, "v=0\r\na=fingerprint:sha-256 device\r\n")
+    }
+
+    func testIncomingCallRegistrationAnswersAndRejectsWithEncryptedCommands() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let media = CallMediaSessionFake()
+        let transport = LiveCallTransport(
+            api: api,
+            makeMediaSession: { media },
+            waitBeforePollingAgain: {},
+            automaticallyPollEvents: false
+        )
+        try transport.registerIncomingCall(
+            IncomingCallRegistration(
+                callID: callID,
+                lineID: deviceID,
+                callSecret: Data((97...128).map(UInt8.init)),
+                verificationKey: api.verificationKey
+            )
+        )
+
+        try await transport.answerIncomingCall(callID: callID)
+        try await transport.rejectIncomingCall(callID: callID)
+
+        XCTAssertEqual(api.payloads.map(\.operation), ["call.answer", "call.reject"])
+        XCTAssertEqual(api.payloads.first?.mediaOffer, media.offer)
+        XCTAssertEqual(media.appliedAnswers, [CallMediaSessionFake.answer])
+        XCTAssertTrue(media.isClosed)
+    }
+
+    func testIncomingCallRegistrationRejectsInvalidSecretsBeforeCommands() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let transport = LiveCallTransport(
+            api: api,
+            makeMediaSession: { CallMediaSessionFake() },
+            waitBeforePollingAgain: {},
+            automaticallyPollEvents: false
+        )
+
+        XCTAssertThrowsError(
+            try transport.registerIncomingCall(
+                IncomingCallRegistration(
+                    callID: callID,
+                    lineID: deviceID,
+                    callSecret: Data(repeating: 1, count: 31),
+                    verificationKey: Data(repeating: 2, count: 32)
+                )
+            )
+        ) { error in
+            XCTAssertEqual(error as? LiveCallTransportError, .invalidDeviceKey)
+        }
+        XCTAssertTrue(api.requests.isEmpty)
     }
 
     func testCallControlsMapToEncryptedDeviceOperations() async throws {
@@ -362,6 +413,8 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
     private(set) var events: [EncryptedEventEnvelope] = []
     private(set) var requestedEventCursors: [Int64] = []
 
+    var verificationKey: Data { identityPrivateKey.publicKey.rawRepresentation }
+
     init(deviceID: UUID, outcome: Outcome) throws {
         self.deviceID = deviceID
         self.outcome = outcome
@@ -422,7 +475,7 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
             success: outcome != .modemRejected,
             errorCode: outcome == .modemRejected ? "modem_rejected" : nil,
             callState: "dialing",
-            mediaAnswer: payload.operation == "call.start" && !omitMediaAnswer
+            mediaAnswer: ["call.start", "call.answer"].contains(payload.operation) && !omitMediaAnswer
                 ? CallMediaSessionFake.answer
                 : nil
         )

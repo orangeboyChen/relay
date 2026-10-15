@@ -215,6 +215,8 @@ private final class RecordingCallTransport: CallTransport {
         eventHandler = handler
     }
 
+    func registerIncomingCall(_ call: IncomingCallRegistration) throws {}
+
     func startOutgoingCall(callID: UUID, number: String, lineID: UUID) async throws {
         if let startError {
             throw startError
@@ -223,6 +225,9 @@ private final class RecordingCallTransport: CallTransport {
         eventHandler?(.ringing(callID: callID))
         eventHandler?(.connected(callID: callID, at: connectedAt))
     }
+
+    func answerIncomingCall(callID: UUID) async throws {}
+    func rejectIncomingCall(callID: UUID) async throws {}
 
     func endCall(callID: UUID) async throws {
         endedCallIDs.append(callID)

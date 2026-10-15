@@ -68,6 +68,22 @@ final class LiveCallTransport: CallTransport {
         eventHandler = handler
     }
 
+    func registerIncomingCall(_ call: IncomingCallRegistration) throws {
+        guard call.callSecret.count == 32, call.verificationKey.count == 32 else {
+            throw LiveCallTransportError.invalidDeviceKey
+        }
+        callLines[call.callID] = call.lineID
+        callEvents[call.callID] = CallEventContext(
+            lineID: call.lineID,
+            sharedSecret: call.callSecret,
+            verificationKey: call.verificationKey,
+            hasConnected: false
+        )
+        if automaticallyPollEvents {
+            startEventLoopIfNeeded()
+        }
+    }
+
     func startOutgoingCall(callID: UUID, number: String, lineID: UUID) async throws {
         let verificationKey = try await api.eventVerificationKey(deviceID: lineID)
         guard verificationKey.count == 32 else { throw LiveCallTransportError.invalidDeviceKey }
@@ -91,7 +107,7 @@ final class LiveCallTransport: CallTransport {
             callLines[callID] = lineID
             callEvents[callID] = CallEventContext(
                 lineID: lineID,
-                sharedSecret: exchange.sharedSecret,
+                sharedSecret: exchange.sharedSecret.withUnsafeBytes { Data($0) },
                 verificationKey: verificationKey,
                 hasConnected: false
             )
@@ -106,6 +122,46 @@ final class LiveCallTransport: CallTransport {
             }
             throw error
         }
+    }
+
+    func answerIncomingCall(callID: UUID) async throws {
+        guard let lineID = callLines[callID], callEvents[callID] != nil else {
+            throw LiveCallTransportError.invalidResponse
+        }
+        let mediaSession = try makeMediaSession()
+        var remoteCallAnswered = false
+        do {
+            let offer = try await mediaSession.makeOffer()
+            let exchange = try await send(
+                operation: "call.answer",
+                callID: callID,
+                lineID: lineID,
+                mediaOffer: offer
+            )
+            remoteCallAnswered = true
+            guard let answer = exchange.result.mediaAnswer else {
+                throw LiveCallTransportError.invalidResponse
+            }
+            try await mediaSession.applyAnswer(answer)
+            mediaSessions[callID] = mediaSession
+        } catch {
+            mediaSession.close()
+            if remoteCallAnswered {
+                _ = try? await send(operation: "call.end", callID: callID, lineID: lineID)
+            }
+            throw error
+        }
+    }
+
+    func rejectIncomingCall(callID: UUID) async throws {
+        guard let lineID = callLines[callID] else {
+            throw LiveCallTransportError.invalidResponse
+        }
+        _ = try await send(operation: "call.reject", callID: callID, lineID: lineID)
+        mediaSessions.removeValue(forKey: callID)?.close()
+        callLines.removeValue(forKey: callID)
+        callEvents.removeValue(forKey: callID)
+        stopEventLoopIfIdle()
     }
 
     func endCall(callID: UUID) async throws {
@@ -328,7 +384,7 @@ private struct CallCommandExchange {
 
 private struct CallEventContext {
     let lineID: UUID
-    let sharedSecret: SharedSecret
+    let sharedSecret: Data
     let verificationKey: Data
     var hasConnected: Bool
 }
@@ -520,7 +576,7 @@ enum EncryptedCallCommandCodec {
 enum EncryptedCallEventCodec {
     static func open(
         _ envelope: EncryptedEventEnvelope,
-        sharedSecret: SharedSecret,
+        sharedSecret: Data,
         verificationKey: Data
     ) throws -> CallStateEventPayload {
         guard envelope.type == "call.state",
@@ -534,10 +590,10 @@ enum EncryptedCallEventCodec {
         guard publicKey.isValidSignature(envelope.signature, for: signedData(envelope)) else {
             throw LiveCallTransportError.invalidResponse
         }
-        let key = sharedSecret.hkdfDerivedSymmetricKey(
-            using: SHA256.self,
+        let key = HKDF<SHA256>.deriveKey(
+            inputKeyMaterial: SymmetricKey(data: sharedSecret),
             salt: Data("\(envelope.id.uuidString.lowercased())\0\(envelope.deviceUUID.uuidString.lowercased())".utf8),
-            sharedInfo: Data("sim-deck-call-event-v1".utf8),
+            info: Data("sim-deck-call-event-v1".utf8),
             outputByteCount: 32
         )
         let box = try AES.GCM.SealedBox(

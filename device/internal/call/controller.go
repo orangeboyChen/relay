@@ -44,10 +44,11 @@ type Commander interface {
 
 // Controller maps application call actions to Quectel AT commands.
 type Controller struct {
-	commander Commander
-	snapshot  Snapshot
-	events    chan Snapshot
-	mu        sync.RWMutex
+	commander   Commander
+	snapshot    Snapshot
+	events      chan Snapshot
+	subscribers []chan Snapshot
+	mu          sync.RWMutex
 }
 
 // NewController creates an idle call controller.
@@ -62,6 +63,15 @@ func NewController(commander Commander) *Controller {
 // Events returns every accepted call-state transition in order.
 func (controller *Controller) Events() <-chan Snapshot {
 	return controller.events
+}
+
+// Subscribe returns an independent ordered stream of future call-state transitions.
+func (controller *Controller) Subscribe() <-chan Snapshot {
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	stream := make(chan Snapshot, 32)
+	controller.subscribers = append(controller.subscribers, stream)
+	return stream
 }
 
 // State returns the last state accepted by the controller.
@@ -332,8 +342,12 @@ func (controller *Controller) setSnapshot(snapshot Snapshot) {
 		return
 	}
 	controller.snapshot = snapshot
+	subscribers := append([]chan Snapshot(nil), controller.subscribers...)
 	controller.mu.Unlock()
 	controller.events <- snapshot
+	for _, subscriber := range subscribers {
+		subscriber <- snapshot
+	}
 }
 
 func remainingState(snapshot Snapshot) State {

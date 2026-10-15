@@ -211,6 +211,17 @@ var _ = Describe("Cellular call controller", func() {
 		Expect(controller.State()).To(Equal(StateEnded))
 	})
 
+	It("broadcasts each transition to independent subscribers", func() {
+		first := controller.Subscribe()
+		second := controller.Subscribe()
+
+		controller.ApplyURC("RING")
+
+		Eventually(first).Should(Receive(Equal(Snapshot{State: StateRinging})))
+		Eventually(second).Should(Receive(Equal(Snapshot{State: StateRinging})))
+		Eventually(controller.Events()).Should(Receive(Equal(Snapshot{State: StateRinging})))
+	})
+
 	It("ignores unrelated notifications", func() {
 		controller.ApplyURC("+CMTI: \"ME\",1")
 		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateIdle}))

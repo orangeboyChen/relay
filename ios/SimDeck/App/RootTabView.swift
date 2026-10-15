@@ -4,45 +4,44 @@ struct RootTabView: View {
     @Bindable var model: AppModel
 
     var body: some View {
-        TabView(selection: $model.selectedTab) {
-            NavigationStack {
-                CallsTabScreen(model: model)
-            }
-            .tabItem {
-                Label("Calls", systemImage: "phone.fill")
-            }
-            .tag(AppTab.calls)
+        ZStack {
+            TabView(selection: $model.selectedTab) {
+                NavigationStack {
+                    CallsTabScreen(model: model)
+                }
+                .tabItem {
+                    Label("Calls", systemImage: "phone.fill")
+                }
+                .tag(AppTab.calls)
 
-            NavigationStack {
-                MessagesScreen(state: model.messages, lines: model.devices)
-            }
-            .tabItem {
-                Label("Messages", systemImage: "message.fill")
-            }
-            .tag(AppTab.messages)
+                NavigationStack {
+                    MessagesScreen(state: model.messages, lines: model.devices)
+                }
+                .tabItem {
+                    Label("Messages", systemImage: "message.fill")
+                }
+                .tag(AppTab.messages)
 
-            NavigationStack {
-                ProfileScreen(devices: model.devices, keyRecoveryState: model.keyRecoveryState)
+                NavigationStack {
+                    ProfileScreen(devices: model.devices, keyRecoveryState: model.keyRecoveryState)
+                }
+                .tabItem {
+                    Label("Me", systemImage: "person.crop.circle.fill")
+                }
+                .tag(AppTab.profile)
             }
-            .tabItem {
-                Label("Me", systemImage: "person.crop.circle.fill")
+
+            if model.callCoordinator.activeCall != nil {
+                InCallScreen(
+                    coordinator: model.callCoordinator,
+                    lines: model.devices,
+                    referenceDate: nil
+                )
+                .transition(.opacity)
+                .zIndex(1)
             }
-            .tag(AppTab.profile)
         }
-        .fullScreenCover(item: activeCall) { _ in
-            InCallScreen(
-                coordinator: model.callCoordinator,
-                lines: model.devices,
-                referenceDate: nil
-            )
-        }
-    }
-
-    private var activeCall: Binding<ActiveCallSession?> {
-        Binding(
-            get: { model.callCoordinator.activeCall },
-            set: { _ in }
-        )
+        .animation(.easeInOut(duration: 0.2), value: model.callCoordinator.activeCall != nil)
     }
 }
 

@@ -331,6 +331,7 @@ private extension ActiveCallStatus {
     )
     let coordinator = CallKitCoordinator(
         transport: PreviewCallTransport(),
+        integratesWithSystem: false,
         initialCall: call
     )
 
@@ -352,6 +353,7 @@ private extension ActiveCallStatus {
     )
     let coordinator = CallKitCoordinator(
         transport: PreviewCallTransport(),
+        integratesWithSystem: false,
         initialCall: call
     )
 

@@ -14,6 +14,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling {
     @ObservationIgnored private let provider: CXProvider
     @ObservationIgnored private let controller: CXCallController
     @ObservationIgnored private let transport: any CallTransport
+    @ObservationIgnored private let integratesWithSystem: Bool
     @ObservationIgnored private var pendingOutgoing: [UUID: OutgoingCallRequest] = [:]
     @ObservationIgnored private var startCompletions: [UUID: (Result<Void, Error>) -> Void] = [:]
 
@@ -21,11 +22,13 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling {
         transport: any CallTransport = UnavailableCallTransport(),
         provider: CXProvider? = nil,
         controller: CXCallController = CXCallController(),
+        integratesWithSystem: Bool = true,
         initialCall: ActiveCallSession? = nil
     ) {
         activeCall = initialCall
         self.transport = transport
         self.controller = controller
+        self.integratesWithSystem = integratesWithSystem
         capabilities = transport.capabilities
 
         if let provider {
@@ -65,6 +68,11 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling {
         )
         pendingOutgoing[callID] = request
 
+        guard integratesWithSystem else {
+            try await startOutgoingCall(request, reportToCallKit: false)
+            return
+        }
+
         try await withCheckedThrowingContinuation { continuation in
             startCompletions[callID] = { result in
                 continuation.resume(with: result)
@@ -82,11 +90,25 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling {
 
     func endCall() async throws {
         guard let activeCall else { return }
+        guard integratesWithSystem else {
+            try await transport.endCall(callID: activeCall.id)
+            finishCall(callID: activeCall.id)
+            return
+        }
         try await controller.request(CXTransaction(action: CXEndCallAction(call: activeCall.id)))
     }
 
     func setHeld(_ isHeld: Bool) async throws {
         guard let activeCall, capabilities.supportsHolding else { return }
+        guard integratesWithSystem else {
+            try await transport.setHeld(isHeld, callID: activeCall.id)
+            if let connectedAt = activeCall.status.connectedAt {
+                self.activeCall?.status = isHeld
+                    ? .held(connectedAt: connectedAt)
+                    : .active(connectedAt: connectedAt)
+            }
+            return
+        }
         try await controller.request(
             CXTransaction(action: CXSetHeldCallAction(call: activeCall.id, onHold: isHeld))
         )
@@ -94,6 +116,11 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling {
 
     func setMuted(_ isMuted: Bool) async throws {
         guard let activeCall, capabilities.supportsMuting else { return }
+        guard integratesWithSystem else {
+            try await transport.setMuted(isMuted, callID: activeCall.id)
+            self.activeCall?.isMuted = isMuted
+            return
+        }
         try await controller.request(
             CXTransaction(action: CXSetMutedCallAction(call: activeCall.id, muted: isMuted))
         )
@@ -101,6 +128,10 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling {
 
     func playDTMF(_ digits: String) async throws {
         guard let activeCall, capabilities.supportsDTMF else { return }
+        guard integratesWithSystem else {
+            try await transport.playDTMF(digits, callID: activeCall.id)
+            return
+        }
         try await controller.request(
             CXTransaction(
                 action: CXPlayDTMFCallAction(call: activeCall.id, digits: digits, type: .singleTone)
@@ -126,10 +157,14 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling {
         case .connected(let callID, let date):
             guard activeCall?.id == callID else { return }
             activeCall?.status = .active(connectedAt: date)
-            provider.reportOutgoingCall(with: callID, connectedAt: date)
+            if integratesWithSystem {
+                provider.reportOutgoingCall(with: callID, connectedAt: date)
+            }
         case .ended(let callID, let reason):
             guard activeCall?.id == callID else { return }
-            provider.reportCall(with: callID, endedAt: .now, reason: reason.callKitReason)
+            if integratesWithSystem {
+                provider.reportCall(with: callID, endedAt: .now, reason: reason.callKitReason)
+            }
             finishCall(callID: callID)
         }
     }
@@ -140,6 +175,33 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling {
             mode: .voiceChat,
             options: [.allowBluetoothHFP]
         )
+    }
+
+    private func startOutgoingCall(
+        _ request: OutgoingCallRequest,
+        reportToCallKit: Bool
+    ) async throws {
+        do {
+            if reportToCallKit {
+                try configureAudioSession()
+            }
+            activeCall?.status = .connecting
+            if reportToCallKit {
+                provider.reportOutgoingCall(with: request.callID, startedConnectingAt: .now)
+            }
+            try await transport.startOutgoingCall(
+                callID: request.callID,
+                number: request.number,
+                lineID: request.lineID
+            )
+            completeStart(callID: request.callID, result: .success(()))
+        } catch {
+            if reportToCallKit {
+                provider.reportCall(with: request.callID, endedAt: .now, reason: .failed)
+            }
+            failStart(callID: request.callID, error: error)
+            throw error
+        }
     }
 
     private func completeStart(callID: UUID, result: Result<Void, Error>) {
@@ -182,29 +244,12 @@ extension CallKitCoordinator: @preconcurrency CXProviderDelegate {
             return
         }
 
-        do {
-            try configureAudioSession()
-            activeCall?.status = .connecting
-            provider.reportOutgoingCall(with: request.callID, startedConnectingAt: .now)
-        } catch {
-            action.fail()
-            failStart(callID: request.callID, error: error)
-            return
-        }
-
         Task {
             do {
-                try await transport.startOutgoingCall(
-                    callID: request.callID,
-                    number: request.number,
-                    lineID: request.lineID
-                )
+                try await startOutgoingCall(request, reportToCallKit: true)
                 action.fulfill()
-                completeStart(callID: request.callID, result: .success(()))
             } catch {
                 action.fail()
-                provider.reportCall(with: request.callID, endedAt: .now, reason: .failed)
-                failStart(callID: request.callID, error: error)
             }
         }
     }

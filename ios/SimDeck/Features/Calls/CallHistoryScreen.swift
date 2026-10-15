@@ -243,7 +243,10 @@ struct DurationText: View {
             state: .loaded(PreviewFixtures.calls),
             lines: PreviewFixtures.devices,
             referenceDate: PreviewFixtures.now,
-            callStarter: CallKitCoordinator(transport: PreviewCallTransport()),
+            callStarter: CallKitCoordinator(
+                transport: PreviewCallTransport(),
+                integratesWithSystem: false
+            ),
             onStarted: { _ in }
         )
     }
@@ -255,7 +258,10 @@ struct DurationText: View {
             state: .loaded([]),
             lines: PreviewFixtures.devices,
             referenceDate: PreviewFixtures.now,
-            callStarter: CallKitCoordinator(transport: PreviewCallTransport()),
+            callStarter: CallKitCoordinator(
+                transport: PreviewCallTransport(),
+                integratesWithSystem: false
+            ),
             onStarted: { _ in }
         )
     }
@@ -267,7 +273,10 @@ struct DurationText: View {
             state: .loading,
             lines: PreviewFixtures.devices,
             referenceDate: PreviewFixtures.now,
-            callStarter: CallKitCoordinator(transport: PreviewCallTransport()),
+            callStarter: CallKitCoordinator(
+                transport: PreviewCallTransport(),
+                integratesWithSystem: false
+            ),
             onStarted: { _ in }
         )
     }
@@ -279,7 +288,10 @@ struct DurationText: View {
             state: .failed,
             lines: PreviewFixtures.devices,
             referenceDate: PreviewFixtures.now,
-            callStarter: CallKitCoordinator(transport: PreviewCallTransport()),
+            callStarter: CallKitCoordinator(
+                transport: PreviewCallTransport(),
+                integratesWithSystem: false
+            ),
             onStarted: { _ in }
         )
     }

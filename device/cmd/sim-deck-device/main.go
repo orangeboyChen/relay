@@ -79,6 +79,7 @@ func run(ctx context.Context, config agent.Config, logger *slog.Logger) error {
 	}
 
 	ready.Store(true)
+	defer ready.Store(false)
 	logger.Info(
 		"device agent ready",
 		"at_device", config.ATDevice,
@@ -90,8 +91,9 @@ func run(ctx context.Context, config agent.Config, logger *slog.Logger) error {
 	for {
 		select {
 		case <-ctx.Done():
-			ready.Store(false)
 			return ctx.Err()
+		case readError := <-client.Errors():
+			return readError
 		case urc := <-client.URCs():
 			logger.Info("modem notification", "urc", urc)
 		}

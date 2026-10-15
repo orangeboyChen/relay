@@ -1,22 +1,67 @@
+x-device-defaults: &device-defaults
+  image: sim-deck/device:dev
+  build:
+    context: .
+  restart: unless-stopped
+  environment:
+    SIM_DECK_SERVER_URL: "${SIM_DECK_SERVER_URL:?set SIM_DECK_SERVER_URL}"
+    SIM_DECK_AT_DEVICE: /dev/sim-deck/at
+    SIM_DECK_PCM_DEVICE: /dev/sim-deck/pcm
+    SIM_DECK_SOUND_DEVICE: /dev/snd
+    SIM_DECK_STATE_DIRECTORY: /var/lib/sim-deck
+    SIM_DECK_PAIRING_TOKEN_FILE: /run/secrets/sim_deck_pairing_token
+  group_add:
+    - "${SIM_DECK_DIALOUT_GID:-20}"
+    - "${SIM_DECK_AUDIO_GID:-29}"
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=16m
+
 services:
-  device:
-    build: .
-    restart: unless-stopped
-    environment:
-      SIM_DECK_AT_DEVICE: /dev/sim-deck/at
-      SIM_DECK_PCM_DEVICE: /dev/sim-deck/pcm
-      SIM_DECK_SOUND_DEVICE: /dev/snd
+  modem-1:
+    <<: *device-defaults
+    hostname: sim-deck-modem-1
     devices:
-      - /dev/sim-deck/ec20-at:/dev/sim-deck/at
-      - /dev/sim-deck/ec20-pcm:/dev/sim-deck/pcm
-      - /dev/snd:/dev/snd
-    group_add:
-      - "${SIM_DECK_DIALOUT_GID:-20}"
-      - "${SIM_DECK_AUDIO_GID:-29}"
+      - "${SIM_DECK_MODEM_1_AT_DEVICE:-/dev/sim-deck/modem-1-at}:/dev/sim-deck/at"
+      - "${SIM_DECK_MODEM_1_PCM_DEVICE:-/dev/sim-deck/modem-1-pcm}:/dev/sim-deck/pcm"
+      - "${SIM_DECK_MODEM_1_AUDIO_CONTROL:-/dev/sim-deck/modem-1-audio-control}:/dev/snd/controlC0"
+      - "${SIM_DECK_MODEM_1_AUDIO_CAPTURE:-/dev/sim-deck/modem-1-audio-capture}:/dev/snd/pcmC0D0c"
+      - "${SIM_DECK_MODEM_1_AUDIO_PLAYBACK:-/dev/sim-deck/modem-1-audio-playback}:/dev/snd/pcmC0D0p"
+    volumes:
+      - modem-1-state:/var/lib/sim-deck
+    secrets:
+      - source: modem-1-pairing-token
+        target: sim_deck_pairing_token
     ports:
-      - 127.0.0.1:18080:8080
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    read_only: true
+      - 127.0.0.1:18081:8080
+
+  modem-2:
+    <<: *device-defaults
+    hostname: sim-deck-modem-2
+    devices:
+      - "${SIM_DECK_MODEM_2_AT_DEVICE:-/dev/sim-deck/modem-2-at}:/dev/sim-deck/at"
+      - "${SIM_DECK_MODEM_2_PCM_DEVICE:-/dev/sim-deck/modem-2-pcm}:/dev/sim-deck/pcm"
+      - "${SIM_DECK_MODEM_2_AUDIO_CONTROL:-/dev/sim-deck/modem-2-audio-control}:/dev/snd/controlC0"
+      - "${SIM_DECK_MODEM_2_AUDIO_CAPTURE:-/dev/sim-deck/modem-2-audio-capture}:/dev/snd/pcmC0D0c"
+      - "${SIM_DECK_MODEM_2_AUDIO_PLAYBACK:-/dev/sim-deck/modem-2-audio-playback}:/dev/snd/pcmC0D0p"
+    volumes:
+      - modem-2-state:/var/lib/sim-deck
+    secrets:
+      - source: modem-2-pairing-token
+        target: sim_deck_pairing_token
+    ports:
+      - 127.0.0.1:18082:8080
+
+volumes:
+  modem-1-state:
+  modem-2-state:
+
+secrets:
+  modem-1-pairing-token:
+    file: ./secrets/modem-1-pairing-token
+  modem-2-pairing-token:
+    file: ./secrets/modem-2-pairing-token

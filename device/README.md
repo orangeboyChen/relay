@@ -9,7 +9,10 @@ and bridges cellular voice audio to an end-to-end encrypted WebRTC session.
 go test ./...
 go test -race ./...
 go vet ./...
+make coverage
 ```
+
+`make coverage` fails when repository-wide statement coverage is below 90%.
 
 ## Container model
 

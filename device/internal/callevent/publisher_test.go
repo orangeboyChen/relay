@@ -53,7 +53,7 @@ var _ = Describe("Encrypted call event publisher", func() {
 		var err error
 		publisher, err = NewPublisher(remote, state, snapshots)
 		Expect(err).NotTo(HaveOccurred())
-		publisher.now = func() time.Time { return time.Date(2026, 10, 16, 8, 9, 10, 0, time.UTC) }
+		publisher.now = func() time.Time { return time.Date(2026, 10, 16, 8, 9, 10, 123456789, time.UTC) }
 		publisher.random = zeroReader{}
 	})
 
@@ -69,6 +69,7 @@ var _ = Describe("Encrypted call event publisher", func() {
 		Expect(envelope.Type).To(Equal("call.state"))
 		Expect(envelope.Sequence).To(BeZero())
 		Expect(envelope.KeyEpoch).To(Equal(1))
+		Expect(envelope.OccurredAt.Nanosecond()).To(Equal(123000000))
 		Expect(envelope.Nonce).To(HaveLen(nonceBytes))
 		Expect(ed25519.Verify(state.PublicKey(), signedData(envelope), envelope.Signature)).To(BeTrue())
 		Expect(string(envelope.Ciphertext)).NotTo(ContainSubstring("call-secret-id"))

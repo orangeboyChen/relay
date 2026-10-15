@@ -130,7 +130,7 @@ func (publisher *Publisher) publish(ctx context.Context, snapshot call.Snapshot)
 	}
 	envelope := Envelope{
 		ID: eventID, Type: eventType, DeviceUUID: publisher.identity.DeviceUUID,
-		OccurredAt: publisher.now().UTC(), KeyEpoch: keyEpoch,
+		OccurredAt: publisher.now().UTC().Truncate(time.Millisecond), KeyEpoch: keyEpoch,
 	}
 	payload, err := json.Marshal(Payload{
 		Version: protocolVersion, CallID: registered.id, State: snapshot.State,

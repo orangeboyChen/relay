@@ -55,7 +55,9 @@ var _ = Describe("Incoming call notification", func() {
 		Expect(notification.Recipients).To(HaveLen(2))
 		Expect(notification.Recipients[0].InstallationID).To(Equal(recipients[1].InstallationID))
 		Expect(notification.Recipients[1].InstallationID).To(Equal(recipients[0].InstallationID))
-		Expect(ed25519.Verify(state.PublicKey(), signedData(notification), notification.Signature)).To(BeTrue())
+		for _, recipient := range notification.Recipients {
+			Expect(ed25519.Verify(state.PublicKey(), recipientSignedData(notification, recipient), recipient.Signature)).To(BeTrue())
+		}
 
 		payloadOne := openRecipient(notification, notification.Recipients[0], privateOne)
 		payloadTwo := openRecipient(notification, notification.Recipients[1], privateTwo)
@@ -88,7 +90,7 @@ var _ = Describe("Incoming call notification", func() {
 		tampered := notification
 		tampered.Recipients = append([]RecipientEnvelope(nil), notification.Recipients...)
 		tampered.Recipients[0].InstallationID = recipients[0].InstallationID
-		Expect(ed25519.Verify(state.PublicKey(), signedData(tampered), tampered.Signature)).To(BeFalse())
+		Expect(ed25519.Verify(state.PublicKey(), recipientSignedData(tampered, tampered.Recipients[0]), tampered.Recipients[0].Signature)).To(BeFalse())
 	})
 
 	DescribeTable("rejects unsafe inputs",

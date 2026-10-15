@@ -45,6 +45,7 @@ type RecipientEnvelope struct {
 	SenderPublicKey []byte `json:"sender_public_key"`
 	Nonce           []byte `json:"nonce"`
 	Ciphertext      []byte `json:"ciphertext"`
+	Signature       []byte `json:"signature"`
 }
 
 // Notification carries only signed routing metadata and recipient ciphertexts.
@@ -55,7 +56,6 @@ type Notification struct {
 	OccurredAt time.Time           `json:"occurred_at"`
 	KeyEpoch   int                 `json:"key_epoch"`
 	Recipients []RecipientEnvelope `json:"recipients"`
-	Signature  []byte              `json:"signature"`
 }
 
 // Payload is visible only to an approved iPhone installation.
@@ -132,7 +132,6 @@ func (builder *Builder) Seal(recipients []Recipient, snapshot call.Snapshot) (No
 		}
 		notification.Recipients = append(notification.Recipients, sealed)
 	}
-	notification.Signature = ed25519.Sign(builder.identity.IdentityPrivateKey, signedData(notification))
 	return notification, CallContext{CallID: callID, SharedSecret: append([]byte(nil), callSecret...)}, nil
 }
 
@@ -163,6 +162,7 @@ func (builder *Builder) sealRecipient(notification Notification, recipient Recip
 		Nonce:           nonce,
 	}
 	envelope.Ciphertext = aead.Seal(nil, nonce, plaintext, recipientAssociatedData(notification, envelope))
+	envelope.Signature = ed25519.Sign(builder.identity.IdentityPrivateKey, recipientSignedData(notification, envelope))
 	return envelope, nil
 }
 
@@ -209,20 +209,17 @@ func recipientAssociatedData(notification Notification, recipient RecipientEnvel
 	return appendBytes(buffer, recipient.SenderPublicKey)
 }
 
-func signedData(notification Notification) []byte {
-	buffer := make([]byte, 0, 512)
+func recipientSignedData(notification Notification, recipient RecipientEnvelope) []byte {
+	buffer := make([]byte, 0, 256)
 	buffer = appendBytes(buffer, []byte(notification.ID))
 	buffer = appendBytes(buffer, []byte(notification.Type))
 	buffer = appendBytes(buffer, []byte(notification.DeviceUUID))
 	buffer = binary.BigEndian.AppendUint64(buffer, uint64(notification.OccurredAt.UTC().UnixNano()))
 	buffer = binary.BigEndian.AppendUint64(buffer, uint64(notification.KeyEpoch))
-	buffer = binary.BigEndian.AppendUint32(buffer, uint32(len(notification.Recipients)))
-	for _, recipient := range notification.Recipients {
-		buffer = appendBytes(buffer, []byte(recipient.InstallationID))
-		buffer = appendBytes(buffer, recipient.SenderPublicKey)
-		buffer = appendBytes(buffer, recipient.Nonce)
-		buffer = appendBytes(buffer, recipient.Ciphertext)
-	}
+	buffer = appendBytes(buffer, []byte(recipient.InstallationID))
+	buffer = appendBytes(buffer, recipient.SenderPublicKey)
+	buffer = appendBytes(buffer, recipient.Nonce)
+	buffer = appendBytes(buffer, recipient.Ciphertext)
 	return buffer
 }
 

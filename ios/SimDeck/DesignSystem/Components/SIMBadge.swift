@@ -2,19 +2,28 @@ import SwiftUI
 
 struct SIMBadge: View {
     let line: DeviceLineIdentity
+    private let baseSide: CGFloat
 
-    @ScaledMetric(relativeTo: .caption) private var height = 30.0
+    @ScaledMetric(relativeTo: .caption) private var scale = 1.0
+
+    init(line: DeviceLineIdentity, size: CGFloat = 18) {
+        self.line = line
+        baseSide = size
+    }
 
     var body: some View {
-        let badgeHeight = min(height, 44)
+        let badgeSide = min(baseSide * scale, baseSide + 4)
 
         Text(line.numericID, format: .number.grouping(.never))
-            .font(.caption.bold().monospacedDigit())
+            .font(.caption2.weight(.semibold).monospacedDigit())
             .foregroundStyle(.white)
             .lineLimit(1)
-            .minimumScaleFactor(0.7)
-            .frame(width: badgeHeight * 0.86, height: badgeHeight)
-            .background(Color.gray, in: SIMCardShape())
+            .minimumScaleFactor(0.65)
+            .frame(width: badgeSide, height: badgeSide)
+            .background(
+                Color(uiColor: .systemGray),
+                in: RoundedRectangle(cornerRadius: badgeSide * 0.2, style: .continuous)
+            )
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityLabel)
     }
@@ -27,21 +36,6 @@ struct SIMBadge: View {
         } else {
             Text("SIM \(line.numericID)")
         }
-    }
-}
-
-private struct SIMCardShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        let cut = min(rect.width, rect.height) * 0.28
-
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX - cut, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + cut))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.closeSubpath()
-        return path
     }
 }
 

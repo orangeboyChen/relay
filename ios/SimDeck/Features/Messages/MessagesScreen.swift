@@ -77,78 +77,6 @@ struct MessagesScreen: View {
     }
 }
 
-private struct SIMFilterMenu: View {
-    let lines: [DeviceLineIdentity]
-    @Binding var selection: UUID?
-
-    var body: some View {
-        Menu {
-            Button("All SIMs") {
-                selection = nil
-            }
-            ForEach(lines) { line in
-                Button("SIM \(line.numericID) · \(line.displayName)") {
-                    selection = line.id
-                }
-            }
-        } label: {
-            Label("Filter by SIM", systemImage: selection == nil ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
-        }
-    }
-}
-
-private struct ConversationRow: View {
-    let conversation: MessageConversation
-    let line: DeviceLineIdentity
-
-    var body: some View {
-        HStack(spacing: 12) {
-            SIMBadge(line: line)
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(conversation.displayName)
-                        .fontWeight(conversation.unreadCount > 0 ? .semibold : .regular)
-                        .lineLimit(1)
-                    Spacer()
-                    if let lastMessage = conversation.lastMessage {
-                        Text(lastMessage.sentAt, format: .dateTime.hour().minute())
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                HStack {
-                    Text(summary)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                    Spacer(minLength: 8)
-                    if conversation.unreadCount > 0 {
-                        Text(conversation.unreadCount, format: .number)
-                            .font(.caption2.bold())
-                            .foregroundStyle(.white)
-                            .frame(minWidth: 20, minHeight: 20)
-                            .background(.blue, in: Circle())
-                            .accessibilityLabel("\(conversation.unreadCount) unread messages")
-                    }
-                }
-            }
-        }
-        .padding(.vertical, 5)
-    }
-
-    private var summary: String {
-        guard let lastMessage = conversation.lastMessage else {
-            return String(localized: "No messages yet")
-        }
-        if lastMessage.body.isEmpty, lastMessage.attachment != nil {
-            return String(localized: "Image")
-        }
-        return lastMessage.body
-    }
-}
-
 #if DEBUG
 #Preview("Messages") {
     NavigationStack {
@@ -171,6 +99,14 @@ private struct ConversationRow: View {
 #Preview("Messages - Offline") {
     NavigationStack {
         MessagesScreen(state: .failed, lines: PreviewFixtures.devices)
+    }
+    .preferredColorScheme(.dark)
+    .environment(\.dynamicTypeSize, .accessibility5)
+}
+
+#Preview("Messages - Dark Accessibility") {
+    NavigationStack {
+        MessagesScreen(state: .loaded(PreviewFixtures.conversations), lines: PreviewFixtures.devices)
     }
     .preferredColorScheme(.dark)
     .environment(\.dynamicTypeSize, .accessibility5)

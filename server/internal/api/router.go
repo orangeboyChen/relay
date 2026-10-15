@@ -73,6 +73,7 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("POST /v1/device-pairings", router.pairDevice)
 	mux.HandleFunc("POST /v1/events", router.insertEvent)
 	mux.HandleFunc("GET /v1/events", router.requireOwner(router.listEvents))
+	mux.HandleFunc("GET /v1/events/ws", router.requireOwner(router.streamEvents))
 	mux.HandleFunc("POST /v1/devices/{deviceID}/commands", router.requireOwner(router.enqueueCommand))
 	mux.HandleFunc("GET /v1/devices/{deviceID}/commands/{commandID}", router.requireOwner(router.commandStatus))
 	mux.HandleFunc("GET /v1/device-commands/next", router.claimCommand)
@@ -333,12 +334,23 @@ func (router *router) discovery(writer http.ResponseWriter, _ *http.Request) {
 	baseURL := strings.TrimRight(router.config.PublicBaseURL, "/")
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"api_version":   "v1",
-		"websocket_url": baseURL + "/v1/events/ws",
+		"websocket_url": websocketBaseURL(baseURL) + "/v1/events/ws",
 		"media": map[string]int{
 			"udp_port": router.config.MediaUDPPort,
 			"tcp_port": router.config.MediaTCPPort,
 		},
 	})
+}
+
+func websocketBaseURL(baseURL string) string {
+	switch {
+	case strings.HasPrefix(baseURL, "https://"):
+		return "wss://" + strings.TrimPrefix(baseURL, "https://")
+	case strings.HasPrefix(baseURL, "http://"):
+		return "ws://" + strings.TrimPrefix(baseURL, "http://")
+	default:
+		return baseURL
+	}
 }
 
 func (router *router) listDevices(writer http.ResponseWriter, request *http.Request) {

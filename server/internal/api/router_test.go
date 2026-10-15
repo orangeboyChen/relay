@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -34,6 +35,8 @@ type fakeRepository struct {
 	listEventsAfter             int64
 	listEventsLimit             int
 	listEventsNow               time.Time
+	listEventsCalls             chan int64
+	listEventsMutex             sync.Mutex
 	credential                  store.OwnerCredential
 	credentialError             error
 	sessionPair                 auth.TokenPair
@@ -170,10 +173,24 @@ func (fake *fakeRepository) ClaimIncomingCall(_ context.Context, ownerID string,
 }
 
 func (fake *fakeRepository) ListEvents(_ context.Context, afterSequence int64, limit int, now time.Time) ([]domain.EventEnvelope, error) {
+	fake.listEventsMutex.Lock()
+	defer fake.listEventsMutex.Unlock()
 	fake.listEventsAfter = afterSequence
 	fake.listEventsLimit = limit
 	fake.listEventsNow = now
+	if fake.listEventsCalls != nil {
+		select {
+		case fake.listEventsCalls <- afterSequence:
+		default:
+		}
+	}
 	return fake.listedEvents, fake.listEventsError
+}
+
+func (fake *fakeRepository) setListedEvents(events []domain.EventEnvelope) {
+	fake.listEventsMutex.Lock()
+	defer fake.listEventsMutex.Unlock()
+	fake.listedEvents = events
 }
 
 func (fake *fakeRepository) OwnerCredentialByUsername(context.Context, string) (store.OwnerCredential, error) {
@@ -305,9 +322,18 @@ var _ = Describe("HTTP API", func() {
 		var body map[string]any
 		Expect(json.Unmarshal(discovery.Body.Bytes(), &body)).To(Succeed())
 		Expect(body["api_version"]).To(Equal("v1"))
-		Expect(body["websocket_url"]).To(Equal("https://deck.example/v1/events/ws"))
+		Expect(body["websocket_url"]).To(Equal("wss://deck.example/v1/events/ws"))
 		Expect(body["media"]).To(Equal(map[string]any{"udp_port": float64(49152), "tcp_port": float64(49153)}))
 	})
+
+	DescribeTable("maps public API schemes to WebSocket schemes",
+		func(baseURL string, expected string) {
+			Expect(websocketBaseURL(baseURL)).To(Equal(expected))
+		},
+		Entry("secure", "https://deck.example", "wss://deck.example"),
+		Entry("local plaintext", "http://127.0.0.1:8080", "ws://127.0.0.1:8080"),
+		Entry("unspecified", "deck.example", "deck.example"),
+	)
 
 	It("lists devices for an authenticated owner", func() {
 		repository.devices = []store.DeviceRecord{{ID: "device-1", NumericID: 1}}

@@ -445,7 +445,21 @@ func (store *Postgres) InsertEvent(ctx context.Context, envelope domain.EventEnv
 		ON CONFLICT (id) DO NOTHING
 		RETURNING sequence`, envelope.ID, envelope.Type, envelope.DeviceUUID, envelope.OccurredAt, envelope.KeyEpoch, envelope.Nonce, envelope.Ciphertext, envelope.Signature, expiresAt).Scan(&sequence)
 	if errors.Is(err, pgx.ErrNoRows) {
-		err = store.pool.QueryRow(ctx, "SELECT sequence FROM events WHERE id = $1", envelope.ID).Scan(&sequence)
+		err = store.pool.QueryRow(ctx, `
+			SELECT sequence
+			FROM events
+			WHERE id = $1
+			  AND type = $2
+			  AND device_id = $3
+			  AND occurred_at = $4
+			  AND key_epoch = $5
+			  AND nonce = $6
+			  AND ciphertext = $7
+			  AND signature = $8
+			  AND expires_at = $9`, envelope.ID, envelope.Type, envelope.DeviceUUID, envelope.OccurredAt, envelope.KeyEpoch, envelope.Nonce, envelope.Ciphertext, envelope.Signature, expiresAt).Scan(&sequence)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, false, domain.ErrIdempotencyConflict
+		}
 		if err != nil {
 			return 0, false, fmt.Errorf("read existing event: %w", err)
 		}

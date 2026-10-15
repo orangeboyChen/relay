@@ -3,6 +3,8 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,27 +13,35 @@ import (
 
 	"sim-deck-server/internal/auth"
 	"sim-deck-server/internal/domain"
+	"sim-deck-server/internal/e2ee"
 	"sim-deck-server/internal/store"
 )
 
 type fakeRepository struct {
-	devices          []store.DeviceRecord
-	updatedDeviceID  string
-	updatedNumericID int
-	insertSequence   int64
-	insertCreated    bool
-	credential       store.OwnerCredential
-	sessionPair      auth.TokenPair
-	rotatedRefresh   string
-	revokedAccess    string
-	ownerID          string
-	ownerAuthError   error
-	pairingOwnerID   string
-	pairingTokenHash []byte
-	pairingExpiresAt time.Time
-	pairing          store.DevicePairing
-	pairingRecord    store.DeviceRecord
-	pairingError     error
+	devices                 []store.DeviceRecord
+	updatedDeviceID         string
+	updatedNumericID        int
+	insertSequence          int64
+	insertCreated           bool
+	insertError             error
+	insertedEnvelope        domain.EventEnvelope
+	insertedExpiry          time.Time
+	credential              store.OwnerCredential
+	sessionPair             auth.TokenPair
+	rotatedRefresh          string
+	revokedAccess           string
+	ownerID                 string
+	ownerAuthError          error
+	pairingOwnerID          string
+	pairingTokenHash        []byte
+	pairingExpiresAt        time.Time
+	pairing                 store.DevicePairing
+	pairingRecord           store.DeviceRecord
+	pairingError            error
+	devicePublicKey         []byte
+	deviceAuthError         error
+	authenticatedDeviceID   string
+	authenticatedCredential string
 }
 
 func (fake *fakeRepository) ListDevices(context.Context) ([]store.DeviceRecord, error) {
@@ -44,8 +54,10 @@ func (fake *fakeRepository) UpdateNumericID(_ context.Context, deviceID string, 
 	return nil
 }
 
-func (fake *fakeRepository) InsertEvent(context.Context, domain.EventEnvelope, time.Time) (int64, bool, error) {
-	return fake.insertSequence, fake.insertCreated, nil
+func (fake *fakeRepository) InsertEvent(_ context.Context, envelope domain.EventEnvelope, expiresAt time.Time) (int64, bool, error) {
+	fake.insertedEnvelope = envelope
+	fake.insertedExpiry = expiresAt
+	return fake.insertSequence, fake.insertCreated, fake.insertError
 }
 
 func (fake *fakeRepository) OwnerCredentialByUsername(context.Context, string) (store.OwnerCredential, error) {
@@ -90,6 +102,15 @@ func (fake *fakeRepository) ConsumePairingToken(_ context.Context, _ []byte, _ t
 	return fake.pairingRecord, fake.pairingError
 }
 
+func (fake *fakeRepository) AuthenticateDevice(_ context.Context, deviceID string, credential string, _ time.Time) ([]byte, error) {
+	fake.authenticatedDeviceID = deviceID
+	fake.authenticatedCredential = credential
+	if fake.deviceAuthError != nil {
+		return nil, fake.deviceAuthError
+	}
+	return append([]byte(nil), fake.devicePublicKey...), nil
+}
+
 func TestDiscovery(t *testing.T) {
 	handler := Handler(&fakeRepository{}, Config{PublicBaseURL: "https://deck.example", MediaUDPPort: 49152, MediaTCPPort: 49153})
 	request := httptest.NewRequest(http.MethodGet, "/.well-known/sim-deck", nil)
@@ -125,15 +146,42 @@ func TestUpdateNumericID(t *testing.T) {
 }
 
 func TestInsertEventIsIdempotent(t *testing.T) {
-	repository := &fakeRepository{insertSequence: 42, insertCreated: false}
-	handler := Handler(repository, Config{})
-	body := `{"envelope":{"id":"01900000-0000-7000-8000-000000000001","type":"message.received","device_uuid":"01900000-0000-7000-8000-000000000002","occurred_at":"2026-10-15T10:00:00Z","key_epoch":1,"nonce":"AA==","ciphertext":"AA==","signature":"AA=="},"expires_at":"2027-10-15T10:00:00Z"}`
-	request := httptest.NewRequest(http.MethodPost, "/v1/events", bytes.NewBufferString(body))
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultKey := make([]byte, 32)
+	eventTime := time.Date(2026, 10, 15, 10, 0, 0, 0, time.UTC)
+	envelope, err := e2ee.Seal(vaultKey, privateKey, e2ee.NewEnvelope(
+		"01900000-0000-7000-8000-000000000001",
+		99,
+		"message.received",
+		"01900000-0000-7000-8000-000000000002",
+		eventTime,
+		1,
+	), []byte("encrypted payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{"envelope": envelope})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &fakeRepository{insertSequence: 42, insertCreated: false, devicePublicKey: publicKey}
+	handler := Handler(repository, Config{Now: func() time.Time { return eventTime.Add(time.Hour) }})
+	request := httptest.NewRequest(http.MethodPost, "/v1/events", bytes.NewReader(body))
+	request.Header.Set("Authorization", "Bearer device-credential")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body = %s", response.Code, response.Body.String())
+	}
+	if repository.insertedEnvelope.Sequence != 0 {
+		t.Fatalf("stored sequence = %d, want 0", repository.insertedEnvelope.Sequence)
+	}
+	if repository.insertedExpiry != eventTime.Add(365*24*time.Hour) {
+		t.Fatalf("stored expiry = %s", repository.insertedExpiry)
 	}
 }
 

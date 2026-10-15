@@ -1,6 +1,11 @@
 package domain
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+var ErrIdempotencyConflict = errors.New("event id was already used with different content")
 
 // EventEnvelope carries encrypted and signed application data through the server.
 type EventEnvelope struct {

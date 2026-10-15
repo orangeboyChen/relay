@@ -16,6 +16,7 @@ import (
 
 	"sim-deck-server/internal/auth"
 	"sim-deck-server/internal/domain"
+	"sim-deck-server/internal/e2ee"
 	"sim-deck-server/internal/store"
 )
 
@@ -31,6 +32,7 @@ type Repository interface {
 	AuthenticateOwnerSession(context.Context, string, time.Time) (string, error)
 	CreatePairingToken(context.Context, string, []byte, time.Time) error
 	ConsumePairingToken(context.Context, []byte, time.Time, store.DevicePairing) (store.DeviceRecord, error)
+	AuthenticateDevice(context.Context, string, string, time.Time) ([]byte, error)
 }
 
 // Config describes public endpoints advertised to clients.
@@ -69,6 +71,8 @@ const (
 	pairingTokenLifetime      = 10 * time.Minute
 	maxProfileCiphertextBytes = 64 << 10
 	maxWrappedVaultKeyBytes   = 16 << 10
+	eventRetention            = 365 * 24 * time.Hour
+	maxEventFutureSkew        = 5 * time.Minute
 )
 
 func (router *router) health(writer http.ResponseWriter, _ *http.Request) {
@@ -206,19 +210,47 @@ func (router *router) pairDevice(writer http.ResponseWriter, request *http.Reque
 
 func (router *router) insertEvent(writer http.ResponseWriter, request *http.Request) {
 	var body struct {
-		Envelope  domain.EventEnvelope `json:"envelope"`
-		ExpiresAt time.Time            `json:"expires_at"`
+		Envelope domain.EventEnvelope `json:"envelope"`
 	}
 	if err := decodeJSON(request, &body); err != nil {
 		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	if body.Envelope.ID == "" || body.Envelope.DeviceUUID == "" || body.Envelope.Type == "" || body.ExpiresAt.IsZero() {
-		writeError(writer, http.StatusUnprocessableEntity, "invalid_event", "Event routing metadata is incomplete.")
+	token, ok := bearerToken(request.Header.Get("Authorization"))
+	if !ok {
+		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is required.")
 		return
 	}
-	sequence, created, err := router.repository.InsertEvent(request.Context(), body.Envelope, body.ExpiresAt)
+	publicKey, err := router.repository.AuthenticateDevice(request.Context(), body.Envelope.DeviceUUID, token, router.now())
 	if err != nil {
+		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is invalid or revoked.")
+		return
+	}
+	if err := e2ee.VerifyEnvelope(ed25519.PublicKey(publicKey), body.Envelope); err != nil {
+		if errors.Is(err, e2ee.ErrInvalidEnvelope) {
+			writeError(writer, http.StatusUnprocessableEntity, "invalid_event", err.Error())
+			return
+		}
+		writeError(writer, http.StatusUnauthorized, "invalid_event_signature", "Event signature is invalid.")
+		return
+	}
+	now := router.now()
+	if body.Envelope.OccurredAt.After(now.Add(maxEventFutureSkew)) {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_event_time", "Event timestamp is too far in the future.")
+		return
+	}
+	expiresAt := body.Envelope.OccurredAt.Add(eventRetention)
+	if !expiresAt.After(now) {
+		writeError(writer, http.StatusUnprocessableEntity, "event_expired", "Event is outside the retention window.")
+		return
+	}
+	body.Envelope.Sequence = 0
+	sequence, created, err := router.repository.InsertEvent(request.Context(), body.Envelope, expiresAt)
+	if err != nil {
+		if errors.Is(err, domain.ErrIdempotencyConflict) {
+			writeError(writer, http.StatusConflict, "idempotency_conflict", err.Error())
+			return
+		}
 		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to store the event.")
 		return
 	}

@@ -15,23 +15,25 @@ struct LinePicker: View {
                     }
                 }
             } label: {
-                HStack(spacing: 10) {
+                HStack(spacing: 8) {
                     SIMBadge(line: selectedLine)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Outgoing line")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(selectedLine.displayName)
-                            .foregroundStyle(.primary)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.up.chevron.down")
-                        .foregroundStyle(.secondary)
+                    Text(selectedLine.displayName)
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                    Image(systemName: "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
                 }
-                .contentShape(Rectangle())
+                .padding(.horizontal, 12)
+                .frame(minHeight: 36)
+                .background(.quaternary, in: Capsule())
+                .contentShape(Capsule())
             }
             .buttonStyle(.plain)
             .frame(minHeight: 44)
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         } else {
             Label("No online SIM", systemImage: "simcard.slash")
                 .foregroundStyle(.secondary)
@@ -44,57 +46,82 @@ struct NumberEntry: View {
     @Binding var number: String
 
     var body: some View {
-        HStack(spacing: 8) {
-            TextField("Phone number", text: $number)
-                .font(.largeTitle.monospacedDigit())
+        ZStack(alignment: .trailing) {
+            TextField("Phone number", text: $number, prompt: Text("Phone number").foregroundStyle(.tertiary))
+                .font(.system(.largeTitle, design: .rounded).weight(.regular).monospacedDigit())
                 .multilineTextAlignment(.center)
                 .keyboardType(.phonePad)
                 .textContentType(.telephoneNumber)
                 .textInputAutocapitalization(.never)
+                .lineLimit(1)
+                .minimumScaleFactor(0.55)
+                .padding(.horizontal, 48)
 
-            Button {
-                if !number.isEmpty {
+            if !number.isEmpty {
+                Button {
                     number.removeLast()
+                } label: {
+                    Image(systemName: "delete.left.fill")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 44, height: 44)
                 }
-            } label: {
-                Image(systemName: "delete.left.fill")
-                    .frame(width: 44, height: 44)
+                .accessibilityLabel("Delete digit")
             }
-            .accessibilityLabel("Delete digit")
-            .disabled(number.isEmpty)
         }
-        .frame(minHeight: 60)
+        .frame(height: 54)
     }
 }
 
 struct DialPad: View {
     @Binding var number: String
 
-    private let keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"]
+    private let keys = [
+        DialPadKeyContent(symbol: "1", letters: ""),
+        DialPadKeyContent(symbol: "2", letters: "ABC"),
+        DialPadKeyContent(symbol: "3", letters: "DEF"),
+        DialPadKeyContent(symbol: "4", letters: "GHI"),
+        DialPadKeyContent(symbol: "5", letters: "JKL"),
+        DialPadKeyContent(symbol: "6", letters: "MNO"),
+        DialPadKeyContent(symbol: "7", letters: "PQRS"),
+        DialPadKeyContent(symbol: "8", letters: "TUV"),
+        DialPadKeyContent(symbol: "9", letters: "WXYZ"),
+        DialPadKeyContent(symbol: "*", letters: ""),
+        DialPadKeyContent(symbol: "0", letters: "+"),
+        DialPadKeyContent(symbol: "#", letters: ""),
+    ]
 
     var body: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 12) {
+        LazyVGrid(
+            columns: Array(repeating: GridItem(.flexible(), spacing: 20), count: 3),
+            spacing: 14
+        ) {
             ForEach(keys, id: \.self) { key in
-                DialPadKey(symbol: key) {
-                    number.append(contentsOf: key)
+                DialPadKey(content: key) {
+                    number.append(contentsOf: key.symbol)
                 } longPressAction: {
-                    if key == "0" {
+                    if key.symbol == "0" {
                         number.append("+")
                     }
                 }
             }
         }
-        .frame(maxWidth: 330)
+        .frame(maxWidth: 318)
     }
 }
 
-private struct DialPadKey: View {
+private struct DialPadKeyContent: Hashable {
     let symbol: String
+    let letters: String
+}
+
+private struct DialPadKey: View {
+    let content: DialPadKeyContent
     let action: () -> Void
     let longPressAction: () -> Void
 
     @State private var handledLongPress = false
-    @ScaledMetric(relativeTo: .title) private var size = 64.0
+    @ScaledMetric(relativeTo: .title) private var scaledSize = 72.0
 
     var body: some View {
         Button {
@@ -104,18 +131,21 @@ private struct DialPadKey: View {
                 action()
             }
         } label: {
-            VStack(spacing: 0) {
-                Text(symbol)
-                    .font(.title)
+            VStack(spacing: -2) {
+                Text(verbatim: content.symbol)
+                    .font(.system(size: 32, weight: .regular, design: .rounded))
                     .foregroundStyle(.primary)
-                if symbol == "0" {
-                    Text(verbatim: "+")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+                Text(verbatim: content.letters)
+                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                    .tracking(content.letters.count > 1 ? 2 : 0)
+                    .foregroundStyle(.primary)
+                    .frame(height: 11)
+                    .opacity(content.letters.isEmpty ? 0 : 1)
+                    .accessibilityHidden(true)
             }
-            .frame(width: min(size, 78), height: min(size, 78))
-            .background(.quaternary, in: Circle())
+            .frame(width: min(scaledSize, 82), height: min(scaledSize, 82))
+            .background(Color(uiColor: .systemGray5), in: Circle())
+            .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .onLongPressGesture(minimumDuration: 0.5) {
@@ -126,10 +156,10 @@ private struct DialPadKey: View {
     }
 
     private var accessibilityLabel: Text {
-        if symbol == "0" {
+        if content.symbol == "0" {
             Text("0, long press for plus")
         } else {
-            Text(verbatim: symbol)
+            Text(verbatim: content.symbol)
         }
     }
 }
@@ -147,10 +177,10 @@ struct CallButton: View {
                         .tint(.white)
                 } else {
                     Image(systemName: "phone.fill")
-                        .font(.title2)
+                        .font(.system(size: 28, weight: .semibold))
                 }
             }
-            .frame(width: 68, height: 68)
+            .frame(width: 72, height: 72)
             .foregroundStyle(.white)
             .background(.green, in: Circle())
         }

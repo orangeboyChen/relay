@@ -25,14 +25,15 @@ struct DialerScreen: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 18) {
-                LinePicker(lines: onlineLines, selection: $selectedLineID)
-
+            VStack(spacing: 14) {
+                Spacer(minLength: 0)
                 NumberEntry(number: $number)
+
+                LinePicker(lines: onlineLines, selection: $selectedLineID)
 
                 DialPad(number: $number)
 
-                if let reason = validationReason {
+                if let reason = visibleValidationReason {
                     Text(reason)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -46,10 +47,12 @@ struct DialerScreen: View {
                 CallButton(isCalling: isCalling, isEnabled: validationReason == nil) {
                     startCall()
                 }
+
+                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 16)
-            .navigationTitle("Dial")
+            .padding(.horizontal, 28)
+            .padding(.bottom, 12)
+            .navigationTitle("Call")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -85,6 +88,12 @@ struct DialerScreen: View {
             return "Enter a valid phone number."
         }
         return nil
+    }
+
+    private var visibleValidationReason: LocalizedStringResource? {
+        guard number.isEmpty else { return validationReason }
+        guard onlineLines.isEmpty else { return nil }
+        return validationReason
     }
 
     private func startCall() {

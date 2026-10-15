@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"sim-deck-device/internal/callevent"
 	"sim-deck-device/internal/command"
 	"sim-deck-device/internal/identity"
 )
@@ -23,6 +24,32 @@ const maxResponseBytes = 1 << 20
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
+}
+
+// UploadEvent sends one signed opaque event using the bound device credential.
+func (client *Client) UploadEvent(ctx context.Context, deviceID string, credential string, envelope callevent.Envelope) error {
+	if envelope.DeviceUUID != deviceID {
+		return errors.New("event device does not match the authenticated device")
+	}
+	body, err := json.Marshal(map[string]any{"envelope": envelope})
+	if err != nil {
+		return fmt.Errorf("encode encrypted event: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+"/v1/events", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create encrypted event request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+credential)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("upload encrypted event: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated {
+		return responseError("upload encrypted event", response.StatusCode, io.LimitReader(response.Body, maxResponseBytes))
+	}
+	return nil
 }
 
 // Claim leases the next encrypted command for an authenticated device.

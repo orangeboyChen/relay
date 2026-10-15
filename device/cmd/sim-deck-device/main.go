@@ -18,6 +18,7 @@ import (
 	"sim-deck-device/internal/agent"
 	"sim-deck-device/internal/at"
 	"sim-deck-device/internal/call"
+	"sim-deck-device/internal/callevent"
 	"sim-deck-device/internal/command"
 	"sim-deck-device/internal/identity"
 	"sim-deck-device/internal/modem"
@@ -68,13 +69,19 @@ type commandRuntime interface {
 	Run(context.Context) error
 }
 
+type callEventRuntime interface {
+	Run(context.Context) error
+	command.CallEventRegistrar
+}
+
 type deviceDependencies struct {
 	openTransport  func(string, int) (io.ReadWriteCloser, error)
 	bindIdentity   func(context.Context, agent.Config, identity.Store, identity.State) (identity.State, error)
 	openInbox      func(string, time.Duration) (*sms.Inbox, error)
 	newSession     func(*at.Client, *sms.Inbox, modem.MessageSink, *slog.Logger, time.Duration) (deviceSession, error)
 	syncCommandKey func(context.Context, agent.Config, identity.State) error
-	newCommands    func(agent.Config, identity.State, command.Calls) (commandRuntime, error)
+	newCallEvents  func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error)
+	newCommands    func(agent.Config, identity.State, command.Calls, command.CallEventRegistrar) (commandRuntime, error)
 }
 
 func productionDependencies() deviceDependencies {
@@ -92,8 +99,11 @@ func productionDependencies() deviceDependencies {
 		syncCommandKey: func(ctx context.Context, config agent.Config, state identity.State) error {
 			return serverapi.NewClient(config.ServerURL, nil).UpdateCommandKey(ctx, state)
 		},
-		newCommands: func(config agent.Config, state identity.State, calls command.Calls) (commandRuntime, error) {
-			return command.NewRuntime(serverapi.NewClient(config.ServerURL, nil), state, calls, config.CommandPoll)
+		newCallEvents: func(config agent.Config, state identity.State, snapshots <-chan call.Snapshot) (callEventRuntime, error) {
+			return callevent.NewPublisher(serverapi.NewClient(config.ServerURL, nil), state, snapshots)
+		},
+		newCommands: func(config agent.Config, state identity.State, calls command.Calls, events command.CallEventRegistrar) (commandRuntime, error) {
+			return command.NewRuntime(serverapi.NewClient(config.ServerURL, nil), state, calls, config.CommandPoll, events)
 		},
 	}
 }
@@ -133,7 +143,11 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	if err := dependencies.syncCommandKey(ctx, config, deviceIdentity); err != nil {
 		return fmt.Errorf("register device command key: %w", err)
 	}
-	commands, err := dependencies.newCommands(config, deviceIdentity, session.Calls())
+	events, err := dependencies.newCallEvents(config, deviceIdentity, session.Calls().Events())
+	if err != nil {
+		return fmt.Errorf("create encrypted call event runtime: %w", err)
+	}
+	commands, err := dependencies.newCommands(config, deviceIdentity, session.Calls(), events)
 	if err != nil {
 		return fmt.Errorf("create encrypted command runtime: %w", err)
 	}
@@ -150,16 +164,21 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	)
 	runContext, cancel := context.WithCancel(ctx)
 	defer cancel()
-	results := make(chan error, 2)
+	results := make(chan error, 3)
 	go func() { results <- session.Run(runContext) }()
 	go func() { results <- commands.Run(runContext) }()
+	go func() { results <- events.Run(runContext) }()
 	first := <-results
 	cancel()
 	second := <-results
+	third := <-results
 	if first != nil && !errors.Is(first, context.Canceled) {
 		return first
 	}
-	return second
+	if second != nil && !errors.Is(second, context.Canceled) {
+		return second
+	}
+	return third
 }
 
 func healthServer(address string, ready *atomic.Bool) *http.Server {

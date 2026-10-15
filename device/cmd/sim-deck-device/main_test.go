@@ -51,14 +51,22 @@ type fakeDeviceSession struct {
 	initializeError error
 	runError        error
 	runStarted      chan struct{}
+	calls           *call.Controller
 }
 
-func (session *fakeDeviceSession) Calls() *call.Controller { return nil }
+func (session *fakeDeviceSession) Calls() *call.Controller { return session.calls }
 
 type fakeCommandRuntime struct {
 	runError   error
 	runStarted chan struct{}
 }
+
+type fakeCallEventRuntime struct {
+	fakeCommandRuntime
+}
+
+func (*fakeCallEventRuntime) RegisterOutgoing(string, []byte) error { return nil }
+func (*fakeCallEventRuntime) Unregister(string)                     {}
 
 func (runtime *fakeCommandRuntime) Run(ctx context.Context) error {
 	if runtime.runStarted != nil {
@@ -100,6 +108,10 @@ func testConfig(stateDirectory string) agent.Config {
 
 func testDependencies(transport io.ReadWriteCloser, session deviceSession) deviceDependencies {
 	commandRunner := &fakeCommandRuntime{}
+	eventRunner := &fakeCallEventRuntime{}
+	if fake, ok := session.(*fakeDeviceSession); ok && fake.calls == nil {
+		fake.calls = call.NewController(&testCallCommander{})
+	}
 	return deviceDependencies{
 		openTransport: func(string, int) (io.ReadWriteCloser, error) { return transport, nil },
 		bindIdentity: func(_ context.Context, _ agent.Config, _ identity.Store, state identity.State) (identity.State, error) {
@@ -112,10 +124,19 @@ func testDependencies(transport io.ReadWriteCloser, session deviceSession) devic
 			return session, nil
 		},
 		syncCommandKey: func(context.Context, agent.Config, identity.State) error { return nil },
-		newCommands: func(agent.Config, identity.State, command.Calls) (commandRuntime, error) {
+		newCallEvents: func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error) {
+			return eventRunner, nil
+		},
+		newCommands: func(agent.Config, identity.State, command.Calls, command.CallEventRegistrar) (commandRuntime, error) {
 			return commandRunner, nil
 		},
 	}
+}
+
+type testCallCommander struct{}
+
+func (*testCallCommander) Send(context.Context, string) (at.Response, error) {
+	return at.Response{Terminal: "OK"}, nil
 }
 
 var _ = Describe("Device command runtime", func() {
@@ -231,13 +252,25 @@ var _ = Describe("Device command runtime", func() {
 	It("returns a command runtime construction failure before readiness", func() {
 		transport := newBlockingTransport()
 		dependencies := testDependencies(transport, &fakeDeviceSession{})
-		dependencies.newCommands = func(agent.Config, identity.State, command.Calls) (commandRuntime, error) {
+		dependencies.newCommands = func(agent.Config, identity.State, command.Calls, command.CallEventRegistrar) (commandRuntime, error) {
 			return nil, errors.New("command runtime unavailable")
 		}
 
 		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
 
 		Expect(err).To(MatchError("create encrypted command runtime: command runtime unavailable"))
+	})
+
+	It("returns a call event runtime construction failure before readiness", func() {
+		transport := newBlockingTransport()
+		dependencies := testDependencies(transport, &fakeDeviceSession{})
+		dependencies.newCallEvents = func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error) {
+			return nil, errors.New("event runtime unavailable")
+		}
+
+		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError("create encrypted call event runtime: event runtime unavailable"))
 	})
 
 	It("returns command key registration failure before readiness", func() {
@@ -256,13 +289,27 @@ var _ = Describe("Device command runtime", func() {
 		transport := newBlockingTransport()
 		session := &fakeDeviceSession{runStarted: make(chan struct{})}
 		dependencies := testDependencies(transport, session)
-		dependencies.newCommands = func(agent.Config, identity.State, command.Calls) (commandRuntime, error) {
+		dependencies.newCommands = func(agent.Config, identity.State, command.Calls, command.CallEventRegistrar) (commandRuntime, error) {
 			return &fakeCommandRuntime{runError: errors.New("command server unavailable")}, nil
 		}
 
 		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
 
 		Expect(err).To(MatchError("command server unavailable"))
+		Expect(session.runStarted).To(BeClosed())
+	})
+
+	It("stops the device when encrypted event delivery fails", func() {
+		transport := newBlockingTransport()
+		session := &fakeDeviceSession{runStarted: make(chan struct{})}
+		dependencies := testDependencies(transport, session)
+		dependencies.newCallEvents = func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error) {
+			return &fakeCallEventRuntime{fakeCommandRuntime{runError: errors.New("event server unavailable")}}, nil
+		}
+
+		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError("event server unavailable"))
 		Expect(session.runStarted).To(BeClosed())
 	})
 
@@ -290,6 +337,7 @@ var _ = Describe("Device command runtime", func() {
 		Expect(dependencies.openInbox).NotTo(BeNil())
 		Expect(dependencies.newSession).NotTo(BeNil())
 		Expect(dependencies.syncCommandKey).NotTo(BeNil())
+		Expect(dependencies.newCallEvents).NotTo(BeNil())
 		Expect(dependencies.newCommands).NotTo(BeNil())
 	})
 })

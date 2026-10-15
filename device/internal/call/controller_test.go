@@ -35,8 +35,10 @@ var _ = Describe("Cellular call controller", func() {
 	It("dials and hangs up a valid number", func() {
 		Expect(controller.Dial(context.Background(), "+8613500000000")).To(Succeed())
 		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateDialing}))
+		Eventually(controller.Events()).Should(Receive(Equal(Snapshot{State: StateDialing})))
 		Expect(controller.Hangup(context.Background())).To(Succeed())
 		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateEnded}))
+		Eventually(controller.Events()).Should(Receive(Equal(Snapshot{State: StateEnded})))
 		Expect(commander.commands).To(Equal([]string{"ATD+8613500000000;", "ATH"}))
 	})
 
@@ -162,6 +164,42 @@ var _ = Describe("Cellular call controller", func() {
 			controller.ApplyURC(notification)
 			Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateEnded}))
 		}
+	})
+
+	It("derives dialing, ringing, active, held, waiting, and ended states from CLCC", func() {
+		Expect(controller.Dial(context.Background(), "10086")).To(Succeed())
+		Eventually(controller.Events()).Should(Receive(Equal(Snapshot{State: StateDialing})))
+
+		Expect(controller.ApplyCLCC([]string{`+CLCC: 1,0,3,0,0,"10086",129`})).To(Succeed())
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateRinging}))
+		Expect(controller.ApplyCLCC([]string{`+CLCC: 1,0,0,0,0,"10086",129`})).To(Succeed())
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateActive, Active: true}))
+		Expect(controller.ApplyCLCC([]string{
+			`+CLCC: 1,0,1,0,0,"10086",129`,
+			`+CLCC: 2,1,5,0,0,"10010",129`,
+		})).To(Succeed())
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateWaiting, Held: true, Waiting: true}))
+		Expect(controller.ApplyCLCC(nil)).To(Succeed())
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateEnded}))
+	})
+
+	DescribeTable("rejects malformed CLCC state without changing the snapshot",
+		func(line string) {
+			Expect(controller.ApplyCLCC([]string{line})).To(HaveOccurred())
+			Expect(controller.State()).To(Equal(StateIdle))
+		},
+		Entry("missing fields", "+CLCC: 1,0"),
+		Entry("non-numeric state", "+CLCC: 1,0,nope,0,0"),
+		Entry("unknown state", "+CLCC: 1,0,9,0,0"),
+	)
+
+	It("ignores unrelated CLCC response lines and suppresses duplicate events", func() {
+		controller.ApplyURC("RING")
+		Eventually(controller.Events()).Should(Receive(Equal(Snapshot{State: StateRinging})))
+		controller.ApplyURC("RING")
+		Consistently(controller.Events()).ShouldNot(Receive())
+		Expect(controller.ApplyCLCC([]string{"vendor banner"})).To(Succeed())
+		Expect(controller.State()).To(Equal(StateEnded))
 	})
 
 	It("ignores unrelated notifications", func() {

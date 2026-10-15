@@ -212,6 +212,57 @@ var _ = Describe("Modem session", func() {
 		Eventually(result).Should(Receive(MatchError(io.EOF)))
 	})
 
+	It("polls CLCC for an authoritative connected state", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+		session.Calls().ApplyURC("RING")
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			command, _ := reader.ReadString('\r')
+			Expect(command).To(Equal("AT+CLCC\r"))
+			_, _ = modemTransport.Write([]byte("+CLCC: 1,1,0,0,0,\"13500000000\",129\r\nOK\r\n"))
+		}()
+
+		Expect(session.refreshCallState(context.Background())).To(Succeed())
+
+		Expect(session.Calls().Snapshot()).To(Equal(call.Snapshot{State: call.StateActive, Active: true}))
+	})
+
+	It("skips idle CLCC polling and maps query failures", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+		Expect(session.refreshCallState(context.Background())).To(Succeed())
+
+		session.Calls().ApplyURC("RING")
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			_, _ = reader.ReadString('\r')
+			_, _ = modemTransport.Write([]byte("ERROR\r\n"))
+		}()
+		Expect(session.refreshCallState(context.Background())).To(MatchError("modem rejected call state query: ERROR"))
+	})
+
+	It("rejects malformed CLCC responses", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+		session.Calls().ApplyURC("RING")
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			_, _ = reader.ReadString('\r')
+			_, _ = modemTransport.Write([]byte("+CLCC: malformed\r\nOK\r\n"))
+		}()
+		Expect(session.refreshCallState(context.Background())).To(MatchError(ContainSubstring("parse modem call state")))
+	})
+
 	It("extracts complete history entries and reports missing payloads", func() {
 		pdus, err := historyPDUs([]string{"echo", "+CMGL: 1", "AABB", "+CMGL: 2", "+CMGL: 3", "CCDD"})
 

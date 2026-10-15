@@ -21,6 +21,8 @@ var initializationCommands = []string{
 	"AT+CCWA=1,1",
 }
 
+const defaultCallPollInterval = time.Second
+
 // MessageSink receives one complete, durably deduplicated SMS.
 type MessageSink interface {
 	ReceiveSMS(context.Context, sms.ReceivedMessage) error
@@ -36,12 +38,13 @@ func (function MessageSinkFunc) ReceiveSMS(ctx context.Context, message sms.Rece
 
 // Session owns modem initialization and routes unsolicited SMS and call events.
 type Session struct {
-	client  *at.Client
-	inbox   *sms.Inbox
-	calls   *call.Controller
-	sink    MessageSink
-	logger  *slog.Logger
-	timeout time.Duration
+	client           *at.Client
+	inbox            *sms.Inbox
+	calls            *call.Controller
+	sink             MessageSink
+	logger           *slog.Logger
+	timeout          time.Duration
+	callPollInterval time.Duration
 }
 
 // NewSession creates a modem session from endpoint-local dependencies.
@@ -50,12 +53,13 @@ func NewSession(client *at.Client, inbox *sms.Inbox, sink MessageSink, logger *s
 		return nil, errors.New("modem session dependencies and positive timeout are required")
 	}
 	return &Session{
-		client:  client,
-		inbox:   inbox,
-		calls:   call.NewController(client),
-		sink:    sink,
-		logger:  logger,
-		timeout: timeout,
+		client:           client,
+		inbox:            inbox,
+		calls:            call.NewController(client),
+		sink:             sink,
+		logger:           logger,
+		timeout:          timeout,
+		callPollInterval: defaultCallPollInterval,
 	}, nil
 }
 
@@ -98,6 +102,8 @@ func (session *Session) Initialize(ctx context.Context) error {
 
 // Run routes modem notifications until cancellation or a terminal serial error.
 func (session *Session) Run(ctx context.Context) error {
+	callPoll := time.NewTicker(session.callPollInterval)
+	defer callPoll.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -108,8 +114,30 @@ func (session *Session) Run(ctx context.Context) error {
 			if err := session.handleURC(ctx, urc); err != nil {
 				return err
 			}
+		case <-callPoll.C:
+			if err := session.refreshCallState(ctx); err != nil {
+				return err
+			}
 		}
 	}
+}
+
+func (session *Session) refreshCallState(ctx context.Context) error {
+	state := session.calls.State()
+	if state == call.StateIdle || state == call.StateEnded {
+		return nil
+	}
+	response, err := session.send(ctx, "AT+CLCC")
+	if err != nil {
+		return fmt.Errorf("query modem call state: %w", err)
+	}
+	if !response.OK() {
+		return fmt.Errorf("modem rejected call state query: %s", response.Terminal)
+	}
+	if err := session.calls.ApplyCLCC(response.Lines); err != nil {
+		return fmt.Errorf("parse modem call state: %w", err)
+	}
+	return nil
 }
 
 func (session *Session) send(ctx context.Context, command string) (at.Response, error) {

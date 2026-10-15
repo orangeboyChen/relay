@@ -76,6 +76,12 @@ type Calls interface {
 	State() call.State
 }
 
+// CallEventRegistrar binds modem state changes to the initiating encrypted call.
+type CallEventRegistrar interface {
+	RegisterOutgoing(string, []byte) error
+	Unregister(string)
+}
+
 // Runtime polls, decrypts, executes, and acknowledges commands for one modem.
 type Runtime struct {
 	remote       Remote
@@ -83,14 +89,22 @@ type Runtime struct {
 	calls        Calls
 	pollInterval time.Duration
 	random       io.Reader
+	events       CallEventRegistrar
 }
 
 // NewRuntime creates a command runtime with a bounded idle polling interval.
-func NewRuntime(remote Remote, state identity.State, calls Calls, pollInterval time.Duration) (*Runtime, error) {
+func NewRuntime(remote Remote, state identity.State, calls Calls, pollInterval time.Duration, eventRegistrars ...CallEventRegistrar) (*Runtime, error) {
 	if remote == nil || calls == nil || state.Credential == "" || len(state.CommandPrivateKey) != keyBytes || pollInterval <= 0 {
 		return nil, errors.New("command runtime requires a bound identity, remote, call controller, and positive poll interval")
 	}
-	return &Runtime{remote: remote, identity: state, calls: calls, pollInterval: pollInterval, random: rand.Reader}, nil
+	if len(eventRegistrars) > 1 || len(eventRegistrars) == 1 && eventRegistrars[0] == nil {
+		return nil, errors.New("command runtime accepts at most one call event registrar")
+	}
+	runtime := &Runtime{remote: remote, identity: state, calls: calls, pollInterval: pollInterval, random: rand.Reader}
+	if len(eventRegistrars) == 1 {
+		runtime.events = eventRegistrars[0]
+	}
+	return runtime, nil
 }
 
 // Run processes commands until cancellation or a server transport failure.
@@ -120,7 +134,17 @@ func (runtime *Runtime) process(ctx context.Context, envelope Envelope) error {
 	if err != nil {
 		return fmt.Errorf("decrypt command %s: %w", envelope.ID, err)
 	}
+	registered := false
+	if runtime.events != nil && payload.Version == protocolVersion && payload.Operation == "call.start" && strings.TrimSpace(payload.CallID) != "" {
+		if err := runtime.events.RegisterOutgoing(payload.CallID, sharedSecret); err != nil {
+			return fmt.Errorf("register call events for command %s: %w", envelope.ID, err)
+		}
+		registered = true
+	}
 	if err := runtime.execute(ctx, payload); err != nil {
+		if registered {
+			runtime.events.Unregister(payload.CallID)
+		}
 		result.ErrorCode = commandErrorCode(err)
 		result.CallState = runtime.calls.State()
 	} else {

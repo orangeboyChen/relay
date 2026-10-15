@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -43,12 +44,22 @@ type Commander interface {
 type Controller struct {
 	commander Commander
 	snapshot  Snapshot
+	events    chan Snapshot
 	mu        sync.RWMutex
 }
 
 // NewController creates an idle call controller.
 func NewController(commander Commander) *Controller {
-	return &Controller{commander: commander, snapshot: Snapshot{State: StateIdle}}
+	return &Controller{
+		commander: commander,
+		snapshot:  Snapshot{State: StateIdle},
+		events:    make(chan Snapshot, 32),
+	}
+}
+
+// Events returns every accepted call-state transition in order.
+func (controller *Controller) Events() <-chan Snapshot {
+	return controller.events
 }
 
 // State returns the last state accepted by the controller.
@@ -212,6 +223,63 @@ func (controller *Controller) ApplyURC(urc string) {
 	controller.setSnapshot(snapshot)
 }
 
+// ApplyCLCC replaces the local snapshot with the modem's authoritative call list.
+func (controller *Controller) ApplyCLCC(lines []string) error {
+	snapshot := Snapshot{}
+	dialing := false
+	ringing := false
+	callCount := 0
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "+CLCC:") {
+			continue
+		}
+		fields := strings.Split(strings.TrimSpace(strings.TrimPrefix(line, "+CLCC:")), ",")
+		if len(fields) < 5 {
+			return fmt.Errorf("malformed CLCC response: %s", line)
+		}
+		status, err := strconv.Atoi(strings.TrimSpace(fields[2]))
+		if err != nil || status < 0 || status > 5 {
+			return fmt.Errorf("malformed CLCC call state: %s", line)
+		}
+		callCount++
+		switch status {
+		case 0:
+			snapshot.Active = true
+		case 1:
+			snapshot.Held = true
+		case 2:
+			dialing = true
+		case 3, 4:
+			ringing = true
+		case 5:
+			snapshot.Waiting = true
+		}
+	}
+	if callCount == 0 {
+		state := controller.State()
+		if state != StateIdle && state != StateEnded {
+			controller.setSnapshot(Snapshot{State: StateEnded})
+		}
+		return nil
+	}
+	switch {
+	case snapshot.Waiting:
+		snapshot.State = StateWaiting
+	case snapshot.Active:
+		snapshot.State = StateActive
+	case snapshot.Held:
+		snapshot.State = StateHeld
+	case ringing:
+		snapshot.State = StateRinging
+	case dialing:
+		snapshot.State = StateDialing
+	default:
+		return errors.New("CLCC response contains no supported call state")
+	}
+	controller.setSnapshot(snapshot)
+	return nil
+}
+
 func (controller *Controller) command(ctx context.Context, command string) error {
 	response, err := controller.commander.Send(ctx, command)
 	if err != nil {
@@ -225,8 +293,13 @@ func (controller *Controller) command(ctx context.Context, command string) error
 
 func (controller *Controller) setSnapshot(snapshot Snapshot) {
 	controller.mu.Lock()
-	defer controller.mu.Unlock()
+	if controller.snapshot == snapshot {
+		controller.mu.Unlock()
+		return
+	}
 	controller.snapshot = snapshot
+	controller.mu.Unlock()
+	controller.events <- snapshot
 }
 
 func remainingState(snapshot Snapshot) State {

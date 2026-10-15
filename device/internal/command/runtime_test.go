@@ -85,6 +85,23 @@ func (calls *fakeCalls) SendDTMF(_ context.Context, value string) error {
 }
 func (calls *fakeCalls) State() call.State { return calls.state }
 
+type fakeEventRegistrar struct {
+	callID       string
+	sharedSecret []byte
+	unregistered string
+	err          error
+}
+
+func (registrar *fakeEventRegistrar) RegisterOutgoing(callID string, sharedSecret []byte) error {
+	registrar.callID = callID
+	registrar.sharedSecret = append([]byte(nil), sharedSecret...)
+	return registrar.err
+}
+
+func (registrar *fakeEventRegistrar) Unregister(callID string) {
+	registrar.unregistered = callID
+}
+
 var _ = Describe("Encrypted command runtime", func() {
 	const (
 		deviceID  = "01900000-0000-7000-8000-000000000001"
@@ -145,6 +162,45 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(string(remote.result.Ciphertext)).NotTo(ContainSubstring("ATD exposed detail"))
 	})
 
+	It("registers the outgoing call secret before dialing", func() {
+		registrar := &fakeEventRegistrar{}
+		var err error
+		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, registrar)
+		Expect(err).NotTo(HaveOccurred())
+		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086"})
+
+		Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+
+		Expect(registrar.callID).To(Equal("call-1"))
+		Expect(registrar.sharedSecret).To(Equal(sharedSecret))
+		Expect(registrar.unregistered).To(BeEmpty())
+	})
+
+	It("unregisters the call secret when dialing fails", func() {
+		registrar := &fakeEventRegistrar{}
+		calls.error = errors.New("modem rejected")
+		var err error
+		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, registrar)
+		Expect(err).NotTo(HaveOccurred())
+		envelope, _ := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086"})
+
+		Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+
+		Expect(registrar.unregistered).To(Equal("call-1"))
+	})
+
+	It("fails closed when outgoing event registration fails", func() {
+		registrar := &fakeEventRegistrar{err: errors.New("event key unavailable")}
+		var err error
+		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, registrar)
+		Expect(err).NotTo(HaveOccurred())
+		envelope, _ := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086"})
+
+		Expect(runtime.process(context.Background(), envelope)).To(MatchError(ContainSubstring("register call events")))
+		Expect(calls.operations).To(BeEmpty())
+		Expect(remote.commandID).To(BeEmpty())
+	})
+
 	It("rejects unsupported or malformed plaintext without invoking the modem", func() {
 		for _, payload := range []Payload{
 			{Version: 2, Operation: "call.end", CallID: "call-1"},
@@ -196,6 +252,10 @@ var _ = Describe("Encrypted command runtime", func() {
 		_, err = NewRuntime(remote, state, nil, time.Second)
 		Expect(err).To(HaveOccurred())
 		_, err = NewRuntime(remote, state, calls, 0)
+		Expect(err).To(HaveOccurred())
+		_, err = NewRuntime(remote, state, calls, time.Second, nil)
+		Expect(err).To(HaveOccurred())
+		_, err = NewRuntime(remote, state, calls, time.Second, &fakeEventRegistrar{}, &fakeEventRegistrar{})
 		Expect(err).To(HaveOccurred())
 	})
 })

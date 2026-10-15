@@ -169,6 +169,7 @@ enum ServerConnectionError: LocalizedError, Equatable {
     case invalidResponse
     case requestFailed(Int)
     case deviceUnavailable
+    case eventStreamUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -182,6 +183,8 @@ enum ServerConnectionError: LocalizedError, Equatable {
             String(localized: "The server request failed.")
         case .deviceUnavailable:
             String(localized: "The selected SIM cannot receive encrypted commands.")
+        case .eventStreamUnavailable:
+            String(localized: "The real-time event connection is unavailable.")
         }
     }
 }
@@ -224,6 +227,7 @@ final class ServerConnectionManager {
 
     @ObservationIgnored private let network: any ServerNetworking
     @ObservationIgnored private let sessionStore: any SecureValueStoring
+    @ObservationIgnored private let webSocketFactory: any ServerWebSocketCreating
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var session: ServerSession?
     @ObservationIgnored private var deviceIdentityKeys: [UUID: Data] = [:]
@@ -233,11 +237,13 @@ final class ServerConnectionManager {
     init(
         network: any ServerNetworking,
         sessionStore: any SecureValueStoring,
-        defaults: UserDefaults
+        defaults: UserDefaults,
+        webSocketFactory: any ServerWebSocketCreating = URLSessionServerWebSocketFactory()
     ) {
         self.network = network
         self.sessionStore = sessionStore
         self.defaults = defaults
+        self.webSocketFactory = webSocketFactory
         address = defaults.string(forKey: Self.addressKey) ?? ""
         session = try? sessionStore.read().map { data in
             try Self.decoder.decode(ServerSession.self, from: data)
@@ -386,6 +392,37 @@ final class ServerConnectionManager {
             throw ServerConnectionError.requestFailed(response.statusCode)
         }
         return try Self.decoder.decode(EncryptedEventPage.self, from: data)
+    }
+
+    func openEncryptedEventStream(
+        afterSequence: Int64
+    ) async throws -> any EncryptedEventStream {
+        guard afterSequence >= 0 else {
+            throw ServerConnectionError.invalidResponse
+        }
+        let baseURL = try validatedBaseURL()
+        let activeSession = try await validSession(baseURL: baseURL)
+        let httpURL = baseURL.appending(path: "v1/events/ws")
+        guard var components = URLComponents(url: httpURL, resolvingAgainstBaseURL: false) else {
+            throw ServerConnectionError.invalidAddress
+        }
+        components.scheme = components.scheme == "https" ? "wss" : "ws"
+        components.queryItems = [
+            URLQueryItem(name: "after_sequence", value: String(afterSequence)),
+        ]
+        guard let url = components.url else {
+            throw ServerConnectionError.invalidAddress
+        }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(activeSession.accessToken)", forHTTPHeaderField: "Authorization")
+        let connection = webSocketFactory.makeConnection(for: request)
+        connection.resume()
+        return ServerEncryptedEventStream(
+            connection: connection,
+            afterSequence: afterSequence,
+            decoder: Self.decoder,
+            encoder: Self.encoder
+        )
     }
 
     func registerAppInstallation(
@@ -575,6 +612,7 @@ final class ServerConnectionManager {
 }
 
 extension ServerConnectionManager: EncryptedCallCommandAPI {}
+extension ServerConnectionManager: EncryptedEventStreamOpening {}
 extension ServerConnectionManager: IncomingCallClaiming {}
 extension ServerConnectionManager: PushTokenRegistering {}
 

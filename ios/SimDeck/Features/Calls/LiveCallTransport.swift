@@ -33,12 +33,14 @@ final class LiveCallTransport: CallTransport {
     private let makeMediaSession: @MainActor () throws -> any CallMediaSession
     private let waitBeforePollingAgain: () async throws -> Void
     private let automaticallyPollEvents: Bool
+    private let eventStreamOpener: (any EncryptedEventStreamOpening)?
     private var eventHandler: (@MainActor (CallTransportEvent) -> Void)?
     private var callLines: [UUID: UUID] = [:]
     private var callEvents: [UUID: CallEventContext] = [:]
     private var mediaSessions: [UUID: any CallMediaSession] = [:]
     private var eventCursor: Int64 = 0
     private var eventTask: Task<Void, Never>?
+    private var activeEventStream: (any EncryptedEventStream)?
 
     init(
         api: any EncryptedCallCommandAPI,
@@ -53,7 +55,8 @@ final class LiveCallTransport: CallTransport {
         waitBeforePollingAgain: @escaping () async throws -> Void = {
             try await Task.sleep(for: .milliseconds(500))
         },
-        automaticallyPollEvents: Bool = true
+        automaticallyPollEvents: Bool = true,
+        eventStreamOpener: (any EncryptedEventStreamOpening)? = nil
     ) {
         self.api = api
         self.now = now
@@ -62,6 +65,7 @@ final class LiveCallTransport: CallTransport {
         self.makeMediaSession = makeMediaSession
         self.waitBeforePollingAgain = waitBeforePollingAgain
         self.automaticallyPollEvents = automaticallyPollEvents
+        self.eventStreamOpener = eventStreamOpener ?? (api as? any EncryptedEventStreamOpening)
     }
 
     func setEventHandler(_ handler: @escaping @MainActor (CallTransportEvent) -> Void) {
@@ -209,6 +213,8 @@ final class LiveCallTransport: CallTransport {
     func reset() async {
         eventTask?.cancel()
         eventTask = nil
+        activeEventStream?.close()
+        activeEventStream = nil
         for mediaSession in mediaSessions.values {
             mediaSession.close()
         }
@@ -303,23 +309,48 @@ final class LiveCallTransport: CallTransport {
         var consecutiveFailures = 0
         while !callEvents.isEmpty && !Task.isCancelled {
             do {
-                try await synchronizeEvents()
-                consecutiveFailures = 0
+                if let eventStreamOpener {
+                    let stream = try await eventStreamOpener.openEncryptedEventStream(
+                        afterSequence: eventCursor
+                    )
+                    activeEventStream = stream
+                    while !callEvents.isEmpty && !Task.isCancelled {
+                        let page = try await stream.receive()
+                        for envelope in page.events {
+                            process(envelope)
+                        }
+                        try await stream.acknowledge(sequence: page.nextSequence)
+                        eventCursor = max(eventCursor, page.nextSequence)
+                        consecutiveFailures = 0
+                    }
+                    stream.close()
+                    activeEventStream = nil
+                } else {
+                    try await synchronizeEvents()
+                    consecutiveFailures = 0
+                    try await waitBeforePollingAgain()
+                }
             } catch is CancellationError {
+                activeEventStream?.close()
+                activeEventStream = nil
                 return
             } catch {
+                activeEventStream?.close()
+                activeEventStream = nil
                 consecutiveFailures += 1
                 if consecutiveFailures >= 3 {
                     failActiveCalls()
                     return
                 }
-            }
-            do {
-                try await waitBeforePollingAgain()
-            } catch {
-                return
+                do {
+                    try await waitBeforePollingAgain()
+                } catch {
+                    return
+                }
             }
         }
+        activeEventStream?.close()
+        activeEventStream = nil
         eventTask = nil
     }
 
@@ -350,7 +381,6 @@ final class LiveCallTransport: CallTransport {
                 callEvents.removeValue(forKey: callID)
                 callLines.removeValue(forKey: callID)
                 eventHandler?(.ended(callID: callID, reason: reason))
-                stopEventLoopIfIdle()
             case "dialing", "held", "waiting":
                 break
             default:
@@ -376,6 +406,8 @@ final class LiveCallTransport: CallTransport {
 
     private func stopEventLoopIfIdle() {
         guard callEvents.isEmpty else { return }
+        activeEventStream?.close()
+        activeEventStream = nil
         eventTask?.cancel()
         eventTask = nil
     }

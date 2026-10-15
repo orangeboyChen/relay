@@ -285,6 +285,42 @@ final class LiveCallTransportTests: XCTestCase {
         XCTAssertEqual(api.requestedEventCursors, [0])
     }
 
+    func testWebSocketEventStreamProcessesThenAcknowledgesTheCursor() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let stream = RecordingEncryptedEventStream()
+        let opener = RecordingEncryptedEventStreamOpener { cursor in
+            XCTAssertEqual(cursor, 0)
+            try api.appendCallEvent(callID: self.callID, state: "ended", occurredAt: .now)
+            stream.pages = [
+                EncryptedEventPage(events: api.events, nextSequence: 1),
+            ]
+            return stream
+        }
+        let transport = LiveCallTransport(
+            api: api,
+            makeMediaSession: { CallMediaSessionFake() },
+            waitBeforePollingAgain: {},
+            eventStreamOpener: opener
+        )
+        let ended = expectation(description: "Encrypted streamed call event ended the call")
+        transport.setEventHandler { event in
+            if event == .ended(callID: self.callID, reason: .unanswered) {
+                ended.fulfill()
+            }
+        }
+
+        try await transport.startOutgoingCall(
+            callID: callID,
+            number: "10086",
+            lineID: deviceID
+        )
+        await fulfillment(of: [ended], timeout: 1)
+
+        XCTAssertEqual(opener.requestedCursors, [0])
+        XCTAssertEqual(stream.acknowledgedSequences, [1])
+        XCTAssertTrue(stream.isClosed)
+    }
+
     func testTamperedOrWrongCallEventsAreNotAccepted() async throws {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
         let transport = LiveCallTransport(
@@ -355,6 +391,43 @@ final class LiveCallTransportTests: XCTestCase {
 
         XCTAssertEqual(api.payloads.map(\.operation), ["call.start", "call.end"])
         XCTAssertTrue(media.isClosed)
+    }
+}
+
+@MainActor
+private final class RecordingEncryptedEventStreamOpener: EncryptedEventStreamOpening {
+    private let handler: @MainActor (Int64) async throws -> any EncryptedEventStream
+    private(set) var requestedCursors: [Int64] = []
+
+    init(handler: @escaping @MainActor (Int64) async throws -> any EncryptedEventStream) {
+        self.handler = handler
+    }
+
+    func openEncryptedEventStream(afterSequence: Int64) async throws -> any EncryptedEventStream {
+        requestedCursors.append(afterSequence)
+        return try await handler(afterSequence)
+    }
+}
+
+@MainActor
+private final class RecordingEncryptedEventStream: EncryptedEventStream {
+    var pages: [EncryptedEventPage] = []
+    private(set) var acknowledgedSequences: [Int64] = []
+    private(set) var isClosed = false
+
+    func receive() async throws -> EncryptedEventPage {
+        guard !pages.isEmpty else {
+            throw ServerConnectionError.eventStreamUnavailable
+        }
+        return pages.removeFirst()
+    }
+
+    func acknowledge(sequence: Int64) async throws {
+        acknowledgedSequences.append(sequence)
+    }
+
+    func close() {
+        isClosed = true
     }
 }
 

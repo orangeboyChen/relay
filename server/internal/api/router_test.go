@@ -81,6 +81,8 @@ type fakeRepository struct {
 	installationCreated     bool
 	installationNow         time.Time
 	installationError       error
+	installationRecipients  []store.AppInstallationRecipient
+	installationListError   error
 }
 
 func (fake *fakeRepository) ListDevices(context.Context) ([]store.DeviceRecord, error) {
@@ -194,6 +196,10 @@ func (fake *fakeRepository) RegisterAppInstallation(_ context.Context, ownerID s
 	fake.installation = registration
 	fake.installationNow = now
 	return fake.installationRecord, fake.installationCreated, fake.installationError
+}
+
+func (fake *fakeRepository) ListApprovedAppInstallationRecipients(context.Context) ([]store.AppInstallationRecipient, error) {
+	return fake.installationRecipients, fake.installationListError
 }
 
 var _ = Describe("HTTP API", func() {

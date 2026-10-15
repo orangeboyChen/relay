@@ -93,6 +93,9 @@ func (repository *memoryRepository) RegisterAppInstallation(_ context.Context, _
 		CreatedAt:             approvedAt,
 	}, true, nil
 }
+func (repository *memoryRepository) ListApprovedAppInstallationRecipients(context.Context) ([]store.AppInstallationRecipient, error) {
+	return nil, nil
+}
 
 type memoryHTTPServer struct {
 	listenError   error

@@ -40,6 +40,7 @@ type Repository interface {
 	CommandStatus(context.Context, string, string, time.Time) (domain.CommandStatus, error)
 	UpdateDeviceCommandPublicKey(context.Context, string, []byte) error
 	RegisterAppInstallation(context.Context, string, store.AppInstallationRegistration, time.Time) (store.AppInstallationRecord, bool, error)
+	ListApprovedAppInstallationRecipients(context.Context) ([]store.AppInstallationRecipient, error)
 }
 
 // Config describes public endpoints advertised to clients.
@@ -60,6 +61,7 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("PATCH /v1/devices/{deviceID}/numeric-id", router.requireOwner(router.updateNumericID))
 	mux.HandleFunc("POST /v1/device-pairing-tokens", router.requireOwner(router.createPairingToken))
 	mux.HandleFunc("POST /v1/app-installations", router.requireOwner(router.registerAppInstallation))
+	mux.HandleFunc("GET /v1/device-installations", router.listDeviceInstallationRecipients)
 	mux.HandleFunc("POST /v1/device-pairings", router.pairDevice)
 	mux.HandleFunc("POST /v1/events", router.insertEvent)
 	mux.HandleFunc("GET /v1/events", router.requireOwner(router.listEvents))
@@ -144,6 +146,25 @@ func (router *router) registerAppInstallation(writer http.ResponseWriter, reques
 		status = http.StatusCreated
 	}
 	writeJSON(writer, status, map[string]any{"installation": record, "created": created})
+}
+
+func (router *router) listDeviceInstallationRecipients(writer http.ResponseWriter, request *http.Request) {
+	deviceID := request.URL.Query().Get("device_uuid")
+	token, ok := bearerToken(request.Header.Get("Authorization"))
+	if !ok || !validUUID(deviceID) {
+		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is required.")
+		return
+	}
+	if _, err := router.repository.AuthenticateDevice(request.Context(), deviceID, token, router.now()); err != nil {
+		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is invalid or revoked.")
+		return
+	}
+	recipients, err := router.repository.ListApprovedAppInstallationRecipients(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to list trusted app installations.")
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"installations": recipients})
 }
 
 func (router *router) health(writer http.ResponseWriter, _ *http.Request) {

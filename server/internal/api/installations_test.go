@@ -17,6 +17,7 @@ import (
 
 var _ = Describe("App installation API", func() {
 	const installationID = "01900000-0000-7000-8000-000000000101"
+	const deviceID = "01900000-0000-7000-8000-000000000001"
 	var (
 		now        time.Time
 		repository *fakeRepository
@@ -126,4 +127,65 @@ var _ = Describe("App installation API", func() {
 		Entry("identity conflict", domain.ErrInstallationConflict, http.StatusConflict, "installation_conflict"),
 		Entry("storage failure", errors.New("database unavailable"), http.StatusInternalServerError, "storage_error"),
 	)
+
+	It("lists only public trusted-recipient metadata for an authenticated device", func() {
+		repository.installationRecipients = []store.AppInstallationRecipient{{
+			InstallationID:        installationID,
+			KeyAgreementPublicKey: bytes.Repeat([]byte{12}, installationPublicKeyBytes),
+		}}
+		request := httptest.NewRequest(
+			http.MethodGet,
+			"/v1/device-installations?device_uuid="+deviceID,
+			nil,
+		)
+		request.Header.Set("Authorization", "Bearer device-secret")
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, request)
+
+		Expect(response.Code).To(Equal(http.StatusOK))
+		Expect(repository.authenticatedDeviceID).To(Equal(deviceID))
+		Expect(repository.authenticatedCredential).To(Equal("device-secret"))
+		Expect(response.Body.String()).To(ContainSubstring(installationID))
+		Expect(response.Body.String()).To(ContainSubstring("key_agreement_public_key"))
+		Expect(response.Body.String()).NotTo(ContainSubstring("private"))
+	})
+
+	It("protects trusted-recipient listing with device authentication", func() {
+		missingCredential := httptest.NewRequest(
+			http.MethodGet,
+			"/v1/device-installations?device_uuid="+deviceID,
+			nil,
+		)
+		missingResponse := httptest.NewRecorder()
+		handler.ServeHTTP(missingResponse, missingCredential)
+		Expect(missingResponse.Code).To(Equal(http.StatusUnauthorized))
+
+		repository.deviceAuthError = errors.New("revoked")
+		revoked := httptest.NewRequest(
+			http.MethodGet,
+			"/v1/device-installations?device_uuid="+deviceID,
+			nil,
+		)
+		revoked.Header.Set("Authorization", "Bearer revoked")
+		revokedResponse := httptest.NewRecorder()
+		handler.ServeHTTP(revokedResponse, revoked)
+		Expect(revokedResponse.Code).To(Equal(http.StatusUnauthorized))
+	})
+
+	It("maps trusted-recipient storage failures", func() {
+		repository.installationListError = errors.New("database unavailable")
+		request := httptest.NewRequest(
+			http.MethodGet,
+			"/v1/device-installations?device_uuid="+deviceID,
+			nil,
+		)
+		request.Header.Set("Authorization", "Bearer device-secret")
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, request)
+
+		Expect(response.Code).To(Equal(http.StatusInternalServerError))
+		Expect(response.Body.String()).To(ContainSubstring("storage_error"))
+	})
 })

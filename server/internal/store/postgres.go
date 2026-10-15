@@ -74,6 +74,12 @@ type AppInstallationRecord struct {
 	CreatedAt             time.Time  `json:"created_at"`
 }
 
+// AppInstallationRecipient is the public routing identity of one approved iPhone.
+type AppInstallationRecipient struct {
+	InstallationID        string `json:"installation_id"`
+	KeyAgreementPublicKey []byte `json:"key_agreement_public_key"`
+}
+
 // Open connects to PostgreSQL and verifies that the server is reachable.
 func Open(ctx context.Context, databaseURL string) (*Postgres, error) {
 	pool, err := pgxpool.New(ctx, databaseURL)
@@ -371,6 +377,34 @@ func (store *Postgres) RegisterAppInstallation(ctx context.Context, ownerID stri
 		return AppInstallationRecord{}, false, fmt.Errorf("commit app installation registration: %w", err)
 	}
 	return record, true, nil
+}
+
+// ListApprovedAppInstallationRecipients returns only active public encryption identities.
+func (store *Postgres) ListApprovedAppInstallationRecipients(ctx context.Context) ([]AppInstallationRecipient, error) {
+	rows, err := store.pool.Query(ctx, `
+		SELECT id, key_agreement_public_key
+		FROM app_installations
+		WHERE approved_at IS NOT NULL
+		  AND revoked_at IS NULL
+		  AND key_agreement_public_key IS NOT NULL
+		ORDER BY created_at, id`)
+	if err != nil {
+		return nil, fmt.Errorf("list approved app installation recipients: %w", err)
+	}
+	defer rows.Close()
+
+	recipients := make([]AppInstallationRecipient, 0)
+	for rows.Next() {
+		var recipient AppInstallationRecipient
+		if err := rows.Scan(&recipient.InstallationID, &recipient.KeyAgreementPublicKey); err != nil {
+			return nil, fmt.Errorf("scan approved app installation recipient: %w", err)
+		}
+		recipients = append(recipients, recipient)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate approved app installation recipients: %w", err)
+	}
+	return recipients, nil
 }
 
 // ConsumePairingToken atomically consumes a pairing token, allocates a SIM ID, and stores a device credential hash.

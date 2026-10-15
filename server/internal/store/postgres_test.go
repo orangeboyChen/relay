@@ -186,6 +186,12 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(created).To(BeTrue())
 		Expect(secondRecord.ApprovedAt).To(BeNil())
+		recipients, err := database.ListApprovedAppInstallationRecipients(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(recipients).To(Equal([]AppInstallationRecipient{{
+			InstallationID:        first.ID,
+			KeyAgreementPublicKey: first.KeyAgreementPublicKey,
+		}}))
 
 		first.IdentityPublicKey = bytes.Repeat([]byte{11}, 32)
 		_, _, err = database.RegisterAppInstallation(context.Background(), owner.ID, first, now)

@@ -68,6 +68,20 @@ final class AppModel {
             }
         }
     }
+
+    func signInToServer(password: String) async throws {
+        try await serverConnection.signIn(password: password)
+        devices = try await serverConnection.loadDevices()
+    }
+
+    func testServerConnection() async throws {
+        devices = try await serverConnection.loadDevices()
+    }
+
+    func signOutFromServer() throws {
+        try serverConnection.signOut()
+        devices = []
+    }
 }
 
 enum KeyRecoveryState: Equatable, Sendable {

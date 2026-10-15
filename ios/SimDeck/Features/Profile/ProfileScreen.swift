@@ -1,21 +1,20 @@
 import SwiftUI
 
 struct ProfileScreen: View {
-    let devices: [DeviceLineIdentity]
-    let keyRecoveryState: KeyRecoveryState
+    let model: AppModel
 
     var body: some View {
         List {
-            AccountSummarySection()
-            DeviceSummarySection(devices: devices)
-            SecuritySummarySection(keyRecoveryState: keyRecoveryState)
+            AccountSummarySection(connection: model.serverConnection)
+            DeviceSummarySection(devices: model.devices)
+            SecuritySummarySection(keyRecoveryState: model.keyRecoveryState)
 
             Section {
                 NavigationLink("Device Management") {
-                    DeviceManagementScreen(devices: devices)
+                    DeviceManagementScreen(devices: model.devices)
                 }
                 NavigationLink("Settings") {
-                    SettingsScreen(devices: devices, keyRecoveryState: keyRecoveryState)
+                    SettingsScreen(model: model)
                 }
             }
         }
@@ -24,13 +23,12 @@ struct ProfileScreen: View {
 }
 
 private struct AccountSummarySection: View {
+    let connection: ServerConnectionManager
+
     var body: some View {
         Section("Account") {
             LabeledContent("Owner", value: "admin")
-            LabeledContent("Server") {
-                Label("Connected", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-            }
+            ServerConnectionStatusRow("Server", state: connection.state)
         }
     }
 }
@@ -86,7 +84,7 @@ struct KeyRecoveryStatusLabel: View {
 #if DEBUG
 #Preview("Me") {
     NavigationStack {
-        ProfileScreen(devices: PreviewFixtures.devices, keyRecoveryState: .available)
+        ProfileScreen(model: .preview(selectedTab: .profile))
     }
 }
 

@@ -1,17 +1,16 @@
 import SwiftUI
 
 struct SettingsScreen: View {
-    let devices: [DeviceLineIdentity]
-    let keyRecoveryState: KeyRecoveryState
+    let model: AppModel
 
     var body: some View {
         List {
             Section {
                 SettingsLink("Server", symbol: "server.rack") {
-                    ServerSettingsScreen()
+                    ServerSettingsScreen(model: model)
                 }
                 SettingsLink("Default Lines", symbol: "simcard.2") {
-                    DefaultLineSettingsScreen(lines: devices)
+                    DefaultLineSettingsScreen(lines: model.devices)
                 }
                 SettingsLink("Notifications", symbol: "bell") {
                     NotificationSettingsScreen()
@@ -20,7 +19,7 @@ struct SettingsScreen: View {
                     ContactsSettingsScreen()
                 }
                 SettingsLink("Security", symbol: "lock.shield") {
-                    SecuritySettingsScreen(keyRecoveryState: keyRecoveryState)
+                    SecuritySettingsScreen(keyRecoveryState: model.keyRecoveryState)
                 }
                 SettingsLink("Messages & Storage", symbol: "externaldrive") {
                     StorageSettingsScreen()
@@ -71,13 +70,13 @@ private struct SettingsLink<Destination: View>: View {
 #if DEBUG
 #Preview("Settings") {
     NavigationStack {
-        SettingsScreen(devices: PreviewFixtures.devices, keyRecoveryState: .available)
+        SettingsScreen(model: .preview(selectedTab: .profile))
     }
 }
 
 #Preview("Settings - Accessibility Chinese") {
     NavigationStack {
-        SettingsScreen(devices: PreviewFixtures.devices, keyRecoveryState: .approvalRequired)
+        SettingsScreen(model: .preview(selectedTab: .profile))
     }
     .environment(\.dynamicTypeSize, .accessibility5)
     .environment(\.locale, Locale(identifier: "zh-Hans"))

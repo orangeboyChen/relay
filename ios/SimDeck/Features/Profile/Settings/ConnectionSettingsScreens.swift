@@ -2,30 +2,199 @@ import SwiftUI
 import UIKit
 
 struct ServerSettingsScreen: View {
-    @State private var address = "https://sim-deck.example.com"
-    @State private var testResult: LocalizedStringResource?
+    let model: AppModel
 
     var body: some View {
         Form {
-            Section("Server") {
-                TextField("Server address", text: $address)
-                    .keyboardType(.URL)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                Button("Test Connection") {
-                    testResult = "Connection succeeded"
-                }
-                if let testResult {
-                    Text(testResult)
-                        .foregroundStyle(.green)
-                }
-            }
-            Section("Version") {
-                LabeledContent("API", value: "v1")
-                LabeledContent("Server", value: "0.1.0")
-            }
+            ServerConnectionSection(model: model)
+            ServerVersionSection()
         }
         .navigationTitle("Server")
+    }
+}
+
+private struct ServerConnectionSection: View {
+    let model: AppModel
+    @Bindable private var connection: ServerConnectionManager
+    @State private var password = ""
+    @State private var isWorking = false
+    @State private var actionResult: LocalizedStringResource?
+    @State private var actionError: String?
+
+    init(model: AppModel) {
+        self.model = model
+        _connection = Bindable(wrappedValue: model.serverConnection)
+    }
+
+    var body: some View {
+        Section("Server") {
+            TextField("Server address", text: $connection.address)
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .disabled(connection.isSignedIn)
+
+            ServerConnectionStatusRow("Status", state: connection.state)
+
+            if connection.isSignedIn {
+                Button("Test Connection") {
+                    Task { await testConnection() }
+                }
+                .disabled(isWorking)
+
+                Button("Sign Out", role: .destructive) {
+                    signOut()
+                }
+                .disabled(isWorking)
+            } else {
+                SecureField("Admin bootstrap password", text: $password)
+
+                Button {
+                    Task { await signIn() }
+                } label: {
+                    if isWorking {
+                        ProgressView()
+                    } else {
+                        Text("Sign In")
+                    }
+                }
+                .disabled(!canSignIn)
+            }
+
+            if let actionResult {
+                Text(actionResult)
+                    .foregroundStyle(.green)
+            }
+            if let actionError {
+                Text(actionError)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    private var canSignIn: Bool {
+        !isWorking
+            && !connection.address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !password.isEmpty
+    }
+
+    private func signIn() async {
+        isWorking = true
+        actionResult = nil
+        actionError = nil
+        defer { isWorking = false }
+        do {
+            try await model.signInToServer(password: password)
+            password = ""
+            actionResult = "Connection succeeded"
+        } catch {
+            actionError = error.localizedDescription
+        }
+    }
+
+    private func testConnection() async {
+        isWorking = true
+        actionResult = nil
+        actionError = nil
+        defer { isWorking = false }
+        do {
+            try await model.testServerConnection()
+            actionResult = "Connection succeeded"
+        } catch {
+            actionError = error.localizedDescription
+        }
+    }
+
+    private func signOut() {
+        actionResult = nil
+        actionError = nil
+        do {
+            try model.signOutFromServer()
+        } catch {
+            actionError = error.localizedDescription
+        }
+    }
+}
+
+private struct ServerVersionSection: View {
+    var body: some View {
+        Section("Version") {
+            LabeledContent("API", value: "v1")
+        }
+    }
+}
+
+struct ServerConnectionStatusLabel: View {
+    let state: ServerConnectionState
+
+    var body: some View {
+        switch state {
+        case .disconnected:
+            ServerConnectionStateContent(
+                title: "Not Connected",
+                systemImage: "network.slash",
+                color: .secondary
+            )
+        case .connecting:
+            ServerConnectionStateContent(
+                title: "Connecting",
+                systemImage: "arrow.triangle.2.circlepath",
+                color: .secondary
+            )
+        case .connected:
+            ServerConnectionStateContent(
+                title: "Connected",
+                systemImage: "checkmark.circle.fill",
+                color: .green
+            )
+        case .failed:
+            ServerConnectionStateContent(
+                title: "Connection Failed",
+                systemImage: "exclamationmark.triangle.fill",
+                color: .red
+            )
+        }
+    }
+}
+
+private struct ServerConnectionStateContent: View {
+    let title: LocalizedStringKey
+    let systemImage: String
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+            Text(title)
+        }
+        .foregroundStyle(color)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+struct ServerConnectionStatusRow: View {
+    let title: LocalizedStringKey
+    let state: ServerConnectionState
+
+    init(_ title: LocalizedStringKey, state: ServerConnectionState) {
+        self.title = title
+        self.state = state
+    }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack {
+                Text(title)
+                Spacer()
+                ServerConnectionStatusLabel(state: state)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title)
+                ServerConnectionStatusLabel(state: state)
+            }
+        }
     }
 }
 
@@ -91,7 +260,7 @@ struct ContactsSettingsScreen: View {
 
 #if DEBUG
 #Preview("Server Settings") {
-    NavigationStack { ServerSettingsScreen() }
+    NavigationStack { ServerSettingsScreen(model: .preview(selectedTab: .profile)) }
 }
 
 #Preview("Default Lines") {

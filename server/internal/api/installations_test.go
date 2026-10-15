@@ -29,11 +29,12 @@ var _ = Describe("App installation API", func() {
 		handler = Handler(repository, Config{Now: func() time.Time { return now }})
 	})
 
-	requestBody := func(id string, publicKey []byte, wrappedKey []byte) []byte {
+	requestBody := func(id string, publicKey []byte, keyAgreementPublicKey []byte, wrappedKey []byte) []byte {
 		body, err := json.Marshal(map[string]any{
-			"installation_id":     id,
-			"identity_public_key": publicKey,
-			"wrapped_vault_key":   wrappedKey,
+			"installation_id":          id,
+			"identity_public_key":      publicKey,
+			"key_agreement_public_key": keyAgreementPublicKey,
+			"wrapped_vault_key":        wrappedKey,
 		})
 		Expect(err).NotTo(HaveOccurred())
 		return body
@@ -51,23 +52,26 @@ var _ = Describe("App installation API", func() {
 
 	It("registers the authenticated installation without exposing private identity data", func() {
 		publicKey := bytes.Repeat([]byte{4}, installationPublicKeyBytes)
+		keyAgreementPublicKey := bytes.Repeat([]byte{8}, installationPublicKeyBytes)
 		wrappedKey := []byte("wrapped vault key")
 		approvedAt := now
 		repository.installationRecord = store.AppInstallationRecord{
-			ID:                installationID,
-			IdentityPublicKey: publicKey,
-			WrappedVaultKey:   wrappedKey,
-			ApprovedAt:        &approvedAt,
-			CreatedAt:         now,
+			ID:                    installationID,
+			IdentityPublicKey:     publicKey,
+			KeyAgreementPublicKey: keyAgreementPublicKey,
+			WrappedVaultKey:       wrappedKey,
+			ApprovedAt:            &approvedAt,
+			CreatedAt:             now,
 		}
 		repository.installationCreated = true
 
-		response := perform(requestBody(installationID, publicKey, wrappedKey), "owner-token")
+		response := perform(requestBody(installationID, publicKey, keyAgreementPublicKey, wrappedKey), "owner-token")
 
 		Expect(response.Code).To(Equal(http.StatusCreated))
 		Expect(repository.installationOwnerID).To(Equal("owner-1"))
 		Expect(repository.installation.ID).To(Equal(installationID))
 		Expect(repository.installation.IdentityPublicKey).To(Equal(publicKey))
+		Expect(repository.installation.KeyAgreementPublicKey).To(Equal(keyAgreementPublicKey))
 		Expect(repository.installation.WrappedVaultKey).To(Equal(wrappedKey))
 		Expect(repository.installationNow).To(Equal(now))
 		Expect(response.Body.String()).To(ContainSubstring(`"created":true`))
@@ -76,9 +80,10 @@ var _ = Describe("App installation API", func() {
 
 	It("returns an idempotent registration without creating a second installation", func() {
 		publicKey := bytes.Repeat([]byte{5}, installationPublicKeyBytes)
-		repository.installationRecord = store.AppInstallationRecord{ID: installationID, IdentityPublicKey: publicKey, CreatedAt: now}
+		keyAgreementPublicKey := bytes.Repeat([]byte{9}, installationPublicKeyBytes)
+		repository.installationRecord = store.AppInstallationRecord{ID: installationID, IdentityPublicKey: publicKey, KeyAgreementPublicKey: keyAgreementPublicKey, CreatedAt: now}
 
-		response := perform(requestBody(installationID, publicKey, nil), "owner-token")
+		response := perform(requestBody(installationID, publicKey, keyAgreementPublicKey, nil), "owner-token")
 
 		Expect(response.Code).To(Equal(http.StatusOK))
 		Expect(response.Body.String()).To(ContainSubstring(`"created":false`))
@@ -86,10 +91,12 @@ var _ = Describe("App installation API", func() {
 
 	It("requires authentication and validates identity material before storage", func() {
 		validKey := bytes.Repeat([]byte{6}, installationPublicKeyBytes)
-		Expect(perform(requestBody(installationID, validKey, nil), "").Code).To(Equal(http.StatusUnauthorized))
-		Expect(perform(requestBody("not-a-uuid", validKey, nil), "owner-token").Code).To(Equal(http.StatusUnprocessableEntity))
-		Expect(perform(requestBody(installationID, []byte("short"), nil), "owner-token").Code).To(Equal(http.StatusUnprocessableEntity))
-		Expect(perform(requestBody(installationID, validKey, bytes.Repeat([]byte{1}, maxWrappedVaultKeyBytes+1)), "owner-token").Code).To(Equal(http.StatusUnprocessableEntity))
+		validAgreementKey := bytes.Repeat([]byte{7}, installationPublicKeyBytes)
+		Expect(perform(requestBody(installationID, validKey, validAgreementKey, nil), "").Code).To(Equal(http.StatusUnauthorized))
+		Expect(perform(requestBody("not-a-uuid", validKey, validAgreementKey, nil), "owner-token").Code).To(Equal(http.StatusUnprocessableEntity))
+		Expect(perform(requestBody(installationID, []byte("short"), validAgreementKey, nil), "owner-token").Code).To(Equal(http.StatusUnprocessableEntity))
+		Expect(perform(requestBody(installationID, validKey, []byte("short"), nil), "owner-token").Code).To(Equal(http.StatusUnprocessableEntity))
+		Expect(perform(requestBody(installationID, validKey, validAgreementKey, bytes.Repeat([]byte{1}, maxWrappedVaultKeyBytes+1)), "owner-token").Code).To(Equal(http.StatusUnprocessableEntity))
 		Expect(repository.installation.ID).To(BeEmpty())
 	})
 
@@ -104,7 +111,12 @@ var _ = Describe("App installation API", func() {
 		func(repositoryError error, expectedStatus int, expectedCode string) {
 			repository.installationError = repositoryError
 			response := perform(
-				requestBody(installationID, bytes.Repeat([]byte{7}, installationPublicKeyBytes), nil),
+				requestBody(
+					installationID,
+					bytes.Repeat([]byte{7}, installationPublicKeyBytes),
+					bytes.Repeat([]byte{8}, installationPublicKeyBytes),
+					nil,
+				),
 				"owner-token",
 			)
 

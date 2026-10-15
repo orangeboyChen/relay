@@ -104,15 +104,19 @@ func (router *router) registerAppInstallation(writer http.ResponseWriter, reques
 		return
 	}
 	var body struct {
-		InstallationID    string `json:"installation_id"`
-		IdentityPublicKey []byte `json:"identity_public_key"`
-		WrappedVaultKey   []byte `json:"wrapped_vault_key"`
+		InstallationID        string `json:"installation_id"`
+		IdentityPublicKey     []byte `json:"identity_public_key"`
+		KeyAgreementPublicKey []byte `json:"key_agreement_public_key"`
+		WrappedVaultKey       []byte `json:"wrapped_vault_key"`
 	}
 	if err := decodeJSON(request, &body); err != nil {
 		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	if !validUUID(body.InstallationID) || len(body.IdentityPublicKey) != installationPublicKeyBytes || len(body.WrappedVaultKey) > maxWrappedVaultKeyBytes {
+	if !validUUID(body.InstallationID) ||
+		len(body.IdentityPublicKey) != installationPublicKeyBytes ||
+		len(body.KeyAgreementPublicKey) != installationPublicKeyBytes ||
+		len(body.WrappedVaultKey) > maxWrappedVaultKeyBytes {
 		writeError(writer, http.StatusUnprocessableEntity, "invalid_installation", "Installation identity or wrapped vault key is invalid.")
 		return
 	}
@@ -120,9 +124,10 @@ func (router *router) registerAppInstallation(writer http.ResponseWriter, reques
 		request.Context(),
 		ownerID,
 		store.AppInstallationRegistration{
-			ID:                body.InstallationID,
-			IdentityPublicKey: body.IdentityPublicKey,
-			WrappedVaultKey:   body.WrappedVaultKey,
+			ID:                    body.InstallationID,
+			IdentityPublicKey:     body.IdentityPublicKey,
+			KeyAgreementPublicKey: body.KeyAgreementPublicKey,
+			WrappedVaultKey:       body.WrappedVaultKey,
 		},
 		router.now(),
 	)

@@ -49,6 +49,7 @@ var _ = Describe("Embedded migrations", func() {
 		Entry("sessions", "migrations/003_auth_sessions.sql", "auth_sessions"),
 		Entry("device credentials", "migrations/004_device_pairing.sql", "device_credentials"),
 		Entry("pairing retries", "migrations/005_pairing_retry.sql", "paired_device_id"),
+		Entry("installation agreement keys", "migrations/007_installation_key_agreement.sql", "key_agreement_public_key"),
 	)
 })
 
@@ -161,9 +162,10 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 	It("approves only the first app installation and makes retries idempotent", func() {
 		owner := createOwner()
 		first := AppInstallationRegistration{
-			ID:                "01900000-0000-7000-8000-000000000101",
-			IdentityPublicKey: bytes.Repeat([]byte{9}, 32),
-			WrappedVaultKey:   []byte("first wrapped key"),
+			ID:                    "01900000-0000-7000-8000-000000000101",
+			IdentityPublicKey:     bytes.Repeat([]byte{9}, 32),
+			KeyAgreementPublicKey: bytes.Repeat([]byte{12}, 32),
+			WrappedVaultKey:       []byte("first wrapped key"),
 		}
 		firstRecord, created, err := database.RegisterAppInstallation(context.Background(), owner.ID, first, now)
 		Expect(err).NotTo(HaveOccurred())
@@ -176,8 +178,9 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(retried).To(Equal(firstRecord))
 
 		second := AppInstallationRegistration{
-			ID:                "01900000-0000-7000-8000-000000000102",
-			IdentityPublicKey: bytes.Repeat([]byte{10}, 32),
+			ID:                    "01900000-0000-7000-8000-000000000102",
+			IdentityPublicKey:     bytes.Repeat([]byte{10}, 32),
+			KeyAgreementPublicKey: bytes.Repeat([]byte{13}, 32),
 		}
 		secondRecord, created, err := database.RegisterAppInstallation(context.Background(), owner.ID, second, now.Add(2*time.Minute))
 		Expect(err).NotTo(HaveOccurred())

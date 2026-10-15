@@ -57,19 +57,21 @@ type DevicePairing struct {
 
 // AppInstallationRegistration contains public identity material supplied by one iPhone install.
 type AppInstallationRegistration struct {
-	ID                string
-	IdentityPublicKey []byte
-	WrappedVaultKey   []byte
+	ID                    string
+	IdentityPublicKey     []byte
+	KeyAgreementPublicKey []byte
+	WrappedVaultKey       []byte
 }
 
 // AppInstallationRecord is the server-readable trust state for one iPhone install.
 type AppInstallationRecord struct {
-	ID                string     `json:"installation_id"`
-	IdentityPublicKey []byte     `json:"identity_public_key"`
-	WrappedVaultKey   []byte     `json:"wrapped_vault_key,omitempty"`
-	ApprovedAt        *time.Time `json:"approved_at,omitempty"`
-	RevokedAt         *time.Time `json:"revoked_at,omitempty"`
-	CreatedAt         time.Time  `json:"created_at"`
+	ID                    string     `json:"installation_id"`
+	IdentityPublicKey     []byte     `json:"identity_public_key"`
+	KeyAgreementPublicKey []byte     `json:"key_agreement_public_key"`
+	WrappedVaultKey       []byte     `json:"wrapped_vault_key,omitempty"`
+	ApprovedAt            *time.Time `json:"approved_at,omitempty"`
+	RevokedAt             *time.Time `json:"revoked_at,omitempty"`
+	CreatedAt             time.Time  `json:"created_at"`
 }
 
 // Open connects to PostgreSQL and verifies that the server is reachable.
@@ -285,13 +287,14 @@ func (store *Postgres) RegisterAppInstallation(ctx context.Context, ownerID stri
 	var existing AppInstallationRecord
 	var existingOwnerID string
 	err = tx.QueryRow(ctx, `
-		SELECT id, owner_id, identity_public_key, wrapped_vault_key,
+		SELECT id, owner_id, identity_public_key, key_agreement_public_key, wrapped_vault_key,
 		       approved_at, revoked_at, created_at
 		FROM app_installations
 		WHERE id = $1`, registration.ID).Scan(
 		&existing.ID,
 		&existingOwnerID,
 		&existing.IdentityPublicKey,
+		&existing.KeyAgreementPublicKey,
 		&existing.WrappedVaultKey,
 		&existing.ApprovedAt,
 		&existing.RevokedAt,
@@ -301,6 +304,22 @@ func (store *Postgres) RegisterAppInstallation(ctx context.Context, ownerID stri
 		if existingOwnerID != ownerID || existing.RevokedAt != nil ||
 			!bytes.Equal(existing.IdentityPublicKey, registration.IdentityPublicKey) ||
 			!bytes.Equal(existing.WrappedVaultKey, registration.WrappedVaultKey) {
+			return AppInstallationRecord{}, false, domain.ErrInstallationConflict
+		}
+		if len(existing.KeyAgreementPublicKey) == 0 {
+			if _, err := tx.Exec(ctx, `
+				UPDATE app_installations
+				SET key_agreement_public_key = $2
+				WHERE id = $1`, registration.ID, registration.KeyAgreementPublicKey); err != nil {
+				return AppInstallationRecord{}, false, fmt.Errorf("upgrade app installation key agreement identity: %w", err)
+			}
+			existing.KeyAgreementPublicKey = append([]byte(nil), registration.KeyAgreementPublicKey...)
+			if err := tx.Commit(ctx); err != nil {
+				return AppInstallationRecord{}, false, fmt.Errorf("commit app installation identity upgrade: %w", err)
+			}
+			return existing, false, nil
+		}
+		if !bytes.Equal(existing.KeyAgreementPublicKey, registration.KeyAgreementPublicKey) {
 			return AppInstallationRecord{}, false, domain.ErrInstallationConflict
 		}
 		return existing, false, nil
@@ -319,9 +338,10 @@ func (store *Postgres) RegisterAppInstallation(ctx context.Context, ownerID stri
 	}
 
 	record := AppInstallationRecord{
-		ID:                registration.ID,
-		IdentityPublicKey: append([]byte(nil), registration.IdentityPublicKey...),
-		WrappedVaultKey:   append([]byte(nil), registration.WrappedVaultKey...),
+		ID:                    registration.ID,
+		IdentityPublicKey:     append([]byte(nil), registration.IdentityPublicKey...),
+		KeyAgreementPublicKey: append([]byte(nil), registration.KeyAgreementPublicKey...),
+		WrappedVaultKey:       append([]byte(nil), registration.WrappedVaultKey...),
 	}
 	if !hasApprovedInstallation {
 		approvedAt := now.UTC()
@@ -329,12 +349,14 @@ func (store *Postgres) RegisterAppInstallation(ctx context.Context, ownerID stri
 	}
 	err = tx.QueryRow(ctx, `
 		INSERT INTO app_installations (
-			id, owner_id, identity_public_key, wrapped_vault_key, approved_at
-		) VALUES ($1, $2, $3, $4, $5)
+			id, owner_id, identity_public_key, key_agreement_public_key,
+			wrapped_vault_key, approved_at
+		) VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING created_at`,
 		registration.ID,
 		ownerID,
 		registration.IdentityPublicKey,
+		registration.KeyAgreementPublicKey,
 		registration.WrappedVaultKey,
 		record.ApprovedAt,
 	).Scan(&record.CreatedAt)

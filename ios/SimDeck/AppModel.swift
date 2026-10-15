@@ -25,16 +25,22 @@ struct DeviceLineIdentity: Identifiable, Equatable, Sendable {
 final class AppModel {
     var devices: [DeviceLineIdentity]
     var callHistory: CallHistoryState
+    var lastSuccessfulDialLineID: UUID?
     var selectedTab: AppTab
+    let callStarter: any CallStarting
 
     init(
         devices: [DeviceLineIdentity] = [],
         callHistory: CallHistoryState = .loaded([]),
-        selectedTab: AppTab = .calls
+        lastSuccessfulDialLineID: UUID? = nil,
+        selectedTab: AppTab = .calls,
+        callStarter: any CallStarting = CallKitCallStarter()
     ) {
         self.devices = devices
         self.callHistory = callHistory
+        self.lastSuccessfulDialLineID = lastSuccessfulDialLineID
         self.selectedTab = selectedTab
+        self.callStarter = callStarter
     }
 }
 
@@ -50,7 +56,9 @@ extension AppModel {
         AppModel(
             devices: PreviewFixtures.devices,
             callHistory: .loaded(PreviewFixtures.calls),
-            selectedTab: selectedTab
+            lastSuccessfulDialLineID: PreviewFixtures.devices[0].id,
+            selectedTab: selectedTab,
+            callStarter: PreviewCallStarter()
         )
     }
 }

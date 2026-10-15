@@ -301,6 +301,146 @@
         }
       }
     },
+    "0, long press for plus" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "0，长按输入加号"
+          }
+        }
+      }
+    },
+    "Close" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭"
+          }
+        }
+      }
+    },
+    "Could not start the call." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法发起通话。"
+          }
+        }
+      }
+    },
+    "Delete digit" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除数字"
+          }
+        }
+      }
+    },
+    "Dial" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拨号"
+          }
+        }
+      }
+    },
+    "Enter a phone number." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请输入电话号码。"
+          }
+        }
+      }
+    },
+    "Enter a valid phone number." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请输入有效的电话号码。"
+          }
+        }
+      }
+    },
+    "No online SIM" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有在线 SIM"
+          }
+        }
+      }
+    },
+    "No SIM is online." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有在线的 SIM。"
+          }
+        }
+      }
+    },
+    "Open dialer" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开拨号盘"
+          }
+        }
+      }
+    },
+    "Outgoing line" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拨出线路"
+          }
+        }
+      }
+    },
+    "Phone number" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "电话号码"
+          }
+        }
+      }
+    },
+    "Select an online SIM." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请选择一张在线 SIM。"
+          }
+        }
+      }
+    },
+    "SIM %lld · %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SIM %1$lld · %2$@"
+          }
+        }
+      }
+    },
     "This section is ready for its feature implementation." : {
       "localizations" : {
         "zh-Hans" : {

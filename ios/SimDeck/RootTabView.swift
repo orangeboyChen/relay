@@ -6,11 +6,7 @@ struct RootTabView: View {
     var body: some View {
         TabView(selection: $model.selectedTab) {
             NavigationStack {
-                CallHistoryScreen(
-                    state: model.callHistory,
-                    lines: model.devices,
-                    referenceDate: .now
-                )
+                CallsTabScreen(model: model)
             }
             .tabItem {
                 Label("Calls", systemImage: "phone.fill")

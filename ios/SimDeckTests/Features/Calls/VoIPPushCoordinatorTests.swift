@@ -63,6 +63,47 @@ final class VoIPPushCoordinatorTests: XCTestCase {
         )
         XCTAssertEqual(object["ciphertext"], "opaque")
     }
+
+    func testDeletesInvalidatedVoIPTokenForCurrentInstallation() async throws {
+        let registrar = RecordingPushTokenRegistrar()
+        let installationID = UUID()
+        let coordinator = VoIPPushCoordinator(
+            tokenRegistrar: registrar,
+            environment: .production,
+            incomingPushHandler: { _ in }
+        )
+        coordinator.configure(installationID: installationID)
+
+        try await coordinator.invalidateToken()
+
+        XCTAssertEqual(
+            registrar.deletions,
+            [.init(kind: .voip, environment: .production, installationID: installationID)]
+        )
+    }
+
+    func testRetriesDeletionBeforeRegisteringAReplacementToken() async throws {
+        let registrar = RecordingPushTokenRegistrar(error: TestPushError.failed)
+        let installationID = UUID()
+        let coordinator = VoIPPushCoordinator(
+            tokenRegistrar: registrar,
+            environment: .sandbox,
+            incomingPushHandler: { _ in }
+        )
+        coordinator.configure(installationID: installationID)
+
+        do {
+            try await coordinator.invalidateToken()
+            XCTFail("Expected token deletion to fail")
+        } catch {
+            XCTAssertEqual(error as? TestPushError, .failed)
+        }
+        registrar.error = nil
+        try await coordinator.receiveToken(Data(repeating: 8, count: 32))
+
+        XCTAssertEqual(registrar.deletions.count, 2)
+        XCTAssertEqual(registrar.registrations.count, 1)
+    }
 }
 
 @MainActor
@@ -74,8 +115,15 @@ private final class RecordingPushTokenRegistrar: PushTokenRegistering {
         let installationID: UUID
     }
 
+    struct Deletion: Equatable {
+        let kind: PushTokenKind
+        let environment: PushEnvironment
+        let installationID: UUID
+    }
+
     var error: Error?
     private(set) var registrations: [Registration] = []
+    private(set) var deletions: [Deletion] = []
 
     init(error: Error? = nil) {
         self.error = error
@@ -89,6 +137,19 @@ private final class RecordingPushTokenRegistrar: PushTokenRegistering {
     ) async throws {
         registrations.append(.init(
             token: token,
+            kind: kind,
+            environment: environment,
+            installationID: installationID
+        ))
+        if let error { throw error }
+    }
+
+    func unregisterPushToken(
+        kind: PushTokenKind,
+        environment: PushEnvironment,
+        installationID: UUID
+    ) async throws {
+        deletions.append(.init(
             kind: kind,
             environment: environment,
             installationID: installationID

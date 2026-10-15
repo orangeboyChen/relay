@@ -8,6 +8,7 @@ final class VoIPPushCoordinator: NSObject {
     private let incomingPushHandler: @MainActor (Data) async throws -> Void
     private var installationID: UUID?
     private var pendingToken: Data?
+    private var requiresTokenDeletion = false
     private var registry: PKPushRegistry?
 
     init(
@@ -39,7 +40,16 @@ final class VoIPPushCoordinator: NSObject {
     }
 
     func uploadPendingToken() async throws {
-        guard let installationID, let pendingToken else { return }
+        guard let installationID else { return }
+        if requiresTokenDeletion {
+            try await tokenRegistrar.unregisterPushToken(
+                kind: .voip,
+                environment: environment,
+                installationID: installationID
+            )
+            requiresTokenDeletion = false
+        }
+        guard let pendingToken else { return }
         try await tokenRegistrar.registerPushToken(
             pendingToken,
             kind: .voip,
@@ -47,6 +57,12 @@ final class VoIPPushCoordinator: NSObject {
             installationID: installationID
         )
         self.pendingToken = nil
+    }
+
+    func invalidateToken() async throws {
+        pendingToken = nil
+        requiresTokenDeletion = true
+        try await uploadPendingToken()
     }
 
     func receiveIncomingPayload(_ dictionary: [AnyHashable: Any]) async throws {
@@ -82,6 +98,11 @@ extension VoIPPushCoordinator: @preconcurrency PKPushRegistryDelegate {
             defer { completion() }
             try? await receiveIncomingPayload(payload.dictionaryPayload)
         }
+    }
+
+    func pushRegistry(_ registry: PKPushRegistry, didInvalidatePushTokenFor type: PKPushType) {
+        guard type == .voIP else { return }
+        Task { try? await invalidateToken() }
     }
 }
 

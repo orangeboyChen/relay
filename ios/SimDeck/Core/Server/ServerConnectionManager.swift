@@ -140,6 +140,11 @@ protocol PushTokenRegistering: AnyObject {
         environment: PushEnvironment,
         installationID: UUID
     ) async throws
+    func unregisterPushToken(
+        kind: PushTokenKind,
+        environment: PushEnvironment,
+        installationID: UUID
+    ) async throws
 }
 
 @MainActor
@@ -446,6 +451,21 @@ final class ServerConnectionManager {
             body: body
         )
         guard response.statusCode == 204 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
+        }
+    }
+
+    func unregisterPushToken(
+        kind: PushTokenKind,
+        environment: PushEnvironment,
+        installationID: UUID
+    ) async throws {
+        let (_, response) = try await authenticatedRequest(
+            path: "v1/app-installations/\(installationID.uuidString.lowercased())/push-tokens/\(kind.rawValue)",
+            method: "DELETE",
+            queryItems: [URLQueryItem(name: "environment", value: environment.rawValue)]
+        )
+        guard response.statusCode == 204 || response.statusCode == 404 else {
             throw ServerConnectionError.requestFailed(response.statusCode)
         }
     }

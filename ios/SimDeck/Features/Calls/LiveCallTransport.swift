@@ -297,6 +297,23 @@ struct CallCommandPayload: Codable, Equatable, Sendable {
     let callID: String
     let number: String?
     let digits: String?
+    let mediaOffer: String?
+
+    init(
+        version: Int,
+        operation: String,
+        callID: String,
+        number: String? = nil,
+        digits: String? = nil,
+        mediaOffer: String? = nil
+    ) {
+        self.version = version
+        self.operation = operation
+        self.callID = callID
+        self.number = number
+        self.digits = digits
+        self.mediaOffer = mediaOffer
+    }
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -304,6 +321,7 @@ struct CallCommandPayload: Codable, Equatable, Sendable {
         case callID = "call_id"
         case number
         case digits
+        case mediaOffer = "media_offer"
     }
 }
 
@@ -312,12 +330,28 @@ struct CallCommandResult: Codable, Equatable, Sendable {
     let success: Bool
     let errorCode: String?
     let callState: String?
+    let mediaAnswer: String?
+
+    init(
+        version: Int,
+        success: Bool,
+        errorCode: String? = nil,
+        callState: String? = nil,
+        mediaAnswer: String? = nil
+    ) {
+        self.version = version
+        self.success = success
+        self.errorCode = errorCode
+        self.callState = callState
+        self.mediaAnswer = mediaAnswer
+    }
 
     enum CodingKeys: String, CodingKey {
         case version
         case success
         case errorCode = "error_code"
         case callState = "call_state"
+        case mediaAnswer = "media_answer"
     }
 }
 

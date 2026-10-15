@@ -88,6 +88,28 @@ final class LiveCallTransportTests: XCTestCase {
         )
     }
 
+    func testMediaSessionDescriptionsUseTheSharedEncryptedProtocolFields() throws {
+        let payload = CallCommandPayload(
+            version: 1,
+            operation: "call.start",
+            callID: callID.uuidString.lowercased(),
+            number: "10086",
+            mediaOffer: "v=0\r\na=fingerprint:sha-256 phone\r\n"
+        )
+        let payloadData = try JSONEncoder().encode(payload)
+        let payloadObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: payloadData) as? [String: Any]
+        )
+        XCTAssertEqual(payloadObject["media_offer"] as? String, payload.mediaOffer)
+        XCTAssertNil(payloadObject["mediaOffer"])
+
+        let resultData = Data(
+            #"{"version":1,"success":true,"call_state":"dialing","media_answer":"v=0\r\na=fingerprint:sha-256 device\r\n"}"#.utf8
+        )
+        let result = try JSONDecoder().decode(CallCommandResult.self, from: resultData)
+        XCTAssertEqual(result.mediaAnswer, "v=0\r\na=fingerprint:sha-256 device\r\n")
+    }
+
     func testCallControlsMapToEncryptedDeviceOperations() async throws {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
         let transport = LiveCallTransport(

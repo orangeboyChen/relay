@@ -27,6 +27,7 @@ type Config struct {
 	HealthAddress     string
 	Baud              int
 	CommandTimeout    time.Duration
+	CommandPoll       time.Duration
 	ServerURL         string
 	StateDirectory    string
 	PairingTokenFile  string
@@ -42,6 +43,7 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 		HealthAddress:    valueOrDefault(lookup, "SIM_DECK_HEALTH_ADDRESS", defaultHealthAddr),
 		Baud:             defaultBaud,
 		CommandTimeout:   5 * time.Second,
+		CommandPoll:      time.Second,
 		ServerURL:        strings.TrimRight(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_SERVER_URL", "")), "/"),
 		StateDirectory:   valueOrDefault(lookup, "SIM_DECK_STATE_DIRECTORY", defaultStateDir),
 		PairingTokenFile: valueOrDefault(lookup, "SIM_DECK_PAIRING_TOKEN_FILE", defaultPairingFile),
@@ -67,6 +69,13 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 			return Config{}, fmt.Errorf("SIM_DECK_COMMAND_TIMEOUT must be a positive duration")
 		}
 		config.CommandTimeout = timeout
+	}
+	if value, ok := lookup("SIM_DECK_COMMAND_POLL_INTERVAL"); ok && strings.TrimSpace(value) != "" {
+		interval, err := time.ParseDuration(value)
+		if err != nil || interval <= 0 {
+			return Config{}, fmt.Errorf("SIM_DECK_COMMAND_POLL_INTERVAL must be a positive duration")
+		}
+		config.CommandPoll = interval
 	}
 	if strings.TrimSpace(config.ATDevice) == "" {
 		return Config{}, fmt.Errorf("SIM_DECK_AT_DEVICE must not be empty")

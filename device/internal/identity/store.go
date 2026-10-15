@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -15,7 +16,7 @@ import (
 )
 
 const (
-	stateVersion = 1
+	stateVersion = 2
 	stateFile    = "identity.json"
 	tokenBytes   = 32
 )
@@ -27,10 +28,20 @@ type State struct {
 	Version            int                `json:"version"`
 	DeviceUUID         string             `json:"device_uuid"`
 	IdentityPrivateKey ed25519.PrivateKey `json:"identity_private_key"`
+	CommandPrivateKey  []byte             `json:"command_private_key"`
 	ServerURL          string             `json:"server_url,omitempty"`
 	PendingCredential  string             `json:"pending_credential,omitempty"`
 	Credential         string             `json:"credential,omitempty"`
 	NumericID          int                `json:"numeric_id,omitempty"`
+}
+
+// CommandPublicKey derives the X25519 key advertised for encrypted device commands.
+func (state State) CommandPublicKey() []byte {
+	privateKey, err := ecdh.X25519().NewPrivateKey(state.CommandPrivateKey)
+	if err != nil {
+		return nil
+	}
+	return append([]byte(nil), privateKey.PublicKey().Bytes()...)
 }
 
 // PublicKey derives the identity public key without persisting a second copy.
@@ -64,6 +75,17 @@ func (store Store) LoadOrCreate() (State, error) {
 	path := filepath.Join(store.directory, stateFile)
 	state, err := load(path)
 	if err == nil {
+		if state.Version == 1 {
+			commandKey, keyError := ecdh.X25519().GenerateKey(store.randomSource())
+			if keyError != nil {
+				return State{}, fmt.Errorf("migrate device command key: %w", keyError)
+			}
+			state.Version = stateVersion
+			state.CommandPrivateKey = commandKey.Bytes()
+			if saveError := store.save(state); saveError != nil {
+				return State{}, fmt.Errorf("persist device identity migration: %w", saveError)
+			}
+		}
 		return state, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
@@ -78,10 +100,15 @@ func (store Store) LoadOrCreate() (State, error) {
 	if err != nil {
 		return State{}, err
 	}
+	commandKey, err := ecdh.X25519().GenerateKey(store.randomSource())
+	if err != nil {
+		return State{}, fmt.Errorf("generate device command key: %w", err)
+	}
 	state = State{
 		Version:            stateVersion,
 		DeviceUUID:         deviceUUID,
 		IdentityPrivateKey: privateKey,
+		CommandPrivateKey:  commandKey.Bytes(),
 	}
 	if err := store.save(state); err != nil {
 		return State{}, err
@@ -181,7 +208,7 @@ func (store Store) save(state State) error {
 }
 
 func validate(state State) error {
-	if state.Version != stateVersion {
+	if state.Version != 1 && state.Version != stateVersion {
 		return fmt.Errorf("%w: unsupported version", ErrInvalidState)
 	}
 	if !validUUID(state.DeviceUUID) {
@@ -189,6 +216,13 @@ func validate(state State) error {
 	}
 	if len(state.IdentityPrivateKey) != ed25519.PrivateKeySize || len(state.PublicKey()) != ed25519.PublicKeySize {
 		return fmt.Errorf("%w: malformed private key", ErrInvalidState)
+	}
+	if state.Version == 1 {
+		if len(state.CommandPrivateKey) != 0 {
+			return fmt.Errorf("%w: legacy state contains a command key", ErrInvalidState)
+		}
+	} else if len(state.CommandPrivateKey) != 32 || len(state.CommandPublicKey()) != 32 {
+		return fmt.Errorf("%w: malformed command private key", ErrInvalidState)
 	}
 	if state.PendingCredential != "" {
 		if state.Credential != "" || state.ServerURL != "" || state.NumericID != 0 || !validCredential(state.PendingCredential) {

@@ -28,6 +28,7 @@ var _ = Describe("Agent configuration", func() {
 		Expect(config.HealthAddress).To(Equal(":8080"))
 		Expect(config.Baud).To(Equal(115200))
 		Expect(config.CommandTimeout).To(Equal(5 * time.Second))
+		Expect(config.CommandPoll).To(Equal(time.Second))
 		Expect(config.StateDirectory).To(Equal("/var/lib/sim-deck"))
 		Expect(config.PairingTokenFile).To(Equal("/run/secrets/sim_deck_pairing_token"))
 		Expect(config.AllowInsecureHTTP).To(BeFalse())
@@ -35,16 +36,17 @@ var _ = Describe("Agent configuration", func() {
 
 	It("reads explicit development and device overrides", func() {
 		config, err := LoadConfig(configLookup(map[string]string{
-			"SIM_DECK_AT_DEVICE":           "/dev/ttyUSB2",
-			"SIM_DECK_PCM_DEVICE":          "/dev/ttyUSB4",
-			"SIM_DECK_SOUND_DEVICE":        "/dev/snd/controlC2",
-			"SIM_DECK_HEALTH_ADDRESS":      "127.0.0.1:9090",
-			"SIM_DECK_BAUD":                "9600",
-			"SIM_DECK_COMMAND_TIMEOUT":     "9s",
-			"SIM_DECK_SERVER_URL":          "http://server:8080/",
-			"SIM_DECK_STATE_DIRECTORY":     "/tmp/state",
-			"SIM_DECK_PAIRING_TOKEN_FILE":  "/tmp/pairing-token",
-			"SIM_DECK_ALLOW_INSECURE_HTTP": "true",
+			"SIM_DECK_AT_DEVICE":             "/dev/ttyUSB2",
+			"SIM_DECK_PCM_DEVICE":            "/dev/ttyUSB4",
+			"SIM_DECK_SOUND_DEVICE":          "/dev/snd/controlC2",
+			"SIM_DECK_HEALTH_ADDRESS":        "127.0.0.1:9090",
+			"SIM_DECK_BAUD":                  "9600",
+			"SIM_DECK_COMMAND_TIMEOUT":       "9s",
+			"SIM_DECK_COMMAND_POLL_INTERVAL": "250ms",
+			"SIM_DECK_SERVER_URL":            "http://server:8080/",
+			"SIM_DECK_STATE_DIRECTORY":       "/tmp/state",
+			"SIM_DECK_PAIRING_TOKEN_FILE":    "/tmp/pairing-token",
+			"SIM_DECK_ALLOW_INSECURE_HTTP":   "true",
 		}))
 
 		Expect(err).NotTo(HaveOccurred())
@@ -54,6 +56,7 @@ var _ = Describe("Agent configuration", func() {
 		Expect(config.HealthAddress).To(Equal("127.0.0.1:9090"))
 		Expect(config.Baud).To(Equal(9600))
 		Expect(config.CommandTimeout).To(Equal(9 * time.Second))
+		Expect(config.CommandPoll).To(Equal(250 * time.Millisecond))
 		Expect(config.ServerURL).To(Equal("http://server:8080"))
 		Expect(config.StateDirectory).To(Equal("/tmp/state"))
 		Expect(config.PairingTokenFile).To(Equal("/tmp/pairing-token"))
@@ -77,6 +80,8 @@ var _ = Describe("Agent configuration", func() {
 		Entry("zero baud", map[string]string{"SIM_DECK_BAUD": "0"}, "BAUD"),
 		Entry("invalid command timeout", map[string]string{"SIM_DECK_COMMAND_TIMEOUT": "later"}, "COMMAND_TIMEOUT"),
 		Entry("zero command timeout", map[string]string{"SIM_DECK_COMMAND_TIMEOUT": "0s"}, "COMMAND_TIMEOUT"),
+		Entry("invalid command poll", map[string]string{"SIM_DECK_COMMAND_POLL_INTERVAL": "later"}, "COMMAND_POLL_INTERVAL"),
+		Entry("zero command poll", map[string]string{"SIM_DECK_COMMAND_POLL_INTERVAL": "0s"}, "COMMAND_POLL_INTERVAL"),
 		Entry("empty AT device", map[string]string{"SIM_DECK_AT_DEVICE": " "}, "AT_DEVICE"),
 		Entry("missing server URL", map[string]string{"SIM_DECK_SERVER_URL": ""}, "SERVER_URL"),
 		Entry("relative server URL", map[string]string{"SIM_DECK_SERVER_URL": "server:8080"}, "SERVER_URL"),

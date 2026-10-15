@@ -26,8 +26,8 @@ following resources kept separate from every other instance:
 - one short-lived, one-time pairing token.
 
 Never share or copy a state volume between two running modem containers. The
-volume contains the modem endpoint's UUID, Ed25519 private identity, server URL,
-device credential, and visible SIM numeric ID. Copying it would create two
+volume contains the modem endpoint's UUID, Ed25519 signing identity, X25519
+command-decryption identity, server URL, device credential, and visible SIM numeric ID. Copying it would create two
 agents with the same identity. Moving the volume together with the same physical
 modem is appropriate when replacing a host.
 
@@ -72,8 +72,8 @@ them.
 
 On first startup, the agent:
 
-1. creates and durably stores a UUID, Ed25519 identity, and pending credential;
-2. sends the public identity and one-time token to the configured server over
+1. creates and durably stores a UUID, Ed25519 identity, X25519 command key, and pending credential;
+2. sends the public identities and one-time token to the configured server over
    HTTPS;
 3. stores the server-assigned SIM numeric ID after the server confirms pairing;
 4. becomes ready only after the binding has been persisted.
@@ -86,6 +86,25 @@ device and pair with a new empty state volume.
 After the first successful binding, the consumed token is no longer needed.
 The secret mount may be removed from that service; subsequent starts use the
 credential in its private state volume.
+
+## Encrypted call commands
+
+After pairing, the agent authenticates with its device credential and polls for
+opaque commands. The iPhone encrypts every call operation directly to the
+device's X25519 public key with AES-256-GCM. The server can route and expire a
+command but cannot read the number, call identifier, DTMF digits, or execution
+result.
+
+The agent decrypts a command locally and maps `call.start`, `call.end`,
+`call.hold`, `call.resume`, `call.swap`, and `call.dtmf` to the modem's serialized
+AT controller. Results are encrypted back to the initiating iPhone before they
+leave the container. An upgraded version-one state volume keeps its UUID,
+Ed25519 identity, credential, and SIM ID while generating and registering one
+new X25519 command key.
+
+`SIM_DECK_COMMAND_POLL_INTERVAL` defaults to `1s`. Lower values reduce command
+latency but increase HTTP request volume. Each modem container polls only its
+own queue and must keep its state volume private.
 
 ## Running two modems
 

@@ -9,10 +9,12 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"sim-deck-device/internal/command"
 	"sim-deck-device/internal/identity"
 )
 
@@ -52,6 +54,7 @@ var _ = Describe("Server pairing client", func() {
 				PairingToken      string `json:"pairing_token"`
 				DeviceUUID        string `json:"device_uuid"`
 				IdentityPublicKey []byte `json:"identity_public_key"`
+				CommandPublicKey  []byte `json:"command_public_key"`
 				ProfileCiphertext []byte `json:"profile_ciphertext"`
 				DeviceCredential  string `json:"device_credential"`
 			}
@@ -60,6 +63,7 @@ var _ = Describe("Server pairing client", func() {
 			Expect(body.DeviceUUID).To(Equal(state.DeviceUUID))
 			Expect(body.IdentityPublicKey).To(Equal([]byte(state.PublicKey())))
 			Expect(body.IdentityPublicKey).NotTo(Equal([]byte(state.IdentityPrivateKey)))
+			Expect(body.CommandPublicKey).To(Equal(state.CommandPublicKey()))
 			Expect(body.ProfileCiphertext).To(BeEmpty())
 			Expect(body.DeviceCredential).To(Equal(credential))
 			return response(http.StatusCreated, `{"device":{"device_uuid":"`+state.DeviceUUID+`","numeric_id":2}}`), nil
@@ -143,5 +147,141 @@ var _ = Describe("Server pairing client", func() {
 		})
 		_, err = client.Pair(context.Background(), "token", "device-credential", state)
 		Expect(err).To(MatchError(ContainSubstring("pair device")))
+	})
+
+	It("registers the current command public key", func() {
+		state, err := identity.NewStore(GinkgoT().TempDir()).LoadOrCreate()
+		Expect(err).NotTo(HaveOccurred())
+		state.Credential = "device-secret"
+		client := clientWithHandler(func(request *http.Request) (*http.Response, error) {
+			Expect(request.Method).To(Equal(http.MethodPut))
+			Expect(request.URL.Path).To(Equal("/v1/device-command-key"))
+			Expect(request.Header.Get("Authorization")).To(Equal("Bearer device-secret"))
+			var body struct {
+				DeviceUUID       string `json:"device_uuid"`
+				CommandPublicKey []byte `json:"command_public_key"`
+			}
+			Expect(json.NewDecoder(request.Body).Decode(&body)).To(Succeed())
+			Expect(body.DeviceUUID).To(Equal(state.DeviceUUID))
+			Expect(body.CommandPublicKey).To(Equal(state.CommandPublicKey()))
+			return response(http.StatusNoContent, ""), nil
+		})
+
+		Expect(client.UpdateCommandKey(context.Background(), state)).To(Succeed())
+	})
+
+	It("maps command key request, transport, and server errors", func() {
+		state, err := identity.NewStore(GinkgoT().TempDir()).LoadOrCreate()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(NewClient("://invalid", nil).UpdateCommandKey(context.Background(), state)).To(MatchError(ContainSubstring("create command key update request")))
+
+		transportFailure := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("transport unavailable")
+		})
+		Expect(transportFailure.UpdateCommandKey(context.Background(), state)).To(MatchError(ContainSubstring("update device command key")))
+
+		serverFailure := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusUnauthorized, `{"error":{"code":"invalid_device_credential"}}`), nil
+		})
+		Expect(serverFailure.UpdateCommandKey(context.Background(), state)).To(MatchError(ContainSubstring("invalid_device_credential")))
+	})
+})
+
+var _ = Describe("Encrypted command client", func() {
+	const (
+		deviceID  = "01900000-0000-7000-8000-000000000001"
+		commandID = "01900000-0000-7000-8000-000000000010"
+	)
+
+	It("claims and decodes an opaque command", func() {
+		encrypted := command.Envelope{
+			ID: commandID, DeviceUUID: deviceID, SenderPublicKey: bytes.Repeat([]byte{1}, 32),
+			Nonce: bytes.Repeat([]byte{2}, 12), Ciphertext: []byte("sealed"),
+			CreatedAt: time.Unix(1_000, 0), ExpiresAt: time.Unix(1_060, 0),
+		}
+		client := clientWithHandler(func(request *http.Request) (*http.Response, error) {
+			Expect(request.Method).To(Equal(http.MethodGet))
+			Expect(request.URL.Path).To(Equal("/v1/device-commands/next"))
+			Expect(request.URL.Query().Get("device_uuid")).To(Equal(deviceID))
+			Expect(request.Header.Get("Authorization")).To(Equal("Bearer device-secret"))
+			body, err := json.Marshal(map[string]any{"command": encrypted})
+			Expect(err).NotTo(HaveOccurred())
+			return response(http.StatusOK, string(body)), nil
+		})
+
+		claimed, err := client.Claim(context.Background(), deviceID, "device-secret")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(claimed).To(Equal(&encrypted))
+	})
+
+	It("returns nil for an empty command queue", func() {
+		client := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusNoContent, ""), nil
+		})
+		claimed, err := client.Claim(context.Background(), deviceID, "device-secret")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(claimed).To(BeNil())
+	})
+
+	It("completes a command with only encrypted result bytes", func() {
+		result := command.EncryptedResult{Nonce: bytes.Repeat([]byte{3}, 12), Ciphertext: []byte("opaque-result")}
+		client := clientWithHandler(func(request *http.Request) (*http.Response, error) {
+			Expect(request.Method).To(Equal(http.MethodPost))
+			Expect(request.URL.Path).To(Equal("/v1/device-commands/" + commandID + "/complete"))
+			Expect(request.Header.Get("Authorization")).To(Equal("Bearer device-secret"))
+			Expect(request.Header.Get("Content-Type")).To(Equal("application/json"))
+			var body struct {
+				DeviceUUID string                  `json:"device_uuid"`
+				Result     command.EncryptedResult `json:"result"`
+			}
+			Expect(json.NewDecoder(request.Body).Decode(&body)).To(Succeed())
+			Expect(body.DeviceUUID).To(Equal(deviceID))
+			Expect(body.Result).To(Equal(result))
+			return response(http.StatusNoContent, ""), nil
+		})
+
+		Expect(client.Complete(context.Background(), deviceID, "device-secret", commandID, result)).To(Succeed())
+	})
+
+	DescribeTable("maps server command errors without exposing response details",
+		func(operation string, status int, body string, expected string) {
+			client := clientWithHandler(func(*http.Request) (*http.Response, error) {
+				return response(status, body), nil
+			})
+			var err error
+			if operation == "claim" {
+				_, err = client.Claim(context.Background(), deviceID, "device-secret")
+			} else {
+				err = client.Complete(context.Background(), deviceID, "device-secret", commandID, command.EncryptedResult{})
+			}
+			Expect(err).To(MatchError(ContainSubstring(expected)))
+			Expect(err.Error()).NotTo(ContainSubstring("sensitive detail"))
+		},
+		Entry("claim JSON error", "claim", http.StatusUnauthorized, `{"error":{"code":"invalid_device_credential","message":"sensitive detail"}}`, "invalid_device_credential"),
+		Entry("claim non-JSON error", "claim", http.StatusBadGateway, "sensitive detail", "unexpected_response"),
+		Entry("complete JSON error", "complete", http.StatusNotFound, `{"error":{"code":"command_not_found","message":"sensitive detail"}}`, "command_not_found"),
+	)
+
+	It("reports malformed claim responses", func() {
+		client := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusOK, "not-json"), nil
+		})
+		_, err := client.Claim(context.Background(), deviceID, "device-secret")
+		Expect(err).To(MatchError(ContainSubstring("decode encrypted command")))
+	})
+
+	It("reports request construction and transport failures", func() {
+		invalid := NewClient("://invalid", nil)
+		_, err := invalid.Claim(context.Background(), deviceID, "device-secret")
+		Expect(err).To(MatchError(ContainSubstring("create command claim request")))
+		Expect(invalid.Complete(context.Background(), deviceID, "device-secret", commandID, command.EncryptedResult{})).To(MatchError(ContainSubstring("create command completion request")))
+
+		client := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("transport unavailable")
+		})
+		_, err = client.Claim(context.Background(), deviceID, "device-secret")
+		Expect(err).To(MatchError(ContainSubstring("claim encrypted command")))
+		Expect(client.Complete(context.Background(), deviceID, "device-secret", commandID, command.EncryptedResult{})).To(MatchError(ContainSubstring("complete encrypted command")))
 	})
 })

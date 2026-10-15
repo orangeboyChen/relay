@@ -62,10 +62,12 @@ var _ = Describe("Device identity store", func() {
 
 		created, err := store.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
-		Expect(created.Version).To(Equal(1))
+		Expect(created.Version).To(Equal(2))
 		Expect(created.DeviceUUID).To(HaveLen(36))
 		Expect(created.IdentityPrivateKey).To(HaveLen(ed25519.PrivateKeySize))
 		Expect(created.PublicKey()).To(HaveLen(ed25519.PublicKeySize))
+		Expect(created.CommandPrivateKey).To(HaveLen(32))
+		Expect(created.CommandPublicKey()).To(HaveLen(32))
 		Expect(created.Credential).To(BeEmpty())
 
 		reloaded, err := store.LoadOrCreate()
@@ -98,6 +100,27 @@ var _ = Describe("Device identity store", func() {
 		Expect(reloaded).To(Equal(bound))
 	})
 
+	It("migrates a version-one identity without replacing its signing key or UUID", func() {
+		directory := GinkgoT().TempDir()
+		store := NewStore(directory)
+		created, err := store.LoadOrCreate()
+		Expect(err).NotTo(HaveOccurred())
+		legacy := created
+		legacy.Version = 1
+		legacy.CommandPrivateKey = nil
+		content, err := json.Marshal(legacy)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(os.WriteFile(filepath.Join(directory, stateFile), content, 0o600)).To(Succeed())
+
+		migrated, err := store.LoadOrCreate()
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(migrated.Version).To(Equal(2))
+		Expect(migrated.DeviceUUID).To(Equal(created.DeviceUUID))
+		Expect(migrated.IdentityPrivateKey).To(Equal(created.IdentityPrivateKey))
+		Expect(migrated.CommandPublicKey()).To(HaveLen(32))
+	})
+
 	It("refuses to initialize an empty state path", func() {
 		_, err := NewStore(" ").LoadOrCreate()
 		Expect(errors.Is(err, ErrInvalidState)).To(BeTrue())
@@ -122,9 +145,10 @@ var _ = Describe("Device identity store", func() {
 			_, err = store.LoadOrCreate()
 			Expect(errors.Is(err, ErrInvalidState)).To(BeTrue())
 		},
-		Entry("unsupported version", func(state *State) { state.Version = 2 }),
+		Entry("unsupported version", func(state *State) { state.Version = 3 }),
 		Entry("malformed UUID", func(state *State) { state.DeviceUUID = "not-a-uuid" }),
 		Entry("malformed private key", func(state *State) { state.IdentityPrivateKey = []byte("short") }),
+		Entry("malformed command key", func(state *State) { state.CommandPrivateKey = []byte("short") }),
 		Entry("malformed credential", func(state *State) { state.Credential = "short" }),
 		Entry("malformed pending credential", func(state *State) { state.PendingCredential = "short" }),
 		Entry("credential without numeric ID", func(state *State) {

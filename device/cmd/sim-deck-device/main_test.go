@@ -17,6 +17,8 @@ import (
 
 	"sim-deck-device/internal/agent"
 	"sim-deck-device/internal/at"
+	"sim-deck-device/internal/call"
+	"sim-deck-device/internal/command"
 	"sim-deck-device/internal/identity"
 	"sim-deck-device/internal/modem"
 	"sim-deck-device/internal/sms"
@@ -51,6 +53,24 @@ type fakeDeviceSession struct {
 	runStarted      chan struct{}
 }
 
+func (session *fakeDeviceSession) Calls() *call.Controller { return nil }
+
+type fakeCommandRuntime struct {
+	runError   error
+	runStarted chan struct{}
+}
+
+func (runtime *fakeCommandRuntime) Run(ctx context.Context) error {
+	if runtime.runStarted != nil {
+		close(runtime.runStarted)
+	}
+	if runtime.runError != nil {
+		return runtime.runError
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
 func (session *fakeDeviceSession) Initialize(context.Context) error {
 	return session.initializeError
 }
@@ -71,6 +91,7 @@ func testConfig(stateDirectory string) agent.Config {
 		ATDevice:         "/dev/sim-deck/at",
 		Baud:             115200,
 		CommandTimeout:   time.Second,
+		CommandPoll:      time.Millisecond,
 		StateDirectory:   stateDirectory,
 		ServerURL:        "https://deck.example",
 		PairingTokenFile: filepath.Join(stateDirectory, "pairing-token"),
@@ -78,6 +99,7 @@ func testConfig(stateDirectory string) agent.Config {
 }
 
 func testDependencies(transport io.ReadWriteCloser, session deviceSession) deviceDependencies {
+	commandRunner := &fakeCommandRuntime{}
 	return deviceDependencies{
 		openTransport: func(string, int) (io.ReadWriteCloser, error) { return transport, nil },
 		bindIdentity: func(_ context.Context, _ agent.Config, _ identity.Store, state identity.State) (identity.State, error) {
@@ -88,6 +110,10 @@ func testDependencies(transport io.ReadWriteCloser, session deviceSession) devic
 		newSession: func(_ *at.Client, _ *sms.Inbox, sink modem.MessageSink, _ *slog.Logger, _ time.Duration) (deviceSession, error) {
 			Expect(sink.ReceiveSMS(context.Background(), sms.ReceivedMessage{ID: "message-id", Segments: 1})).To(Succeed())
 			return session, nil
+		},
+		syncCommandKey: func(context.Context, agent.Config, identity.State) error { return nil },
+		newCommands: func(agent.Config, identity.State, command.Calls) (commandRuntime, error) {
+			return commandRunner, nil
 		},
 	}
 }
@@ -202,6 +228,44 @@ var _ = Describe("Device command runtime", func() {
 		Expect(ready.Load()).To(BeFalse())
 	})
 
+	It("returns a command runtime construction failure before readiness", func() {
+		transport := newBlockingTransport()
+		dependencies := testDependencies(transport, &fakeDeviceSession{})
+		dependencies.newCommands = func(agent.Config, identity.State, command.Calls) (commandRuntime, error) {
+			return nil, errors.New("command runtime unavailable")
+		}
+
+		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError("create encrypted command runtime: command runtime unavailable"))
+	})
+
+	It("returns command key registration failure before readiness", func() {
+		transport := newBlockingTransport()
+		dependencies := testDependencies(transport, &fakeDeviceSession{})
+		dependencies.syncCommandKey = func(context.Context, agent.Config, identity.State) error {
+			return errors.New("key registration unavailable")
+		}
+
+		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError("register device command key: key registration unavailable"))
+	})
+
+	It("stops the modem session when encrypted command delivery fails", func() {
+		transport := newBlockingTransport()
+		session := &fakeDeviceSession{runStarted: make(chan struct{})}
+		dependencies := testDependencies(transport, session)
+		dependencies.newCommands = func(agent.Config, identity.State, command.Calls) (commandRuntime, error) {
+			return &fakeCommandRuntime{runError: errors.New("command server unavailable")}, nil
+		}
+
+		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError("command server unavailable"))
+		Expect(session.runStarted).To(BeClosed())
+	})
+
 	It("serves readiness as JSON", func() {
 		ready := &atomic.Bool{}
 		server := healthServer("unused", ready)
@@ -225,5 +289,7 @@ var _ = Describe("Device command runtime", func() {
 		Expect(dependencies.bindIdentity).NotTo(BeNil())
 		Expect(dependencies.openInbox).NotTo(BeNil())
 		Expect(dependencies.newSession).NotTo(BeNil())
+		Expect(dependencies.syncCommandKey).NotTo(BeNil())
+		Expect(dependencies.newCommands).NotTo(BeNil())
 	})
 })

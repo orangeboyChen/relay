@@ -17,6 +17,8 @@ import (
 
 	"sim-deck-device/internal/agent"
 	"sim-deck-device/internal/at"
+	"sim-deck-device/internal/call"
+	"sim-deck-device/internal/command"
 	"sim-deck-device/internal/identity"
 	"sim-deck-device/internal/modem"
 	"sim-deck-device/internal/serialport"
@@ -59,13 +61,20 @@ func run(ctx context.Context, config agent.Config, logger *slog.Logger) error {
 type deviceSession interface {
 	Initialize(context.Context) error
 	Run(context.Context) error
+	Calls() *call.Controller
+}
+
+type commandRuntime interface {
+	Run(context.Context) error
 }
 
 type deviceDependencies struct {
-	openTransport func(string, int) (io.ReadWriteCloser, error)
-	bindIdentity  func(context.Context, agent.Config, identity.Store, identity.State) (identity.State, error)
-	openInbox     func(string, time.Duration) (*sms.Inbox, error)
-	newSession    func(*at.Client, *sms.Inbox, modem.MessageSink, *slog.Logger, time.Duration) (deviceSession, error)
+	openTransport  func(string, int) (io.ReadWriteCloser, error)
+	bindIdentity   func(context.Context, agent.Config, identity.Store, identity.State) (identity.State, error)
+	openInbox      func(string, time.Duration) (*sms.Inbox, error)
+	newSession     func(*at.Client, *sms.Inbox, modem.MessageSink, *slog.Logger, time.Duration) (deviceSession, error)
+	syncCommandKey func(context.Context, agent.Config, identity.State) error
+	newCommands    func(agent.Config, identity.State, command.Calls) (commandRuntime, error)
 }
 
 func productionDependencies() deviceDependencies {
@@ -79,6 +88,12 @@ func productionDependencies() deviceDependencies {
 		openInbox: sms.NewPersistentInbox,
 		newSession: func(client *at.Client, inbox *sms.Inbox, sink modem.MessageSink, logger *slog.Logger, timeout time.Duration) (deviceSession, error) {
 			return modem.NewSession(client, inbox, sink, logger, timeout)
+		},
+		syncCommandKey: func(ctx context.Context, config agent.Config, state identity.State) error {
+			return serverapi.NewClient(config.ServerURL, nil).UpdateCommandKey(ctx, state)
+		},
+		newCommands: func(config agent.Config, state identity.State, calls command.Calls) (commandRuntime, error) {
+			return command.NewRuntime(serverapi.NewClient(config.ServerURL, nil), state, calls, config.CommandPoll)
 		},
 	}
 }
@@ -115,6 +130,13 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	if err != nil {
 		return fmt.Errorf("bind device to server: %w", err)
 	}
+	if err := dependencies.syncCommandKey(ctx, config, deviceIdentity); err != nil {
+		return fmt.Errorf("register device command key: %w", err)
+	}
+	commands, err := dependencies.newCommands(config, deviceIdentity, session.Calls())
+	if err != nil {
+		return fmt.Errorf("create encrypted command runtime: %w", err)
+	}
 
 	ready.Store(true)
 	defer ready.Store(false)
@@ -126,7 +148,18 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 		"device_uuid", deviceIdentity.DeviceUUID,
 		"numeric_id", deviceIdentity.NumericID,
 	)
-	return session.Run(ctx)
+	runContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make(chan error, 2)
+	go func() { results <- session.Run(runContext) }()
+	go func() { results <- commands.Run(runContext) }()
+	first := <-results
+	cancel()
+	second := <-results
+	if first != nil && !errors.Is(first, context.Canceled) {
+		return first
+	}
+	return second
 }
 
 func healthServer(address string, ready *atomic.Bool) *http.Server {

@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
+	"sim-deck-device/internal/command"
 	"sim-deck-device/internal/identity"
 )
 
@@ -21,6 +23,101 @@ const maxResponseBytes = 1 << 20
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
+}
+
+// Claim leases the next encrypted command for an authenticated device.
+func (client *Client) Claim(ctx context.Context, deviceID string, credential string) (*command.Envelope, error) {
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		client.baseURL+"/v1/device-commands/next?device_uuid="+url.QueryEscape(deviceID),
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create command claim request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+credential)
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("claim encrypted command: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNoContent {
+		return nil, nil
+	}
+	limitedBody := io.LimitReader(response.Body, maxResponseBytes)
+	if response.StatusCode != http.StatusOK {
+		return nil, responseError("claim encrypted command", response.StatusCode, limitedBody)
+	}
+	var body struct {
+		Command command.Envelope `json:"command"`
+	}
+	if err := json.NewDecoder(limitedBody).Decode(&body); err != nil {
+		return nil, fmt.Errorf("decode encrypted command: %w", err)
+	}
+	return &body.Command, nil
+}
+
+// Complete uploads an opaque encrypted command result.
+func (client *Client) Complete(ctx context.Context, deviceID string, credential string, commandID string, result command.EncryptedResult) error {
+	body, err := json.Marshal(map[string]any{"device_uuid": deviceID, "result": result})
+	if err != nil {
+		return fmt.Errorf("encode command completion: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+"/v1/device-commands/"+url.PathEscape(commandID)+"/complete", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create command completion request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+credential)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("complete encrypted command: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		return responseError("complete encrypted command", response.StatusCode, io.LimitReader(response.Body, maxResponseBytes))
+	}
+	return nil
+}
+
+// UpdateCommandKey registers the device's current X25519 public key after migration or restore.
+func (client *Client) UpdateCommandKey(ctx context.Context, state identity.State) error {
+	body, err := json.Marshal(map[string]any{
+		"device_uuid":        state.DeviceUUID,
+		"command_public_key": state.CommandPublicKey(),
+	})
+	if err != nil {
+		return fmt.Errorf("encode command key update: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, client.baseURL+"/v1/device-command-key", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create command key update request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+state.Credential)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("update device command key: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		return responseError("update device command key", response.StatusCode, io.LimitReader(response.Body, maxResponseBytes))
+	}
+	return nil
+}
+
+func responseError(operation string, statusCode int, body io.Reader) error {
+	var failure struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	_ = json.NewDecoder(body).Decode(&failure)
+	if failure.Error.Code == "" {
+		failure.Error.Code = "unexpected_response"
+	}
+	return fmt.Errorf("%s: server returned %d (%s)", operation, statusCode, failure.Error.Code)
 }
 
 // PairingResult contains the durable binding returned exactly once by the server.
@@ -39,7 +136,7 @@ func NewClient(baseURL string, httpClient *http.Client) *Client {
 // Pair consumes a one-time token and registers the device identity public key.
 func (client *Client) Pair(ctx context.Context, pairingToken string, deviceCredential string, state identity.State) (PairingResult, error) {
 	publicKey := state.PublicKey()
-	if strings.TrimSpace(pairingToken) == "" || strings.TrimSpace(deviceCredential) == "" || len(publicKey) != ed25519.PublicKeySize {
+	if strings.TrimSpace(pairingToken) == "" || strings.TrimSpace(deviceCredential) == "" || len(publicKey) != ed25519.PublicKeySize || len(state.CommandPublicKey()) != 32 {
 		return PairingResult{}, errors.New("pairing token, device credential, and valid device identity are required")
 	}
 	body, err := json.Marshal(map[string]any{
@@ -47,6 +144,7 @@ func (client *Client) Pair(ctx context.Context, pairingToken string, deviceCrede
 		"device_uuid":         state.DeviceUUID,
 		"profile_ciphertext":  []byte{},
 		"identity_public_key": publicKey,
+		"command_public_key":  state.CommandPublicKey(),
 		"wrapped_vault_key":   []byte{},
 		"device_credential":   deviceCredential,
 	})

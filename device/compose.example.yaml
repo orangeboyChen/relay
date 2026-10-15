@@ -10,6 +10,7 @@ x-device-defaults: &device-defaults
     SIM_DECK_SOUND_DEVICE: /dev/snd
     SIM_DECK_STATE_DIRECTORY: /var/lib/sim-deck
     SIM_DECK_PAIRING_TOKEN_FILE: /run/secrets/sim_deck_pairing_token
+    SIM_DECK_COMMAND_POLL_INTERVAL: 1s
   group_add:
     - "${SIM_DECK_DIALOUT_GID:-20}"
     - "${SIM_DECK_AUDIO_GID:-29}"

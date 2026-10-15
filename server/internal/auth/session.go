@@ -27,6 +27,11 @@ func NewTokenPair(now time.Time) (TokenPair, error) {
 	return newTokenPair(now, rand.Reader)
 }
 
+// NewOpaqueToken creates a high-entropy credential suitable for one-time pairing or device authentication.
+func NewOpaqueToken() (string, error) {
+	return randomToken(rand.Reader)
+}
+
 func newTokenPair(now time.Time, source io.Reader) (TokenPair, error) {
 	accessToken, err := randomToken(source)
 	if err != nil {

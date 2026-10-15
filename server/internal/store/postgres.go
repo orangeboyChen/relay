@@ -43,6 +43,15 @@ type OwnerCredential struct {
 	PasswordDisabledAt *time.Time
 }
 
+// DevicePairing contains the public-key material and encrypted profile supplied by a new agent.
+type DevicePairing struct {
+	DeviceUUID        string
+	ProfileCiphertext []byte
+	IdentityPublicKey []byte
+	WrappedVaultKey   []byte
+	CredentialHash    []byte
+}
+
 // Open connects to PostgreSQL and verifies that the server is reachable.
 func Open(ctx context.Context, databaseURL string) (*Postgres, error) {
 	pool, err := pgxpool.New(ctx, databaseURL)
@@ -211,6 +220,126 @@ func (store *Postgres) RevokeSession(ctx context.Context, accessToken string, no
 		return pgx.ErrNoRows
 	}
 	return nil
+}
+
+// AuthenticateOwnerSession validates an unexpired owner access token.
+func (store *Postgres) AuthenticateOwnerSession(ctx context.Context, accessToken string, now time.Time) (string, error) {
+	accessHash, err := auth.TokenHash(accessToken)
+	if err != nil {
+		return "", err
+	}
+	var ownerID string
+	err = store.pool.QueryRow(ctx, `
+		SELECT owner_id
+		FROM auth_sessions
+		WHERE access_token_hash = $1 AND revoked_at IS NULL AND access_expires_at > $2`, accessHash[:], now.UTC()).Scan(&ownerID)
+	if err != nil {
+		return "", err
+	}
+	return ownerID, nil
+}
+
+// CreatePairingToken stores only the hash of a short-lived one-time pairing secret.
+func (store *Postgres) CreatePairingToken(ctx context.Context, ownerID string, tokenHash []byte, expiresAt time.Time) error {
+	_, err := store.pool.Exec(ctx, `
+		INSERT INTO pairing_tokens (token_hash, owner_id, expires_at)
+		VALUES ($1, $2, $3)`, tokenHash, ownerID, expiresAt.UTC())
+	if err != nil {
+		return fmt.Errorf("create pairing token: %w", err)
+	}
+	return nil
+}
+
+// ConsumePairingToken atomically consumes a pairing token, allocates a SIM ID, and stores a device credential hash.
+func (store *Postgres) ConsumePairingToken(ctx context.Context, tokenHash []byte, now time.Time, pairing DevicePairing) (DeviceRecord, error) {
+	tx, err := store.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return DeviceRecord{}, fmt.Errorf("begin device pairing: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var ownerID string
+	err = tx.QueryRow(ctx, `
+		UPDATE pairing_tokens
+		SET consumed_at = $2
+		WHERE token_hash = $1 AND owner_id IS NOT NULL AND consumed_at IS NULL AND expires_at > $2
+		RETURNING owner_id`, tokenHash, now.UTC()).Scan(&ownerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DeviceRecord{}, domain.ErrInvalidPairingToken
+	}
+	if err != nil {
+		return DeviceRecord{}, fmt.Errorf("consume pairing token: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", int64(0x53494d44)); err != nil {
+		return DeviceRecord{}, fmt.Errorf("lock numeric id allocation: %w", err)
+	}
+
+	var numericID int
+	err = tx.QueryRow(ctx, `
+		SELECT candidate
+		FROM generate_series(1, 99) AS candidate
+		LEFT JOIN devices ON devices.numeric_id = candidate AND devices.revoked_at IS NULL
+		WHERE devices.id IS NULL
+		ORDER BY candidate
+		LIMIT 1`).Scan(&numericID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DeviceRecord{}, domain.ErrNoNumericID
+	}
+	if err != nil {
+		return DeviceRecord{}, fmt.Errorf("allocate numeric id: %w", err)
+	}
+
+	record := DeviceRecord{
+		ID:                pairing.DeviceUUID,
+		NumericID:         numericID,
+		ProfileCiphertext: pairing.ProfileCiphertext,
+		IdentityPublicKey: pairing.IdentityPublicKey,
+		WrappedVaultKey:   pairing.WrappedVaultKey,
+	}
+	err = tx.QueryRow(ctx, `
+		INSERT INTO devices (id, numeric_id, profile_ciphertext, identity_public_key, wrapped_vault_key)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING paired_at`, pairing.DeviceUUID, numericID, pairing.ProfileCiphertext, pairing.IdentityPublicKey, pairing.WrappedVaultKey).Scan(&record.PairedAt)
+	if err != nil {
+		var postgresError *pgconn.PgError
+		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
+			return DeviceRecord{}, domain.ErrDeviceExists
+		}
+		return DeviceRecord{}, fmt.Errorf("insert paired device: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO device_credentials (device_id, credential_hash)
+		VALUES ($1, $2)`, pairing.DeviceUUID, pairing.CredentialHash); err != nil {
+		return DeviceRecord{}, fmt.Errorf("insert device credential: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return DeviceRecord{}, fmt.Errorf("commit device pairing: %w", err)
+	}
+	return record, nil
+}
+
+// AuthenticateDevice validates a device credential and records liveness without exposing encrypted profile data.
+func (store *Postgres) AuthenticateDevice(ctx context.Context, deviceID string, credential string, now time.Time) ([]byte, error) {
+	credentialHash, err := auth.TokenHash(credential)
+	if err != nil {
+		return nil, err
+	}
+	var identityPublicKey []byte
+	err = store.pool.QueryRow(ctx, `
+		UPDATE devices
+		SET last_seen_at = $3
+		FROM device_credentials
+		WHERE devices.id = $1
+		  AND device_credentials.device_id = devices.id
+		  AND device_credentials.credential_hash = $2
+		  AND devices.revoked_at IS NULL
+		  AND device_credentials.revoked_at IS NULL
+		RETURNING devices.identity_public_key`, deviceID, credentialHash[:], now.UTC()).Scan(&identityPublicKey)
+	if err != nil {
+		return nil, err
+	}
+	return identityPublicKey, nil
 }
 
 // CreateDevice atomically allocates the smallest free numeric identifier.

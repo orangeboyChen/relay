@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +28,9 @@ type Repository interface {
 	CreateSession(context.Context, string, auth.TokenPair) error
 	RotateSession(context.Context, string, auth.TokenPair, time.Time) error
 	RevokeSession(context.Context, string, time.Time) error
+	AuthenticateOwnerSession(context.Context, string, time.Time) (string, error)
+	CreatePairingToken(context.Context, string, []byte, time.Time) error
+	ConsumePairingToken(context.Context, []byte, time.Time, store.DevicePairing) (store.DeviceRecord, error)
 }
 
 // Config describes public endpoints advertised to clients.
@@ -33,6 +38,7 @@ type Config struct {
 	PublicBaseURL string
 	MediaUDPPort  int
 	MediaTCPPort  int
+	Now           func() time.Time
 }
 
 // Handler builds the versioned HTTP API.
@@ -41,8 +47,10 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", router.health)
 	mux.HandleFunc("GET /.well-known/sim-deck", router.discovery)
-	mux.HandleFunc("GET /v1/devices", router.listDevices)
-	mux.HandleFunc("PATCH /v1/devices/{deviceID}/numeric-id", router.updateNumericID)
+	mux.HandleFunc("GET /v1/devices", router.requireOwner(router.listDevices))
+	mux.HandleFunc("PATCH /v1/devices/{deviceID}/numeric-id", router.requireOwner(router.updateNumericID))
+	mux.HandleFunc("POST /v1/device-pairing-tokens", router.requireOwner(router.createPairingToken))
+	mux.HandleFunc("POST /v1/device-pairings", router.pairDevice)
 	mux.HandleFunc("POST /v1/events", router.insertEvent)
 	mux.HandleFunc("POST /v1/auth/bootstrap", router.bootstrapLogin)
 	mux.HandleFunc("POST /v1/auth/refresh", router.refreshSession)
@@ -54,6 +62,14 @@ type router struct {
 	repository Repository
 	config     Config
 }
+
+type ownerContextKey struct{}
+
+const (
+	pairingTokenLifetime      = 10 * time.Minute
+	maxProfileCiphertextBytes = 64 << 10
+	maxWrappedVaultKeyBytes   = 16 << 10
+)
 
 func (router *router) health(writer http.ResponseWriter, _ *http.Request) {
 	writeJSON(writer, http.StatusOK, map[string]string{"status": "ok"})
@@ -102,6 +118,90 @@ func (router *router) updateNumericID(writer http.ResponseWriter, request *http.
 		return
 	}
 	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (router *router) createPairingToken(writer http.ResponseWriter, request *http.Request) {
+	ownerID, ok := request.Context().Value(ownerContextKey{}).(string)
+	if !ok || ownerID == "" {
+		writeError(writer, http.StatusUnauthorized, "invalid_access_token", "Access token is invalid or expired.")
+		return
+	}
+	token, err := auth.NewOpaqueToken()
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "pairing_error", "Unable to create a pairing token.")
+		return
+	}
+	tokenHash, err := auth.TokenHash(token)
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "pairing_error", "Unable to create a pairing token.")
+		return
+	}
+	expiresAt := router.now().Add(pairingTokenLifetime)
+	if err := router.repository.CreatePairingToken(request.Context(), ownerID, tokenHash[:], expiresAt); err != nil {
+		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to store the pairing token.")
+		return
+	}
+	writeJSON(writer, http.StatusCreated, map[string]any{
+		"pairing_token": token,
+		"expires_at":    expiresAt,
+	})
+}
+
+func (router *router) pairDevice(writer http.ResponseWriter, request *http.Request) {
+	var body struct {
+		PairingToken      string `json:"pairing_token"`
+		DeviceUUID        string `json:"device_uuid"`
+		ProfileCiphertext []byte `json:"profile_ciphertext"`
+		IdentityPublicKey []byte `json:"identity_public_key"`
+		WrappedVaultKey   []byte `json:"wrapped_vault_key"`
+	}
+	if err := decodeJSON(request, &body); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	tokenHash, err := auth.TokenHash(body.PairingToken)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, "invalid_pairing_token", domain.ErrInvalidPairingToken.Error())
+		return
+	}
+	if !validUUID(body.DeviceUUID) || len(body.IdentityPublicKey) != ed25519.PublicKeySize || len(body.ProfileCiphertext) == 0 || len(body.ProfileCiphertext) > maxProfileCiphertextBytes || len(body.WrappedVaultKey) > maxWrappedVaultKeyBytes {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_device", "Device identity or encrypted profile is invalid.")
+		return
+	}
+	credential, err := auth.NewOpaqueToken()
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "pairing_error", "Unable to create a device credential.")
+		return
+	}
+	credentialHash, err := auth.TokenHash(credential)
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "pairing_error", "Unable to create a device credential.")
+		return
+	}
+	record, err := router.repository.ConsumePairingToken(request.Context(), tokenHash[:], router.now(), store.DevicePairing{
+		DeviceUUID:        body.DeviceUUID,
+		ProfileCiphertext: body.ProfileCiphertext,
+		IdentityPublicKey: body.IdentityPublicKey,
+		WrappedVaultKey:   body.WrappedVaultKey,
+		CredentialHash:    credentialHash[:],
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrInvalidPairingToken):
+			writeError(writer, http.StatusUnauthorized, "invalid_pairing_token", err.Error())
+		case errors.Is(err, domain.ErrDeviceExists):
+			writeError(writer, http.StatusConflict, "device_exists", err.Error())
+		case errors.Is(err, domain.ErrNoNumericID):
+			writeError(writer, http.StatusConflict, "numeric_ids_exhausted", err.Error())
+		default:
+			writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to pair the device.")
+		}
+		return
+	}
+	writeJSON(writer, http.StatusCreated, map[string]any{
+		"device":     record,
+		"credential": credential,
+	})
 }
 
 func (router *router) insertEvent(writer http.ResponseWriter, request *http.Request) {
@@ -191,6 +291,40 @@ func (router *router) logout(writer http.ResponseWriter, request *http.Request) 
 		return
 	}
 	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (router *router) requireOwner(next http.HandlerFunc) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		token, ok := bearerToken(request.Header.Get("Authorization"))
+		if !ok {
+			writeError(writer, http.StatusUnauthorized, "invalid_access_token", "Access token is required.")
+			return
+		}
+		ownerID, err := router.repository.AuthenticateOwnerSession(request.Context(), token, router.now())
+		if err != nil {
+			writeError(writer, http.StatusUnauthorized, "invalid_access_token", "Access token is invalid or expired.")
+			return
+		}
+		context := context.WithValue(request.Context(), ownerContextKey{}, ownerID)
+		next(writer, request.WithContext(context))
+	}
+}
+
+func (router *router) now() time.Time {
+	if router.config.Now != nil {
+		return router.config.Now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+func validUUID(value string) bool {
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {
+		return false
+	}
+	encoded := strings.ReplaceAll(value, "-", "")
+	decoded := make([]byte, 16)
+	_, err := hex.Decode(decoded, []byte(encoded))
+	return err == nil
 }
 
 func bearerToken(value string) (string, bool) {

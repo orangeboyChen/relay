@@ -30,3 +30,20 @@ func TestTokenHashRejectsMalformedToken(t *testing.T) {
 		t.Fatalf("TokenHash() error = %v, want ErrInvalidToken", err)
 	}
 }
+
+func TestNewOpaqueTokenProducesHashableIndependentCredentials(t *testing.T) {
+	first, err := NewOpaqueToken()
+	if err != nil {
+		t.Fatalf("NewOpaqueToken() error = %v", err)
+	}
+	second, err := NewOpaqueToken()
+	if err != nil {
+		t.Fatalf("NewOpaqueToken() error = %v", err)
+	}
+	if first == second {
+		t.Fatal("opaque credentials are equal")
+	}
+	if _, err := TokenHash(first); err != nil {
+		t.Fatalf("TokenHash() error = %v", err)
+	}
+}

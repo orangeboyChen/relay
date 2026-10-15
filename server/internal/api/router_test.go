@@ -24,6 +24,14 @@ type fakeRepository struct {
 	sessionPair      auth.TokenPair
 	rotatedRefresh   string
 	revokedAccess    string
+	ownerID          string
+	ownerAuthError   error
+	pairingOwnerID   string
+	pairingTokenHash []byte
+	pairingExpiresAt time.Time
+	pairing          store.DevicePairing
+	pairingRecord    store.DeviceRecord
+	pairingError     error
 }
 
 func (fake *fakeRepository) ListDevices(context.Context) ([]store.DeviceRecord, error) {
@@ -60,6 +68,28 @@ func (fake *fakeRepository) RevokeSession(_ context.Context, access string, _ ti
 	return nil
 }
 
+func (fake *fakeRepository) AuthenticateOwnerSession(_ context.Context, _ string, _ time.Time) (string, error) {
+	if fake.ownerAuthError != nil {
+		return "", fake.ownerAuthError
+	}
+	if fake.ownerID == "" {
+		return "owner-1", nil
+	}
+	return fake.ownerID, nil
+}
+
+func (fake *fakeRepository) CreatePairingToken(_ context.Context, ownerID string, tokenHash []byte, expiresAt time.Time) error {
+	fake.pairingOwnerID = ownerID
+	fake.pairingTokenHash = append([]byte(nil), tokenHash...)
+	fake.pairingExpiresAt = expiresAt
+	return nil
+}
+
+func (fake *fakeRepository) ConsumePairingToken(_ context.Context, _ []byte, _ time.Time, pairing store.DevicePairing) (store.DeviceRecord, error) {
+	fake.pairing = pairing
+	return fake.pairingRecord, fake.pairingError
+}
+
 func TestDiscovery(t *testing.T) {
 	handler := Handler(&fakeRepository{}, Config{PublicBaseURL: "https://deck.example", MediaUDPPort: 49152, MediaTCPPort: 49153})
 	request := httptest.NewRequest(http.MethodGet, "/.well-known/sim-deck", nil)
@@ -82,6 +112,7 @@ func TestUpdateNumericID(t *testing.T) {
 	repository := &fakeRepository{}
 	handler := Handler(repository, Config{})
 	request := httptest.NewRequest(http.MethodPatch, "/v1/devices/device-1/numeric-id", bytes.NewBufferString(`{"numeric_id":2}`))
+	request.Header.Set("Authorization", "Bearer access-token")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 

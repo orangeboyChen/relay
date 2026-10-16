@@ -263,7 +263,9 @@ def main():
     result = usb.libusb_init(ctypes.byref(context))
     if result != 0:
         raise RuntimeError(f"libusb_init: {error_name(usb, result)}")
-    devices = config_pointer = handle = None
+    devices = None
+    config_pointer = ctypes.POINTER(ConfigDescriptor)()
+    handle = ctypes.c_void_p()
     claimed = []
     stopped = threading.Event()
     capture = playback = None

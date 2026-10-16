@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -937,6 +938,13 @@ func decodeJSON(request *http.Request, value any) error {
 	decoder := json.NewDecoder(http.MaxBytesReader(nil, request.Body, 1<<20))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
+		return fmt.Errorf("invalid JSON body: %w", err)
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("invalid JSON body: multiple JSON values")
+		}
 		return fmt.Errorf("invalid JSON body: %w", err)
 	}
 	return nil

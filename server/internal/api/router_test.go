@@ -431,6 +431,9 @@ var _ = Describe("HTTP API", func() {
 			Expect(response.Body.String()).To(ContainSubstring(expectedCode))
 		},
 		Entry("malformed JSON", `{`, nil, http.StatusBadRequest, "invalid_request"),
+		Entry("trailing JSON value", `{"numeric_id":2}{"numeric_id":3}`, nil, http.StatusBadRequest, "invalid_request"),
+		Entry("trailing invalid data", `{"numeric_id":2} trailing`, nil, http.StatusBadRequest, "invalid_request"),
+		Entry("unknown field", `{"numeric_id":2,"unexpected":true}`, nil, http.StatusBadRequest, "invalid_request"),
 		Entry("invalid identifier", `{"numeric_id":0}`, domain.ErrInvalidNumericID, http.StatusUnprocessableEntity, "invalid_numeric_id"),
 		Entry("duplicate identifier", `{"numeric_id":2}`, domain.ErrDuplicateNumericID, http.StatusConflict, "duplicate_numeric_id"),
 		Entry("missing device", `{"numeric_id":2}`, pgx.ErrNoRows, http.StatusNotFound, "device_not_found"),

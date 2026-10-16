@@ -162,3 +162,56 @@ development network or encrypted VPN with
 `SIM_DECK_ALLOW_INSECURE_HTTP=true`; production pairing over an untrusted
 network must use HTTPS because device credentials still require transport
 protection even though message and call content is end-to-end encrypted.
+
+## Start and pair the first Linux modem
+
+Generate a one-time pairing token from the server as described in the server
+README. From this repository on the Linux modem host, store it in the secret
+file without putting the token on a Docker command line:
+
+```sh
+install -m 600 /dev/null secrets/modem-1-pairing-token
+printf '%s' "$pairing_token" > secrets/modem-1-pairing-token
+unset pairing_token pairing_json access_token
+```
+
+Set the server URL and the stable host paths created by the udev rules. These
+example paths must be replaced with the paths for the first physical modem:
+
+```sh
+export SIM_DECK_SERVER_URL=https://sim-deck.example.com
+export SIM_DECK_MODEM_1_AT_DEVICE=/dev/sim-deck/modem-1-at
+export SIM_DECK_MODEM_1_AUDIO_CONTROL=/dev/sim-deck/modem-1-audio-control
+export SIM_DECK_MODEM_1_AUDIO_CAPTURE=/dev/sim-deck/modem-1-audio-capture
+export SIM_DECK_MODEM_1_AUDIO_PLAYBACK=/dev/sim-deck/modem-1-audio-playback
+export SIM_DECK_DIALOUT_GID="$(getent group dialout | cut -d: -f3)"
+export SIM_DECK_AUDIO_GID="$(getent group audio | cut -d: -f3)"
+```
+
+For a server reached over plain HTTP on a trusted LAN or encrypted VPN, also
+set `SIM_DECK_ALLOW_INSECURE_HTTP=true`. Do not enable that option across an
+untrusted network.
+
+Start only the first modem service and inspect its readiness and logs:
+
+```sh
+docker compose -f compose.example.yaml up --build -d modem-1
+docker compose -f compose.example.yaml ps modem-1
+curl --fail-with-body http://127.0.0.1:18081/healthz
+docker compose -f compose.example.yaml logs --tail=100 modem-1
+```
+
+A successful log entry contains `device agent ready`, the immutable device
+UUID, and the assigned numeric SIM ID. The server's authenticated
+`GET /v1/devices` endpoint and the iOS device-management screen then show the
+same device. After successful pairing, clear the consumed token while keeping
+the empty secret file for future Compose recreations:
+
+```sh
+install -m 600 /dev/null secrets/modem-1-pairing-token
+```
+
+The named `modem-1-state` volume must remain attached to this modem. Removing
+or replacing it creates a new endpoint identity and requires a new pairing
+token. For a second modem, repeat the process with a new token, the `modem-2`
+paths, and the independent `modem-2-state` volume.

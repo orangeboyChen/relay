@@ -532,8 +532,8 @@ struct SealedCallCommand {
 }
 
 enum EncryptedCallCommandCodec {
-    static func seal(
-        payload: CallCommandPayload,
+    static func seal<Payload: Encodable>(
+        payload: Payload,
         recipientPublicKey: Data,
         senderPrivateKey: Curve25519.KeyAgreement.PrivateKey,
         nonce: AES.GCM.Nonce,

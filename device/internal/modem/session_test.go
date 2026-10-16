@@ -2,6 +2,7 @@ package modem
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -155,6 +156,40 @@ var _ = Describe("Modem session", func() {
 			_ = client.Close()
 			_ = modemTransport.Close()
 		}
+	})
+
+	It("logs modem rejection details without recipient or message content", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := at.NewClient(clientTransport)
+		var logs bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&logs, nil))
+		session, err := NewSession(
+			client,
+			sms.NewInbox(time.Hour),
+			MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }),
+			logger,
+			100*time.Millisecond,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			_, _ = reader.ReadString('\r')
+			_, _ = modemTransport.Write([]byte("\r\n> "))
+			_, _ = reader.ReadBytes(0x1a)
+			_, _ = modemTransport.Write([]byte("\r\n+CMS ERROR: 500\r\n"))
+		}()
+
+		err = session.SendSMS(context.Background(), "13500000000", "private body", 1)
+
+		Expect(err).To(MatchError(ContainSubstring("+CMS ERROR: 500")))
+		Expect(logs.String()).To(ContainSubstring("SMS submission failed"))
+		Expect(logs.String()).To(ContainSubstring("terminal=\"+CMS ERROR: 500\""))
+		Expect(logs.String()).NotTo(ContainSubstring("13500000000"))
+		Expect(logs.String()).NotTo(ContainSubstring("private body"))
 	})
 
 	It("rejects an invalid outbound SMS before writing to the modem", func() {

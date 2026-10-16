@@ -87,13 +87,19 @@ func (session *Session) SendSMS(ctx context.Context, destination string, text st
 	for _, pdu := range pdus {
 		response, err := session.sendPrompt(ctx, fmt.Sprintf("AT+CMGS=%d", pdu.TPDULength), []byte(pdu.Hex))
 		if err != nil {
-			return fmt.Errorf("submit SMS segment %d of %d: %w", pdu.Segment, pdu.Total, err)
+			failure := fmt.Errorf("submit SMS segment %d of %d: %w", pdu.Segment, pdu.Total, err)
+			session.logger.Warn("SMS submission failed", "segment", pdu.Segment, "total", pdu.Total, "error", failure)
+			return failure
 		}
 		if !response.OK() {
-			return fmt.Errorf("modem rejected SMS segment %d of %d: %s", pdu.Segment, pdu.Total, response.Terminal)
+			failure := fmt.Errorf("modem rejected SMS segment %d of %d: %s", pdu.Segment, pdu.Total, response.Terminal)
+			session.logger.Warn("SMS submission failed", "segment", pdu.Segment, "total", pdu.Total, "terminal", response.Terminal)
+			return failure
 		}
 		if !hasMessageReference(response.Lines) {
-			return fmt.Errorf("modem SMS segment %d of %d response is missing +CMGS", pdu.Segment, pdu.Total)
+			failure := fmt.Errorf("modem SMS segment %d of %d response is missing +CMGS", pdu.Segment, pdu.Total)
+			session.logger.Warn("SMS submission failed", "segment", pdu.Segment, "total", pdu.Total, "error", failure)
+			return failure
 		}
 	}
 	return nil

@@ -328,6 +328,9 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(records).To(HaveLen(2))
 		Expect(records[0].NumericID).To(Equal(1))
+		Expect(records[0].RadioAccessTechnology).To(BeEmpty())
+		Expect(records[0].SignalBars).To(BeNil())
+		Expect(records[0].RadioStatusUpdatedAt).To(BeNil())
 		Expect(records[1].NumericID).To(Equal(5))
 	})
 

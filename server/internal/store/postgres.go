@@ -1082,7 +1082,7 @@ func (store *Postgres) RevokeDevice(ctx context.Context, deviceID string, revoke
 func (store *Postgres) ListDevices(ctx context.Context) ([]DeviceRecord, error) {
 	rows, err := store.pool.Query(ctx, `
 		SELECT id, numeric_id, profile_ciphertext, identity_public_key, command_public_key,
-		       wrapped_vault_key, paired_at, last_seen_at, radio_access_technology,
+		       wrapped_vault_key, paired_at, last_seen_at, COALESCE(radio_access_technology, ''),
 		       signal_bars, radio_status_updated_at
 		FROM devices
 		WHERE revoked_at IS NULL

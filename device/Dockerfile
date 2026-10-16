@@ -20,4 +20,6 @@ COPY --from=build /out/sim-deck-device /usr/local/bin/sim-deck-device
 USER simdeck:simdeck
 VOLUME ["/var/lib/sim-deck"]
 EXPOSE 8080
+HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=3 \
+    CMD wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1
 ENTRYPOINT ["/usr/local/bin/sim-deck-device"]

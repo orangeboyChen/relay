@@ -142,7 +142,9 @@ port. Do not add multiple modem mappings to one container.
 The local readiness endpoints in the example are
 `http://127.0.0.1:18081/healthz` and `http://127.0.0.1:18082/healthz`. Readiness
 becomes healthy only after the AT port is initialized and server binding has
-succeeded.
+succeeded. The image declares the same probe as its Docker health check, so a
+container stays `starting` or becomes `unhealthy` instead of appearing ready
+while its modem or server binding is unavailable.
 
 Plain HTTP is rejected by default. It can be enabled only for an isolated local
 development network with `SIM_DECK_ALLOW_INSECURE_HTTP=true`; production pairing

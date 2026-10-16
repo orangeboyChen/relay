@@ -1,6 +1,7 @@
 package incomingcall
 
 import (
+	"bytes"
 	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -38,8 +39,8 @@ var _ = Describe("Incoming call notification", func() {
 		privateTwo, err = ecdh.X25519().GenerateKey(rand.Reader)
 		Expect(err).NotTo(HaveOccurred())
 		recipients = []Recipient{
-			{InstallationID: "01900000-0000-7000-8000-000000000102", KeyAgreementPublicKey: privateTwo.PublicKey().Bytes()},
-			{InstallationID: "01900000-0000-7000-8000-000000000101", KeyAgreementPublicKey: privateOne.PublicKey().Bytes()},
+			{InstallationID: "01900000-0000-7000-8000-000000000102", IdentityPublicKey: bytes.Repeat([]byte{12}, ed25519.PublicKeySize), KeyAgreementPublicKey: privateTwo.PublicKey().Bytes()},
+			{InstallationID: "01900000-0000-7000-8000-000000000101", IdentityPublicKey: bytes.Repeat([]byte{11}, ed25519.PublicKeySize), KeyAgreementPublicKey: privateOne.PublicKey().Bytes()},
 		}
 	})
 
@@ -103,6 +104,7 @@ var _ = Describe("Incoming call notification", func() {
 		},
 		Entry("no recipients", func(value *[]Recipient, _ *call.Snapshot) { *value = nil }),
 		Entry("invalid installation ID", func(value *[]Recipient, _ *call.Snapshot) { (*value)[0].InstallationID = "invalid" }),
+		Entry("short identity key", func(value *[]Recipient, _ *call.Snapshot) { (*value)[0].IdentityPublicKey = []byte("short") }),
 		Entry("short public key", func(value *[]Recipient, _ *call.Snapshot) { (*value)[0].KeyAgreementPublicKey = []byte("short") }),
 		Entry("duplicate recipient", func(value *[]Recipient, _ *call.Snapshot) { (*value)[1] = (*value)[0] }),
 		Entry("non-ringing state", func(_ *[]Recipient, value *call.Snapshot) { value.State = call.StateActive }),

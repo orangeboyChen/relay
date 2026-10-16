@@ -36,6 +36,7 @@ var phoneNumberPattern = regexp.MustCompile(`^\+?[0-9]{1,20}$`)
 // Recipient is one approved iPhone public encryption identity.
 type Recipient struct {
 	InstallationID        string `json:"installation_id"`
+	IdentityPublicKey     []byte `json:"identity_public_key"`
 	KeyAgreementPublicKey []byte `json:"key_agreement_public_key"`
 }
 
@@ -175,7 +176,7 @@ func validateRecipients(recipients []Recipient) ([]Recipient, error) {
 		return validated[left].InstallationID < validated[right].InstallationID
 	})
 	for index, recipient := range validated {
-		if !validUUID(recipient.InstallationID) || len(recipient.KeyAgreementPublicKey) != keyBytes {
+		if !validUUID(recipient.InstallationID) || len(recipient.IdentityPublicKey) != ed25519.PublicKeySize || len(recipient.KeyAgreementPublicKey) != keyBytes {
 			return nil, errors.New("installation recipient identity is invalid")
 		}
 		if index > 0 && recipient.InstallationID == validated[index-1].InstallationID {

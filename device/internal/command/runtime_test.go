@@ -6,6 +6,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
+	"crypto/ed25519"
 	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
@@ -19,16 +20,28 @@ import (
 
 	"sim-deck-device/internal/call"
 	"sim-deck-device/internal/identity"
+	"sim-deck-device/internal/incomingcall"
 )
 
+const testInstallationID = "01900000-0000-7000-8000-000000000101"
+
 type fakeRemote struct {
-	claims        []*Envelope
-	claimError    error
-	completeError error
-	deviceID      string
-	credential    string
-	commandID     string
-	result        EncryptedResult
+	claims         []*Envelope
+	claimError     error
+	completeError  error
+	deviceID       string
+	credential     string
+	commandID      string
+	result         EncryptedResult
+	recipients     []incomingcall.Recipient
+	recipientError error
+}
+
+func (remote *fakeRemote) ListInstallationRecipients(context.Context, string, string) ([]incomingcall.Recipient, error) {
+	if remote.recipientError != nil {
+		return nil, remote.recipientError
+	}
+	return remote.recipients, nil
 }
 
 func (remote *fakeRemote) Claim(context.Context, string, string) (*Envelope, error) {
@@ -166,7 +179,12 @@ var _ = Describe("Encrypted command runtime", func() {
 		state = identity.State{
 			Version: 2, DeviceUUID: deviceID, CommandPrivateKey: deviceKey.Bytes(), Credential: "device-secret",
 		}
-		remote = &fakeRemote{}
+		signingKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{9}, ed25519.SeedSize))
+		remote = &fakeRemote{recipients: []incomingcall.Recipient{{
+			InstallationID:        testInstallationID,
+			IdentityPublicKey:     signingKey.Public().(ed25519.PublicKey),
+			KeyAgreementPublicKey: bytes.Repeat([]byte{7}, 32),
+		}}}
 		calls = &fakeCalls{state: call.StateIdle}
 		events = &fakeEventRegistrar{}
 		media = &fakeCallMedia{answer: "answer-sdp"}
@@ -361,9 +379,19 @@ var _ = Describe("Encrypted command runtime", func() {
 
 		err := runtime.process(context.Background(), envelope)
 
-		Expect(err).To(MatchError(ContainSubstring("decrypt command")))
+		Expect(err).To(MatchError(ContainSubstring("verify command")))
 		Expect(calls.operations).To(BeEmpty())
 		Expect(remote.commandID).To(BeEmpty())
+	})
+
+	It("rejects commands from unapproved or unavailable installation identities", func() {
+		envelope, _ := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.end", CallID: "call-1"})
+		remote.recipients = nil
+		Expect(runtime.process(context.Background(), envelope)).To(MatchError(ContainSubstring("verify command")))
+		Expect(calls.operations).To(BeEmpty())
+
+		remote.recipientError = errors.New("server unavailable")
+		Expect(runtime.process(context.Background(), envelope)).To(MatchError(ContainSubstring("load trusted command senders")))
 	})
 
 	It("surfaces completion and entropy failures", func() {
@@ -418,10 +446,16 @@ func sealCommand(state identity.State, senderKey *ecdh.PrivateKey, commandID str
 	Expect(err).NotTo(HaveOccurred())
 	plaintext, err := json.Marshal(payload)
 	Expect(err).NotTo(HaveOccurred())
-	return Envelope{
-		ID: commandID, DeviceUUID: state.DeviceUUID, SenderPublicKey: senderKey.PublicKey().Bytes(), Nonce: nonce,
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	envelope := Envelope{
+		ID: commandID, DeviceUUID: state.DeviceUUID, SenderInstallationID: testInstallationID,
+		SenderPublicKey: senderKey.PublicKey().Bytes(), Nonce: nonce,
 		Ciphertext: aead.Seal(nil, nonce, plaintext, associatedData("sim-deck-command-v1", commandID, state.DeviceUUID)),
-	}, sharedSecret
+		CreatedAt:  now, ExpiresAt: now.Add(time.Minute),
+	}
+	signingKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{9}, ed25519.SeedSize))
+	envelope.Signature = ed25519.Sign(signingKey, commandSignedData(envelope))
+	return envelope, sharedSecret
 }
 
 func openResult(sharedSecret []byte, envelope Envelope, encrypted EncryptedResult) Result {

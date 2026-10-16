@@ -46,6 +46,7 @@ var _ = Describe("Installation recipient client", func() {
 	It("lists approved public encryption identities with device authentication", func() {
 		recipients := []InstallationRecipient{{
 			InstallationID:        "01900000-0000-7000-8000-000000000101",
+			IdentityPublicKey:     bytes.Repeat([]byte{6}, ed25519.PublicKeySize),
 			KeyAgreementPublicKey: bytes.Repeat([]byte{7}, 32),
 		}}
 		client := clientWithHandler(func(request *http.Request) (*http.Response, error) {
@@ -77,9 +78,9 @@ var _ = Describe("Installation recipient client", func() {
 	})
 
 	DescribeTable("rejects malformed recipient metadata",
-		func(installationID string, publicKey []byte) {
+		func(installationID string, identityPublicKey []byte, agreementPublicKey []byte) {
 			body, err := json.Marshal(map[string]any{"installations": []InstallationRecipient{{
-				InstallationID: installationID, KeyAgreementPublicKey: publicKey,
+				InstallationID: installationID, IdentityPublicKey: identityPublicKey, KeyAgreementPublicKey: agreementPublicKey,
 			}}})
 			Expect(err).NotTo(HaveOccurred())
 			client := clientWithHandler(func(*http.Request) (*http.Response, error) {
@@ -90,8 +91,9 @@ var _ = Describe("Installation recipient client", func() {
 
 			Expect(err).To(MatchError("server returned an invalid installation recipient"))
 		},
-		Entry("invalid installation UUID", "not-a-uuid", bytes.Repeat([]byte{8}, 32)),
-		Entry("invalid X25519 key", "01900000-0000-7000-8000-000000000101", bytes.Repeat([]byte{8}, 31)),
+		Entry("invalid installation UUID", "not-a-uuid", bytes.Repeat([]byte{7}, 32), bytes.Repeat([]byte{8}, 32)),
+		Entry("invalid Ed25519 key", "01900000-0000-7000-8000-000000000101", bytes.Repeat([]byte{7}, 31), bytes.Repeat([]byte{8}, 32)),
+		Entry("invalid X25519 key", "01900000-0000-7000-8000-000000000101", bytes.Repeat([]byte{7}, 32), bytes.Repeat([]byte{8}, 31)),
 	)
 
 	It("maps malformed responses and request, transport, and server failures", func() {

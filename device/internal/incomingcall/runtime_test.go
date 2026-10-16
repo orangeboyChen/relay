@@ -1,6 +1,7 @@
 package incomingcall
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdh"
 	"crypto/ed25519"
@@ -75,6 +76,7 @@ var _ = Describe("Incoming call runtime", func() {
 		}
 		remote = &fakeRemote{recipients: []Recipient{{
 			InstallationID:        "01900000-0000-7000-8000-000000000101",
+			IdentityPublicKey:     bytes.Repeat([]byte{8}, ed25519.PublicKeySize),
 			KeyAgreementPublicKey: agreementKey.PublicKey().Bytes(),
 		}}}
 		events = &fakeEventRegistrar{}
@@ -111,6 +113,7 @@ var _ = Describe("Incoming call runtime", func() {
 
 		remote.recipients = []Recipient{{
 			InstallationID:        "01900000-0000-7000-8000-000000000101",
+			IdentityPublicKey:     bytes.Repeat([]byte{8}, ed25519.PublicKeySize),
 			KeyAgreementPublicKey: mustAgreementPublicKey(),
 		}}
 		Expect(runtime.process(context.Background(), call.Snapshot{State: call.StateRinging, IncomingNumber: "13500000000"})).To(Succeed())

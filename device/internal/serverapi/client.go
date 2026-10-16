@@ -88,7 +88,7 @@ func (client *Client) ListInstallationRecipients(ctx context.Context, deviceID s
 		return nil, fmt.Errorf("decode installation recipients: %w", err)
 	}
 	for _, recipient := range body.Installations {
-		if !validUUID(recipient.InstallationID) || len(recipient.KeyAgreementPublicKey) != 32 {
+		if !validUUID(recipient.InstallationID) || len(recipient.IdentityPublicKey) != ed25519.PublicKeySize || len(recipient.KeyAgreementPublicKey) != 32 {
 			return nil, errors.New("server returned an invalid installation recipient")
 		}
 	}

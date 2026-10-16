@@ -5,9 +5,11 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
+	"crypto/ed25519"
 	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +19,7 @@ import (
 
 	"sim-deck-device/internal/call"
 	"sim-deck-device/internal/identity"
+	"sim-deck-device/internal/incomingcall"
 )
 
 const (
@@ -27,13 +30,15 @@ const (
 
 // Envelope is one opaque command leased from the server.
 type Envelope struct {
-	ID              string    `json:"id"`
-	DeviceUUID      string    `json:"device_uuid"`
-	SenderPublicKey []byte    `json:"sender_public_key"`
-	Nonce           []byte    `json:"nonce"`
-	Ciphertext      []byte    `json:"ciphertext"`
-	CreatedAt       time.Time `json:"created_at"`
-	ExpiresAt       time.Time `json:"expires_at"`
+	ID                   string    `json:"id"`
+	DeviceUUID           string    `json:"device_uuid"`
+	SenderInstallationID string    `json:"sender_installation_id"`
+	SenderPublicKey      []byte    `json:"sender_public_key"`
+	Nonce                []byte    `json:"nonce"`
+	Ciphertext           []byte    `json:"ciphertext"`
+	Signature            []byte    `json:"signature"`
+	CreatedAt            time.Time `json:"created_at"`
+	ExpiresAt            time.Time `json:"expires_at"`
 }
 
 // EncryptedResult is the opaque completion returned through the server.
@@ -63,6 +68,7 @@ type Result struct {
 
 // Remote provides authenticated opaque command delivery.
 type Remote interface {
+	ListInstallationRecipients(context.Context, string, string) ([]incomingcall.Recipient, error)
 	Claim(context.Context, string, string) (*Envelope, error)
 	Complete(context.Context, string, string, string, EncryptedResult) error
 }
@@ -108,6 +114,7 @@ type Runtime struct {
 	random       io.Reader
 	events       CallEventRegistrar
 	media        CallMedia
+	now          func() time.Time
 }
 
 // NewRuntime creates a command runtime with a bounded idle polling interval.
@@ -120,7 +127,7 @@ func NewRuntime(remote Remote, state identity.State, calls Calls, pollInterval t
 	}
 	return &Runtime{
 		remote: remote, identity: state, calls: calls, pollInterval: pollInterval,
-		random: rand.Reader, events: dependencies.Events, media: dependencies.Media,
+		random: rand.Reader, events: dependencies.Events, media: dependencies.Media, now: time.Now,
 	}, nil
 }
 
@@ -146,6 +153,20 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 }
 
 func (runtime *Runtime) process(ctx context.Context, envelope Envelope) error {
+	recipients, err := runtime.remote.ListInstallationRecipients(ctx, runtime.identity.DeviceUUID, runtime.identity.Credential)
+	if err != nil {
+		return fmt.Errorf("load trusted command senders: %w", err)
+	}
+	var verificationKey ed25519.PublicKey
+	for _, recipient := range recipients {
+		if recipient.InstallationID == envelope.SenderInstallationID {
+			verificationKey = ed25519.PublicKey(recipient.IdentityPublicKey)
+			break
+		}
+	}
+	if err := verifyEnvelope(envelope, verificationKey, runtime.now()); err != nil {
+		return fmt.Errorf("verify command %s: %w", envelope.ID, err)
+	}
 	payload, sharedSecret, err := open(runtime.identity, envelope)
 	result := Result{Version: protocolVersion, CallState: runtime.calls.State()}
 	if err != nil {
@@ -281,6 +302,37 @@ func open(state identity.State, envelope Envelope) (Payload, []byte, error) {
 		return Payload{}, nil, errInvalidCommand
 	}
 	return payload, sharedSecret, nil
+}
+
+func verifyEnvelope(envelope Envelope, verificationKey ed25519.PublicKey, now time.Time) error {
+	if !identity.ValidDeviceUUID(envelope.ID) || !identity.ValidDeviceUUID(envelope.DeviceUUID) ||
+		!identity.ValidDeviceUUID(envelope.SenderInstallationID) || len(verificationKey) != ed25519.PublicKeySize ||
+		len(envelope.SenderPublicKey) != keyBytes || len(envelope.Nonce) != nonceBytes || len(envelope.Ciphertext) == 0 ||
+		len(envelope.Signature) != ed25519.SignatureSize || envelope.CreatedAt.IsZero() ||
+		!envelope.ExpiresAt.After(now) || envelope.ExpiresAt.After(envelope.CreatedAt.Add(5*time.Minute)) {
+		return errInvalidCommand
+	}
+	if !ed25519.Verify(verificationKey, commandSignedData(envelope), envelope.Signature) {
+		return errInvalidCommand
+	}
+	return nil
+}
+
+func commandSignedData(envelope Envelope) []byte {
+	buffer := make([]byte, 0, 256+len(envelope.Ciphertext))
+	for _, field := range [][]byte{
+		[]byte("sim-deck-command-envelope-v2"), []byte(envelope.ID), []byte(envelope.DeviceUUID),
+		[]byte(envelope.SenderInstallationID), envelope.SenderPublicKey, envelope.Nonce, envelope.Ciphertext,
+	} {
+		buffer = appendCommandField(buffer, field)
+	}
+	buffer = binary.BigEndian.AppendUint64(buffer, uint64(envelope.CreatedAt.UTC().UnixMilli()))
+	return binary.BigEndian.AppendUint64(buffer, uint64(envelope.ExpiresAt.UTC().UnixMilli()))
+}
+
+func appendCommandField(buffer []byte, value []byte) []byte {
+	buffer = binary.BigEndian.AppendUint32(buffer, uint32(len(value)))
+	return append(buffer, value...)
 }
 
 func sealResult(random io.Reader, sharedSecret []byte, envelope Envelope, result Result) (EncryptedResult, error) {

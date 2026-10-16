@@ -54,6 +54,7 @@ var _ = Describe("Embedded migrations", func() {
 		Entry("incoming call notifications", "migrations/008_incoming_call_notifications.sql", "incoming_call_recipients"),
 		Entry("incoming call claims", "migrations/009_incoming_call_claims.sql", "incoming_call_claims"),
 		Entry("outbox expiry", "migrations/010_outbox_expiry.sql", "expires_at"),
+		Entry("device discovery", "migrations/012_device_discovery.sql", "device_discoveries"),
 	)
 })
 
@@ -89,7 +90,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 			       messages, attachments, calls, outbox_jobs, audit_events,
 			       auth_sessions, device_credentials, encrypted_device_commands,
 			       incoming_call_notifications, incoming_call_recipients,
-			       incoming_call_claims
+			       incoming_call_claims, device_discovery_sessions, device_discoveries
 			RESTART IDENTITY CASCADE`)
 		Expect(err).NotTo(HaveOccurred())
 	})
@@ -299,6 +300,115 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		wrongPairing.CredentialHash = bytes.Repeat([]byte{8}, len(pairing.CredentialHash))
 		_, err = database.ConsumePairingToken(context.Background(), pairingHash[:], now, wrongPairing)
 		Expect(errors.Is(err, domain.ErrInvalidPairingToken)).To(BeTrue())
+	})
+
+	It("opens, closes, and replaces the owner device discovery window", func() {
+		owner := createOwner()
+
+		session, err := database.OpenDeviceDiscovery(context.Background(), owner.ID, now, now.Add(10*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(session.OwnerID).To(Equal(owner.ID))
+		Expect(session.Active(now.Add(9 * time.Minute))).To(BeTrue())
+		Expect(session.Active(now.Add(10 * time.Minute))).To(BeFalse())
+
+		loaded, err := database.GetDeviceDiscoverySession(context.Background(), owner.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(loaded).To(Equal(session))
+		Expect(database.CloseDeviceDiscovery(context.Background(), owner.ID, now.Add(time.Minute))).To(Succeed())
+		closed, err := database.GetDeviceDiscoverySession(context.Background(), owner.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(closed.Active(now.Add(2 * time.Minute))).To(BeFalse())
+
+		reopened, err := database.OpenDeviceDiscovery(context.Background(), owner.ID, now.Add(3*time.Minute), now.Add(13*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(reopened.ClosedAt).To(BeNil())
+		Expect(reopened.Active(now.Add(4 * time.Minute))).To(BeTrue())
+		_, err = database.OpenDeviceDiscovery(context.Background(), owner.ID, now, now)
+		Expect(err).To(MatchError("device discovery expiration must be after its opening time"))
+	})
+
+	It("records idempotent candidates only while discovery is active", func() {
+		owner := createOwner()
+		candidate := DeviceDiscoveryRequest{
+			DeviceUUID: firstDeviceID, IdentityPublicKey: bytes.Repeat([]byte{1}, ed25519.PublicKeySize),
+			CommandPublicKey: bytes.Repeat([]byte{2}, 32), CredentialHash: bytes.Repeat([]byte{3}, 32),
+		}
+
+		_, err := database.SubmitDeviceDiscovery(context.Background(), now, candidate)
+		Expect(errors.Is(err, domain.ErrDeviceDiscoveryClosed)).To(BeTrue())
+		_, err = database.OpenDeviceDiscovery(context.Background(), owner.ID, now, now.Add(10*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		created, err := database.SubmitDeviceDiscovery(context.Background(), now.Add(time.Minute), candidate)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created.DeviceUUID).To(Equal(firstDeviceID))
+		Expect(created.Status).To(Equal(DeviceDiscoveryPending))
+		Expect(created.ExpiresAt).To(Equal(now.Add(10 * time.Minute)))
+
+		retried, err := database.SubmitDeviceDiscovery(context.Background(), now.Add(2*time.Minute), candidate)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(retried.FirstSeenAt).To(Equal(created.FirstSeenAt))
+		Expect(retried.LastSeenAt).To(Equal(now.Add(2 * time.Minute)))
+		candidate.CommandPublicKey = bytes.Repeat([]byte{9}, 32)
+		_, err = database.SubmitDeviceDiscovery(context.Background(), now.Add(3*time.Minute), candidate)
+		Expect(errors.Is(err, domain.ErrDeviceDiscoveryConflict)).To(BeTrue())
+
+		pending, err := database.ListPendingDeviceDiscoveries(context.Background(), owner.ID, now.Add(3*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pending).To(HaveLen(1))
+		Expect(pending[0].DeviceUUID).To(Equal(firstDeviceID))
+		Expect(pending[0].IdentityPublicKey).To(Equal(bytes.Repeat([]byte{1}, ed25519.PublicKeySize)))
+	})
+
+	It("approves one discovery atomically and retains its result after closing discovery", func() {
+		owner := createOwner()
+		credentialHash := bytes.Repeat([]byte{3}, 32)
+		_, err := database.OpenDeviceDiscovery(context.Background(), owner.ID, now, now.Add(10*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = database.SubmitDeviceDiscovery(context.Background(), now, DeviceDiscoveryRequest{
+			DeviceUUID: firstDeviceID, IdentityPublicKey: bytes.Repeat([]byte{1}, ed25519.PublicKeySize),
+			CommandPublicKey: bytes.Repeat([]byte{2}, 32), CredentialHash: credentialHash,
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		approved, err := database.ApproveDeviceDiscovery(context.Background(), owner.ID, firstDeviceID, now.Add(time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(approved.NumericID).To(Equal(1))
+		Expect(approved.IdentityPublicKey).To(Equal(bytes.Repeat([]byte{1}, ed25519.PublicKeySize)))
+		Expect(approved.CommandPublicKey).To(Equal(bytes.Repeat([]byte{2}, 32)))
+		retried, err := database.ApproveDeviceDiscovery(context.Background(), owner.ID, firstDeviceID, now.Add(2*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(retried.NumericID).To(Equal(approved.NumericID))
+
+		Expect(database.CloseDeviceDiscovery(context.Background(), owner.ID, now.Add(3*time.Minute))).To(Succeed())
+		status, err := database.DeviceDiscoveryStatus(context.Background(), firstDeviceID, credentialHash, now.Add(4*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status.Status).To(Equal(DeviceDiscoveryApproved))
+		Expect(status.NumericID).To(Equal(1))
+		_, err = database.DeviceDiscoveryStatus(context.Background(), firstDeviceID, bytes.Repeat([]byte{8}, 32), now.Add(4*time.Minute))
+		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
+	})
+
+	It("rejects a pending discovery without creating a device", func() {
+		owner := createOwner()
+		credentialHash := bytes.Repeat([]byte{4}, 32)
+		_, err := database.OpenDeviceDiscovery(context.Background(), owner.ID, now, now.Add(10*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = database.SubmitDeviceDiscovery(context.Background(), now, DeviceDiscoveryRequest{
+			DeviceUUID: secondDeviceID, IdentityPublicKey: bytes.Repeat([]byte{5}, ed25519.PublicKeySize),
+			CommandPublicKey: bytes.Repeat([]byte{6}, 32), CredentialHash: credentialHash,
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(database.RejectDeviceDiscovery(context.Background(), owner.ID, secondDeviceID, now.Add(time.Minute))).To(Succeed())
+		Expect(database.RejectDeviceDiscovery(context.Background(), owner.ID, secondDeviceID, now.Add(2*time.Minute))).To(Succeed())
+		status, err := database.DeviceDiscoveryStatus(context.Background(), secondDeviceID, credentialHash, now.Add(3*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status.Status).To(Equal(DeviceDiscoveryRejected))
+		devices, err := database.ListDevices(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(devices).To(BeEmpty())
+		_, err = database.ApproveDeviceDiscovery(context.Background(), owner.ID, secondDeviceID, now.Add(3*time.Minute))
+		Expect(errors.Is(err, domain.ErrDeviceDiscoveryRejected)).To(BeTrue())
 	})
 
 	It("rejects expired, unknown, and conflicting pairing tokens", func() {

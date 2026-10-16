@@ -64,6 +64,22 @@ var _ = Describe("Agent configuration", func() {
 		Expect(config.ATTLSKeyFile).To(Equal("/run/secrets/at_bridge_client_key.pem"))
 	})
 
+	It("accepts a mutually authenticated remote PCM bridge", func() {
+		config, err := LoadConfig(configLookup(map[string]string{
+			"SIM_DECK_DEVICE_UUID":       configDeviceUUID,
+			"SIM_DECK_SERVER_URL":        "https://deck.example",
+			"SIM_DECK_AUDIO_MODE":        "remote-pcm",
+			"SIM_DECK_PCM_ENDPOINT":      "tls://host.docker.internal:19002",
+			"SIM_DECK_PCM_TLS_CA_FILE":   "/run/secrets/bridge-ca.pem",
+			"SIM_DECK_PCM_TLS_CERT_FILE": "/run/secrets/device.pem",
+			"SIM_DECK_PCM_TLS_KEY_FILE":  "/run/secrets/device-key.pem",
+		}))
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(config.AudioMode).To(Equal(AudioModeRemotePCM))
+		Expect(config.PCMEndpoint).To(Equal("tls://host.docker.internal:19002"))
+	})
+
 	It("reads explicit development and device overrides", func() {
 		config, err := LoadConfig(configLookup(map[string]string{
 			"SIM_DECK_DEVICE_UUID":             "01900000-0000-7000-8000-0000000000AB",

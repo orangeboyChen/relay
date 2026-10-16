@@ -26,56 +26,65 @@ const (
 type AudioMode string
 
 const (
-	AudioModeALSA   AudioMode = "alsa"
-	AudioModeRawPCM AudioMode = "raw-pcm"
+	AudioModeALSA      AudioMode = "alsa"
+	AudioModeRawPCM    AudioMode = "raw-pcm"
+	AudioModeRemotePCM AudioMode = "remote-pcm"
 )
 
 // Config describes the host devices and local health endpoint used by one agent instance.
 type Config struct {
-	DeviceUUID           string
-	ATDevice             string
-	ATTLSCAFile          string
-	ATTLSCertificateFile string
-	ATTLSKeyFile         string
-	AudioMode            AudioMode
-	ALSACaptureDevice    string
-	ALSAPlaybackDevice   string
-	PCMDevice            string
-	MediaUDPPort         int
-	MediaTCPPort         int
-	MediaPublicIP        string
-	HealthAddress        string
-	Baud                 int
-	CommandTimeout       time.Duration
-	CommandPoll          time.Duration
-	DiscoveryPoll        time.Duration
-	RadioStatusPoll      time.Duration
-	ServerURL            string
-	StateDirectory       string
-	AllowInsecureHTTP    bool
+	DeviceUUID            string
+	ATDevice              string
+	ATTLSCAFile           string
+	ATTLSCertificateFile  string
+	ATTLSKeyFile          string
+	AudioMode             AudioMode
+	ALSACaptureDevice     string
+	ALSAPlaybackDevice    string
+	PCMDevice             string
+	PCMEndpoint           string
+	PCMTLSCAFile          string
+	PCMTLSCertificateFile string
+	PCMTLSKeyFile         string
+	MediaUDPPort          int
+	MediaTCPPort          int
+	MediaPublicIP         string
+	HealthAddress         string
+	Baud                  int
+	CommandTimeout        time.Duration
+	CommandPoll           time.Duration
+	DiscoveryPoll         time.Duration
+	RadioStatusPoll       time.Duration
+	ServerURL             string
+	StateDirectory        string
+	AllowInsecureHTTP     bool
 }
 
 // LoadConfig reads agent configuration from an environment lookup function.
 func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 	config := Config{
-		DeviceUUID:           strings.ToLower(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_DEVICE_UUID", ""))),
-		ATDevice:             valueOrDefault(lookup, "SIM_DECK_AT_DEVICE", defaultATDevice),
-		ATTLSCAFile:          strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_AT_TLS_CA_FILE", "")),
-		ATTLSCertificateFile: strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_AT_TLS_CERT_FILE", "")),
-		ATTLSKeyFile:         strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_AT_TLS_KEY_FILE", "")),
-		AudioMode:            AudioMode(strings.ToLower(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_AUDIO_MODE", string(AudioModeALSA))))),
-		ALSACaptureDevice:    valueOrDefault(lookup, "SIM_DECK_ALSA_CAPTURE_DEVICE", defaultALSACaptureDevice),
-		ALSAPlaybackDevice:   valueOrDefault(lookup, "SIM_DECK_ALSA_PLAYBACK_DEVICE", defaultALSAPlaybackDevice),
-		PCMDevice:            valueOrDefault(lookup, "SIM_DECK_PCM_DEVICE", defaultPCMDevice),
-		MediaPublicIP:        strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_MEDIA_PUBLIC_IP", "")),
-		HealthAddress:        valueOrDefault(lookup, "SIM_DECK_HEALTH_ADDRESS", defaultHealthAddr),
-		Baud:                 defaultBaud,
-		CommandTimeout:       5 * time.Second,
-		CommandPoll:          time.Second,
-		DiscoveryPoll:        2 * time.Second,
-		RadioStatusPoll:      15 * time.Second,
-		ServerURL:            strings.TrimRight(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_SERVER_URL", "")), "/"),
-		StateDirectory:       valueOrDefault(lookup, "SIM_DECK_STATE_DIRECTORY", defaultStateDir),
+		DeviceUUID:            strings.ToLower(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_DEVICE_UUID", ""))),
+		ATDevice:              valueOrDefault(lookup, "SIM_DECK_AT_DEVICE", defaultATDevice),
+		ATTLSCAFile:           strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_AT_TLS_CA_FILE", "")),
+		ATTLSCertificateFile:  strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_AT_TLS_CERT_FILE", "")),
+		ATTLSKeyFile:          strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_AT_TLS_KEY_FILE", "")),
+		AudioMode:             AudioMode(strings.ToLower(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_AUDIO_MODE", string(AudioModeALSA))))),
+		ALSACaptureDevice:     valueOrDefault(lookup, "SIM_DECK_ALSA_CAPTURE_DEVICE", defaultALSACaptureDevice),
+		ALSAPlaybackDevice:    valueOrDefault(lookup, "SIM_DECK_ALSA_PLAYBACK_DEVICE", defaultALSAPlaybackDevice),
+		PCMDevice:             valueOrDefault(lookup, "SIM_DECK_PCM_DEVICE", defaultPCMDevice),
+		PCMEndpoint:           strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_PCM_ENDPOINT", "")),
+		PCMTLSCAFile:          strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_PCM_TLS_CA_FILE", "")),
+		PCMTLSCertificateFile: strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_PCM_TLS_CERT_FILE", "")),
+		PCMTLSKeyFile:         strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_PCM_TLS_KEY_FILE", "")),
+		MediaPublicIP:         strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_MEDIA_PUBLIC_IP", "")),
+		HealthAddress:         valueOrDefault(lookup, "SIM_DECK_HEALTH_ADDRESS", defaultHealthAddr),
+		Baud:                  defaultBaud,
+		CommandTimeout:        5 * time.Second,
+		CommandPoll:           time.Second,
+		DiscoveryPoll:         2 * time.Second,
+		RadioStatusPoll:       15 * time.Second,
+		ServerURL:             strings.TrimRight(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_SERVER_URL", "")), "/"),
+		StateDirectory:        valueOrDefault(lookup, "SIM_DECK_STATE_DIRECTORY", defaultStateDir),
 	}
 	if !identity.ValidDeviceUUID(config.DeviceUUID) {
 		return Config{}, fmt.Errorf("SIM_DECK_DEVICE_UUID must be a canonical UUID")
@@ -175,8 +184,22 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 		if isSyntheticPCMDevice(config.PCMDevice) {
 			return Config{}, fmt.Errorf("SIM_DECK_PCM_DEVICE must reference a real full-duplex modem audio device")
 		}
+	case AudioModeRemotePCM:
+		endpoint, err := url.Parse(config.PCMEndpoint)
+		if err != nil || endpoint.Scheme != "tls" || endpoint.Host == "" || endpoint.Port() == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") {
+			return Config{}, fmt.Errorf("SIM_DECK_PCM_ENDPOINT must be tls://host:port")
+		}
+		if !filepath.IsAbs(config.PCMTLSCAFile) {
+			return Config{}, fmt.Errorf("SIM_DECK_PCM_TLS_CA_FILE must be an absolute path for remote-pcm mode")
+		}
+		if !filepath.IsAbs(config.PCMTLSCertificateFile) || !filepath.IsAbs(config.PCMTLSKeyFile) {
+			return Config{}, fmt.Errorf("SIM_DECK_PCM_TLS_CERT_FILE and SIM_DECK_PCM_TLS_KEY_FILE must be absolute paths for remote-pcm mode")
+		}
 	default:
-		return Config{}, fmt.Errorf("SIM_DECK_AUDIO_MODE must be alsa or raw-pcm")
+		return Config{}, fmt.Errorf("SIM_DECK_AUDIO_MODE must be alsa, raw-pcm, or remote-pcm")
+	}
+	if config.AudioMode != AudioModeRemotePCM && (config.PCMEndpoint != "" || config.PCMTLSCAFile != "" || config.PCMTLSCertificateFile != "" || config.PCMTLSKeyFile != "") {
+		return Config{}, fmt.Errorf("remote PCM endpoint and TLS credentials require remote-pcm mode")
 	}
 	serverURL, err := url.Parse(config.ServerURL)
 	if err != nil || serverURL.Host == "" || serverURL.User != nil || serverURL.RawQuery != "" || serverURL.Fragment != "" {

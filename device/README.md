@@ -142,14 +142,33 @@ the bridge hostname, authenticates itself with a client certificate, and rejects
 plaintext network endpoints. This is a development adapter only; Linux
 deployments should continue to map the modem TTY directly into the container.
 
-The development TLS bridge used on macOS transports only the EC20 AT bulk
-interface. It does not transport the modem's USB Audio Class isochronous
-endpoints. Therefore it is suitable for SMS, radio status, and call-control
-tests, but it cannot carry call audio. Do not configure `SIM_DECK_PCM_DEVICE`
-to `/dev/zero` or another synthetic device to make that setup start; the agent
-rejects those paths. Real audio tests require a Linux host with the modem's
-ALSA capture and playback nodes mapped into the container (or a separately
-verified full-duplex raw PCM device).
+The repository also includes `tools/macos-uac-bridge.py` for development on a
+Mac that does not register the EC20F as a CoreAudio device. It uses libusb to
+claim the modem's UAC capture/playback interfaces, select alternate setting 1,
+and transfer the 8 kHz signed 16-bit mono isochronous endpoints. The bridge
+accepts one mutual-TLS client and uses the same framed PCM protocol as the
+agent's `remote-pcm` mode:
+
+```sh
+brew install libusb
+python3 tools/macos-uac-bridge.py \
+  --listen 0.0.0.0 --port 19002 \
+  --cert bridge-server.pem --key bridge-server-key.pem --ca device-client-ca.pem
+```
+
+Configure the device container with `SIM_DECK_AUDIO_MODE=remote-pcm`,
+`SIM_DECK_PCM_ENDPOINT=tls://host.docker.internal:19002`, and absolute paths
+for `SIM_DECK_PCM_TLS_CA_FILE`, `SIM_DECK_PCM_TLS_CERT_FILE`, and
+`SIM_DECK_PCM_TLS_KEY_FILE`. The bridge must be started only after the AT
+bridge has released the modem's audio interfaces; it claims interfaces 7 and
+8 exclusively. The script does not include certificates and does not weaken
+TLS verification. It is a development adapter; production Linux deployments
+should continue to map the modem's ALSA nodes directly.
+
+If the script reports that an interface or endpoint is missing, first rerun
+`probe_quectel.py` and compare the active descriptor. Do not guess endpoint
+numbers or use a synthetic PCM path. Real audio still requires `AT+QCFG` UAC
+enabled and `AT+QPCMV=1,2` confirmed on the current modem boot.
 
 For direct WebRTC media on a Linux deployment, set
 `SIM_DECK_MEDIA_UDP_PORT`, `SIM_DECK_MEDIA_TCP_PORT`, and

@@ -1,3 +1,4 @@
 /secrets/*
 !/secrets/.gitignore
 /coverage.out
+__pycache__/

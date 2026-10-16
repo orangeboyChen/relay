@@ -177,7 +177,7 @@ func productionDependencies(httpClient *http.Client) deviceDependencies {
 			return modem.NewSession(client, inbox, sink, logger, timeout)
 		},
 		configureAudio: func(ctx context.Context, config agent.Config, client *at.Client) error {
-			if config.AudioMode == agent.AudioModeALSA {
+			if config.AudioMode == agent.AudioModeALSA || config.AudioMode == agent.AudioModeRemotePCM {
 				return modem.ConfigureUAC(ctx, client, config.CommandTimeout)
 			}
 			return nil
@@ -198,6 +198,8 @@ func productionDependencies(httpClient *http.Client) deviceDependencies {
 					return media.OpenALSAEndpoint(ctx, config.ALSACaptureDevice, config.ALSAPlaybackDevice)
 				case agent.AudioModeRawPCM:
 					return media.OpenRawPCMEndpoint(config.PCMDevice)
+				case agent.AudioModeRemotePCM:
+					return media.OpenRemotePCMEndpoint(ctx, config.PCMEndpoint, config.PCMTLSCAFile, config.PCMTLSCertificateFile, config.PCMTLSKeyFile)
 				default:
 					return nil, fmt.Errorf("unsupported audio mode %q", config.AudioMode)
 				}

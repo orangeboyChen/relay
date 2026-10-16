@@ -695,7 +695,8 @@ func (store *Postgres) ClaimIncomingCall(ctx context.Context, ownerID string, no
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO outbox_jobs (kind, routing_key, payload, available_at, expires_at)
-			SELECT 'voip.incoming_call_claimed', recipient.installation_id::text, $2, $3, $3 + INTERVAL '30 seconds'
+			SELECT 'voip.incoming_call_claimed', recipient.installation_id::text, $2,
+			       $3::timestamptz, $3::timestamptz + INTERVAL '30 seconds'
 			FROM incoming_call_recipients AS recipient
 			JOIN app_installations AS installation ON installation.id = recipient.installation_id
 			WHERE recipient.notification_id = $1

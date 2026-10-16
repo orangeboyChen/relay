@@ -150,6 +150,7 @@ func testConfig(stateDirectory string) agent.Config {
 		Baud:               115200,
 		CommandTimeout:     time.Second,
 		CommandPoll:        time.Millisecond,
+		RadioStatusPoll:    time.Millisecond,
 		StateDirectory:     stateDirectory,
 		ServerURL:          "https://deck.example",
 		PairingTokenFile:   filepath.Join(stateDirectory, "pairing-token"),
@@ -184,6 +185,9 @@ func testDependencies(transport io.ReadWriteCloser, session deviceSession) devic
 		newCallMedia: func(agent.Config) (callMediaRuntime, error) { return mediaRunner, nil },
 		newCommands: func(agent.Config, identity.State, command.Calls, command.Dependencies) (commandRuntime, error) {
 			return commandRunner, nil
+		},
+		newRadioStatus: func(agent.Config, identity.State, *at.Client) (commandRuntime, error) {
+			return &fakeCommandRuntime{}, nil
 		},
 	}
 }
@@ -314,6 +318,18 @@ var _ = Describe("Device command runtime", func() {
 		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
 
 		Expect(err).To(MatchError("create encrypted command runtime: command runtime unavailable"))
+	})
+
+	It("returns a radio runtime construction failure before readiness", func() {
+		transport := newBlockingTransport()
+		dependencies := testDependencies(transport, &fakeDeviceSession{})
+		dependencies.newRadioStatus = func(agent.Config, identity.State, *at.Client) (commandRuntime, error) {
+			return nil, errors.New("radio unavailable")
+		}
+
+		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError("create radio status runtime: radio unavailable"))
 	})
 
 	It("returns a call event runtime construction failure before readiness", func() {

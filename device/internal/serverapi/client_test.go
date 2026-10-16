@@ -18,6 +18,7 @@ import (
 	"sim-deck-device/internal/command"
 	"sim-deck-device/internal/identity"
 	"sim-deck-device/internal/incomingcall"
+	"sim-deck-device/internal/radio"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -183,6 +184,48 @@ var _ = Describe("Incoming call client", func() {
 		err := serverFailure.UploadIncomingCall(context.Background(), deviceID, "device-secret", notification)
 		Expect(err).To(MatchError(ContainSubstring("untrusted_installation_recipient")))
 		Expect(err.Error()).NotTo(ContainSubstring("sensitive detail"))
+	})
+})
+
+var _ = Describe("Radio status client", func() {
+	It("uploads authenticated modem telemetry", func() {
+		state := identity.State{DeviceUUID: "01900000-0000-7000-8000-000000000001", Credential: "device-secret"}
+		bars := 3
+		client := clientWithHandler(func(request *http.Request) (*http.Response, error) {
+			Expect(request.Method).To(Equal(http.MethodPut))
+			Expect(request.URL.Path).To(Equal("/v1/device-radio-status"))
+			Expect(request.Header.Get("Authorization")).To(Equal("Bearer device-secret"))
+			var body struct {
+				DeviceUUID            string `json:"device_uuid"`
+				RadioAccessTechnology string `json:"radio_access_technology"`
+				SignalBars            *int   `json:"signal_bars"`
+			}
+			Expect(json.NewDecoder(request.Body).Decode(&body)).To(Succeed())
+			Expect(body.DeviceUUID).To(Equal(state.DeviceUUID))
+			Expect(body.RadioAccessTechnology).To(Equal("lte"))
+			Expect(body.SignalBars).NotTo(BeNil())
+			Expect(*body.SignalBars).To(Equal(3))
+			return response(http.StatusNoContent, ""), nil
+		})
+
+		Expect(client.UpdateRadioStatus(context.Background(), state, radio.Status{
+			RadioAccessTechnology: "lte",
+			SignalBars:            &bars,
+		})).To(Succeed())
+	})
+
+	It("maps transport and server failures", func() {
+		state := identity.State{DeviceUUID: "device", Credential: "secret"}
+		status := radio.Status{RadioAccessTechnology: "unknown"}
+		transportFailure := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("transport unavailable")
+		})
+		Expect(transportFailure.UpdateRadioStatus(context.Background(), state, status)).To(MatchError(ContainSubstring("update radio status")))
+
+		serverFailure := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusUnauthorized, `{"error":{"code":"invalid_device_credential"}}`), nil
+		})
+		Expect(serverFailure.UpdateRadioStatus(context.Background(), state, status)).To(MatchError(ContainSubstring("invalid_device_credential")))
 	})
 })
 

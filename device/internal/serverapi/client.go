@@ -17,6 +17,7 @@ import (
 	"sim-deck-device/internal/command"
 	"sim-deck-device/internal/identity"
 	"sim-deck-device/internal/incomingcall"
+	"sim-deck-device/internal/radio"
 )
 
 const maxResponseBytes = 1 << 20
@@ -25,6 +26,33 @@ const maxResponseBytes = 1 << 20
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
+}
+
+// UpdateRadioStatus publishes the current modem registration and signal level.
+func (client *Client) UpdateRadioStatus(ctx context.Context, state identity.State, status radio.Status) error {
+	body, err := json.Marshal(map[string]any{
+		"device_uuid":             state.DeviceUUID,
+		"radio_access_technology": status.RadioAccessTechnology,
+		"signal_bars":             status.SignalBars,
+	})
+	if err != nil {
+		return fmt.Errorf("encode radio status: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, client.baseURL+"/v1/device-radio-status", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create radio status request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+state.Credential)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("update radio status: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		return responseError("update radio status", response.StatusCode, io.LimitReader(response.Body, maxResponseBytes))
+	}
+	return nil
 }
 
 // InstallationRecipient identifies one approved iPhone encryption endpoint.

@@ -31,6 +31,7 @@ var _ = Describe("Agent configuration", func() {
 		Expect(config.Baud).To(Equal(115200))
 		Expect(config.CommandTimeout).To(Equal(5 * time.Second))
 		Expect(config.CommandPoll).To(Equal(time.Second))
+		Expect(config.RadioStatusPoll).To(Equal(15 * time.Second))
 		Expect(config.StateDirectory).To(Equal("/var/lib/sim-deck"))
 		Expect(config.PairingTokenFile).To(Equal("/run/secrets/sim_deck_pairing_token"))
 		Expect(config.AllowInsecureHTTP).To(BeFalse())
@@ -47,6 +48,7 @@ var _ = Describe("Agent configuration", func() {
 			"SIM_DECK_BAUD":                  "9600",
 			"SIM_DECK_COMMAND_TIMEOUT":       "9s",
 			"SIM_DECK_COMMAND_POLL_INTERVAL": "250ms",
+			"SIM_DECK_RADIO_STATUS_INTERVAL": "30s",
 			"SIM_DECK_SERVER_URL":            "http://server:8080/",
 			"SIM_DECK_STATE_DIRECTORY":       "/tmp/state",
 			"SIM_DECK_PAIRING_TOKEN_FILE":    "/tmp/pairing-token",
@@ -63,6 +65,7 @@ var _ = Describe("Agent configuration", func() {
 		Expect(config.Baud).To(Equal(9600))
 		Expect(config.CommandTimeout).To(Equal(9 * time.Second))
 		Expect(config.CommandPoll).To(Equal(250 * time.Millisecond))
+		Expect(config.RadioStatusPoll).To(Equal(30 * time.Second))
 		Expect(config.ServerURL).To(Equal("http://server:8080"))
 		Expect(config.StateDirectory).To(Equal("/tmp/state"))
 		Expect(config.PairingTokenFile).To(Equal("/tmp/pairing-token"))
@@ -88,6 +91,8 @@ var _ = Describe("Agent configuration", func() {
 		Entry("zero command timeout", map[string]string{"SIM_DECK_COMMAND_TIMEOUT": "0s"}, "COMMAND_TIMEOUT"),
 		Entry("invalid command poll", map[string]string{"SIM_DECK_COMMAND_POLL_INTERVAL": "later"}, "COMMAND_POLL_INTERVAL"),
 		Entry("zero command poll", map[string]string{"SIM_DECK_COMMAND_POLL_INTERVAL": "0s"}, "COMMAND_POLL_INTERVAL"),
+		Entry("invalid radio status interval", map[string]string{"SIM_DECK_RADIO_STATUS_INTERVAL": "later"}, "RADIO_STATUS_INTERVAL"),
+		Entry("zero radio status interval", map[string]string{"SIM_DECK_RADIO_STATUS_INTERVAL": "0s"}, "RADIO_STATUS_INTERVAL"),
 		Entry("empty AT device", map[string]string{"SIM_DECK_AT_DEVICE": " "}, "AT_DEVICE"),
 		Entry("invalid audio mode", map[string]string{"SIM_DECK_AUDIO_MODE": "automatic"}, "AUDIO_MODE"),
 		Entry("missing ALSA capture", map[string]string{"SIM_DECK_ALSA_CAPTURE_DEVICE": " "}, "ALSA_CAPTURE_DEVICE"),

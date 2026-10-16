@@ -24,6 +24,7 @@ import (
 	"sim-deck-device/internal/incomingcall"
 	"sim-deck-device/internal/media"
 	"sim-deck-device/internal/modem"
+	"sim-deck-device/internal/radio"
 	"sim-deck-device/internal/serialport"
 	"sim-deck-device/internal/serverapi"
 	"sim-deck-device/internal/sms"
@@ -93,6 +94,7 @@ type deviceDependencies struct {
 	newIncomingCalls func(agent.Config, identity.State, <-chan call.Snapshot, incomingcall.EventRegistrar) (commandRuntime, error)
 	newCallMedia     func(agent.Config) (callMediaRuntime, error)
 	newCommands      func(agent.Config, identity.State, command.Calls, command.Dependencies) (commandRuntime, error)
+	newRadioStatus   func(agent.Config, identity.State, *at.Client) (commandRuntime, error)
 }
 
 func productionDependencies(httpClient *http.Client) deviceDependencies {
@@ -130,6 +132,15 @@ func productionDependencies(httpClient *http.Client) deviceDependencies {
 		},
 		newCommands: func(config agent.Config, state identity.State, calls command.Calls, dependencies command.Dependencies) (commandRuntime, error) {
 			return command.NewRuntime(serverapi.NewClient(config.ServerURL, httpClient), state, calls, config.CommandPoll, dependencies)
+		},
+		newRadioStatus: func(config agent.Config, state identity.State, client *at.Client) (commandRuntime, error) {
+			return radio.NewRuntime(
+				client,
+				serverapi.NewClient(config.ServerURL, httpClient),
+				state,
+				config.RadioStatusPoll,
+				config.CommandTimeout,
+			)
 		},
 	}
 }
@@ -186,6 +197,10 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	if err != nil {
 		return fmt.Errorf("create encrypted command runtime: %w", err)
 	}
+	radioStatus, err := dependencies.newRadioStatus(config, deviceIdentity, client)
+	if err != nil {
+		return fmt.Errorf("create radio status runtime: %w", err)
+	}
 
 	ready.Store(true)
 	defer ready.Store(false)
@@ -202,15 +217,16 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	runContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go logMediaErrors(runContext, callMedia.Errors(), logger)
-	results := make(chan error, 4)
+	results := make(chan error, 5)
 	go func() { results <- session.Run(runContext) }()
 	go func() { results <- commands.Run(runContext) }()
 	go func() { results <- events.Run(runContext) }()
 	go func() { results <- incomingCalls.Run(runContext) }()
+	go func() { results <- radioStatus.Run(runContext) }()
 	first := <-results
 	cancel()
 	resultsToCheck := []error{first}
-	for count := 1; count < 4; count++ {
+	for count := 1; count < 5; count++ {
 		resultsToCheck = append(resultsToCheck, <-results)
 	}
 	for _, result := range resultsToCheck {

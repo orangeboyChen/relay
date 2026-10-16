@@ -227,7 +227,7 @@ func testDependencies(transport io.ReadWriteCloser, session deviceSession) devic
 		fake.calls = call.NewController(&testCallCommander{})
 	}
 	return deviceDependencies{
-		openTransport: func(string, int, string) (io.ReadWriteCloser, error) { return transport, nil },
+		openTransport: func(string, int, string, string, string) (io.ReadWriteCloser, error) { return transport, nil },
 		bindIdentity: func(_ context.Context, _ agent.Config, _ identity.Store, state identity.State) (identity.State, error) {
 			state.NumericID = 2
 			return state, nil
@@ -394,7 +394,7 @@ var _ = Describe("Device command runtime", func() {
 
 	It("returns an AT transport open failure", func() {
 		dependencies := testDependencies(newBlockingTransport(), &fakeDeviceSession{})
-		dependencies.openTransport = func(string, int, string) (io.ReadWriteCloser, error) {
+		dependencies.openTransport = func(string, int, string, string, string) (io.ReadWriteCloser, error) {
 			return nil, errors.New("AT device unavailable")
 		}
 
@@ -407,7 +407,7 @@ var _ = Describe("Device command runtime", func() {
 		transport := newBlockingTransport()
 		dependencies := testDependencies(transport, &fakeDeviceSession{})
 		openedTransport := false
-		dependencies.openTransport = func(string, int, string) (io.ReadWriteCloser, error) {
+		dependencies.openTransport = func(string, int, string, string, string) (io.ReadWriteCloser, error) {
 			openedTransport = true
 			return transport, nil
 		}
@@ -738,7 +738,7 @@ var _ = Describe("Device command runtime", func() {
 		Expect(dependencies.newCommands).NotTo(BeNil())
 
 		stateDirectory := GinkgoT().TempDir()
-		_, err := dependencies.openTransport(filepath.Join(stateDirectory, "missing-at"), 115200, "")
+		_, err := dependencies.openTransport(filepath.Join(stateDirectory, "missing-at"), 115200, "", "", "")
 		Expect(err).To(HaveOccurred())
 		_, err = dependencies.openInbox(
 			filepath.Join(stateDirectory, "wired-inbox.json"),

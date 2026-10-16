@@ -2,7 +2,9 @@ package serialport
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -24,6 +26,13 @@ var _ = Describe("AT endpoint selection", func() {
 		server.TLS = &tls.Config{MinVersion: tls.VersionTLS13}
 		server.StartTLS()
 		defer server.Close()
+		server.TLS.ClientAuth = tls.RequireAnyClientCert
+		server.TLS.VerifyPeerCertificate = func(rawCertificates [][]byte, _ [][]*x509.Certificate) error {
+			if len(rawCertificates) != 1 || !bytes.Equal(rawCertificates[0], server.Certificate().Raw) {
+				return fmt.Errorf("unexpected client certificate")
+			}
+			return nil
+		}
 
 		certificate := pem.EncodeToMemory(&pem.Block{
 			Type:  "CERTIFICATE",
@@ -31,8 +40,14 @@ var _ = Describe("AT endpoint selection", func() {
 		})
 		caFile := filepath.Join(GinkgoT().TempDir(), "bridge-ca.pem")
 		Expect(os.WriteFile(caFile, certificate, 0o600)).To(Succeed())
+		certificateFile := filepath.Join(GinkgoT().TempDir(), "client.pem")
+		Expect(os.WriteFile(certificateFile, certificate, 0o600)).To(Succeed())
+		privateKey, err := x509.MarshalPKCS8PrivateKey(server.TLS.Certificates[0].PrivateKey)
+		Expect(err).NotTo(HaveOccurred())
+		keyFile := filepath.Join(GinkgoT().TempDir(), "client-key.pem")
+		Expect(os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateKey}), 0o600)).To(Succeed())
 
-		connection, err := Open(strings.Replace(server.URL, "https://", "tls://", 1), 115200, caFile)
+		connection, err := Open(strings.Replace(server.URL, "https://", "tls://", 1), 115200, caFile, certificateFile, keyFile)
 		Expect(err).NotTo(HaveOccurred())
 		defer connection.Close()
 
@@ -47,16 +62,17 @@ var _ = Describe("AT endpoint selection", func() {
 	})
 
 	DescribeTable("rejects unsafe or malformed bridge configuration",
-		func(endpoint string, caFile string, expected string) {
-			connection, err := Open(endpoint, 115200, caFile)
+		func(endpoint string, caFile string, certificateFile string, keyFile string, expected string) {
+			connection, err := Open(endpoint, 115200, caFile, certificateFile, keyFile)
 			Expect(connection).To(BeNil())
 			Expect(err).To(MatchError(ContainSubstring(expected)))
 		},
-		Entry("plaintext network", "tcp://bridge:9000", "", "unsupported AT endpoint scheme"),
-		Entry("missing port", "tls://bridge", "", "include a port"),
-		Entry("credentials", "tls://user:secret@bridge:9000", "", "/host:port"),
-		Entry("missing CA", "tls://bridge:9000", "", "CA file is required"),
-		Entry("missing CA file", "tls://bridge:9000", "/missing/ca.pem", "read AT TLS CA file"),
-		Entry("CA on local TTY", "/dev/ttyUSB2", "/tmp/ca.pem", "requires a tls:// endpoint"),
+		Entry("plaintext network", "tcp://bridge:9000", "", "", "", "unsupported AT endpoint scheme"),
+		Entry("missing port", "tls://bridge", "", "", "", "include a port"),
+		Entry("credentials", "tls://user:secret@bridge:9000", "", "", "", "/host:port"),
+		Entry("missing CA", "tls://bridge:9000", "", "", "", "CA file is required"),
+		Entry("missing client identity", "tls://bridge:9000", "/tmp/ca.pem", "", "", "client certificate and key"),
+		Entry("missing CA file", "tls://bridge:9000", "/missing/ca.pem", "/tmp/client.pem", "/tmp/client-key.pem", "read AT TLS CA file"),
+		Entry("TLS credentials on local TTY", "/dev/ttyUSB2", "/tmp/ca.pem", "/tmp/client.pem", "/tmp/client-key.pem", "require a tls:// endpoint"),
 	)
 })

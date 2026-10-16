@@ -25,14 +25,14 @@ var _ = Describe("Linux serial port", func() {
 	)
 
 	It("rejects an unsupported baud rate before opening the path", func() {
-		file, err := Open("/does/not/exist", 12345, "")
+		file, err := Open("/does/not/exist", 12345, "", "", "")
 
 		Expect(file).To(BeNil())
 		Expect(err).To(MatchError("unsupported baud rate 12345"))
 	})
 
 	It("reports failure to open a missing serial device", func() {
-		file, err := Open("/does/not/exist", 115200, "")
+		file, err := Open("/does/not/exist", 115200, "", "", "")
 
 		Expect(file).To(BeNil())
 		Expect(err).To(MatchError(ContainSubstring("open serial port")))
@@ -42,14 +42,14 @@ var _ = Describe("Linux serial port", func() {
 		path := GinkgoT().TempDir() + "/not-a-terminal"
 		Expect(os.WriteFile(path, nil, 0o600)).To(Succeed())
 
-		file, err := Open(path, 115200, "")
+		file, err := Open(path, 115200, "", "", "")
 
 		Expect(file).To(BeNil())
 		Expect(err).To(MatchError(ContainSubstring("read serial settings")))
 	})
 
 	It("configures the Linux pseudo-terminal multiplexer", func() {
-		file, err := Open("/dev/ptmx", 115200, "")
+		file, err := Open("/dev/ptmx", 115200, "", "", "")
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(file).NotTo(BeNil())

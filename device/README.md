@@ -135,11 +135,12 @@ walk; never distinguish identical modems by their transient `ttyUSB` number.
 
 For local Docker Desktop end-to-end testing on a host that cannot pass the USB
 interface into the Linux VM, `SIM_DECK_AT_DEVICE` may instead use an explicit
-`tls://host:port` endpoint. Set `SIM_DECK_AT_TLS_CA_FILE` to an absolute path to
-the bridge CA mounted read-only in the container. The agent requires TLS 1.3,
-validates the bridge hostname, and rejects plaintext network endpoints. This is
-a development adapter only; Linux deployments should continue to map the modem
-TTY directly into the container.
+`tls://host:port` endpoint. Set `SIM_DECK_AT_TLS_CA_FILE`,
+`SIM_DECK_AT_TLS_CERT_FILE`, and `SIM_DECK_AT_TLS_KEY_FILE` to absolute paths
+mounted read-only in the container. The agent requires mutual TLS 1.3, validates
+the bridge hostname, authenticates itself with a client certificate, and rejects
+plaintext network endpoints. This is a development adapter only; Linux
+deployments should continue to map the modem TTY directly into the container.
 
 ## App-controlled discovery
 

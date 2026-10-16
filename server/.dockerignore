@@ -3,3 +3,5 @@
 AGENTS.md
 bin
 coverage.out
+.env
+secrets

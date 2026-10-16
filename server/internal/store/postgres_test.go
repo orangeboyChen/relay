@@ -329,6 +329,39 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(records[1].NumericID).To(Equal(5))
 	})
 
+	It("updates encrypted profiles and immediately revokes device credentials", func() {
+		owner := createOwner()
+		pairingToken := newToken()
+		pairingHash, err := auth.TokenHash(pairingToken)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(database.CreatePairingToken(context.Background(), owner.ID, pairingHash[:], now.Add(time.Minute))).To(Succeed())
+		deviceCredential := newToken()
+		credentialHash, err := auth.TokenHash(deviceCredential)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = database.ConsumePairingToken(context.Background(), pairingHash[:], now, DevicePairing{
+			DeviceUUID:        firstDeviceID,
+			ProfileCiphertext: []byte("initial encrypted profile"),
+			IdentityPublicKey: bytes.Repeat([]byte{4}, ed25519.PublicKeySize),
+			CredentialHash:    credentialHash[:],
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(database.UpdateDeviceProfile(context.Background(), firstDeviceID, []byte("updated encrypted profile"))).To(Succeed())
+		records, err := database.ListDevices(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(records).To(HaveLen(1))
+		Expect(records[0].ProfileCiphertext).To(Equal([]byte("updated encrypted profile")))
+
+		Expect(database.RevokeDevice(context.Background(), firstDeviceID, now.Add(time.Minute))).To(Succeed())
+		records, err = database.ListDevices(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(records).To(BeEmpty())
+		_, err = database.AuthenticateDevice(context.Background(), firstDeviceID, deviceCredential, now.Add(2*time.Minute))
+		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
+		Expect(database.UpdateDeviceProfile(context.Background(), firstDeviceID, []byte("late update"))).To(MatchError(pgx.ErrNoRows))
+		Expect(database.RevokeDevice(context.Background(), firstDeviceID, now.Add(3*time.Minute))).To(MatchError(pgx.ErrNoRows))
+	})
+
 	It("returns no numeric ID after all visible identifiers are occupied", func() {
 		for numericID := domain.MinNumericID; numericID <= domain.MaxNumericID; numericID++ {
 			_, err := database.pool.Exec(context.Background(), `
@@ -721,6 +754,8 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		_, err = database.CreateDevice(ctx, firstDeviceID, []byte{}, []byte{}, nil)
 		Expect(err).To(MatchError(ContainSubstring("begin device transaction")))
 		Expect(database.UpdateNumericID(ctx, firstDeviceID, 1)).To(MatchError(ContainSubstring("update numeric id")))
+		Expect(database.UpdateDeviceProfile(ctx, firstDeviceID, []byte("profile"))).To(MatchError(ContainSubstring("update device profile")))
+		Expect(database.RevokeDevice(ctx, firstDeviceID, now)).To(MatchError(ContainSubstring("begin device revocation")))
 		_, err = database.ListDevices(ctx)
 		Expect(err).To(MatchError(ContainSubstring("list devices")))
 		_, _, err = database.InsertEvent(ctx, domain.EventEnvelope{}, now)

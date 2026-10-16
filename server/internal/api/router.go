@@ -24,6 +24,8 @@ import (
 type Repository interface {
 	ListDevices(context.Context) ([]store.DeviceRecord, error)
 	UpdateNumericID(context.Context, string, int) error
+	UpdateDeviceProfile(context.Context, string, []byte) error
+	RevokeDevice(context.Context, string, time.Time) error
 	InsertEvent(context.Context, domain.EventEnvelope, time.Time) (int64, bool, error)
 	ListEvents(context.Context, int64, int, time.Time) ([]domain.EventEnvelope, error)
 	OwnerCredentialByUsername(context.Context, string) (store.OwnerCredential, error)
@@ -64,6 +66,8 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("GET /.well-known/sim-deck", router.discovery)
 	mux.HandleFunc("GET /v1/devices", router.requireOwner(router.listDevices))
 	mux.HandleFunc("PATCH /v1/devices/{deviceID}/numeric-id", router.requireOwner(router.updateNumericID))
+	mux.HandleFunc("PUT /v1/devices/{deviceID}/profile", router.requireOwner(router.updateDeviceProfile))
+	mux.HandleFunc("DELETE /v1/devices/{deviceID}", router.requireOwner(router.revokeDevice))
 	mux.HandleFunc("POST /v1/device-pairing-tokens", router.requireOwner(router.createPairingToken))
 	mux.HandleFunc("POST /v1/app-installations", router.requireOwner(router.registerAppInstallation))
 	mux.HandleFunc("PUT /v1/app-installations/{installationID}/push-tokens/{kind}", router.requireOwner(router.upsertPushToken))
@@ -382,6 +386,46 @@ func (router *router) updateNumericID(writer http.ResponseWriter, request *http.
 			writeError(writer, http.StatusNotFound, "device_not_found", "Device not found.")
 		default:
 			writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to update the device.")
+		}
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (router *router) updateDeviceProfile(writer http.ResponseWriter, request *http.Request) {
+	var body struct {
+		ProfileCiphertext []byte `json:"profile_ciphertext"`
+	}
+	if err := decodeJSON(request, &body); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if !validUUID(request.PathValue("deviceID")) || len(body.ProfileCiphertext) == 0 || len(body.ProfileCiphertext) > maxProfileCiphertextBytes {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_device_profile", "Encrypted device profile is invalid.")
+		return
+	}
+	if err := router.repository.UpdateDeviceProfile(request.Context(), request.PathValue("deviceID"), body.ProfileCiphertext); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(writer, http.StatusNotFound, "device_not_found", "Device not found.")
+		} else {
+			writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to update the device profile.")
+		}
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (router *router) revokeDevice(writer http.ResponseWriter, request *http.Request) {
+	deviceID := request.PathValue("deviceID")
+	if !validUUID(deviceID) {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_device", "Device identifier is invalid.")
+		return
+	}
+	if err := router.repository.RevokeDevice(request.Context(), deviceID, router.now()); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(writer, http.StatusNotFound, "device_not_found", "Device not found.")
+		} else {
+			writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to remove the device.")
 		}
 		return
 	}

@@ -44,6 +44,12 @@ func (repository *memoryRepository) ListDevices(context.Context) ([]store.Device
 func (repository *memoryRepository) UpdateNumericID(context.Context, string, int) error {
 	return nil
 }
+func (repository *memoryRepository) UpdateDeviceProfile(context.Context, string, []byte) error {
+	return nil
+}
+func (repository *memoryRepository) RevokeDevice(context.Context, string, time.Time) error {
+	return nil
+}
 func (repository *memoryRepository) InsertEvent(context.Context, domain.EventEnvelope, time.Time) (int64, bool, error) {
 	return 0, false, nil
 }

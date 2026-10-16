@@ -1023,6 +1023,48 @@ func (store *Postgres) UpdateNumericID(ctx context.Context, deviceID string, num
 	return nil
 }
 
+// UpdateDeviceProfile replaces only the opaque end-to-end encrypted line profile.
+func (store *Postgres) UpdateDeviceProfile(ctx context.Context, deviceID string, profileCiphertext []byte) error {
+	command, err := store.pool.Exec(ctx, `
+		UPDATE devices SET profile_ciphertext = $2
+		WHERE id = $1 AND revoked_at IS NULL`, deviceID, profileCiphertext)
+	if err != nil {
+		return fmt.Errorf("update device profile: %w", err)
+	}
+	if command.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+// RevokeDevice atomically disables the device and all credentials issued to it.
+func (store *Postgres) RevokeDevice(ctx context.Context, deviceID string, revokedAt time.Time) error {
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin device revocation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	command, err := tx.Exec(ctx, `
+		UPDATE devices SET revoked_at = $2
+		WHERE id = $1 AND revoked_at IS NULL`, deviceID, revokedAt.UTC())
+	if err != nil {
+		return fmt.Errorf("revoke device: %w", err)
+	}
+	if command.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE device_credentials SET revoked_at = $2
+		WHERE device_id = $1 AND revoked_at IS NULL`, deviceID, revokedAt.UTC()); err != nil {
+		return fmt.Errorf("revoke device credentials: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit device revocation: %w", err)
+	}
+	return nil
+}
+
 // ListDevices returns active devices without decrypting their line profiles.
 func (store *Postgres) ListDevices(ctx context.Context) ([]DeviceRecord, error) {
 	rows, err := store.pool.Query(ctx, `

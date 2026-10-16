@@ -25,6 +25,12 @@ type fakeRepository struct {
 	updatedDeviceID             string
 	updatedNumericID            int
 	updateNumericIDError        error
+	updatedProfileDeviceID      string
+	updatedProfileCiphertext    []byte
+	updateDeviceProfileError    error
+	revokedDeviceID             string
+	revokedDeviceAt             time.Time
+	revokeDeviceError           error
 	insertSequence              int64
 	insertCreated               bool
 	insertError                 error
@@ -163,6 +169,18 @@ func (fake *fakeRepository) UpdateNumericID(_ context.Context, deviceID string, 
 	fake.updatedDeviceID = deviceID
 	fake.updatedNumericID = numericID
 	return fake.updateNumericIDError
+}
+
+func (fake *fakeRepository) UpdateDeviceProfile(_ context.Context, deviceID string, profileCiphertext []byte) error {
+	fake.updatedProfileDeviceID = deviceID
+	fake.updatedProfileCiphertext = append([]byte(nil), profileCiphertext...)
+	return fake.updateDeviceProfileError
+}
+
+func (fake *fakeRepository) RevokeDevice(_ context.Context, deviceID string, revokedAt time.Time) error {
+	fake.revokedDeviceID = deviceID
+	fake.revokedDeviceAt = revokedAt
+	return fake.revokeDeviceError
 }
 
 func (fake *fakeRepository) InsertEvent(_ context.Context, envelope domain.EventEnvelope, expiresAt time.Time) (int64, bool, error) {
@@ -392,6 +410,58 @@ var _ = Describe("HTTP API", func() {
 		Entry("duplicate identifier", `{"numeric_id":2}`, domain.ErrDuplicateNumericID, http.StatusConflict, "duplicate_numeric_id"),
 		Entry("missing device", `{"numeric_id":2}`, pgx.ErrNoRows, http.StatusNotFound, "device_not_found"),
 		Entry("storage failure", `{"numeric_id":2}`, errors.New("database unavailable"), http.StatusInternalServerError, "storage_error"),
+	)
+
+	It("updates only an opaque encrypted device profile", func() {
+		response := perform(
+			http.MethodPut,
+			"/v1/devices/01900000-0000-7000-8000-000000000001/profile",
+			`{"profile_ciphertext":"ZW5jcnlwdGVkLXByb2ZpbGU="}`,
+			"access-token",
+		)
+
+		Expect(response.Code).To(Equal(http.StatusNoContent))
+		Expect(repository.updatedProfileDeviceID).To(Equal("01900000-0000-7000-8000-000000000001"))
+		Expect(repository.updatedProfileCiphertext).To(Equal([]byte("encrypted-profile")))
+	})
+
+	DescribeTable("rejects invalid or unavailable encrypted device profiles",
+		func(path string, body string, repositoryError error, expectedStatus int, expectedCode string) {
+			repository.updateDeviceProfileError = repositoryError
+			response := perform(http.MethodPut, path, body, "access-token")
+			Expect(response.Code).To(Equal(expectedStatus))
+			Expect(response.Body.String()).To(ContainSubstring(expectedCode))
+		},
+		Entry("malformed JSON", "/v1/devices/01900000-0000-7000-8000-000000000001/profile", `{`, nil, http.StatusBadRequest, "invalid_request"),
+		Entry("invalid device ID", "/v1/devices/not-a-uuid/profile", `{"profile_ciphertext":"YQ=="}`, nil, http.StatusUnprocessableEntity, "invalid_device_profile"),
+		Entry("empty ciphertext", "/v1/devices/01900000-0000-7000-8000-000000000001/profile", `{"profile_ciphertext":""}`, nil, http.StatusUnprocessableEntity, "invalid_device_profile"),
+		Entry("missing device", "/v1/devices/01900000-0000-7000-8000-000000000001/profile", `{"profile_ciphertext":"YQ=="}`, pgx.ErrNoRows, http.StatusNotFound, "device_not_found"),
+		Entry("storage failure", "/v1/devices/01900000-0000-7000-8000-000000000001/profile", `{"profile_ciphertext":"YQ=="}`, errors.New("database unavailable"), http.StatusInternalServerError, "storage_error"),
+	)
+
+	It("revokes a device using the owner session", func() {
+		response := perform(
+			http.MethodDelete,
+			"/v1/devices/01900000-0000-7000-8000-000000000001",
+			"",
+			"access-token",
+		)
+
+		Expect(response.Code).To(Equal(http.StatusNoContent))
+		Expect(repository.revokedDeviceID).To(Equal("01900000-0000-7000-8000-000000000001"))
+		Expect(repository.revokedDeviceAt).NotTo(BeZero())
+	})
+
+	DescribeTable("maps device revocation failures",
+		func(path string, repositoryError error, expectedStatus int, expectedCode string) {
+			repository.revokeDeviceError = repositoryError
+			response := perform(http.MethodDelete, path, "", "access-token")
+			Expect(response.Code).To(Equal(expectedStatus))
+			Expect(response.Body.String()).To(ContainSubstring(expectedCode))
+		},
+		Entry("invalid device ID", "/v1/devices/not-a-uuid", nil, http.StatusUnprocessableEntity, "invalid_device"),
+		Entry("missing device", "/v1/devices/01900000-0000-7000-8000-000000000001", pgx.ErrNoRows, http.StatusNotFound, "device_not_found"),
+		Entry("storage failure", "/v1/devices/01900000-0000-7000-8000-000000000001", errors.New("database unavailable"), http.StatusInternalServerError, "storage_error"),
 	)
 
 	It("creates a bootstrap session", func() {

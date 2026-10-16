@@ -35,13 +35,13 @@ var _ = Describe("Device identity store", func() {
 		Expect(errors.Is(statErr, os.ErrNotExist)).To(BeTrue())
 	})
 
-	It("reports entropy exhaustion before persisting a pairing credential", func() {
+	It("reports entropy exhaustion before persisting a discovery credential", func() {
 		store := NewStore(GinkgoT().TempDir(), testDeviceUUID)
 		state, err := store.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
 		store.random = errorReader{}
 
-		_, err = store.PreparePairing(state)
+		_, err = store.PrepareDiscovery(state)
 
 		Expect(err).To(MatchError(ContainSubstring("generate pending device credential")))
 	})
@@ -107,7 +107,7 @@ var _ = Describe("Device identity store", func() {
 		store := NewStore(directory, testDeviceUUID)
 		state, err := store.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
-		prepared, err := store.PreparePairing(state)
+		prepared, err := store.PrepareDiscovery(state)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(prepared.PendingCredential).NotTo(BeEmpty())
 
@@ -182,29 +182,29 @@ var _ = Describe("Device identity store", func() {
 		Entry("numeric ID without credential", func(state *State) { state.NumericID = 1 }),
 	)
 
-	It("reuses the pending credential across pairing retries", func() {
+	It("reuses the pending credential across discovery retries", func() {
 		store := NewStore(GinkgoT().TempDir(), testDeviceUUID)
 		state, err := store.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
 
-		first, err := store.PreparePairing(state)
+		first, err := store.PrepareDiscovery(state)
 		Expect(err).NotTo(HaveOccurred())
-		second, err := store.PreparePairing(first)
+		second, err := store.PrepareDiscovery(first)
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(second.PendingCredential).To(Equal(first.PendingCredential))
 	})
 
-	It("leaves an already bound identity unchanged when pairing is prepared again", func() {
+	It("leaves an already bound identity unchanged when discovery is prepared again", func() {
 		store := NewStore(GinkgoT().TempDir(), testDeviceUUID)
 		state, err := store.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
-		prepared, err := store.PreparePairing(state)
+		prepared, err := store.PrepareDiscovery(state)
 		Expect(err).NotTo(HaveOccurred())
 		bound, err := store.Bind(prepared, "https://deck.example", 8)
 		Expect(err).NotTo(HaveOccurred())
 
-		unchanged, err := store.PreparePairing(bound)
+		unchanged, err := store.PrepareDiscovery(bound)
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(unchanged).To(Equal(bound))
@@ -218,7 +218,7 @@ var _ = Describe("Device identity store", func() {
 		occupiedPath := filepath.Join(directory, "occupied")
 		Expect(os.WriteFile(occupiedPath, []byte("not a directory"), 0o600)).To(Succeed())
 
-		_, err = NewStore(occupiedPath, testDeviceUUID).PreparePairing(state)
+		_, err = NewStore(occupiedPath, testDeviceUUID).PrepareDiscovery(state)
 
 		Expect(err).To(MatchError(ContainSubstring("create state directory")))
 	})
@@ -231,7 +231,7 @@ var _ = Describe("Device identity store", func() {
 		Expect(os.Chmod(directory, 0o500)).To(Succeed())
 		DeferCleanup(func() { Expect(os.Chmod(directory, 0o700)).To(Succeed()) })
 
-		_, err = store.PreparePairing(state)
+		_, err = store.PrepareDiscovery(state)
 
 		Expect(err).To(MatchError(ContainSubstring("create temporary identity")))
 	})

@@ -189,7 +189,7 @@ func testConfig(stateDirectory string) agent.Config {
 		RadioStatusPoll:    time.Millisecond,
 		StateDirectory:     stateDirectory,
 		ServerURL:          "https://deck.example",
-		PairingTokenFile:   filepath.Join(stateDirectory, "pairing-token"),
+		DiscoveryPoll:      time.Millisecond,
 	}
 }
 
@@ -635,7 +635,7 @@ var _ = Describe("Device command runtime", func() {
 		stateStore := identity.NewStore(stateDirectory, config.DeviceUUID)
 		state, err := stateStore.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
-		state, err = stateStore.PreparePairing(state)
+		state, err = stateStore.PrepareDiscovery(state)
 		Expect(err).NotTo(HaveOccurred())
 		state, err = stateStore.Bind(state, "https://deck.example", 1)
 		Expect(err).NotTo(HaveOccurred())

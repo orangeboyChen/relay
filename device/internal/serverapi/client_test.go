@@ -3,6 +3,7 @@ package serverapi
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -229,7 +230,7 @@ var _ = Describe("Radio status client", func() {
 	})
 })
 
-var _ = Describe("Server pairing client", func() {
+var _ = Describe("Server discovery client", func() {
 	var state identity.State
 
 	BeforeEach(func() {
@@ -238,108 +239,114 @@ var _ = Describe("Server pairing client", func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
-	It("registers only the public identity and accepts the returned binding", func() {
+	It("submits a signed discovery request without exposing private keys", func() {
 		credential := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{4}, 32))
 		client := clientWithHandler(func(request *http.Request) (*http.Response, error) {
 			Expect(request.Method).To(Equal(http.MethodPost))
-			Expect(request.URL.Path).To(Equal("/v1/device-pairings"))
+			Expect(request.URL.Path).To(Equal("/v1/device-discoveries"))
 			var body struct {
-				PairingToken      string `json:"pairing_token"`
 				DeviceUUID        string `json:"device_uuid"`
 				IdentityPublicKey []byte `json:"identity_public_key"`
 				CommandPublicKey  []byte `json:"command_public_key"`
-				ProfileCiphertext []byte `json:"profile_ciphertext"`
-				DeviceCredential  string `json:"device_credential"`
+				PendingCredential string `json:"pending_credential"`
+				Signature         []byte `json:"signature"`
 			}
 			Expect(json.NewDecoder(request.Body).Decode(&body)).To(Succeed())
-			Expect(body.PairingToken).To(Equal("one-time-token"))
 			Expect(body.DeviceUUID).To(Equal(state.DeviceUUID))
 			Expect(body.IdentityPublicKey).To(Equal([]byte(state.PublicKey())))
 			Expect(body.IdentityPublicKey).NotTo(Equal([]byte(state.IdentityPrivateKey)))
 			Expect(body.CommandPublicKey).To(Equal(state.CommandPublicKey()))
-			Expect(body.ProfileCiphertext).To(BeEmpty())
-			Expect(body.DeviceCredential).To(Equal(credential))
-			return response(http.StatusCreated, `{"device":{"device_uuid":"`+state.DeviceUUID+`","numeric_id":2}}`), nil
+			Expect(body.PendingCredential).To(Equal(credential))
+			proof := discoverySignedData(body.DeviceUUID, body.IdentityPublicKey, body.CommandPublicKey, body.PendingCredential)
+			Expect(ed25519.Verify(body.IdentityPublicKey, proof, body.Signature)).To(BeTrue())
+			return response(http.StatusAccepted, `{"discovery":{"device_uuid":"`+state.DeviceUUID+`","status":"pending"}}`), nil
 		})
 
-		result, err := client.Pair(context.Background(), "one-time-token", credential, state)
+		result, err := client.SubmitDiscovery(context.Background(), credential, state)
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(result).To(Equal(PairingResult{NumericID: 2}))
+		Expect(result).To(Equal(DiscoveryResult{DeviceUUID: state.DeviceUUID, Status: DiscoveryPending}))
 	})
 
-	It("returns a bounded server error without echoing the pairing secret", func() {
-		client := clientWithHandler(func(*http.Request) (*http.Response, error) {
-			return response(http.StatusUnauthorized, `{"error":{"code":"invalid_pairing_token","message":"secret details"}}`), nil
+	It("polls an approved discovery with the pending credential", func() {
+		credential := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{5}, 32))
+		client := clientWithHandler(func(request *http.Request) (*http.Response, error) {
+			Expect(request.Method).To(Equal(http.MethodGet))
+			Expect(request.URL.Path).To(Equal("/v1/device-discoveries/" + state.DeviceUUID + "/status"))
+			Expect(request.Header.Get("Authorization")).To(Equal("Bearer " + credential))
+			return response(http.StatusOK, `{"discovery":{"device_uuid":"`+state.DeviceUUID+`","status":"approved","numeric_id":2}}`), nil
 		})
 
-		_, err := client.Pair(context.Background(), "one-time-token", "device-credential", state)
+		result, err := client.GetDiscoveryStatus(context.Background(), state.DeviceUUID, credential)
 
-		Expect(err).To(MatchError("pair device: server returned 401 (invalid_pairing_token)"))
-		Expect(err.Error()).NotTo(ContainSubstring("one-time-token"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(DiscoveryResult{DeviceUUID: state.DeviceUUID, Status: DiscoveryApproved, NumericID: 2}))
+	})
+
+	It("maps unavailable status without echoing the credential", func() {
+		credential := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{6}, 32))
+		client := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusUnauthorized, `{"error":{"code":"invalid_pending_credential","message":"secret details"}}`), nil
+		})
+
+		_, err := client.GetDiscoveryStatus(context.Background(), state.DeviceUUID, credential)
+
+		Expect(errors.Is(err, ErrDiscoveryUnavailable)).To(BeTrue())
+		Expect(err.Error()).NotTo(ContainSubstring(credential))
+	})
+
+	It("returns bounded submission errors without echoing the pending credential", func() {
+		credential := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+		client := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusConflict, `{"error":{"code":"device_discovery_closed","message":"secret details"}}`), nil
+		})
+
+		_, err := client.SubmitDiscovery(context.Background(), credential, state)
+
+		Expect(err).To(MatchError("submit device discovery: server returned 409 (device_discovery_closed)"))
+		Expect(err.Error()).NotTo(ContainSubstring(credential))
 		Expect(err.Error()).NotTo(ContainSubstring("secret details"))
 	})
 
-	It("uses a generic code when the server error is not JSON", func() {
-		client := clientWithHandler(func(*http.Request) (*http.Response, error) {
-			return response(http.StatusBadGateway, "upstream failed"), nil
-		})
-
-		_, err := client.Pair(context.Background(), "token", "device-credential", state)
-
-		Expect(err).To(MatchError("pair device: server returned 502 (unexpected_response)"))
-	})
-
-	DescribeTable("rejects invalid bindings",
-		func(deviceUUID string, numericID int) {
+	DescribeTable("rejects invalid discovery results",
+		func(payload string) {
 			client := clientWithHandler(func(*http.Request) (*http.Response, error) {
-				body, err := json.Marshal(map[string]any{
-					"device": map[string]any{"device_uuid": deviceUUID, "numeric_id": numericID},
-				})
-				Expect(err).NotTo(HaveOccurred())
-				return response(http.StatusCreated, string(body)), nil
+				return response(http.StatusOK, payload), nil
 			})
-
-			_, err := client.Pair(context.Background(), "one-time-token", "device-credential", state)
-
-			Expect(err).To(MatchError("pair device: server returned an invalid binding"))
+			_, err := client.GetDiscoveryStatus(context.Background(), state.DeviceUUID, "credential")
+			Expect(err).To(MatchError(ContainSubstring("invalid device discovery")))
 		},
-		Entry("different device", "01900000-0000-7000-8000-000000000099", 1),
-		Entry("numeric ID below range", "", 0),
-		Entry("numeric ID above range", "", 100),
+		Entry("different device", `{"discovery":{"device_uuid":"01900000-0000-7000-8000-000000000099","status":"pending"}}`),
+		Entry("unknown state", `{"discovery":{"device_uuid":"01900000-0000-7000-8000-000000000001","status":"unknown"}}`),
+		Entry("pending numeric id", `{"discovery":{"device_uuid":"01900000-0000-7000-8000-000000000001","status":"pending","numeric_id":2}}`),
+		Entry("approved missing id", `{"discovery":{"device_uuid":"01900000-0000-7000-8000-000000000001","status":"approved"}}`),
+		Entry("approved high id", `{"discovery":{"device_uuid":"01900000-0000-7000-8000-000000000001","status":"approved","numeric_id":100}}`),
 	)
 
-	It("rejects missing inputs before making a request", func() {
-		_, err := NewClient("http://unused.invalid", nil).Pair(context.Background(), "", "credential", state)
-		Expect(err).To(MatchError("pairing token, device credential, and valid device identity are required"))
-
-		_, err = NewClient("http://unused.invalid", nil).Pair(context.Background(), "token", "", state)
-		Expect(err).To(MatchError("pairing token, device credential, and valid device identity are required"))
-
+	It("rejects missing discovery inputs before making a request", func() {
+		_, err := NewClient("http://unused.invalid", nil).SubmitDiscovery(context.Background(), "", state)
+		Expect(err).To(MatchError("pending credential and valid device identity are required"))
+		_, err = NewClient("http://unused.invalid", nil).GetDiscoveryStatus(context.Background(), "", "credential")
+		Expect(err).To(MatchError("device UUID and pending credential are required"))
 		state.IdentityPrivateKey = nil
-		_, err = NewClient("http://unused.invalid", nil).Pair(context.Background(), "token", "credential", state)
-		Expect(err).To(MatchError("pairing token, device credential, and valid device identity are required"))
+		_, err = NewClient("http://unused.invalid", nil).SubmitDiscovery(context.Background(), "credential", state)
+		Expect(err).To(MatchError("pending credential and valid device identity are required"))
 	})
 
-	It("reports malformed success JSON", func() {
+	It("reports malformed discovery JSON and transport failures", func() {
 		client := clientWithHandler(func(*http.Request) (*http.Response, error) {
-			return response(http.StatusCreated, "not-json"), nil
+			return response(http.StatusOK, "not-json"), nil
 		})
+		_, err := client.GetDiscoveryStatus(context.Background(), state.DeviceUUID, "credential")
+		Expect(err).To(MatchError(ContainSubstring("decode device discovery response")))
 
-		_, err := client.Pair(context.Background(), "token", "device-credential", state)
-
-		Expect(err).To(MatchError(ContainSubstring("decode pairing response")))
-	})
-
-	It("reports request construction and transport failures", func() {
-		_, err := NewClient("://invalid", nil).Pair(context.Background(), "token", "device-credential", state)
-		Expect(err).To(MatchError(ContainSubstring("create pairing request")))
-
-		client := clientWithHandler(func(*http.Request) (*http.Response, error) {
+		_, err = NewClient("://invalid", nil).GetDiscoveryStatus(context.Background(), state.DeviceUUID, "credential")
+		Expect(err).To(MatchError(ContainSubstring("create discovery status request")))
+		client = clientWithHandler(func(*http.Request) (*http.Response, error) {
 			return nil, errors.New("transport unavailable")
 		})
-		_, err = client.Pair(context.Background(), "token", "device-credential", state)
-		Expect(err).To(MatchError(ContainSubstring("pair device")))
+		_, err = client.SubmitDiscovery(context.Background(), "credential", state)
+		Expect(err).To(MatchError(ContainSubstring("submit device discovery")))
 	})
 
 	It("registers the current command public key", func() {

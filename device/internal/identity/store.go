@@ -120,8 +120,8 @@ func (store Store) LoadOrCreate() (State, error) {
 	return state, nil
 }
 
-// PreparePairing creates and durably stores the credential before a one-time pairing request is sent.
-func (store Store) PreparePairing(state State) (State, error) {
+// PrepareDiscovery creates and durably stores the credential before requesting app approval.
+func (store Store) PrepareDiscovery(state State) (State, error) {
 	if state.Credential != "" {
 		return state, nil
 	}
@@ -138,7 +138,7 @@ func (store Store) PreparePairing(state State) (State, error) {
 	return state, nil
 }
 
-// Bind promotes the pending credential and stores the visible SIM ID after successful pairing.
+// Bind promotes the pending credential and stores the visible SIM ID after app approval.
 func (store Store) Bind(state State, serverURL string, numericID int) (State, error) {
 	state.ServerURL = strings.TrimRight(strings.TrimSpace(serverURL), "/")
 	state.Credential = state.PendingCredential

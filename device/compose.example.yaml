@@ -3,7 +3,7 @@ x-device-environment: &device-environment
   SIM_DECK_ALLOW_INSECURE_HTTP: "${SIM_DECK_ALLOW_INSECURE_HTTP:-false}"
   SIM_DECK_AT_DEVICE: /dev/sim-deck/at
   SIM_DECK_STATE_DIRECTORY: /var/lib/sim-deck
-  SIM_DECK_PAIRING_TOKEN_FILE: /run/secrets/sim_deck_pairing_token
+  SIM_DECK_DISCOVERY_POLL_INTERVAL: 2s
   SIM_DECK_COMMAND_POLL_INTERVAL: 1s
 
 x-device-defaults: &device-defaults
@@ -39,9 +39,6 @@ services:
       - "${SIM_DECK_MODEM_1_AUDIO_PLAYBACK:-/dev/sim-deck/modem-1-audio-playback}:/dev/snd/pcmC0D0p"
     volumes:
       - modem-1-state:/var/lib/sim-deck
-    secrets:
-      - source: modem-1-pairing-token
-        target: sim_deck_pairing_token
     ports:
       - 127.0.0.1:18081:8080
 
@@ -61,18 +58,9 @@ services:
       - "${SIM_DECK_MODEM_2_AUDIO_PLAYBACK:-/dev/sim-deck/modem-2-audio-playback}:/dev/snd/pcmC0D0p"
     volumes:
       - modem-2-state:/var/lib/sim-deck
-    secrets:
-      - source: modem-2-pairing-token
-        target: sim_deck_pairing_token
     ports:
       - 127.0.0.1:18082:8080
 
 volumes:
   modem-1-state:
   modem-2-state:
-
-secrets:
-  modem-1-pairing-token:
-    file: ./secrets/modem-1-pairing-token
-  modem-2-pairing-token:
-    file: ./secrets/modem-2-pairing-token

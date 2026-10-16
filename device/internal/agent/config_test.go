@@ -35,29 +35,29 @@ var _ = Describe("Agent configuration", func() {
 		Expect(config.Baud).To(Equal(115200))
 		Expect(config.CommandTimeout).To(Equal(5 * time.Second))
 		Expect(config.CommandPoll).To(Equal(time.Second))
+		Expect(config.DiscoveryPoll).To(Equal(2 * time.Second))
 		Expect(config.RadioStatusPoll).To(Equal(15 * time.Second))
 		Expect(config.StateDirectory).To(Equal("/var/lib/sim-deck"))
-		Expect(config.PairingTokenFile).To(Equal("/run/secrets/sim_deck_pairing_token"))
 		Expect(config.AllowInsecureHTTP).To(BeFalse())
 	})
 
 	It("reads explicit development and device overrides", func() {
 		config, err := LoadConfig(configLookup(map[string]string{
-			"SIM_DECK_DEVICE_UUID":           "01900000-0000-7000-8000-0000000000AB",
-			"SIM_DECK_AT_DEVICE":             "/dev/ttyUSB2",
-			"SIM_DECK_AUDIO_MODE":            "raw-pcm",
-			"SIM_DECK_ALSA_CAPTURE_DEVICE":   "plughw:2,0",
-			"SIM_DECK_ALSA_PLAYBACK_DEVICE":  "plughw:2,1",
-			"SIM_DECK_PCM_DEVICE":            "/dev/ttyUSB4",
-			"SIM_DECK_HEALTH_ADDRESS":        "127.0.0.1:9090",
-			"SIM_DECK_BAUD":                  "9600",
-			"SIM_DECK_COMMAND_TIMEOUT":       "9s",
-			"SIM_DECK_COMMAND_POLL_INTERVAL": "250ms",
-			"SIM_DECK_RADIO_STATUS_INTERVAL": "30s",
-			"SIM_DECK_SERVER_URL":            "http://server:8080/",
-			"SIM_DECK_STATE_DIRECTORY":       "/tmp/state",
-			"SIM_DECK_PAIRING_TOKEN_FILE":    "/tmp/pairing-token",
-			"SIM_DECK_ALLOW_INSECURE_HTTP":   "true",
+			"SIM_DECK_DEVICE_UUID":             "01900000-0000-7000-8000-0000000000AB",
+			"SIM_DECK_AT_DEVICE":               "/dev/ttyUSB2",
+			"SIM_DECK_AUDIO_MODE":              "raw-pcm",
+			"SIM_DECK_ALSA_CAPTURE_DEVICE":     "plughw:2,0",
+			"SIM_DECK_ALSA_PLAYBACK_DEVICE":    "plughw:2,1",
+			"SIM_DECK_PCM_DEVICE":              "/dev/ttyUSB4",
+			"SIM_DECK_HEALTH_ADDRESS":          "127.0.0.1:9090",
+			"SIM_DECK_BAUD":                    "9600",
+			"SIM_DECK_COMMAND_TIMEOUT":         "9s",
+			"SIM_DECK_COMMAND_POLL_INTERVAL":   "250ms",
+			"SIM_DECK_DISCOVERY_POLL_INTERVAL": "750ms",
+			"SIM_DECK_RADIO_STATUS_INTERVAL":   "30s",
+			"SIM_DECK_SERVER_URL":              "http://server:8080/",
+			"SIM_DECK_STATE_DIRECTORY":         "/tmp/state",
+			"SIM_DECK_ALLOW_INSECURE_HTTP":     "true",
 		}))
 
 		Expect(err).NotTo(HaveOccurred())
@@ -71,10 +71,10 @@ var _ = Describe("Agent configuration", func() {
 		Expect(config.Baud).To(Equal(9600))
 		Expect(config.CommandTimeout).To(Equal(9 * time.Second))
 		Expect(config.CommandPoll).To(Equal(250 * time.Millisecond))
+		Expect(config.DiscoveryPoll).To(Equal(750 * time.Millisecond))
 		Expect(config.RadioStatusPoll).To(Equal(30 * time.Second))
 		Expect(config.ServerURL).To(Equal("http://server:8080"))
 		Expect(config.StateDirectory).To(Equal("/tmp/state"))
-		Expect(config.PairingTokenFile).To(Equal("/tmp/pairing-token"))
 		Expect(config.AllowInsecureHTTP).To(BeTrue())
 	})
 
@@ -102,6 +102,8 @@ var _ = Describe("Agent configuration", func() {
 		Entry("zero command timeout", map[string]string{"SIM_DECK_COMMAND_TIMEOUT": "0s"}, "COMMAND_TIMEOUT"),
 		Entry("invalid command poll", map[string]string{"SIM_DECK_COMMAND_POLL_INTERVAL": "later"}, "COMMAND_POLL_INTERVAL"),
 		Entry("zero command poll", map[string]string{"SIM_DECK_COMMAND_POLL_INTERVAL": "0s"}, "COMMAND_POLL_INTERVAL"),
+		Entry("invalid discovery poll", map[string]string{"SIM_DECK_DISCOVERY_POLL_INTERVAL": "later"}, "DISCOVERY_POLL_INTERVAL"),
+		Entry("zero discovery poll", map[string]string{"SIM_DECK_DISCOVERY_POLL_INTERVAL": "0s"}, "DISCOVERY_POLL_INTERVAL"),
 		Entry("invalid radio status interval", map[string]string{"SIM_DECK_RADIO_STATUS_INTERVAL": "later"}, "RADIO_STATUS_INTERVAL"),
 		Entry("zero radio status interval", map[string]string{"SIM_DECK_RADIO_STATUS_INTERVAL": "0s"}, "RADIO_STATUS_INTERVAL"),
 		Entry("empty AT device", map[string]string{"SIM_DECK_AT_DEVICE": " "}, "AT_DEVICE"),
@@ -116,7 +118,6 @@ var _ = Describe("Agent configuration", func() {
 		Entry("server URL query", map[string]string{"SIM_DECK_SERVER_URL": "https://server?token=value"}, "SERVER_URL"),
 		Entry("server URL fragment", map[string]string{"SIM_DECK_SERVER_URL": "https://server/#fragment"}, "SERVER_URL"),
 		Entry("relative state directory", map[string]string{"SIM_DECK_STATE_DIRECTORY": "state"}, "STATE_DIRECTORY"),
-		Entry("relative pairing token", map[string]string{"SIM_DECK_PAIRING_TOKEN_FILE": "pairing-token"}, "PAIRING_TOKEN_FILE"),
 	)
 
 	It("does not treat whitespace-only overrides as values", func() {

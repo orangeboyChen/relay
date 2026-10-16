@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -262,10 +263,20 @@ func responseError(operation string, statusCode int, body io.Reader) error {
 	return fmt.Errorf("%s: server returned %d (%s)", operation, statusCode, failure.Error.Code)
 }
 
-// PairingResult contains the durable binding returned exactly once by the server.
-type PairingResult struct {
-	NumericID int
+// DiscoveryResult is the app-controlled admission state returned by the server.
+type DiscoveryResult struct {
+	DeviceUUID string `json:"device_uuid"`
+	Status     string `json:"status"`
+	NumericID  int    `json:"numeric_id,omitempty"`
 }
+
+const (
+	DiscoveryPending  = "pending"
+	DiscoveryApproved = "approved"
+	DiscoveryRejected = "rejected"
+)
+
+var ErrDiscoveryUnavailable = errors.New("device discovery request is unavailable")
 
 // NewClient creates a server API client with an injected transport for testing.
 func NewClient(baseURL string, httpClient *http.Client) *Client {
@@ -275,59 +286,106 @@ func NewClient(baseURL string, httpClient *http.Client) *Client {
 	return &Client{baseURL: strings.TrimRight(baseURL, "/"), httpClient: httpClient}
 }
 
-// Pair consumes a one-time token and registers the device identity public key.
-func (client *Client) Pair(ctx context.Context, pairingToken string, deviceCredential string, state identity.State) (PairingResult, error) {
+// SubmitDiscovery asks the active app-controlled window to display this device for approval.
+func (client *Client) SubmitDiscovery(ctx context.Context, pendingCredential string, state identity.State) (DiscoveryResult, error) {
 	publicKey := state.PublicKey()
-	if strings.TrimSpace(pairingToken) == "" || strings.TrimSpace(deviceCredential) == "" || len(publicKey) != ed25519.PublicKeySize || len(state.CommandPublicKey()) != 32 {
-		return PairingResult{}, errors.New("pairing token, device credential, and valid device identity are required")
+	commandPublicKey := state.CommandPublicKey()
+	if strings.TrimSpace(pendingCredential) == "" || !validUUID(state.DeviceUUID) ||
+		len(publicKey) != ed25519.PublicKeySize || len(commandPublicKey) != 32 ||
+		len(state.IdentityPrivateKey) != ed25519.PrivateKeySize {
+		return DiscoveryResult{}, errors.New("pending credential and valid device identity are required")
 	}
+	proof := discoverySignedData(state.DeviceUUID, publicKey, commandPublicKey, pendingCredential)
 	body, err := json.Marshal(map[string]any{
-		"pairing_token":       pairingToken,
-		"device_uuid":         state.DeviceUUID,
-		"profile_ciphertext":  []byte{},
-		"identity_public_key": publicKey,
-		"command_public_key":  state.CommandPublicKey(),
-		"wrapped_vault_key":   []byte{},
-		"device_credential":   deviceCredential,
+		"device_uuid": state.DeviceUUID, "identity_public_key": publicKey,
+		"command_public_key": commandPublicKey, "pending_credential": pendingCredential,
+		"signature": ed25519.Sign(state.IdentityPrivateKey, proof),
 	})
 	if err != nil {
-		return PairingResult{}, fmt.Errorf("encode pairing request: %w", err)
+		return DiscoveryResult{}, fmt.Errorf("encode device discovery: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+"/v1/device-pairings", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+"/v1/device-discoveries", bytes.NewReader(body))
 	if err != nil {
-		return PairingResult{}, fmt.Errorf("create pairing request: %w", err)
+		return DiscoveryResult{}, fmt.Errorf("create device discovery request: %w", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		return PairingResult{}, fmt.Errorf("pair device: %w", err)
+		return DiscoveryResult{}, fmt.Errorf("submit device discovery: %w", err)
 	}
 	defer response.Body.Close()
-
 	limitedBody := io.LimitReader(response.Body, maxResponseBytes)
-	if response.StatusCode != http.StatusCreated {
-		var failure struct {
-			Error struct {
-				Code string `json:"code"`
-			} `json:"error"`
+	if response.StatusCode != http.StatusAccepted {
+		return DiscoveryResult{}, responseError("submit device discovery", response.StatusCode, limitedBody)
+	}
+	return decodeDiscoveryResult(limitedBody, state.DeviceUUID)
+}
+
+// GetDiscoveryStatus polls the approval result with the private pending credential.
+func (client *Client) GetDiscoveryStatus(ctx context.Context, deviceID string, pendingCredential string) (DiscoveryResult, error) {
+	if !validUUID(deviceID) || strings.TrimSpace(pendingCredential) == "" {
+		return DiscoveryResult{}, errors.New("device UUID and pending credential are required")
+	}
+	request, err := http.NewRequestWithContext(
+		ctx, http.MethodGet, client.baseURL+"/v1/device-discoveries/"+url.PathEscape(deviceID)+"/status", nil,
+	)
+	if err != nil {
+		return DiscoveryResult{}, fmt.Errorf("create discovery status request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+pendingCredential)
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return DiscoveryResult{}, fmt.Errorf("get device discovery status: %w", err)
+	}
+	defer response.Body.Close()
+	limitedBody := io.LimitReader(response.Body, maxResponseBytes)
+	if response.StatusCode == http.StatusUnauthorized {
+		_, _ = io.Copy(io.Discard, limitedBody)
+		return DiscoveryResult{}, ErrDiscoveryUnavailable
+	}
+	if response.StatusCode != http.StatusOK {
+		return DiscoveryResult{}, responseError("get device discovery status", response.StatusCode, limitedBody)
+	}
+	return decodeDiscoveryResult(limitedBody, deviceID)
+}
+
+func decodeDiscoveryResult(body io.Reader, expectedDeviceID string) (DiscoveryResult, error) {
+	var response struct {
+		Discovery DiscoveryResult `json:"discovery"`
+	}
+	if err := json.NewDecoder(body).Decode(&response); err != nil {
+		return DiscoveryResult{}, fmt.Errorf("decode device discovery response: %w", err)
+	}
+	result := response.Discovery
+	if result.DeviceUUID != expectedDeviceID {
+		return DiscoveryResult{}, errors.New("server returned an invalid device discovery result for a different device")
+	}
+	switch result.Status {
+	case DiscoveryPending, DiscoveryRejected:
+		if result.NumericID != 0 {
+			return DiscoveryResult{}, errors.New("server returned an invalid device discovery result")
 		}
-		_ = json.NewDecoder(limitedBody).Decode(&failure)
-		if failure.Error.Code == "" {
-			failure.Error.Code = "unexpected_response"
+	case DiscoveryApproved:
+		if result.NumericID < 1 || result.NumericID > 99 {
+			return DiscoveryResult{}, errors.New("server returned an invalid device discovery result")
 		}
-		return PairingResult{}, fmt.Errorf("pair device: server returned %d (%s)", response.StatusCode, failure.Error.Code)
+	default:
+		return DiscoveryResult{}, errors.New("server returned an invalid device discovery result")
 	}
-	var result struct {
-		Device struct {
-			DeviceUUID string `json:"device_uuid"`
-			NumericID  int    `json:"numeric_id"`
-		} `json:"device"`
+	return result, nil
+}
+
+func discoverySignedData(deviceUUID string, identityPublicKey []byte, commandPublicKey []byte, credential string) []byte {
+	fields := [][]byte{
+		[]byte("sim-deck-device-discovery-v1"), []byte(deviceUUID),
+		identityPublicKey, commandPublicKey, []byte(credential),
 	}
-	if err := json.NewDecoder(limitedBody).Decode(&result); err != nil {
-		return PairingResult{}, fmt.Errorf("decode pairing response: %w", err)
+	data := make([]byte, 0, len(deviceUUID)+len(identityPublicKey)+len(commandPublicKey)+len(credential)+64)
+	for _, field := range fields {
+		var length [4]byte
+		binary.BigEndian.PutUint32(length[:], uint32(len(field)))
+		data = append(data, length[:]...)
+		data = append(data, field...)
 	}
-	if result.Device.DeviceUUID != state.DeviceUUID || result.Device.NumericID < 1 || result.Device.NumericID > 99 {
-		return PairingResult{}, errors.New("pair device: server returned an invalid binding")
-	}
-	return PairingResult{NumericID: result.Device.NumericID}, nil
+	return data
 }

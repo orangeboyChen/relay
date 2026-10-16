@@ -19,7 +19,6 @@ const (
 	defaultHealthAddr         = ":8080"
 	defaultBaud               = 115200
 	defaultStateDir           = "/var/lib/sim-deck"
-	defaultPairingFile        = "/run/secrets/sim_deck_pairing_token"
 )
 
 // AudioMode selects the modem audio transport exposed to the media peer.
@@ -42,10 +41,10 @@ type Config struct {
 	Baud               int
 	CommandTimeout     time.Duration
 	CommandPoll        time.Duration
+	DiscoveryPoll      time.Duration
 	RadioStatusPoll    time.Duration
 	ServerURL          string
 	StateDirectory     string
-	PairingTokenFile   string
 	AllowInsecureHTTP  bool
 }
 
@@ -62,10 +61,10 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 		Baud:               defaultBaud,
 		CommandTimeout:     5 * time.Second,
 		CommandPoll:        time.Second,
+		DiscoveryPoll:      2 * time.Second,
 		RadioStatusPoll:    15 * time.Second,
 		ServerURL:          strings.TrimRight(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_SERVER_URL", "")), "/"),
 		StateDirectory:     valueOrDefault(lookup, "SIM_DECK_STATE_DIRECTORY", defaultStateDir),
-		PairingTokenFile:   valueOrDefault(lookup, "SIM_DECK_PAIRING_TOKEN_FILE", defaultPairingFile),
 	}
 	if !identity.ValidDeviceUUID(config.DeviceUUID) {
 		return Config{}, fmt.Errorf("SIM_DECK_DEVICE_UUID must be a canonical UUID")
@@ -99,6 +98,13 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 		}
 		config.CommandPoll = interval
 	}
+	if value, ok := lookup("SIM_DECK_DISCOVERY_POLL_INTERVAL"); ok && strings.TrimSpace(value) != "" {
+		interval, err := time.ParseDuration(value)
+		if err != nil || interval <= 0 {
+			return Config{}, fmt.Errorf("SIM_DECK_DISCOVERY_POLL_INTERVAL must be a positive duration")
+		}
+		config.DiscoveryPoll = interval
+	}
 	if value, ok := lookup("SIM_DECK_RADIO_STATUS_INTERVAL"); ok && strings.TrimSpace(value) != "" {
 		interval, err := time.ParseDuration(value)
 		if err != nil || interval <= 0 {
@@ -130,9 +136,6 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 	}
 	if !filepath.IsAbs(config.StateDirectory) {
 		return Config{}, fmt.Errorf("SIM_DECK_STATE_DIRECTORY must be an absolute path")
-	}
-	if !filepath.IsAbs(config.PairingTokenFile) {
-		return Config{}, fmt.Errorf("SIM_DECK_PAIRING_TOKEN_FILE must be an absolute path")
 	}
 	return config, nil
 }

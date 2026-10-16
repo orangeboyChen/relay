@@ -48,6 +48,26 @@ final class DefaultLineRoutingTests: XCTestCase {
         )
     }
 
+    func testRequiredOnlineLineIsSelectedEvenWhenAnotherLineIsPreferred() {
+        let required = makeLine(numericID: 1, isOnline: true)
+        let other = makeLine(numericID: 2, isOnline: true)
+
+        XCTAssertEqual(
+            OutgoingCallLineRouter.resolve(lines: [other, required], requiredLineID: required.id),
+            .ready(required)
+        )
+    }
+
+    func testOfflineRequiredLineNeedsExplicitSelectionInsteadOfSilentFallback() {
+        let required = makeLine(numericID: 1, isOnline: false)
+        let other = makeLine(numericID: 2, isOnline: true)
+
+        XCTAssertEqual(
+            OutgoingCallLineRouter.resolve(lines: [required, other], requiredLineID: required.id),
+            .selectionRequired([other])
+        )
+    }
+
     func testUserDefaultsStorePersistsAndClearsLineIDs() throws {
         let suiteName = "DefaultLineRoutingTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

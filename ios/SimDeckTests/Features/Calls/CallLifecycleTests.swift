@@ -35,9 +35,11 @@ final class CallLifecycleTests: XCTestCase {
 
     func testInProcessCallFlowStartsControlsAndEndsWithoutSystemTransactions() async throws {
         let transport = RecordingCallTransport()
+        let recentLineStore = RecordingRecentCallLineStore()
         let coordinator = CallKitCoordinator(
             transport: transport,
-            integratesWithSystem: false
+            integratesWithSystem: false,
+            recentCallLineStore: recentLineStore
         )
         let lineID = UUID()
 
@@ -45,6 +47,10 @@ final class CallLifecycleTests: XCTestCase {
 
         let callID = try XCTUnwrap(coordinator.activeCall?.id)
         XCTAssertEqual(transport.startedCalls, [.init(callID: callID, number: "10086", lineID: lineID)])
+        XCTAssertEqual(
+            recentLineStore.routes,
+            [.init(callID: callID, remoteNumber: "10086", lineID: lineID)]
+        )
         XCTAssertEqual(coordinator.activeCall?.status, .active(connectedAt: transport.connectedAt))
 
         try await coordinator.setMuted(true)
@@ -83,10 +89,12 @@ final class CallLifecycleTests: XCTestCase {
     func testReportsIncomingCallWithRemoteNumberAndSIMIdentity() async throws {
         let provider = RecordingSystemCallProvider()
         let transport = RecordingCallTransport()
+        let recentLineStore = RecordingRecentCallLineStore()
         let coordinator = CallKitCoordinator(
             transport: transport,
             provider: provider,
-            integratesWithSystem: false
+            integratesWithSystem: false,
+            recentCallLineStore: recentLineStore
         )
         let call = makeIncomingCall(contactName: "Home")
 
@@ -101,6 +109,16 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertEqual(coordinator.activeCall?.status, .ringing)
         XCTAssertEqual(coordinator.activeCall?.lineID, call.lineID)
         XCTAssertEqual(transport.registeredIncomingCalls.first?.callSecret, call.callSecret)
+        XCTAssertEqual(
+            recentLineStore.routes,
+            [
+                .init(
+                    callID: call.callID,
+                    remoteNumber: call.remoteNumber,
+                    lineID: call.lineID
+                )
+            ]
+        )
     }
 
     func testIncomingCallReportFailureClearsVisibleCall() async {
@@ -261,6 +279,25 @@ private final class RecordingSystemCallProvider: SystemCallProviding {
     }
     func reportOutgoingCall(with UUID: UUID, startedConnectingAt dateStartedConnecting: Date?) {}
     func reportOutgoingCall(with UUID: UUID, connectedAt dateConnected: Date?) {}
+}
+
+@MainActor
+private final class RecordingRecentCallLineStore: RecentCallLineStoring {
+    struct Route: Equatable {
+        let callID: UUID
+        let remoteNumber: String
+        let lineID: UUID
+    }
+
+    private(set) var routes: [Route] = []
+
+    func record(callID: UUID, remoteNumber: String, lineID: UUID) {
+        routes.append(Route(callID: callID, remoteNumber: remoteNumber, lineID: lineID))
+    }
+
+    func lineID(callRecordIdentifier: String?, remoteNumber: String) -> UUID? {
+        nil
+    }
 }
 
 @MainActor

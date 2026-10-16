@@ -112,39 +112,129 @@ final class ExternalDialRoutingTests: XCTestCase {
             callCapability: .audioCall
         )
 
-        XCTAssertEqual(
-            DefaultCallingRequestParser.number(from: intent),
-            "+8613500000000"
-        )
+        let request = DefaultCallingRequestParser.request(from: intent)
+
+        XCTAssertEqual(request?.number, "+8613500000000")
+        XCTAssertEqual(request?.isCallBack, false)
+        XCTAssertNil(request?.callRecordIdentifier)
     }
 
     func testTelURLExtractsEncodedPhoneNumber() throws {
         let url = try XCTUnwrap(URL(string: "tel://%2B86%20135%200000%200000"))
 
-        XCTAssertEqual(DefaultCallingRequestParser.number(from: url), "+8613500000000")
+        XCTAssertEqual(
+            DefaultCallingRequestParser.request(from: url),
+            DefaultCallingRequest(
+                number: "+8613500000000",
+                callRecordIdentifier: nil,
+                isCallBack: false
+            )
+        )
     }
 
     func testUnsupportedOrInvalidURLIsIgnored() throws {
         let webURL = try XCTUnwrap(URL(string: "https://example.com/13500000000"))
         let invalidTelURL = try XCTUnwrap(URL(string: "tel:not-a-number"))
 
-        XCTAssertNil(DefaultCallingRequestParser.number(from: webURL))
-        XCTAssertNil(DefaultCallingRequestParser.number(from: invalidTelURL))
+        XCTAssertNil(DefaultCallingRequestParser.request(from: webURL))
+        XCTAssertNil(DefaultCallingRequestParser.request(from: invalidTelURL))
+    }
+
+    func testSystemRecentCallBackUsesTheRecordsOriginalLineInsteadOfDefault() async {
+        let originalLine = makeLine(numericID: 1, isOnline: true)
+        let defaultLine = makeLine(numericID: 2, isOnline: true)
+        let record = makeCallRecord(lineID: originalLine.id, remoteNumber: "10086")
+        let transport = ExternalDialRecordingTransport()
+        let model = makeModel(
+            lines: [originalLine, defaultLine],
+            defaultLineID: defaultLine.id,
+            callHistory: .loaded([record]),
+            transport: transport
+        )
+
+        await model.handleDefaultCallingRequest(
+            DefaultCallingRequest(
+                number: "10086",
+                callRecordIdentifier: record.id.uuidString,
+                isCallBack: true
+            )
+        )
+
+        XCTAssertEqual(transport.startedCalls.map(\.lineID), [originalLine.id])
+        XCTAssertNil(model.pendingExternalDialRequest)
+    }
+
+    func testSystemRecentCallBackUsesPersistedLineWhenHistoryIsNotLoaded() async {
+        let originalLine = makeLine(numericID: 1, isOnline: true)
+        let defaultLine = makeLine(numericID: 2, isOnline: true)
+        let store = ExternalDialRecentCallLineStore()
+        let callID = UUID()
+        store.record(callID: callID, remoteNumber: "10086", lineID: originalLine.id)
+        let transport = ExternalDialRecordingTransport()
+        let model = makeModel(
+            lines: [originalLine, defaultLine],
+            defaultLineID: defaultLine.id,
+            callHistory: .loading,
+            recentCallLineStore: store,
+            transport: transport
+        )
+
+        await model.handleDefaultCallingRequest(
+            DefaultCallingRequest(
+                number: "10086",
+                callRecordIdentifier: callID.uuidString,
+                isCallBack: true
+            )
+        )
+
+        XCTAssertEqual(transport.startedCalls.map(\.lineID), [originalLine.id])
+    }
+
+    func testSystemRecentCallBackDoesNotSilentlyReplaceAnOfflineOriginalLine() async {
+        let originalLine = makeLine(numericID: 1, isOnline: false)
+        let otherLine = makeLine(numericID: 2, isOnline: true)
+        let record = makeCallRecord(lineID: originalLine.id, remoteNumber: "10086")
+        let transport = ExternalDialRecordingTransport()
+        let model = makeModel(
+            lines: [originalLine, otherLine],
+            defaultLineID: otherLine.id,
+            callHistory: .loaded([record]),
+            transport: transport
+        )
+
+        await model.handleDefaultCallingRequest(
+            DefaultCallingRequest(
+                number: "10086",
+                callRecordIdentifier: record.id.uuidString,
+                isCallBack: true
+            )
+        )
+
+        XCTAssertTrue(transport.startedCalls.isEmpty)
+        XCTAssertEqual(model.pendingExternalDialRequest?.number, "10086")
+        XCTAssertEqual(
+            model.pendingExternalDialRequest?.lineSelection,
+            .preferred(originalLine.id)
+        )
     }
 
     private func makeModel(
         lines: [DeviceLineIdentity],
         defaultLineID: UUID?,
+        callHistory: CallHistoryState = .loaded([]),
+        recentCallLineStore: (any RecentCallLineStoring)? = nil,
         transport: ExternalDialRecordingTransport
     ) -> AppModel {
         AppModel(
             devices: lines,
+            callHistory: callHistory,
             defaultCallLineID: defaultLineID,
             callCoordinator: CallKitCoordinator(
                 transport: transport,
                 integratesWithSystem: false
             ),
-            defaultLineStore: ExternalDialDefaultLineStore()
+            defaultLineStore: ExternalDialDefaultLineStore(),
+            recentCallLineStore: recentCallLineStore
         )
     }
 
@@ -169,6 +259,19 @@ final class ExternalDialRoutingTests: XCTestCase {
             customIdentifier: nil
         )
     }
+
+    private func makeCallRecord(lineID: UUID, remoteNumber: String) -> CallRecord {
+        CallRecord(
+            id: UUID(),
+            lineID: lineID,
+            remoteNumber: remoteNumber,
+            contactName: nil,
+            direction: .incoming,
+            result: .answered,
+            startedAt: Date(timeIntervalSince1970: 1_000),
+            endedAt: Date(timeIntervalSince1970: 1_100)
+        )
+    }
 }
 
 private enum ExternalDialTestError: Error {
@@ -178,6 +281,33 @@ private enum ExternalDialTestError: Error {
 private final class ExternalDialDefaultLineStore: DefaultLineStoring {
     var callLineID: UUID?
     var messageLineID: UUID?
+}
+
+@MainActor
+private final class ExternalDialRecentCallLineStore: RecentCallLineStoring {
+    private struct Route {
+        let callID: UUID
+        let remoteNumber: String
+        let lineID: UUID
+    }
+
+    private var routes: [Route] = []
+
+    func record(callID: UUID, remoteNumber: String, lineID: UUID) {
+        routes.append(Route(callID: callID, remoteNumber: remoteNumber, lineID: lineID))
+    }
+
+    func lineID(callRecordIdentifier: String?, remoteNumber: String) -> UUID? {
+        if let callRecordIdentifier,
+           let callID = UUID(uuidString: callRecordIdentifier),
+           let exact = routes.last(where: { $0.callID == callID }) {
+            return exact.lineID
+        }
+        let normalizedNumber = DialString.normalized(remoteNumber)
+        return routes.last(where: {
+            DialString.normalized($0.remoteNumber) == normalizedNumber
+        })?.lineID
+    }
 }
 
 @MainActor

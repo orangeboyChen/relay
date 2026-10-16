@@ -15,6 +15,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
     @ObservationIgnored private let controller: CXCallController
     @ObservationIgnored private let transport: any CallTransport
     @ObservationIgnored private let incomingCallClaimer: (any IncomingCallClaiming)?
+    @ObservationIgnored private let recentCallLineStore: any RecentCallLineStoring
     @ObservationIgnored private let integratesWithSystem: Bool
     @ObservationIgnored private var pendingOutgoing: [UUID: OutgoingCallRequest] = [:]
     @ObservationIgnored private var incomingCalls: [UUID: IncomingCallPresentation] = [:]
@@ -26,13 +27,15 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
         provider: (any SystemCallProviding)? = nil,
         controller: CXCallController = CXCallController(),
         integratesWithSystem: Bool = true,
-        initialCall: ActiveCallSession? = nil
+        initialCall: ActiveCallSession? = nil,
+        recentCallLineStore: any RecentCallLineStoring = NullRecentCallLineStore()
     ) {
         activeCall = initialCall
         self.transport = transport
         self.incomingCallClaimer = incomingCallClaimer
         self.controller = controller
         self.integratesWithSystem = integratesWithSystem
+        self.recentCallLineStore = recentCallLineStore
         capabilities = transport.capabilities
 
         if let provider {
@@ -123,6 +126,11 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
                     }
                 }
             }
+            recentCallLineStore.record(
+                callID: call.callID,
+                remoteNumber: call.remoteNumber,
+                lineID: call.lineID
+            )
         } catch {
             transport.discardIncomingCall(callID: call.callID)
             finishCall(callID: call.callID)
@@ -303,6 +311,11 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
             try await transport.startOutgoingCall(
                 callID: request.callID,
                 number: request.number,
+                lineID: request.lineID
+            )
+            recentCallLineStore.record(
+                callID: request.callID,
+                remoteNumber: request.number,
                 lineID: request.lineID
             )
             completeStart(callID: request.callID, result: .success(()))

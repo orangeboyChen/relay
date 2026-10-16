@@ -34,10 +34,29 @@ struct LinePicker: View {
             .buttonStyle(.plain)
             .frame(minHeight: 44)
             .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-        } else {
+        } else if lines.isEmpty {
             Label("No online SIM", systemImage: "simcard.slash")
                 .foregroundStyle(.secondary)
                 .frame(minHeight: 44)
+        } else {
+            Menu {
+                ForEach(lines) { line in
+                    Button {
+                        selection = line.id
+                    } label: {
+                        Text("SIM \(line.numericID) · \(line.displayName)")
+                    }
+                }
+            } label: {
+                Label("Select SIM", systemImage: "simcard")
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 36)
+                    .background(.quaternary, in: Capsule())
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .frame(minHeight: 44)
         }
     }
 }

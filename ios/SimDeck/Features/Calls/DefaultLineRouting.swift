@@ -1,43 +1,72 @@
 import Foundation
 import Intents
 
+enum ExternalDialLineSelection: Equatable {
+    case automatic
+    case preferred(UUID)
+}
+
 struct ExternalDialRequest: Identifiable, Equatable {
     let id: UUID
     let number: String
+    let lineSelection: ExternalDialLineSelection
 
-    init(id: UUID = UUID(), number: String) {
+    init(
+        id: UUID = UUID(),
+        number: String,
+        lineSelection: ExternalDialLineSelection = .automatic
+    ) {
         self.id = id
         self.number = number
+        self.lineSelection = lineSelection
     }
 }
 
+struct DefaultCallingRequest: Equatable {
+    let number: String
+    let callRecordIdentifier: String?
+    let isCallBack: Bool
+}
+
 enum DefaultCallingRequestParser {
-    static func number(from activity: NSUserActivity) -> String? {
+    static func request(from activity: NSUserActivity) -> DefaultCallingRequest? {
         if let intent = activity.interaction?.intent as? INStartCallIntent,
-           let number = number(from: intent) {
-            return number
+           let request = request(from: intent) {
+            return request
         }
-        return activity.webpageURL.flatMap(number(from:))
+        return activity.webpageURL.flatMap(request(from:))
     }
 
-    static func number(from intent: INStartCallIntent) -> String? {
+    static func request(from intent: INStartCallIntent) -> DefaultCallingRequest? {
         let contacts = intent.contacts ?? []
         let callbackParticipants = intent.callRecordToCallBack?.participants ?? []
 
-        return (contacts + callbackParticipants)
+        guard let number = (callbackParticipants + contacts)
             .lazy
             .compactMap(\.personHandle?.value)
             .map(DialString.normalized)
-            .first(where: DialString.isValid)
+            .first(where: DialString.isValid) else {
+            return nil
+        }
+        return DefaultCallingRequest(
+            number: number,
+            callRecordIdentifier: intent.callRecordToCallBack?.identifier,
+            isCallBack: intent.callRecordToCallBack != nil
+        )
     }
 
-    static func number(from url: URL) -> String? {
+    static func request(from url: URL) -> DefaultCallingRequest? {
         guard url.scheme?.lowercased() == "tel" else { return nil }
 
         let encodedNumber = url.absoluteString.dropFirst("tel:".count)
         let decodedNumber = String(encodedNumber).removingPercentEncoding ?? String(encodedNumber)
         let number = DialString.normalized(String(decodedNumber.drop(while: { $0 == "/" })))
-        return DialString.isValid(number) ? number : nil
+        guard DialString.isValid(number) else { return nil }
+        return DefaultCallingRequest(
+            number: number,
+            callRecordIdentifier: nil,
+            isCallBack: false
+        )
     }
 }
 
@@ -65,6 +94,17 @@ struct OutgoingCallLineRouter {
             return .unavailable
         }
         return .selectionRequired(onlineLines)
+    }
+
+    static func resolve(
+        lines: [DeviceLineIdentity],
+        requiredLineID: UUID
+    ) -> OutgoingCallLineResolution {
+        let onlineLines = lines.filter(\.isOnline)
+        if let requiredLine = onlineLines.first(where: { $0.id == requiredLineID }) {
+            return .ready(requiredLine)
+        }
+        return onlineLines.isEmpty ? .unavailable : .selectionRequired(onlineLines)
     }
 }
 

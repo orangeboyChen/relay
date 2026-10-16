@@ -23,7 +23,7 @@ struct CallsTabScreen: View {
         .sheet(item: $dialerPresentation) { presentation in
             DialerScreen(
                 lines: model.devices,
-                initialLineID: presentation.isExternal ? externalPreferredLineID : preferredLineID,
+                initialLineID: initialLineID(for: presentation),
                 initialNumber: presentation.number,
                 callStarter: model.callCoordinator
             ) { lineID in
@@ -67,19 +67,35 @@ struct CallsTabScreen: View {
         dialerPresentation = .external(request)
         model.pendingExternalDialRequest = nil
     }
+
+    private func initialLineID(for presentation: DialerPresentation) -> UUID? {
+        guard let lineSelection = presentation.lineSelection else { return preferredLineID }
+        switch lineSelection {
+        case .automatic:
+            return externalPreferredLineID
+        case .preferred(let lineID):
+            return model.devices.contains(where: { $0.id == lineID && $0.isOnline })
+                ? lineID
+                : nil
+        }
+    }
 }
 
 private struct DialerPresentation: Identifiable {
     let id: UUID
     let number: String
-    let isExternal: Bool
+    let lineSelection: ExternalDialLineSelection?
 
     static func manual() -> DialerPresentation {
-        DialerPresentation(id: UUID(), number: "", isExternal: false)
+        DialerPresentation(id: UUID(), number: "", lineSelection: nil)
     }
 
     static func external(_ request: ExternalDialRequest) -> DialerPresentation {
-        DialerPresentation(id: request.id, number: request.number, isExternal: true)
+        DialerPresentation(
+            id: request.id,
+            number: request.number,
+            lineSelection: request.lineSelection
+        )
     }
 }
 

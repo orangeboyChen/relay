@@ -30,6 +30,7 @@ final class AppModel {
     let callCoordinator: CallKitCoordinator
     let installationBootstrapper: any InstallationBootstrapping
     @ObservationIgnored private let defaultLineStore: any DefaultLineStoring
+    @ObservationIgnored private let recentCallLineStore: any RecentCallLineStoring
     @ObservationIgnored private var installationIdentity: InstallationIdentity?
     @ObservationIgnored private var recoveredVaultKey: VaultKey?
     @ObservationIgnored private var voipPushCoordinator: VoIPPushCoordinator?
@@ -46,10 +47,12 @@ final class AppModel {
         serverConnection: ServerConnectionManager? = nil,
         callCoordinator: CallKitCoordinator? = nil,
         installationBootstrapper: any InstallationBootstrapping = InstallationBootstrapper.live(),
-        defaultLineStore: (any DefaultLineStoring)? = nil
+        defaultLineStore: (any DefaultLineStoring)? = nil,
+        recentCallLineStore: (any RecentCallLineStoring)? = nil
     ) {
         let resolvedServerConnection = serverConnection ?? .live()
         let resolvedDefaultLineStore = defaultLineStore ?? UserDefaultsDefaultLineStore()
+        let resolvedRecentCallLineStore = recentCallLineStore ?? UserDefaultsRecentCallLineStore()
         self.devices = devices
         self.callHistory = callHistory
         self.messages = messages
@@ -64,10 +67,12 @@ final class AppModel {
         self.serverConnection = resolvedServerConnection
         self.callCoordinator = callCoordinator ?? CallKitCoordinator(
             transport: LiveCallTransport(api: resolvedServerConnection),
-            incomingCallClaimer: resolvedServerConnection
+            incomingCallClaimer: resolvedServerConnection,
+            recentCallLineStore: resolvedRecentCallLineStore
         )
         self.installationBootstrapper = installationBootstrapper
         self.defaultLineStore = resolvedDefaultLineStore
+        self.recentCallLineStore = resolvedRecentCallLineStore
     }
 
     func bootstrapInstallation() {
@@ -121,28 +126,35 @@ final class AppModel {
         voipPushCoordinator?.start(installationID: installationIdentity.id)
     }
 
-    func handleExternalDial(number rawNumber: String) async {
+    func handleExternalDial(number rawNumber: String, requiredLineID: UUID? = nil) async {
         let number = DialString.normalized(rawNumber)
         guard DialString.isValid(number) else { return }
 
         selectedTab = .calls
-        let request = ExternalDialRequest(number: number)
+        let lineSelection = requiredLineID.map(ExternalDialLineSelection.preferred) ?? .automatic
+        let request = ExternalDialRequest(number: number, lineSelection: lineSelection)
         pendingExternalDialRequest = nil
         guard callCoordinator.activeCall == nil else {
             pendingExternalDialRequest = request
             return
         }
 
-        switch OutgoingCallLineRouter.resolve(
-            lines: devices,
-            preferredLineID: defaultCallLineID
-        ) {
+        let resolution = if let requiredLineID {
+            OutgoingCallLineRouter.resolve(lines: devices, requiredLineID: requiredLineID)
+        } else {
+            OutgoingCallLineRouter.resolve(lines: devices, preferredLineID: defaultCallLineID)
+        }
+
+        switch resolution {
         case .ready(let line):
             do {
                 try await callCoordinator.startCall(to: number, using: line.id)
                 lastSuccessfulDialLineID = line.id
             } catch {
-                pendingExternalDialRequest = request
+                pendingExternalDialRequest = ExternalDialRequest(
+                    number: number,
+                    lineSelection: .preferred(line.id)
+                )
             }
         case .selectionRequired, .unavailable:
             pendingExternalDialRequest = request
@@ -150,8 +162,13 @@ final class AppModel {
     }
 
     func handleDefaultCallingActivity(_ activity: NSUserActivity) async {
-        guard let number = DefaultCallingRequestParser.number(from: activity) else { return }
-        await handleExternalDial(number: number)
+        guard let request = DefaultCallingRequestParser.request(from: activity) else { return }
+        await handleDefaultCallingRequest(request)
+    }
+
+    func handleDefaultCallingRequest(_ request: DefaultCallingRequest) async {
+        let requiredLineID = request.isCallBack ? recentLineID(for: request) : nil
+        await handleExternalDial(number: request.number, requiredLineID: requiredLineID)
     }
 
     func testServerConnection() async throws {
@@ -174,6 +191,27 @@ final class AppModel {
                 wrappedVaultKey: nil
             )
         )
+    }
+
+    private func recentLineID(for request: DefaultCallingRequest) -> UUID? {
+        let normalizedNumber = DialString.normalized(request.number)
+        if let callRecordIdentifier = request.callRecordIdentifier,
+           let callRecordID = UUID(uuidString: callRecordIdentifier),
+           case .loaded(let records) = callHistory,
+           let exactRecord = records.first(where: { $0.id == callRecordID }) {
+            return exactRecord.lineID
+        }
+        if let storedLineID = recentCallLineStore.lineID(
+            callRecordIdentifier: request.callRecordIdentifier,
+            remoteNumber: request.number
+        ) {
+            return storedLineID
+        }
+        guard case .loaded(let records) = callHistory else { return nil }
+        return records
+            .filter { DialString.normalized($0.remoteNumber) == normalizedNumber }
+            .max(by: { $0.startedAt < $1.startedAt })?
+            .lineID
     }
 
     private func processIncomingCallPush(_ data: Data) async throws {

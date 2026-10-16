@@ -49,9 +49,9 @@ struct RootTabView: View {
             }
         }
         .onOpenURL { url in
-            guard let number = DefaultCallingRequestParser.number(from: url) else { return }
+            guard let request = DefaultCallingRequestParser.request(from: url) else { return }
             Task {
-                await model.handleExternalDial(number: number)
+                await model.handleDefaultCallingRequest(request)
             }
         }
     }

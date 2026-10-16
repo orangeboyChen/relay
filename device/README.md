@@ -21,20 +21,6 @@ make coverage
 
 `make coverage` fails when repository-wide statement coverage is below 90%.
 
-## Real modem test safety
-
-Real calls and SMS tests in this development environment may target only
-`13800000000` or `13500000000`. Validate a destination before sending any
-`ATD` or `AT+CMGS` command:
-
-```sh
-test_number="$(./scripts/check-real-test-number.sh "13800000000")"
-```
-
-The guard also accepts the corresponding `+86` forms and rejects every other
-number. Unit tests use synthetic numbers with fake transports and do not access
-the modem.
-
 ## Container model
 
 One container controls exactly one modem. Every container must have all of the

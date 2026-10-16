@@ -192,7 +192,7 @@ func productionDependencies(httpClient *http.Client) deviceDependencies {
 			return incomingcall.NewRuntime(serverapi.NewClient(config.ServerURL, httpClient), state, snapshots, events)
 		},
 		newCallMedia: func(config agent.Config) (callMediaRuntime, error) {
-			return media.NewManager(func(ctx context.Context) (media.DuplexPCM, error) {
+			return media.NewManagerWithICE(media.ICEConfig{UDPPort: config.MediaUDPPort, TCPPort: config.MediaTCPPort, PublicIP: config.MediaPublicIP}, func(ctx context.Context) (media.DuplexPCM, error) {
 				switch config.AudioMode {
 				case agent.AudioModeALSA:
 					return media.OpenALSAEndpoint(ctx, config.ALSACaptureDevice, config.ALSAPlaybackDevice)
@@ -313,6 +313,9 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 		"alsa_capture_device", config.ALSACaptureDevice,
 		"alsa_playback_device", config.ALSAPlaybackDevice,
 		"pcm_device", config.PCMDevice,
+		"media_udp_port", config.MediaUDPPort,
+		"media_tcp_port", config.MediaTCPPort,
+		"media_public_ip", config.MediaPublicIP,
 		"device_uuid", deviceIdentity.DeviceUUID,
 		"numeric_id", deviceIdentity.NumericID,
 	)

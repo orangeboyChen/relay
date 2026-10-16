@@ -34,6 +34,9 @@ var _ = Describe("Agent configuration", func() {
 		Expect(config.ALSACaptureDevice).To(Equal("hw:0,0"))
 		Expect(config.ALSAPlaybackDevice).To(Equal("hw:0,0"))
 		Expect(config.PCMDevice).To(Equal("/dev/sim-deck/pcm"))
+		Expect(config.MediaUDPPort).To(Equal(0))
+		Expect(config.MediaTCPPort).To(Equal(0))
+		Expect(config.MediaPublicIP).To(BeEmpty())
 		Expect(config.HealthAddress).To(Equal(":8080"))
 		Expect(config.Baud).To(Equal(115200))
 		Expect(config.CommandTimeout).To(Equal(5 * time.Second))
@@ -69,6 +72,9 @@ var _ = Describe("Agent configuration", func() {
 			"SIM_DECK_ALSA_CAPTURE_DEVICE":     "plughw:2,0",
 			"SIM_DECK_ALSA_PLAYBACK_DEVICE":    "plughw:2,1",
 			"SIM_DECK_PCM_DEVICE":              "/dev/ttyUSB4",
+			"SIM_DECK_MEDIA_UDP_PORT":          "49160",
+			"SIM_DECK_MEDIA_TCP_PORT":          "49161",
+			"SIM_DECK_MEDIA_PUBLIC_IP":         "203.0.113.10",
 			"SIM_DECK_HEALTH_ADDRESS":          "127.0.0.1:9090",
 			"SIM_DECK_BAUD":                    "9600",
 			"SIM_DECK_COMMAND_TIMEOUT":         "9s",
@@ -87,6 +93,9 @@ var _ = Describe("Agent configuration", func() {
 		Expect(config.ALSACaptureDevice).To(Equal("plughw:2,0"))
 		Expect(config.ALSAPlaybackDevice).To(Equal("plughw:2,1"))
 		Expect(config.PCMDevice).To(Equal("/dev/ttyUSB4"))
+		Expect(config.MediaUDPPort).To(Equal(49160))
+		Expect(config.MediaTCPPort).To(Equal(49161))
+		Expect(config.MediaPublicIP).To(Equal("203.0.113.10"))
 		Expect(config.HealthAddress).To(Equal("127.0.0.1:9090"))
 		Expect(config.Baud).To(Equal(9600))
 		Expect(config.CommandTimeout).To(Equal(9 * time.Second))
@@ -138,6 +147,9 @@ var _ = Describe("Agent configuration", func() {
 		Entry("missing ALSA playback", map[string]string{"SIM_DECK_ALSA_PLAYBACK_DEVICE": " "}, "ALSA_PLAYBACK_DEVICE"),
 		Entry("missing raw PCM path", map[string]string{"SIM_DECK_AUDIO_MODE": "raw-pcm", "SIM_DECK_PCM_DEVICE": " "}, "PCM_DEVICE"),
 		Entry("synthetic raw PCM path", map[string]string{"SIM_DECK_AUDIO_MODE": "raw-pcm", "SIM_DECK_PCM_DEVICE": "/dev/zero"}, "real full-duplex modem audio"),
+		Entry("invalid media UDP port", map[string]string{"SIM_DECK_MEDIA_UDP_PORT": "70000"}, "MEDIA_UDP_PORT"),
+		Entry("invalid media TCP port", map[string]string{"SIM_DECK_MEDIA_TCP_PORT": "tcp"}, "MEDIA_TCP_PORT"),
+		Entry("invalid media public IP", map[string]string{"SIM_DECK_MEDIA_PUBLIC_IP": "media.example"}, "MEDIA_PUBLIC_IP"),
 		Entry("missing server URL", map[string]string{"SIM_DECK_SERVER_URL": ""}, "SERVER_URL"),
 		Entry("relative server URL", map[string]string{"SIM_DECK_SERVER_URL": "server:8080"}, "SERVER_URL"),
 		Entry("HTTP without opt in", map[string]string{"SIM_DECK_SERVER_URL": "http://server:8080"}, "must use HTTPS"),

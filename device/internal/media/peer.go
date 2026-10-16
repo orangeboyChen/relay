@@ -38,6 +38,10 @@ type Peer struct {
 func NewPeer(source io.Reader, sink io.Writer) (*Peer, error) {
 	settings := webrtc.SettingEngine{}
 	settings.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+	return newPeerWithSettings(source, sink, settings)
+}
+
+func newPeerWithSettings(source io.Reader, sink io.Writer, settings webrtc.SettingEngine) (*Peer, error) {
 	return newPeer(source, sink, settings)
 }
 

@@ -151,6 +151,14 @@ rejects those paths. Real audio tests require a Linux host with the modem's
 ALSA capture and playback nodes mapped into the container (or a separately
 verified full-duplex raw PCM device).
 
+For direct WebRTC media on a Linux deployment, set
+`SIM_DECK_MEDIA_UDP_PORT`, `SIM_DECK_MEDIA_TCP_PORT`, and
+`SIM_DECK_MEDIA_PUBLIC_IP`. The UDP and TCP ports must be published to the
+same host ports and allowed by the firewall. `SIM_DECK_MEDIA_PUBLIC_IP` is the
+address that the iPhone can reach; it prevents Docker's private container
+address from being advertised in the SDP. The device shares these listeners
+across calls and still protects media with DTLS-SRTP.
+
 ## App-controlled discovery
 
 Device admission is controlled from the iOS app and does not require copying a

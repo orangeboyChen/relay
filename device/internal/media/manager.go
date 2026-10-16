@@ -19,6 +19,13 @@ type DuplexPCM interface {
 // EndpointFactory opens call-scoped modem audio.
 type EndpointFactory func(context.Context) (DuplexPCM, error)
 
+// ICEConfig controls fixed listeners used by deployed agents.
+type ICEConfig struct {
+	UDPPort  int
+	TCPPort  int
+	PublicIP string
+}
+
 type mediaPeer interface {
 	Answer(context.Context, string) (string, error)
 	Errors() <-chan error
@@ -52,13 +59,29 @@ type Manager struct {
 	mu       sync.Mutex
 	sessions map[string]*activeSession
 	closed   bool
+	closeICE func()
 }
 
 // NewManager creates a call media manager using the production Pion peer.
 func NewManager(openEndpoint EndpointFactory) (*Manager, error) {
-	return newManager(openEndpoint, func(source io.Reader, sink io.Writer) (mediaPeer, error) {
-		return NewPeer(source, sink)
+	return NewManagerWithICE(ICEConfig{}, openEndpoint)
+}
+
+// NewManagerWithICE creates a manager with optional fixed ICE UDP/TCP listeners.
+func NewManagerWithICE(config ICEConfig, openEndpoint EndpointFactory) (*Manager, error) {
+	settings, closeICE, err := NewICESettings(config)
+	if err != nil {
+		return nil, err
+	}
+	manager, err := newManager(openEndpoint, func(source io.Reader, sink io.Writer) (mediaPeer, error) {
+		return newPeerWithSettings(source, sink, settings)
 	})
+	if err != nil {
+		closeICE()
+		return nil, err
+	}
+	manager.closeICE = closeICE
+	return manager, nil
 }
 
 func newManager(openEndpoint EndpointFactory, newPeer mediaPeerFactory) (*Manager, error) {
@@ -154,6 +177,9 @@ func (manager *Manager) Close() error {
 	var closeError error
 	for _, session := range sessions {
 		closeError = errors.Join(closeError, session.close())
+	}
+	if manager.closeICE != nil {
+		manager.closeICE()
 	}
 	return closeError
 }

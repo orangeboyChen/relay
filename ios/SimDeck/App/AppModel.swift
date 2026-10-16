@@ -106,7 +106,7 @@ final class AppModel {
         }
         do {
             try await registerInstallationIfNeeded()
-            devices = try await serverConnection.loadDevices()
+            devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
             try? await voipPushCoordinator?.uploadPendingToken()
         } catch {
             devices = devices.map { device in
@@ -120,7 +120,7 @@ final class AppModel {
     func signInToServer(password: String) async throws {
         try await serverConnection.signIn(password: password)
         try await registerInstallationIfNeeded()
-        devices = try await serverConnection.loadDevices()
+        devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
         try? await voipPushCoordinator?.uploadPendingToken()
     }
 
@@ -183,7 +183,49 @@ final class AppModel {
     }
 
     func testServerConnection() async throws {
-        devices = try await serverConnection.loadDevices()
+        devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
+    }
+
+    func createDevicePairingToken() async throws -> DevicePairingToken {
+        try await serverConnection.createDevicePairingToken()
+    }
+
+    func saveDevice(
+        id: UUID,
+        numericID: Int,
+        deviceName: String,
+        lineName: String,
+        phoneNumber: String
+    ) async throws {
+        guard let recoveredVaultKey else {
+            throw KeyRecoveryError.invalidVaultKey
+        }
+        let profile = DeviceProfile(
+            deviceName: deviceName.trimmingCharacters(in: .whitespacesAndNewlines),
+            lineName: lineName.trimmingCharacters(in: .whitespacesAndNewlines),
+            phoneNumber: phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        let ciphertext = try DeviceProfileCodec.seal(profile, using: recoveredVaultKey)
+        try await serverConnection.updateDeviceProfile(
+            deviceID: id,
+            profileCiphertext: ciphertext
+        )
+        try await serverConnection.updateDeviceNumericID(deviceID: id, numericID: numericID)
+        devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
+    }
+
+    func removeDevice(id: UUID) async throws {
+        try await serverConnection.revokeDevice(deviceID: id)
+        devices.removeAll { $0.id == id }
+        if defaultCallLineID == id {
+            defaultCallLineID = nil
+        }
+        if defaultMessageLineID == id {
+            defaultMessageLineID = nil
+        }
+        if lastSuccessfulDialLineID == id {
+            lastSuccessfulDialLineID = nil
+        }
     }
 
     func signOutFromServer() throws {

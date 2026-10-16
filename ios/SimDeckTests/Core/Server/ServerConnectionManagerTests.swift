@@ -127,6 +127,125 @@ final class ServerConnectionManagerTests: XCTestCase {
         XCTAssertNil(devices[1].radioStatus?.signalBars)
     }
 
+    func testLoadsAndDecryptsDeviceProfileWithVaultKey() async throws {
+        let deviceID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-000000000003")!
+        let key = try VaultKey(data: Data(repeating: 6, count: VaultKey.length))
+        let profile = DeviceProfile(
+            deviceName: "Living Room EC20",
+            lineName: "Personal",
+            phoneNumber: "13500000000"
+        )
+        let ciphertext = try DeviceProfileCodec.seal(profile, using: key)
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
+        )
+        let network = ScriptedServerNetwork { _ in
+            Self.response(
+                status: 200,
+                body: """
+                {"devices":[{
+                  "device_uuid":"\(deviceID.uuidString.lowercased())",
+                  "numeric_id":2,
+                  "profile_ciphertext":"\(ciphertext.base64EncodedString())",
+                  "identity_public_key":"",
+                  "paired_at":"2026-10-16T00:00:00Z"
+                }]}
+                """
+            )
+        }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+
+        let devices = try await manager.loadDevices(profileKey: key)
+
+        XCTAssertEqual(devices.first?.deviceName, profile.deviceName)
+        XCTAssertEqual(devices.first?.lineName, profile.lineName)
+        XCTAssertEqual(devices.first?.phoneNumber, profile.phoneNumber)
+    }
+
+    func testCreatesDevicePairingToken() async throws {
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
+        )
+        let network = ScriptedServerNetwork { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/v1/device-pairing-tokens")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
+            return Self.response(
+                status: 201,
+                body: "{\"pairing_token\":\"pair-once\",\"expires_at\":\"2026-10-16T13:10:00Z\"}"
+            )
+        }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+
+        let token = try await manager.createDevicePairingToken()
+
+        XCTAssertEqual(token.value, "pair-once")
+        XCTAssertEqual(token.expiresAt, ISO8601DateFormatter().date(from: "2026-10-16T13:10:00Z"))
+    }
+
+    func testUpdatesEncryptedProfileAndNumericIDThenRevokesDevice() async throws {
+        let deviceID = UUID(uuidString: "01900000-0000-7000-8000-000000000001")!
+        let ciphertext = Data("opaque encrypted profile".utf8)
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
+        )
+        let network = ScriptedServerNetwork { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
+            let expectedBase = "/v1/devices/\(deviceID.uuidString.lowercased())"
+            switch (request.httpMethod, request.url?.path) {
+            case ("PUT", "\(expectedBase)/profile"):
+                let object = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+                )
+                XCTAssertEqual(
+                    object["profile_ciphertext"] as? String,
+                    ciphertext.base64EncodedString()
+                )
+                XCTAssertEqual(object.count, 1)
+            case ("PATCH", "\(expectedBase)/numeric-id"):
+                let object = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+                )
+                XCTAssertEqual(object["numeric_id"] as? Int, 7)
+            case ("DELETE", expectedBase):
+                XCTAssertNil(request.httpBody)
+            default:
+                XCTFail("Unexpected request: \(request.httpMethod ?? "") \(request.url?.path ?? "")")
+            }
+            return Self.response(status: 204, body: "")
+        }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+
+        try await manager.updateDeviceProfile(deviceID: deviceID, profileCiphertext: ciphertext)
+        try await manager.updateDeviceNumericID(deviceID: deviceID, numericID: 7)
+        try await manager.revokeDevice(deviceID: deviceID)
+
+        XCTAssertEqual(network.requests.count, 3)
+    }
+
+    func testMapsDeviceManagementFailureStatus() async throws {
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
+        )
+        let network = ScriptedServerNetwork { _ in Self.response(status: 409, body: "{}") }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+
+        do {
+            try await manager.updateDeviceNumericID(deviceID: UUID(), numericID: 2)
+            XCTFail("Expected the duplicate SIM ID to fail")
+        } catch {
+            XCTAssertEqual(error as? ServerConnectionError, .requestFailed(409))
+        }
+    }
+
     func testExpiredAccessTokenRefreshesBeforeLoadingDevices() async throws {
         let store = MemoryServerSessionStore(
             value: Data(Self.sessionJSON(

@@ -139,6 +139,125 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.installationID, identity.id)
         XCTAssertTrue(model.installationTrust?.isApproved == true)
     }
+
+    @MainActor
+    func testSavesEncryptedDeviceMetadataAndReloadsProfile() async throws {
+        let deviceID = UUID(uuidString: "01900000-0000-7000-8000-000000000008")!
+        let identity = InstallationIdentity.generate()
+        let vaultKey = try VaultKey(data: Data(repeating: 3, count: VaultKey.length))
+        let network = AppModelDeviceManagementNetwork(deviceID: deviceID)
+        let defaults = UserDefaults(suiteName: "AppModelDeviceSaveTests.\(UUID().uuidString)")!
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let connection = ServerConnectionManager(
+            network: network,
+            sessionStore: AppModelSessionStore(value: Self.activeSession),
+            defaults: defaults
+        )
+        let model = AppModel(
+            devices: [Self.line(id: deviceID, numericID: 1)],
+            serverConnection: connection,
+            installationBootstrapper: AppModelInstallationBootstrapper(
+                identity: identity,
+                vaultKey: vaultKey
+            )
+        )
+        model.bootstrapInstallation()
+
+        try await model.saveDevice(
+            id: deviceID,
+            numericID: 7,
+            deviceName: "  Living Room EC20  ",
+            lineName: "  Personal  ",
+            phoneNumber: "  13500000000  "
+        )
+
+        let ciphertext = try XCTUnwrap(network.profileCiphertext)
+        XCTAssertFalse(String(decoding: ciphertext, as: UTF8.self).contains("Living Room"))
+        XCTAssertEqual(
+            try DeviceProfileCodec.open(ciphertext, using: vaultKey),
+            DeviceProfile(
+                deviceName: "Living Room EC20",
+                lineName: "Personal",
+                phoneNumber: "13500000000"
+            )
+        )
+        XCTAssertEqual(model.devices.first?.numericID, 7)
+        XCTAssertEqual(model.devices.first?.phoneNumber, "13500000000")
+        XCTAssertEqual(network.requestMethods, ["PUT", "PATCH", "GET"])
+    }
+
+    @MainActor
+    func testSavingDeviceWithoutRecoveredVaultKeyFailsBeforeNetworkRequest() async {
+        let deviceID = UUID()
+        let network = AppModelDeviceManagementNetwork(deviceID: deviceID)
+        let defaults = UserDefaults(suiteName: "AppModelDeviceNoKeyTests.\(UUID().uuidString)")!
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let model = AppModel(
+            devices: [Self.line(id: deviceID, numericID: 1)],
+            serverConnection: ServerConnectionManager(
+                network: network,
+                sessionStore: AppModelSessionStore(value: Self.activeSession),
+                defaults: defaults
+            )
+        )
+
+        do {
+            try await model.saveDevice(
+                id: deviceID,
+                numericID: 2,
+                deviceName: "Office",
+                lineName: "Work",
+                phoneNumber: "10086"
+            )
+            XCTFail("Expected missing recovery key to fail")
+        } catch {
+            XCTAssertEqual(error as? KeyRecoveryError, .invalidVaultKey)
+        }
+
+        XCTAssertTrue(network.requestMethods.isEmpty)
+    }
+
+    @MainActor
+    func testRemovingDeviceClearsLineDefaults() async throws {
+        let deviceID = UUID()
+        let network = AppModelDeviceManagementNetwork(deviceID: deviceID)
+        let defaults = UserDefaults(suiteName: "AppModelDeviceRemoveTests.\(UUID().uuidString)")!
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let model = AppModel(
+            devices: [Self.line(id: deviceID, numericID: 1)],
+            lastSuccessfulDialLineID: deviceID,
+            defaultCallLineID: deviceID,
+            defaultMessageLineID: deviceID,
+            serverConnection: ServerConnectionManager(
+                network: network,
+                sessionStore: AppModelSessionStore(value: Self.activeSession),
+                defaults: defaults
+            )
+        )
+
+        try await model.removeDevice(id: deviceID)
+
+        XCTAssertTrue(model.devices.isEmpty)
+        XCTAssertNil(model.defaultCallLineID)
+        XCTAssertNil(model.defaultMessageLineID)
+        XCTAssertNil(model.lastSuccessfulDialLineID)
+        XCTAssertEqual(network.requestMethods, ["DELETE"])
+    }
+
+    private static let activeSession = Data("""
+    {"access_token":"access","refresh_token":"refresh","access_expires_at":"2098-01-01T00:00:00Z","refresh_expires_at":"2099-01-01T00:00:00Z"}
+    """.utf8)
+
+    private static func line(id: UUID, numericID: Int) -> DeviceLineIdentity {
+        DeviceLineIdentity(
+            id: id,
+            numericID: numericID,
+            deviceName: "",
+            lineName: "",
+            phoneNumber: "",
+            isOnline: true
+        )
+    }
 }
 
 @MainActor
@@ -185,17 +304,84 @@ private final class AppModelSessionStore: SecureValueStoring, @unchecked Sendabl
 
 private struct AppModelInstallationBootstrapper: InstallationBootstrapping {
     let identity: InstallationIdentity
+    var vaultKey: VaultKey? = try? VaultKey(
+        data: Data(repeating: 3, count: VaultKey.length)
+    )
 
     func bootstrap() throws -> InstallationBootstrapResult {
         InstallationBootstrapResult(
             identity: identity,
-            recoveredVaultKey: try VaultKey(data: Data(repeating: 3, count: VaultKey.length)),
+            recoveredVaultKey: vaultKey,
             pendingRevocationIDs: []
         )
     }
 
     func saveVaultKey(_: VaultKey) throws {}
     func markInstallationRevoked(_: UUID) throws {}
+}
+
+@MainActor
+private final class AppModelDeviceManagementNetwork: ServerNetworking {
+    let deviceID: UUID
+    private(set) var requestMethods: [String] = []
+    private(set) var profileCiphertext: Data?
+    private var numericID = 1
+
+    init(deviceID: UUID) {
+        self.deviceID = deviceID
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        requestMethods.append(request.httpMethod ?? "")
+        let basePath = "/v1/devices/\(deviceID.uuidString.lowercased())"
+        let body: Data
+        let status: Int
+        switch (request.httpMethod, request.url?.path) {
+        case ("PUT", "\(basePath)/profile"):
+            let object = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+            )
+            profileCiphertext = Data(
+                base64Encoded: try XCTUnwrap(object["profile_ciphertext"] as? String)
+            )
+            body = Data()
+            status = 204
+        case ("PATCH", "\(basePath)/numeric-id"):
+            let object = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+            )
+            numericID = try XCTUnwrap(object["numeric_id"] as? Int)
+            body = Data()
+            status = 204
+        case ("GET", "/v1/devices"):
+            body = Data("""
+            {"devices":[{
+              "device_uuid":"\(deviceID.uuidString.lowercased())",
+              "numeric_id":\(numericID),
+              "profile_ciphertext":"\((profileCiphertext ?? Data()).base64EncodedString())",
+              "identity_public_key":"",
+              "paired_at":"2026-10-16T00:00:00Z"
+            }]}
+            """.utf8)
+            status = 200
+        case ("DELETE", basePath):
+            body = Data()
+            status = 204
+        default:
+            XCTFail("Unexpected request: \(request.httpMethod ?? "") \(request.url?.path ?? "")")
+            body = Data("{}".utf8)
+            status = 500
+        }
+        return (
+            body,
+            HTTPURLResponse(
+                url: request.url!,
+                statusCode: status,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+        )
+    }
 }
 
 @MainActor

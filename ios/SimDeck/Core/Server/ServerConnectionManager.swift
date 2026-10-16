@@ -116,6 +116,16 @@ struct IncomingCallClaim: Decodable, Equatable, Sendable {
     }
 }
 
+struct DevicePairingToken: Decodable, Equatable, Sendable {
+    let value: String
+    let expiresAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case value = "pairing_token"
+        case expiresAt = "expires_at"
+    }
+}
+
 @MainActor
 protocol IncomingCallClaiming: AnyObject {
     func claimIncomingCall(notificationID: UUID, installationID: UUID) async throws
@@ -297,7 +307,7 @@ final class ServerConnectionManager {
         lastErrorDescription = nil
     }
 
-    func loadDevices(now: Date = .now) async throws -> [DeviceLineIdentity] {
+    func loadDevices(profileKey: VaultKey? = nil, now: Date = .now) async throws -> [DeviceLineIdentity] {
         do {
             let (data, response) = try await authenticatedRequest(path: "v1/devices", method: "GET")
             guard response.statusCode == 200 else {
@@ -310,7 +320,7 @@ final class ServerConnectionManager {
                     return (device.deviceUUID, device.identityPublicKey)
                 }
             )
-            let devices = body.devices.map { device in
+            let devices = try body.devices.map { device in
                 let recentlySeen = Self.isFresh(device.lastSeenAt, now: now)
                 let isOnline = recentlySeen && device.commandPublicKey?.count == 32
                 let hasFreshRadioStatus = Self.isFresh(device.radioStatusUpdatedAt, now: now)
@@ -322,12 +332,21 @@ final class ServerConnectionManager {
                 } else {
                     nil
                 }
+                let profileCiphertext = device.profileCiphertext ?? Data()
+                let profile: DeviceProfile
+                if profileCiphertext.isEmpty {
+                    profile = .empty
+                } else if let profileKey {
+                    profile = try DeviceProfileCodec.open(profileCiphertext, using: profileKey)
+                } else {
+                    profile = .empty
+                }
                 return DeviceLineIdentity(
                     id: device.deviceUUID,
                     numericID: device.numericID,
-                    deviceName: "",
-                    lineName: "",
-                    phoneNumber: "",
+                    deviceName: profile.deviceName,
+                    lineName: profile.lineName,
+                    phoneNumber: profile.phoneNumber,
                     isOnline: isOnline,
                     radioStatus: radioStatus,
                     commandPublicKey: device.commandPublicKey
@@ -340,6 +359,59 @@ final class ServerConnectionManager {
             state = .failed
             lastErrorDescription = error.localizedDescription
             throw error
+        }
+    }
+
+    func createDevicePairingToken() async throws -> DevicePairingToken {
+        let (data, response) = try await authenticatedRequest(
+            path: "v1/device-pairing-tokens",
+            method: "POST"
+        )
+        guard response.statusCode == 201 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
+        }
+        return try Self.decoder.decode(DevicePairingToken.self, from: data)
+    }
+
+    func updateDeviceNumericID(deviceID: UUID, numericID: Int) async throws {
+        guard (1...99).contains(numericID) else {
+            throw ServerConnectionError.invalidResponse
+        }
+        let body = try Self.encoder.encode(DeviceNumericIDRequest(numericID: numericID))
+        let (_, response) = try await authenticatedRequest(
+            path: "v1/devices/\(deviceID.uuidString.lowercased())/numeric-id",
+            method: "PATCH",
+            body: body
+        )
+        guard response.statusCode == 204 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
+        }
+    }
+
+    func updateDeviceProfile(deviceID: UUID, profileCiphertext: Data) async throws {
+        guard !profileCiphertext.isEmpty else {
+            throw ServerConnectionError.invalidResponse
+        }
+        let body = try Self.encoder.encode(
+            DeviceProfileRequest(profileCiphertext: profileCiphertext)
+        )
+        let (_, response) = try await authenticatedRequest(
+            path: "v1/devices/\(deviceID.uuidString.lowercased())/profile",
+            method: "PUT",
+            body: body
+        )
+        guard response.statusCode == 204 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
+        }
+    }
+
+    func revokeDevice(deviceID: UUID) async throws {
+        let (_, response) = try await authenticatedRequest(
+            path: "v1/devices/\(deviceID.uuidString.lowercased())",
+            method: "DELETE"
+        )
+        guard response.statusCode == 204 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
         }
     }
 
@@ -678,6 +750,22 @@ private struct PushTokenRegistrationRequest: Encodable {
     let token: Data
 }
 
+private struct DeviceNumericIDRequest: Encodable {
+    let numericID: Int
+
+    enum CodingKeys: String, CodingKey {
+        case numericID = "numeric_id"
+    }
+}
+
+private struct DeviceProfileRequest: Encodable {
+    let profileCiphertext: Data
+
+    enum CodingKeys: String, CodingKey {
+        case profileCiphertext = "profile_ciphertext"
+    }
+}
+
 private struct DeviceListResponse: Decodable {
     let devices: [ServerDeviceRecord]
 }
@@ -685,6 +773,7 @@ private struct DeviceListResponse: Decodable {
 private struct ServerDeviceRecord: Decodable {
     let deviceUUID: UUID
     let numericID: Int
+    let profileCiphertext: Data?
     let identityPublicKey: Data
     let commandPublicKey: Data?
     let lastSeenAt: Date?
@@ -695,6 +784,7 @@ private struct ServerDeviceRecord: Decodable {
     enum CodingKeys: String, CodingKey {
         case deviceUUID = "device_uuid"
         case numericID = "numeric_id"
+        case profileCiphertext = "profile_ciphertext"
         case identityPublicKey = "identity_public_key"
         case commandPublicKey = "command_public_key"
         case lastSeenAt = "last_seen_at"

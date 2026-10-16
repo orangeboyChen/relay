@@ -277,6 +277,13 @@ func (controller *Controller) ApplyCLCC(lines []string) error {
 		if err != nil || status < 0 || status > 5 {
 			return fmt.Errorf("malformed CLCC call state: %s", line)
 		}
+		mode, err := strconv.Atoi(strings.TrimSpace(fields[3]))
+		if err != nil {
+			return fmt.Errorf("malformed CLCC call mode: %s", line)
+		}
+		if mode != 0 {
+			continue
+		}
 		callCount++
 		switch status {
 		case 0:

@@ -192,6 +192,20 @@ var _ = Describe("Cellular call controller", func() {
 		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateEnded}))
 	})
 
+	It("ignores the non-voice sessions reported alongside an EC20F call", func() {
+		Expect(controller.Dial(context.Background(), "13500000000")).To(Succeed())
+
+		Expect(controller.ApplyCLCC([]string{
+			`+CLCC: 2,1,0,1,0,"",128`,
+			`+CLCC: 1,1,0,1,0,"",128`,
+			`+CLCC: 3,1,0,1,0,"",128`,
+			`+CLCC: 4,0,3,0,0,"13500000000",129," B"`,
+			`+CLCC: 5,1,0,1,0,"",128`,
+		})).To(Succeed())
+
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateRinging}))
+	})
+
 	DescribeTable("rejects malformed CLCC state without changing the snapshot",
 		func(line string) {
 			Expect(controller.ApplyCLCC([]string{line})).To(HaveOccurred())
@@ -200,6 +214,7 @@ var _ = Describe("Cellular call controller", func() {
 		Entry("missing fields", "+CLCC: 1,0"),
 		Entry("non-numeric state", "+CLCC: 1,0,nope,0,0"),
 		Entry("unknown state", "+CLCC: 1,0,9,0,0"),
+		Entry("non-numeric mode", "+CLCC: 1,0,0,voice,0"),
 	)
 
 	It("ignores unrelated CLCC response lines and suppresses duplicate events", func() {

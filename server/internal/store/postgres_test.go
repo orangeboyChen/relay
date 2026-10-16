@@ -208,6 +208,40 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(err).To(MatchError(domain.ErrInstallationConflict))
 	})
 
+	It("upgrades a legacy installation with a key agreement identity", func() {
+		owner := createOwner()
+		registration := AppInstallationRegistration{
+			ID:                    "01900000-0000-7000-8000-000000000101",
+			IdentityPublicKey:     bytes.Repeat([]byte{41}, 32),
+			KeyAgreementPublicKey: bytes.Repeat([]byte{42}, 32),
+			WrappedVaultKey:       []byte("legacy wrapped vault key"),
+		}
+		_, err := database.pool.Exec(context.Background(), `
+			INSERT INTO app_installations (
+				id, owner_id, identity_public_key, wrapped_vault_key, approved_at
+			) VALUES ($1, $2, $3, $4, $5)`,
+			registration.ID,
+			owner.ID,
+			registration.IdentityPublicKey,
+			registration.WrappedVaultKey,
+			now,
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		record, created, err := database.RegisterAppInstallation(
+			context.Background(), owner.ID, registration, now.Add(time.Minute),
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeFalse())
+		Expect(record.KeyAgreementPublicKey).To(Equal(registration.KeyAgreementPublicKey))
+
+		var persistedKey []byte
+		Expect(database.pool.QueryRow(context.Background(), `
+			SELECT key_agreement_public_key FROM app_installations WHERE id = $1`, registration.ID,
+		).Scan(&persistedKey)).To(Succeed())
+		Expect(persistedKey).To(Equal(registration.KeyAgreementPublicKey))
+	})
+
 	It("rejects malformed bearer credentials before querying PostgreSQL", func() {
 		owner := createOwner()
 		invalidPair := auth.TokenPair{AccessToken: "bad", RefreshToken: "bad"}

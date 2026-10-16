@@ -397,7 +397,7 @@ var _ = Describe("Encrypted command client", func() {
 		encrypted := command.Envelope{
 			ID: commandID, DeviceUUID: deviceID, SenderPublicKey: bytes.Repeat([]byte{1}, 32),
 			Nonce: bytes.Repeat([]byte{2}, 12), Ciphertext: []byte("sealed"),
-			CreatedAt: time.Unix(1_000, 0), ExpiresAt: time.Unix(1_060, 0),
+			CreatedAt: time.Unix(1_000, 0).UTC(), ExpiresAt: time.Unix(1_060, 0).UTC(),
 		}
 		client := clientWithHandler(func(request *http.Request) (*http.Response, error) {
 			Expect(request.Method).To(Equal(http.MethodGet))

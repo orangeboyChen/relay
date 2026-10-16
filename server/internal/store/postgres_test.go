@@ -175,6 +175,8 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(created).To(BeTrue())
 		Expect(firstRecord.ApprovedAt).NotTo(BeNil())
+		Expect(firstRecord.ApprovedAt.Location()).To(Equal(time.UTC))
+		Expect(firstRecord.CreatedAt.Location()).To(Equal(time.UTC))
 
 		retried, created, err := database.RegisterAppInstallation(context.Background(), owner.ID, first, now.Add(time.Minute))
 		Expect(err).NotTo(HaveOccurred())

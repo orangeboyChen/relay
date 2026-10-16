@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"sim-deck-server/internal/auth"
@@ -98,7 +99,19 @@ type OutboxPushJob struct {
 
 // Open connects to PostgreSQL and verifies that the server is reachable.
 func Open(ctx context.Context, databaseURL string) (*Postgres, error) {
-	pool, err := pgxpool.New(ctx, databaseURL)
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("configure postgres: %w", err)
+	}
+	config.AfterConnect = func(_ context.Context, connection *pgx.Conn) error {
+		connection.TypeMap().RegisterType(&pgtype.Type{
+			Name:  "timestamptz",
+			OID:   pgtype.TimestamptzOID,
+			Codec: &pgtype.TimestamptzCodec{ScanLocation: time.UTC},
+		})
+		return nil
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("configure postgres: %w", err)
 	}

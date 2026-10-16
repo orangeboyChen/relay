@@ -192,10 +192,6 @@ final class AppModel {
         try await serverConnection.openDeviceDiscovery()
     }
 
-    func createDevicePairingToken() async throws -> DevicePairingToken {
-        try await serverConnection.createDevicePairingToken()
-    }
-
     func deviceDiscoverySession() async throws -> DeviceDiscoverySessionState {
         try await serverConnection.deviceDiscoverySession()
     }

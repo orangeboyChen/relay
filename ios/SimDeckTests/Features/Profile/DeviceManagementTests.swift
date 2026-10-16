@@ -2,24 +2,6 @@ import XCTest
 @testable import SimDeck
 
 final class DeviceManagementTests: XCTestCase {
-    func testPairingDetectorFindsOnlyNewDeviceIdentity() {
-        let existing = makeLine(id: UUID(), numericID: 1)
-        let added = makeLine(id: UUID(), numericID: 2)
-
-        let detected = DevicePairingDetector.newDevice(
-            previousIDs: [existing.id],
-            devices: [existing, added]
-        )
-
-        XCTAssertEqual(detected, added)
-        XCTAssertNil(
-            DevicePairingDetector.newDevice(
-                previousIDs: [existing.id, added.id],
-                devices: [existing, added]
-            )
-        )
-    }
-
     func testSettingsDraftPreservesEditableProfileAndValidatesSIMRange() {
         let line = DeviceLineIdentity(
             id: UUID(),
@@ -41,14 +23,4 @@ final class DeviceManagementTests: XCTestCase {
         XCTAssertFalse(draft.isValid)
     }
 
-    private func makeLine(id: UUID, numericID: Int) -> DeviceLineIdentity {
-        DeviceLineIdentity(
-            id: id,
-            numericID: numericID,
-            deviceName: "Modem \(numericID)",
-            lineName: "Line \(numericID)",
-            phoneNumber: "",
-            isOnline: true
-        )
-    }
 }

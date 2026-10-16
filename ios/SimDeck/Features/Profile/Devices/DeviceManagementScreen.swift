@@ -72,7 +72,7 @@ private struct DeviceManagementEmptyState: View {
         ContentUnavailableView {
             Label("No Devices", systemImage: "simcard")
         } description: {
-            Text("Pair one Linux modem container for each SIM you want to use.")
+            Text("Turn on Device Discovery, then start one Linux modem container for each SIM.")
         } actions: {
             Button("Add Device") {
                 addDevice()

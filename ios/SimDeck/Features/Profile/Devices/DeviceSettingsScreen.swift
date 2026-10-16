@@ -83,7 +83,7 @@ struct DeviceSettingsScreen: View {
                 }
                 .disabled(isWorking)
             } footer: {
-                Text("Removing a device disconnects it immediately. Pair it again with a new code and an empty state volume.")
+                Text("Removing a device disconnects it immediately. To add it again, turn on Device Discovery and restart the modem container.")
             }
         }
         .navigationTitle("Device")

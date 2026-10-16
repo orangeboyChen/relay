@@ -68,7 +68,7 @@ private struct EmptySIMCardsRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("No SIM Cards")
-                Text("Pair a device in Device Management.")
+                Text("Add a device in Device Management.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

@@ -128,16 +128,6 @@ struct DeviceDiscoverySession: Decodable, Equatable, Sendable {
     }
 }
 
-struct DevicePairingToken: Decodable, Equatable, Sendable {
-    let value: String
-    let expiresAt: Date
-
-    enum CodingKeys: String, CodingKey {
-        case value = "pairing_token"
-        case expiresAt = "expires_at"
-    }
-}
-
 struct DeviceDiscoverySessionState: Decodable, Equatable, Sendable {
     let active: Bool
     let session: DeviceDiscoverySession?
@@ -436,17 +426,6 @@ final class ServerConnectionManager {
             throw ServerConnectionError.requestFailed(response.statusCode)
         }
         return try Self.decoder.decode(DeviceDiscoverySessionState.self, from: data)
-    }
-
-    func createDevicePairingToken() async throws -> DevicePairingToken {
-        let (data, response) = try await authenticatedRequest(
-            path: "v1/device-pairing-tokens",
-            method: "POST"
-        )
-        guard response.statusCode == 201 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
-        }
-        return try Self.decoder.decode(DevicePairingToken.self, from: data)
     }
 
     func deviceDiscoverySession() async throws -> DeviceDiscoverySessionState {

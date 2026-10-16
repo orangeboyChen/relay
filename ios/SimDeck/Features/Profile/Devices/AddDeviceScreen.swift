@@ -1,262 +1,368 @@
 import SwiftUI
-import UIKit
-
-enum DevicePairingTokenState: Equatable {
-    case idle
-    case loading
-    case loaded(DevicePairingToken)
-    case failed(String)
-}
-
-enum DevicePairingDetector {
-    static func newDevice(
-        previousIDs: Set<UUID>,
-        devices: [DeviceLineIdentity]
-    ) -> DeviceLineIdentity? {
-        devices.first { !previousIDs.contains($0.id) }
-    }
-}
 
 struct AddDeviceScreen: View {
     let model: AppModel
 
     @Environment(\.dismiss) private var dismiss
-    @State private var tokenState: DevicePairingTokenState
-    @State private var isChecking = false
-    @State private var checkMessage: String?
-    @State private var pairedDevice: DeviceLineIdentity?
-    private let initialDeviceIDs: Set<UUID>
+    @State private var discovery: DeviceDiscoveryViewModel
+    @State private var candidateToConfirm: DiscoveredDevice?
 
-    init(
-        model: AppModel,
-        initialTokenState: DevicePairingTokenState = .idle
-    ) {
+    init(model: AppModel, discovery: DeviceDiscoveryViewModel? = nil) {
         self.model = model
-        initialDeviceIDs = Set(model.devices.map(\.id))
-        _tokenState = State(initialValue: initialTokenState)
+        _discovery = State(initialValue: discovery ?? DeviceDiscoveryViewModel(api: model.serverConnection))
     }
 
     var body: some View {
+        @Bindable var discovery = discovery
+
         NavigationStack {
             Form {
-                PairingCodeSection(
-                    state: tokenState,
-                    generate: generatePairingToken,
-                    copy: copyPairingToken
+                DeviceDiscoveryControlSection(
+                    isEnabled: $discovery.isDiscoveryEnabled,
+                    isChanging: discovery.isChangingDiscovery,
+                    session: discovery.session,
+                    now: discovery.now
                 )
-                PairingInstructionsSection()
-                PairingCheckSection(
-                    isChecking: isChecking,
-                    message: checkMessage,
-                    check: checkForDevice
+                DeviceDiscoveryResultsSection(
+                    isEnabled: discovery.isDiscoveryEnabled,
+                    loadState: discovery.loadState,
+                    discoveries: discovery.discoveries,
+                    decisionDeviceID: discovery.decisionDeviceID,
+                    retry: { Task { await discovery.load() } },
+                    select: { candidateToConfirm = $0 }
                 )
+                DeviceDiscoveryLinuxSection()
             }
             .navigationTitle("Add Device")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done", action: close)
                 }
             }
             .task {
-                if tokenState == .idle {
-                    await loadPairingToken()
+                guard discovery.automaticallyRefreshes else { return }
+                await discovery.load()
+            }
+            .task {
+                guard discovery.automaticallyRefreshes else { return }
+                await discovery.poll()
+            }
+            .confirmationDialog(
+                "Allow This Device?",
+                isPresented: Binding(
+                    get: { candidateToConfirm != nil },
+                    set: { if !$0 { candidateToConfirm = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: candidateToConfirm
+            ) { candidate in
+                Button("Allow") {
+                    candidateToConfirm = nil
+                    Task {
+                        await discovery.approve(candidate)
+                        await model.refreshDevices()
+                    }
                 }
+                Button("Don’t Allow", role: .destructive) {
+                    candidateToConfirm = nil
+                    Task { await discovery.reject(candidate) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in
+                Text("Only allow the modem if its UUID and fingerprint match the Linux device.")
             }
             .alert(
-                "Device Paired",
+                "Device Added",
                 isPresented: Binding(
-                    get: { pairedDevice != nil },
-                    set: { if !$0 { pairedDevice = nil } }
+                    get: { discovery.approvedDevice != nil },
+                    set: { if !$0 { discovery.clearApproval() } }
                 ),
-                presenting: pairedDevice
+                presenting: discovery.approvedDevice
             ) { _ in
-                Button("Done") {
-                    dismiss()
-                }
-            } message: { device in
-                Text("SIM \(device.numericID) is ready to configure.")
+                Button("Done", role: .cancel) { discovery.clearApproval() }
+            } message: { approved in
+                Text("The modem is now SIM \(approved.numericID). You can turn off Device Discovery.")
             }
         }
     }
 
-    private func generatePairingToken() {
-        Task { await loadPairingToken() }
-    }
-
-    private func loadPairingToken() async {
-        tokenState = .loading
-        checkMessage = nil
-        do {
-            tokenState = .loaded(try await model.createDevicePairingToken())
-        } catch {
-            tokenState = .failed(error.localizedDescription)
-        }
-    }
-
-    private func copyPairingToken(_ value: String) {
-        UIPasteboard.general.string = value
-        checkMessage = String(localized: "Pairing code copied.")
-    }
-
-    private func checkForDevice() {
-        Task {
-            isChecking = true
-            checkMessage = nil
-            await model.refreshDevices()
-            isChecking = false
-            if let device = DevicePairingDetector.newDevice(
-                previousIDs: initialDeviceIDs,
-                devices: model.devices
-            ) {
-                pairedDevice = device
-            } else {
-                checkMessage = String(localized: "No new device found yet.")
-            }
-        }
+    private func close() {
+        dismiss()
     }
 }
 
-private struct PairingCodeSection: View {
-    let state: DevicePairingTokenState
-    let generate: () -> Void
-    let copy: (String) -> Void
+private struct DeviceDiscoveryControlSection: View {
+    @Binding var isEnabled: Bool
+    let isChanging: Bool
+    let session: DeviceDiscoverySession?
+    let now: Date
 
     var body: some View {
         Section {
-            switch state {
-            case .idle, .loading:
+            Toggle("Device Discovery", isOn: $isEnabled)
+                .disabled(isChanging)
+            if isChanging {
                 HStack {
                     ProgressView()
-                    Text("Generating a secure code…")
-                        .foregroundStyle(.secondary)
+                    if isEnabled {
+                        Text("Starting discovery…")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Stopping discovery…")
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .frame(minHeight: 44)
-            case .loaded(let token):
-                Text(token.value)
-                    .font(.system(.body, design: .monospaced, weight: .semibold))
-                    .textSelection(.enabled)
-                    .accessibilityLabel("Pairing code")
-                LabeledContent("Expires") {
-                    Text(token.expiresAt, format: .dateTime.hour().minute().second())
+            } else if isEnabled, let session {
+                LabeledContent("Time Remaining") {
+                    Text(timerInterval: now...session.expiresAt, countsDown: true)
+                        .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
-                Button {
-                    copy(token.value)
-                } label: {
-                    Label("Copy Pairing Code", systemImage: "doc.on.doc")
-                }
-                Button("Generate New Code", action: generate)
-            case .failed(let message):
-                Label(message, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.red)
-                Button("Try Again", action: generate)
             }
         } header: {
-            Text("One-Time Pairing Code")
+            Text("Discovery")
         } footer: {
-            Text("The code expires after ten minutes and can pair only one modem.")
+            Text("Discovery closes automatically after ten minutes. Turn it off sooner when you finish adding devices.")
         }
     }
 }
 
-private struct PairingInstructionsSection: View {
+private struct DeviceDiscoveryResultsSection: View {
+    let isEnabled: Bool
+    let loadState: DeviceDiscoveryLoadState
+    let discoveries: [DiscoveredDevice]
+    let decisionDeviceID: UUID?
+    let retry: () -> Void
+    let select: (DiscoveredDevice) -> Void
+
     var body: some View {
         Section {
-            PairingInstructionRow(
-                number: 1,
-                title: "Save the code as a Docker secret",
-                detail: "secrets/modem-1-pairing-token"
-            )
-            PairingInstructionRow(
-                number: 2,
-                title: "Mount the secret in the container",
-                detail: "/run/secrets/sim_deck_pairing_token"
-            )
-            PairingInstructionRow(
-                number: 3,
-                title: "Start one container for this modem",
-                detail: "Use unique device mappings and a unique state volume."
-            )
-        } header: {
-            Text("Linux Device")
-        } footer: {
-            Text("For multiple SIMs, create a separate code, container, state volume, and hardware mapping for each modem.")
-        }
-    }
-}
-
-private struct PairingInstructionRow: View {
-    let number: Int
-    let title: LocalizedStringResource
-    let detail: LocalizedStringResource
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Text(number, format: .number)
-                .font(.caption.bold())
-                .foregroundStyle(.white)
-                .frame(width: 24, height: 24)
-                .background(.tint, in: Circle())
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                Text(detail)
-                    .font(.caption.monospaced())
+            if !isEnabled {
+                Label("Turn on Device Discovery to add a modem.", systemImage: "antenna.radiowaves.left.and.right.slash")
                     .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
+            } else {
+                DiscoveryResultContent(
+                    loadState: loadState,
+                    discoveries: discoveries,
+                    decisionDeviceID: decisionDeviceID,
+                    retry: retry,
+                    select: select
+                )
+            }
+        } header: {
+            Text("Nearby Devices")
+        } footer: {
+            if isEnabled {
+                Text("Verify the UUID and fingerprint before allowing a device. Editable device names are not used as proof of identity.")
             }
         }
-        .padding(.vertical, 4)
     }
 }
 
-private struct PairingCheckSection: View {
-    let isChecking: Bool
-    let message: String?
-    let check: () -> Void
+private struct DiscoveryResultContent: View {
+    let loadState: DeviceDiscoveryLoadState
+    let discoveries: [DiscoveredDevice]
+    let decisionDeviceID: UUID?
+    let retry: () -> Void
+    let select: (DiscoveredDevice) -> Void
 
     var body: some View {
-        Section {
-            Button(action: check) {
+        VStack {
+            switch loadState {
+            case .loading:
                 HStack {
-                    Text("Check for Device")
-                    if isChecking {
-                        Spacer()
-                        ProgressView()
+                    ProgressView()
+                    Text("Looking for devices…")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            case .failed(let message):
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
+                    Button {
+                        retry()
+                    } label: {
+                        Text("Try Again")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            case .loaded:
+                if discoveries.isEmpty {
+                    Label("No devices found yet", systemImage: "simcard")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                } else {
+                    ForEach(discoveries) { candidate in
+                        DiscoveredDeviceRow(
+                            candidate: candidate,
+                            isWorking: decisionDeviceID == candidate.id,
+                            select: { select(candidate) }
+                        )
                     }
                 }
             }
-            .disabled(isChecking)
-            if let message {
-                Text(message)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct DiscoveredDeviceRow: View {
+    let candidate: DiscoveredDevice
+    let isWorking: Bool
+    let select: () -> Void
+
+    var body: some View {
+        Button {
+            select()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "simcard")
+                    .font(.title2)
+                    .foregroundStyle(.tint)
+                    .frame(width: 32)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("New SIM Device")
+                        .foregroundStyle(.primary)
+                    Text(candidate.shortIdentifier)
+                        .font(.subheadline.monospaced())
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Text(candidate.identityFingerprint)
+                        Text(candidate.firstSeenAt, format: .dateTime.hour().minute())
+                    }
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.tertiary)
+                }
+                Spacer(minLength: 8)
+                if isWorking {
+                    ProgressView()
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.bold())
+                        .foregroundStyle(.tertiary)
+                }
             }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isWorking)
+        .accessibilityLabel("New SIM device, UUID \(candidate.deviceUUID.uuidString), fingerprint \(candidate.identityFingerprint)")
+        .accessibilityHint("Double-tap to review this device.")
+    }
+}
+
+private struct DeviceDiscoveryLinuxSection: View {
+    var body: some View {
+        Section("Linux Device") {
+            Label("Configure a unique SIM_DECK_DEVICE_UUID for each modem container.", systemImage: "number")
+            Label("Start the container after discovery is enabled.", systemImage: "play.circle")
+            Label("Compare the UUID and fingerprint, then tap Allow.", systemImage: "checkmark.shield")
         }
     }
 }
 
 #if DEBUG
-#Preview("Pair Device") {
+@MainActor
+private final class PreviewDeviceDiscoveryAPI: DeviceDiscoveryAPI {
+    var state: DeviceDiscoverySessionState
+    var devices: [DiscoveredDevice]
+
+    init(state: DeviceDiscoverySessionState, devices: [DiscoveredDevice]) {
+        self.state = state
+        self.devices = devices
+    }
+
+    func openDeviceDiscovery() async throws -> DeviceDiscoverySessionState { state }
+    func deviceDiscoverySession() async throws -> DeviceDiscoverySessionState { state }
+    func closeDeviceDiscovery() async throws {}
+    func discoveredDevices() async throws -> [DiscoveredDevice] { devices }
+    func approveDiscoveredDevice(id: UUID) async throws -> ApprovedDevice {
+        ApprovedDevice(deviceUUID: id, numericID: 2)
+    }
+    func rejectDiscoveredDevice(id: UUID) async throws {}
+}
+
+private extension DeviceDiscoveryViewModel {
+    static func preview(
+        enabled: Bool = true,
+        devices: [DiscoveredDevice] = PreviewFixtures.discoveredDevices,
+        loadState: DeviceDiscoveryLoadState = .loaded
+    ) -> DeviceDiscoveryViewModel {
+        let session = DeviceDiscoverySession(
+            openedAt: PreviewFixtures.now,
+            expiresAt: PreviewFixtures.now.addingTimeInterval(600),
+            closedAt: nil
+        )
+        let state = DeviceDiscoverySessionState(active: enabled, session: session)
+        return DeviceDiscoveryViewModel(
+            api: PreviewDeviceDiscoveryAPI(state: state, devices: devices),
+            clock: FixedDeviceDiscoveryClock(now: PreviewFixtures.now),
+            isDiscoveryEnabled: enabled,
+            session: session,
+            discoveries: devices,
+            loadState: loadState,
+            automaticallyRefreshes: false
+        )
+    }
+}
+
+private extension PreviewFixtures {
+    static let discoveredDevices = [
+        DiscoveredDevice(
+            deviceUUID: UUID(uuidString: "01900000-0000-7000-8000-000000000401")!,
+            identityPublicKey: Data(repeating: 4, count: 32),
+            commandPublicKey: Data(repeating: 5, count: 32),
+            status: .pending,
+            firstSeenAt: now.addingTimeInterval(15),
+            lastSeenAt: now.addingTimeInterval(30),
+            expiresAt: now.addingTimeInterval(600)
+        ),
+        DiscoveredDevice(
+            deviceUUID: UUID(uuidString: "01900000-0000-7000-8000-000000000402")!,
+            identityPublicKey: Data(repeating: 8, count: 32),
+            commandPublicKey: Data(repeating: 9, count: 32),
+            status: .pending,
+            firstSeenAt: now.addingTimeInterval(20),
+            lastSeenAt: now.addingTimeInterval(35),
+            expiresAt: now.addingTimeInterval(600)
+        ),
+    ]
+}
+
+#Preview("Device Discovery") {
+    AddDeviceScreen(model: .preview(selectedTab: .profile), discovery: .preview())
+}
+
+#Preview("Device Discovery - Empty") {
     AddDeviceScreen(
         model: .preview(selectedTab: .profile),
-        initialTokenState: .loaded(
-            DevicePairingToken(
-                value: "sk_pair_8k3w-j19q-x7m2",
-                expiresAt: PreviewFixtures.now.addingTimeInterval(600)
+        discovery: .preview(devices: [])
+    )
+    .preferredColorScheme(.dark)
+}
+
+#Preview("Device Discovery - Error, Chinese") {
+    AddDeviceScreen(
+        model: .preview(selectedTab: .profile),
+        discovery: .preview(
+            loadState: .failed(
+                String(
+                    localized: "The server request failed.",
+                    locale: Locale(identifier: "zh-Hans")
+                )
             )
         )
     )
+    .environment(\.locale, Locale(identifier: "zh-Hans"))
+    .environment(\.dynamicTypeSize, .accessibility5)
 }
 
-#Preview("Pair Device - Error") {
+#Preview("Device Discovery - Off") {
     AddDeviceScreen(
         model: .preview(selectedTab: .profile),
-        initialTokenState: .failed("The server request failed.")
+        discovery: .preview(enabled: false, devices: [])
     )
-    .preferredColorScheme(.dark)
-    .environment(\.dynamicTypeSize, .accessibility3)
 }
 #endif

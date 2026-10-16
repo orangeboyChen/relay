@@ -142,6 +142,15 @@ the bridge hostname, authenticates itself with a client certificate, and rejects
 plaintext network endpoints. This is a development adapter only; Linux
 deployments should continue to map the modem TTY directly into the container.
 
+The development TLS bridge used on macOS transports only the EC20 AT bulk
+interface. It does not transport the modem's USB Audio Class isochronous
+endpoints. Therefore it is suitable for SMS, radio status, and call-control
+tests, but it cannot carry call audio. Do not configure `SIM_DECK_PCM_DEVICE`
+to `/dev/zero` or another synthetic device to make that setup start; the agent
+rejects those paths. Real audio tests require a Linux host with the modem's
+ALSA capture and playback nodes mapped into the container (or a separately
+verified full-duplex raw PCM device).
+
 ## App-controlled discovery
 
 Device admission is controlled from the iOS app and does not require copying a

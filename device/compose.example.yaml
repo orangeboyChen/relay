@@ -1,5 +1,6 @@
 x-device-environment: &device-environment
   SIM_DECK_SERVER_URL: "${SIM_DECK_SERVER_URL:?set SIM_DECK_SERVER_URL}"
+  SIM_DECK_ALLOW_INSECURE_HTTP: "${SIM_DECK_ALLOW_INSECURE_HTTP:-false}"
   SIM_DECK_AT_DEVICE: /dev/sim-deck/at
   SIM_DECK_STATE_DIRECTORY: /var/lib/sim-deck
   SIM_DECK_PAIRING_TOKEN_FILE: /run/secrets/sim_deck_pairing_token

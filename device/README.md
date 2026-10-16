@@ -158,5 +158,7 @@ container stays `starting` or becomes `unhealthy` instead of appearing ready
 while its modem or server binding is unavailable.
 
 Plain HTTP is rejected by default. It can be enabled only for an isolated local
-development network with `SIM_DECK_ALLOW_INSECURE_HTTP=true`; production pairing
-must use HTTPS.
+development network or encrypted VPN with
+`SIM_DECK_ALLOW_INSECURE_HTTP=true`; production pairing over an untrusted
+network must use HTTPS because device credentials still require transport
+protection even though message and call content is end-to-end encrypted.

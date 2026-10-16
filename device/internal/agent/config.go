@@ -146,6 +146,9 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 		if strings.TrimSpace(config.PCMDevice) == "" {
 			return Config{}, fmt.Errorf("SIM_DECK_PCM_DEVICE must not be empty in raw-pcm mode")
 		}
+		if isSyntheticPCMDevice(config.PCMDevice) {
+			return Config{}, fmt.Errorf("SIM_DECK_PCM_DEVICE must reference a real full-duplex modem audio device")
+		}
 	default:
 		return Config{}, fmt.Errorf("SIM_DECK_AUDIO_MODE must be alsa or raw-pcm")
 	}
@@ -160,6 +163,15 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, fmt.Errorf("SIM_DECK_STATE_DIRECTORY must be an absolute path")
 	}
 	return config, nil
+}
+
+func isSyntheticPCMDevice(path string) bool {
+	switch filepath.Clean(strings.TrimSpace(path)) {
+	case "/dev/zero", "/dev/null", "/dev/full", "/dev/random", "/dev/urandom":
+		return true
+	default:
+		return false
+	}
 }
 
 func valueOrDefault(lookup func(string) (string, bool), key string, fallback string) string {

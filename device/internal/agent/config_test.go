@@ -137,6 +137,7 @@ var _ = Describe("Agent configuration", func() {
 		Entry("missing ALSA capture", map[string]string{"SIM_DECK_ALSA_CAPTURE_DEVICE": " "}, "ALSA_CAPTURE_DEVICE"),
 		Entry("missing ALSA playback", map[string]string{"SIM_DECK_ALSA_PLAYBACK_DEVICE": " "}, "ALSA_PLAYBACK_DEVICE"),
 		Entry("missing raw PCM path", map[string]string{"SIM_DECK_AUDIO_MODE": "raw-pcm", "SIM_DECK_PCM_DEVICE": " "}, "PCM_DEVICE"),
+		Entry("synthetic raw PCM path", map[string]string{"SIM_DECK_AUDIO_MODE": "raw-pcm", "SIM_DECK_PCM_DEVICE": "/dev/zero"}, "real full-duplex modem audio"),
 		Entry("missing server URL", map[string]string{"SIM_DECK_SERVER_URL": ""}, "SERVER_URL"),
 		Entry("relative server URL", map[string]string{"SIM_DECK_SERVER_URL": "server:8080"}, "SERVER_URL"),
 		Entry("HTTP without opt in", map[string]string{"SIM_DECK_SERVER_URL": "http://server:8080"}, "must use HTTPS"),

@@ -36,6 +36,7 @@ final class AppModel {
     @ObservationIgnored private var installationIdentity: InstallationIdentity?
     @ObservationIgnored private var recoveredVaultKey: VaultKey?
     @ObservationIgnored private var voipPushCoordinator: VoIPPushCoordinator?
+    @ObservationIgnored private let commandSigner: InstallationCommandSigner
 
     var canEditDeviceProfiles: Bool { recoveredVaultKey != nil }
 
@@ -67,13 +68,17 @@ final class AppModel {
         self.pendingExternalDialRequest = nil
         self.selectedTab = selectedTab
         let resolvedOnboardingStore = onboardingStore ?? UserDefaultsOnboardingStore()
+        let resolvedCommandSigner = InstallationCommandSigner()
         self.isOnboardingPresented = !resolvedOnboardingStore.isCompleted
         self.keyRecoveryState = keyRecoveryState
         self.installationTrust = nil
         self.pendingInstallationRevocationIDs = []
         self.serverConnection = resolvedServerConnection
         self.callCoordinator = callCoordinator ?? CallKitCoordinator(
-            transport: LiveCallTransport(api: resolvedServerConnection),
+            transport: LiveCallTransport(
+                api: resolvedServerConnection,
+                commandSigner: resolvedCommandSigner
+            ),
             incomingCallClaimer: resolvedServerConnection,
             recentCallLineStore: resolvedRecentCallLineStore
         )
@@ -81,6 +86,7 @@ final class AppModel {
         self.defaultLineStore = resolvedDefaultLineStore
         self.recentCallLineStore = resolvedRecentCallLineStore
         self.onboardingStore = resolvedOnboardingStore
+        self.commandSigner = resolvedCommandSigner
     }
 
     func completeOnboarding() {
@@ -92,6 +98,7 @@ final class AppModel {
         do {
             let result = try installationBootstrapper.bootstrap()
             installationIdentity = result.identity
+            commandSigner.identity = result.identity
             recoveredVaultKey = result.recoveredVaultKey
             installationID = result.identity.id
             pendingInstallationRevocationIDs = result.pendingRevocationIDs

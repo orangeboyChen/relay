@@ -24,6 +24,12 @@ final class LiveCallTransportTests: XCTestCase {
             number: "13500000000",
             digits: nil
         )
+        let installationIdentity = InstallationIdentity(
+            id: UUID(uuidString: "01900000-0000-7000-8000-000000000101")!,
+            signingPrivateKey: Data((65...96).map(UInt8.init)),
+            keyAgreementPrivateKey: Data((97...128).map(UInt8.init)),
+            pendingRevocationIDs: []
+        )
 
         let sealed = try EncryptedCallCommandCodec.seal(
             payload: payload,
@@ -32,7 +38,8 @@ final class LiveCallTransportTests: XCTestCase {
             nonce: try AES.GCM.Nonce(data: Data(0...11)),
             commandID: commandID,
             deviceID: deviceID,
-            createdAt: Date(timeIntervalSince1970: 0)
+            createdAt: Date(timeIntervalSince1970: 0),
+            installationIdentity: installationIdentity
         )
 
         XCTAssertEqual(
@@ -43,6 +50,43 @@ final class LiveCallTransportTests: XCTestCase {
             sealed.request.ciphertext.base64EncodedString(),
             "8C9qlHoP+UOktcg7CVAbJkL0spZi2YtHSmdCbO/BHRvZ6KIEeE9wUPPGWv5l4O8vfga1aK7M/HzWds0hUL0cMWo8RgkMx7SRAg1uSoyJfcgyL84GKPyCaOfCpabajw3u75vmCoUy3i7KrCSeMuyMqHDGUMFtSLT+e+JrSFVu"
         )
+        XCTAssertEqual(sealed.request.senderInstallationID, installationIdentity.id)
+        let verificationKey = try Curve25519.Signing.PrivateKey(
+            rawRepresentation: installationIdentity.signingPrivateKey
+        ).publicKey
+        XCTAssertTrue(
+            verificationKey.isValidSignature(
+                sealed.request.signature,
+                for: EncryptedCallCommandCodec.signedData(
+                    for: sealed.request,
+                    deviceID: deviceID
+                )
+            )
+        )
+
+        let tamperedRequests = [
+            replacing(sealed.request, ciphertext: sealed.request.ciphertext + Data([0xff])),
+            replacing(sealed.request, senderInstallationID: UUID()),
+            replacing(
+                sealed.request,
+                createdAt: sealed.request.createdAt.addingTimeInterval(1)
+            ),
+            replacing(
+                sealed.request,
+                expiresAt: sealed.request.expiresAt.addingTimeInterval(1)
+            ),
+        ]
+        for request in tamperedRequests {
+            XCTAssertFalse(
+                verificationKey.isValidSignature(
+                    request.signature,
+                    for: EncryptedCallCommandCodec.signedData(
+                        for: request,
+                        deviceID: deviceID
+                    )
+                )
+            )
+        }
     }
 
     func testCallEventDecryptionMatchesGoCompatibilityVector() throws {
@@ -116,6 +160,7 @@ final class LiveCallTransportTests: XCTestCase {
         let media = CallMediaSessionFake()
         let transport = LiveCallTransport(
             api: api,
+            commandSigner: api.commandSigner,
             makeMediaSession: { media },
             waitBeforePollingAgain: {},
             automaticallyPollEvents: false
@@ -142,6 +187,7 @@ final class LiveCallTransportTests: XCTestCase {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
         let transport = LiveCallTransport(
             api: api,
+            commandSigner: api.commandSigner,
             makeMediaSession: { CallMediaSessionFake() },
             waitBeforePollingAgain: {},
             automaticallyPollEvents: false
@@ -167,6 +213,7 @@ final class LiveCallTransportTests: XCTestCase {
         let media = CallMediaSessionFake()
         let transport = LiveCallTransport(
             api: api,
+            commandSigner: api.commandSigner,
             makeMediaSession: { media },
             waitBeforePollingAgain: {},
             automaticallyPollEvents: false
@@ -204,6 +251,7 @@ final class LiveCallTransportTests: XCTestCase {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .modemRejected)
         let transport = LiveCallTransport(
             api: api,
+            commandSigner: api.commandSigner,
             makeMediaSession: { CallMediaSessionFake() },
             waitBeforePollingAgain: {},
             automaticallyPollEvents: false
@@ -226,6 +274,7 @@ final class LiveCallTransportTests: XCTestCase {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .tampered)
         let transport = LiveCallTransport(
             api: api,
+            commandSigner: api.commandSigner,
             makeMediaSession: { CallMediaSessionFake() },
             waitBeforePollingAgain: {},
             automaticallyPollEvents: false
@@ -244,6 +293,7 @@ final class LiveCallTransportTests: XCTestCase {
         api.recipientKeyOverride = Data(repeating: 1, count: 31)
         let transport = LiveCallTransport(
             api: api,
+            commandSigner: api.commandSigner,
             makeMediaSession: { CallMediaSessionFake() },
             waitBeforePollingAgain: {},
             automaticallyPollEvents: false
@@ -263,6 +313,7 @@ final class LiveCallTransportTests: XCTestCase {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
         let transport = LiveCallTransport(
             api: api,
+            commandSigner: api.commandSigner,
             makeMediaSession: { CallMediaSessionFake() },
             waitBeforePollingAgain: {},
             automaticallyPollEvents: false
@@ -298,6 +349,7 @@ final class LiveCallTransportTests: XCTestCase {
         }
         let transport = LiveCallTransport(
             api: api,
+            commandSigner: api.commandSigner,
             makeMediaSession: { CallMediaSessionFake() },
             waitBeforePollingAgain: {},
             eventStreamOpener: opener
@@ -325,6 +377,7 @@ final class LiveCallTransportTests: XCTestCase {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
         let transport = LiveCallTransport(
             api: api,
+            commandSigner: api.commandSigner,
             makeMediaSession: { CallMediaSessionFake() },
             waitBeforePollingAgain: {},
             automaticallyPollEvents: false
@@ -346,6 +399,7 @@ final class LiveCallTransportTests: XCTestCase {
         let media = CallMediaSessionFake()
         let transport = LiveCallTransport(
             api: api,
+            commandSigner: api.commandSigner,
             makeMediaSession: { media },
             waitBeforePollingAgain: {},
             automaticallyPollEvents: false
@@ -373,6 +427,7 @@ final class LiveCallTransportTests: XCTestCase {
         media.applyAnswerError = CallMediaSessionError.invalidAnswer
         let transport = LiveCallTransport(
             api: api,
+            commandSigner: api.commandSigner,
             makeMediaSession: { media },
             waitBeforePollingAgain: {},
             automaticallyPollEvents: false
@@ -391,6 +446,52 @@ final class LiveCallTransportTests: XCTestCase {
 
         XCTAssertEqual(api.payloads.map(\.operation), ["call.start", "call.end"])
         XCTAssertTrue(media.isClosed)
+    }
+
+    func testMissingInstallationIdentityDoesNotQueueACommand() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: InstallationCommandSigner(),
+            makeMediaSession: { CallMediaSessionFake() },
+            waitBeforePollingAgain: {},
+            automaticallyPollEvents: false
+        )
+
+        do {
+            try await transport.startOutgoingCall(
+                callID: callID,
+                number: "10086",
+                lineID: deviceID
+            )
+            XCTFail("Expected installation identity validation to fail")
+        } catch {
+            XCTAssertEqual(
+                error as? LiveCallTransportError,
+                .missingInstallationIdentity
+            )
+        }
+
+        XCTAssertTrue(api.requests.isEmpty)
+    }
+
+    private func replacing(
+        _ request: EncryptedCallCommandRequest,
+        senderInstallationID: UUID? = nil,
+        ciphertext: Data? = nil,
+        createdAt: Date? = nil,
+        expiresAt: Date? = nil
+    ) -> EncryptedCallCommandRequest {
+        EncryptedCallCommandRequest(
+            id: request.id,
+            senderInstallationID: senderInstallationID ?? request.senderInstallationID,
+            senderPublicKey: request.senderPublicKey,
+            nonce: request.nonce,
+            ciphertext: ciphertext ?? request.ciphertext,
+            signature: request.signature,
+            createdAt: createdAt ?? request.createdAt,
+            expiresAt: expiresAt ?? request.expiresAt
+        )
     }
 }
 
@@ -475,6 +576,7 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
     private let deviceID: UUID
     private let devicePrivateKey: Curve25519.KeyAgreement.PrivateKey
     private let identityPrivateKey: Curve25519.Signing.PrivateKey
+    private let installationIdentity: InstallationIdentity
     private let outcome: Outcome
     private var results: [UUID: EncryptedCallCommandResult] = [:]
     private var callSharedSecret: SharedSecret?
@@ -487,6 +589,9 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
     private(set) var requestedEventCursors: [Int64] = []
 
     var verificationKey: Data { identityPrivateKey.publicKey.rawRepresentation }
+    var commandSigner: InstallationCommandSigner {
+        InstallationCommandSigner(identity: installationIdentity)
+    }
 
     init(deviceID: UUID, outcome: Outcome) throws {
         self.deviceID = deviceID
@@ -496,6 +601,12 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
         )
         identityPrivateKey = try Curve25519.Signing.PrivateKey(
             rawRepresentation: Data((65...96).map(UInt8.init))
+        )
+        installationIdentity = InstallationIdentity(
+            id: UUID(uuidString: "01900000-0000-7000-8000-000000000101")!,
+            signingPrivateKey: Data((129...160).map(UInt8.init)),
+            keyAgreementPrivateKey: Data((161...192).map(UInt8.init)),
+            pendingRevocationIDs: []
         )
     }
 
@@ -511,6 +622,19 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
 
     func enqueueCommand(deviceID: UUID, command: EncryptedCallCommandRequest) async throws {
         XCTAssertEqual(deviceID, self.deviceID)
+        let verificationKey = try Curve25519.Signing.PrivateKey(
+            rawRepresentation: installationIdentity.signingPrivateKey
+        ).publicKey
+        XCTAssertEqual(command.senderInstallationID, installationIdentity.id)
+        XCTAssertTrue(
+            verificationKey.isValidSignature(
+                command.signature,
+                for: EncryptedCallCommandCodec.signedData(
+                    for: command,
+                    deviceID: deviceID
+                )
+            )
+        )
         requests.append(command)
 
         let senderPublicKey = try Curve25519.KeyAgreement.PublicKey(

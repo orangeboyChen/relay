@@ -4,17 +4,21 @@ import Security
 
 struct EncryptedCallCommandRequest: Encodable, Equatable, Sendable {
     let id: UUID
+    let senderInstallationID: UUID
     let senderPublicKey: Data
     let nonce: Data
     let ciphertext: Data
+    let signature: Data
     let createdAt: Date
     let expiresAt: Date
 
     enum CodingKeys: String, CodingKey {
         case id
+        case senderInstallationID = "sender_installation_id"
         case senderPublicKey = "sender_public_key"
         case nonce
         case ciphertext
+        case signature
         case createdAt = "created_at"
         case expiresAt = "expires_at"
     }

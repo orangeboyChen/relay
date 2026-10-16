@@ -3,6 +3,7 @@ import CryptoKit
 import Foundation
 
 enum LiveCallTransportError: LocalizedError, Equatable {
+    case missingInstallationIdentity
     case invalidDeviceKey
     case invalidResponse
     case commandTimedOut
@@ -10,6 +11,8 @@ enum LiveCallTransportError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
+        case .missingInstallationIdentity:
+            String(localized: "The selected SIM cannot receive encrypted commands.")
         case .invalidDeviceKey:
             String(localized: "The selected SIM has an invalid encryption key.")
         case .invalidResponse:
@@ -19,6 +22,15 @@ enum LiveCallTransportError: LocalizedError, Equatable {
         case .modemRejected:
             String(localized: "The modem rejected the call command.")
         }
+    }
+}
+
+@MainActor
+final class InstallationCommandSigner {
+    var identity: InstallationIdentity?
+
+    init(identity: InstallationIdentity? = nil) {
+        self.identity = identity
     }
 }
 
@@ -34,6 +46,7 @@ final class LiveCallTransport: CallTransport {
     private let waitBeforePollingAgain: () async throws -> Void
     private let automaticallyPollEvents: Bool
     private let eventStreamOpener: (any EncryptedEventStreamOpening)?
+    private let commandSigner: InstallationCommandSigner
     private var eventHandler: (@MainActor (CallTransportEvent) -> Void)?
     private var callLines: [UUID: UUID] = [:]
     private var callEvents: [UUID: CallEventContext] = [:]
@@ -44,6 +57,7 @@ final class LiveCallTransport: CallTransport {
 
     init(
         api: any EncryptedCallCommandAPI,
+        commandSigner: InstallationCommandSigner,
         now: @escaping () -> Date = Date.init,
         makeCommandID: @escaping () -> UUID = UUID.init,
         makeSenderKey: @escaping () -> Curve25519.KeyAgreement.PrivateKey = {
@@ -66,6 +80,7 @@ final class LiveCallTransport: CallTransport {
         self.waitBeforePollingAgain = waitBeforePollingAgain
         self.automaticallyPollEvents = automaticallyPollEvents
         self.eventStreamOpener = eventStreamOpener ?? (api as? any EncryptedEventStreamOpening)
+        self.commandSigner = commandSigner
     }
 
     func setEventHandler(_ handler: @escaping @MainActor (CallTransportEvent) -> Void) {
@@ -234,6 +249,9 @@ final class LiveCallTransport: CallTransport {
         let deviceKeyData = try await api.commandRecipient(deviceID: lineID)
         let commandID = makeCommandID()
         let senderKey = makeSenderKey()
+        guard let installationIdentity = commandSigner.identity else {
+            throw LiveCallTransportError.missingInstallationIdentity
+        }
         let payload = CallCommandPayload(
             version: 1,
             operation: operation,
@@ -251,7 +269,8 @@ final class LiveCallTransport: CallTransport {
                 nonce: AES.GCM.Nonce(),
                 commandID: commandID,
                 deviceID: lineID,
-                createdAt: now()
+                createdAt: Date(timeIntervalSince1970: floor(now().timeIntervalSince1970)),
+                installationIdentity: installationIdentity
             )
         } catch is CryptoKitError {
             throw LiveCallTransportError.invalidDeviceKey
@@ -520,7 +539,8 @@ enum EncryptedCallCommandCodec {
         nonce: AES.GCM.Nonce,
         commandID: UUID,
         deviceID: UUID,
-        createdAt: Date
+        createdAt: Date,
+        installationIdentity: InstallationIdentity
     ) throws -> SealedCallCommand {
         let deviceKey = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: recipientPublicKey)
         let sharedSecret = try senderPrivateKey.sharedSecretFromKeyAgreement(with: deviceKey)
@@ -543,14 +563,36 @@ enum EncryptedCallCommandCodec {
                 deviceID: deviceID
             )
         )
+        let senderPublicKey = senderPrivateKey.publicKey.rawRepresentation
+        let nonceData = nonce.withUnsafeBytes { Data($0) }
+        let ciphertext = sealed.ciphertext + sealed.tag
+        let expiresAt = createdAt.addingTimeInterval(60)
+        let signingKey = try Curve25519.Signing.PrivateKey(
+            rawRepresentation: installationIdentity.signingPrivateKey
+        )
+        let unsignedRequest = EncryptedCallCommandRequest(
+            id: commandID,
+            senderInstallationID: installationIdentity.id,
+            senderPublicKey: senderPublicKey,
+            nonce: nonceData,
+            ciphertext: ciphertext,
+            signature: Data(),
+            createdAt: createdAt,
+            expiresAt: expiresAt
+        )
+        let signature = try signingKey.signature(
+            for: signedData(for: unsignedRequest, deviceID: deviceID)
+        )
         return SealedCallCommand(
             request: EncryptedCallCommandRequest(
                 id: commandID,
-                senderPublicKey: senderPrivateKey.publicKey.rawRepresentation,
-                nonce: nonce.withUnsafeBytes { Data($0) },
-                ciphertext: sealed.ciphertext + sealed.tag,
+                senderInstallationID: installationIdentity.id,
+                senderPublicKey: senderPublicKey,
+                nonce: nonceData,
+                ciphertext: ciphertext,
+                signature: signature,
                 createdAt: createdAt,
-                expiresAt: createdAt.addingTimeInterval(60)
+                expiresAt: expiresAt
             ),
             sharedSecret: sharedSecret
         )
@@ -606,6 +648,38 @@ enum EncryptedCallCommandCodec {
 
     private static func associatedData(context: String, commandID: UUID, deviceID: UUID) -> Data {
         Data("\(context)\0\(commandID.uuidString.lowercased())\0\(deviceID.uuidString.lowercased())".utf8)
+    }
+
+    static func signedData(
+        for request: EncryptedCallCommandRequest,
+        deviceID: UUID
+    ) -> Data {
+        var data = Data()
+        for field in [
+            Data("sim-deck-command-envelope-v2".utf8),
+            Data(request.id.uuidString.lowercased().utf8),
+            Data(deviceID.uuidString.lowercased().utf8),
+            Data(request.senderInstallationID.uuidString.lowercased().utf8),
+            request.senderPublicKey,
+            request.nonce,
+            request.ciphertext,
+        ] {
+            appendCommandField(field, to: &data)
+        }
+        appendCommandInteger(Int64(request.createdAt.timeIntervalSince1970 * 1_000), to: &data)
+        appendCommandInteger(Int64(request.expiresAt.timeIntervalSince1970 * 1_000), to: &data)
+        return data
+    }
+
+    private static func appendCommandField(_ field: Data, to data: inout Data) {
+        var length = UInt32(field.count).bigEndian
+        withUnsafeBytes(of: &length) { data.append(contentsOf: $0) }
+        data.append(field)
+    }
+
+    private static func appendCommandInteger(_ value: Int64, to data: inout Data) {
+        var encoded = UInt64(bitPattern: value).bigEndian
+        withUnsafeBytes(of: &encoded) { data.append(contentsOf: $0) }
     }
 }
 

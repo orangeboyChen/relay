@@ -111,6 +111,9 @@ func (transport *blockingTransport) Close() error {
 
 type fakeDeviceSession struct {
 	initializeError error
+	retryError      error
+	retryMessage    *sms.ReceivedMessage
+	sink            modem.MessageSink
 	runError        error
 	runStarted      chan struct{}
 	calls           *call.Controller
@@ -119,6 +122,17 @@ type fakeDeviceSession struct {
 func (session *fakeDeviceSession) Calls() *call.Controller { return session.calls }
 
 func (*fakeDeviceSession) SendSMS(context.Context, string, string, byte) error { return nil }
+
+func (session *fakeDeviceSession) RetryPendingSMS(ctx context.Context) error {
+	if session.retryError != nil || session.retryMessage == nil {
+		return session.retryError
+	}
+	err := session.sink.ReceiveSMS(ctx, *session.retryMessage)
+	if errors.Is(err, modem.ErrMessageDeliveryDeferred) {
+		return nil
+	}
+	return err
+}
 
 type fakeCommandRuntime struct {
 	runError   error
@@ -137,6 +151,16 @@ type fakeCallMediaRuntime struct {
 	failures   chan error
 	closeError error
 	closed     bool
+}
+
+type fakeMessageEventPublisher struct {
+	err      error
+	messages []sms.ReceivedMessage
+}
+
+func (publisher *fakeMessageEventPublisher) Publish(_ context.Context, message sms.ReceivedMessage) error {
+	publisher.messages = append(publisher.messages, message)
+	return publisher.err
 }
 
 func (*fakeCallMediaRuntime) Negotiate(context.Context, string, string) (string, error) {
@@ -211,6 +235,9 @@ func testDependencies(transport io.ReadWriteCloser, session deviceSession) devic
 		openInbox: func(string, time.Duration, []byte) (*sms.Inbox, error) { return sms.NewInbox(time.Hour), nil },
 		newSession: func(_ *at.Client, _ *sms.Inbox, sink modem.MessageSink, _ *slog.Logger, _ time.Duration) (deviceSession, error) {
 			Expect(sink.ReceiveSMS(context.Background(), sms.ReceivedMessage{ID: "message-id", Segments: 1})).To(MatchError(modem.ErrMessageDeliveryDeferred))
+			if fake, ok := session.(*fakeDeviceSession); ok {
+				fake.sink = sink
+			}
 			return session, nil
 		},
 		configureAudio: func(context.Context, agent.Config, *at.Client) error { return nil },
@@ -222,6 +249,9 @@ func testDependencies(transport io.ReadWriteCloser, session deviceSession) devic
 			return &fakeCommandRuntime{}, nil
 		},
 		newCallMedia: func(agent.Config) (callMediaRuntime, error) { return mediaRunner, nil },
+		newMessageEvents: func(agent.Config, identity.State) (messageEventPublisher, error) {
+			return &fakeMessageEventPublisher{}, nil
+		},
 		newCommands: func(agent.Config, identity.State, command.Calls, command.Dependencies) (commandRuntime, error) {
 			return commandRunner, nil
 		},
@@ -532,6 +562,69 @@ var _ = Describe("Device command runtime", func() {
 		Expect(err).To(MatchError("register device command key: key registration unavailable"))
 	})
 
+	It("returns message event publisher construction failure before readiness", func() {
+		transport := newBlockingTransport()
+		dependencies := testDependencies(transport, &fakeDeviceSession{})
+		dependencies.newMessageEvents = func(agent.Config, identity.State) (messageEventPublisher, error) {
+			return nil, errors.New("message encryption unavailable")
+		}
+
+		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError("create encrypted message event publisher: message encryption unavailable"))
+	})
+
+	It("returns a pending SMS synchronization failure before readiness", func() {
+		transport := newBlockingTransport()
+		session := &fakeDeviceSession{retryError: errors.New("inbox unavailable")}
+		dependencies := testDependencies(transport, session)
+
+		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError("synchronize pending SMS: inbox unavailable"))
+	})
+
+	It("publishes pending SMS after device binding before becoming ready", func() {
+		transport := newBlockingTransport()
+		message := sms.ReceivedMessage{ID: "message-id", Sender: "10086", Text: "pending", Segments: 1}
+		session := &fakeDeviceSession{retryMessage: &message}
+		dependencies := testDependencies(transport, session)
+		publisher := &fakeMessageEventPublisher{}
+		dependencies.newMessageEvents = func(agent.Config, identity.State) (messageEventPublisher, error) {
+			return publisher, nil
+		}
+		dependencies.newCommands = func(agent.Config, identity.State, command.Calls, command.Dependencies) (commandRuntime, error) {
+			return &fakeCommandRuntime{runError: errors.New("stop after synchronization")}, nil
+		}
+
+		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError("stop after synchronization"))
+		Expect(publisher.messages).To(Equal([]sms.ReceivedMessage{message}))
+	})
+
+	It("keeps pending SMS durable when encrypted event upload is unavailable", func() {
+		transport := newBlockingTransport()
+		message := sms.ReceivedMessage{ID: "message-id", Sender: "10086", Text: "pending", Segments: 1}
+		session := &fakeDeviceSession{retryMessage: &message}
+		dependencies := testDependencies(transport, session)
+		publisher := &fakeMessageEventPublisher{err: errors.New("event server unavailable")}
+		dependencies.newMessageEvents = func(agent.Config, identity.State) (messageEventPublisher, error) {
+			return publisher, nil
+		}
+		dependencies.newCommands = func(agent.Config, identity.State, command.Calls, command.Dependencies) (commandRuntime, error) {
+			return &fakeCommandRuntime{runError: errors.New("stop after synchronization")}, nil
+		}
+		var output synchronizedBuffer
+		logger = slog.New(slog.NewTextHandler(&output, nil))
+
+		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError("stop after synchronization"))
+		Expect(publisher.messages).To(Equal([]sms.ReceivedMessage{message}))
+		Expect(output.String()).To(ContainSubstring("SMS retained pending encrypted synchronization"))
+	})
+
 	It("stops the modem session when encrypted command delivery fails", func() {
 		transport := newBlockingTransport()
 		session := &fakeDeviceSession{runStarted: make(chan struct{})}
@@ -641,6 +734,7 @@ var _ = Describe("Device command runtime", func() {
 		Expect(dependencies.newCallEvents).NotTo(BeNil())
 		Expect(dependencies.newIncomingCalls).NotTo(BeNil())
 		Expect(dependencies.newCallMedia).NotTo(BeNil())
+		Expect(dependencies.newMessageEvents).NotTo(BeNil())
 		Expect(dependencies.newCommands).NotTo(BeNil())
 
 		stateDirectory := GinkgoT().TempDir()
@@ -685,6 +779,9 @@ var _ = Describe("Device command runtime", func() {
 		callMedia, err := dependencies.newCallMedia(config)
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { _ = callMedia.Close() })
+		messageEvents, err := dependencies.newMessageEvents(config, state)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(messageEvents).NotTo(BeNil())
 		commands, err := dependencies.newCommands(config, state, session.Calls(), command.Dependencies{Events: events, Media: callMedia, Messages: session})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(commands).NotTo(BeNil())

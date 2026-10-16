@@ -24,6 +24,7 @@ import (
 	"sim-deck-device/internal/identity"
 	"sim-deck-device/internal/incomingcall"
 	"sim-deck-device/internal/media"
+	"sim-deck-device/internal/messageevent"
 	"sim-deck-device/internal/modem"
 	"sim-deck-device/internal/radio"
 	"sim-deck-device/internal/serialport"
@@ -125,6 +126,7 @@ type deviceSession interface {
 	Run(context.Context) error
 	Calls() *call.Controller
 	command.Messages
+	RetryPendingSMS(context.Context) error
 }
 
 type commandRuntime interface {
@@ -143,6 +145,10 @@ type callMediaRuntime interface {
 	Close() error
 }
 
+type messageEventPublisher interface {
+	Publish(context.Context, sms.ReceivedMessage) error
+}
+
 type deviceDependencies struct {
 	openTransport    func(string, int) (io.ReadWriteCloser, error)
 	bindIdentity     func(context.Context, agent.Config, identity.Store, identity.State) (identity.State, error)
@@ -153,6 +159,7 @@ type deviceDependencies struct {
 	newCallEvents    func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error)
 	newIncomingCalls func(agent.Config, identity.State, <-chan call.Snapshot, incomingcall.EventRegistrar) (commandRuntime, error)
 	newCallMedia     func(agent.Config) (callMediaRuntime, error)
+	newMessageEvents func(agent.Config, identity.State) (messageEventPublisher, error)
 	newCommands      func(agent.Config, identity.State, command.Calls, command.Dependencies) (commandRuntime, error)
 	newRadioStatus   func(agent.Config, identity.State, *at.Client) (commandRuntime, error)
 }
@@ -196,6 +203,9 @@ func productionDependencies(httpClient *http.Client) deviceDependencies {
 				}
 			})
 		},
+		newMessageEvents: func(config agent.Config, state identity.State) (messageEventPublisher, error) {
+			return messageevent.NewPublisher(serverapi.NewClient(config.ServerURL, httpClient), state)
+		},
 		newCommands: func(config agent.Config, state identity.State, calls command.Calls, dependencies command.Dependencies) (commandRuntime, error) {
 			return command.NewRuntime(serverapi.NewClient(config.ServerURL, httpClient), state, calls, config.CommandPoll, dependencies)
 		},
@@ -237,9 +247,16 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	if err != nil {
 		return fmt.Errorf("open SMS inbox: %w", err)
 	}
-	messageSink := modem.MessageSinkFunc(func(_ context.Context, message sms.ReceivedMessage) error {
-		logger.Warn("SMS retained pending encrypted synchronization", "message_id", message.ID, "segments", message.Segments)
-		return modem.ErrMessageDeliveryDeferred
+	var messageEvents messageEventPublisher
+	messageSink := modem.MessageSinkFunc(func(ctx context.Context, message sms.ReceivedMessage) error {
+		if messageEvents == nil {
+			return modem.ErrMessageDeliveryDeferred
+		}
+		if err := messageEvents.Publish(ctx, message); err != nil {
+			logger.Warn("SMS retained pending encrypted synchronization", "message_id", message.ID, "segments", message.Segments, "error", err)
+			return modem.ErrMessageDeliveryDeferred
+		}
+		return nil
 	})
 	session, err := dependencies.newSession(client, inbox, messageSink, logger, config.CommandTimeout)
 	if err != nil {
@@ -257,6 +274,13 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	}
 	if err := dependencies.syncCommandKey(ctx, config, deviceIdentity); err != nil {
 		return fmt.Errorf("register device command key: %w", err)
+	}
+	messageEvents, err = dependencies.newMessageEvents(config, deviceIdentity)
+	if err != nil {
+		return fmt.Errorf("create encrypted message event publisher: %w", err)
+	}
+	if err := session.RetryPendingSMS(ctx); err != nil {
+		return fmt.Errorf("synchronize pending SMS: %w", err)
 	}
 	events, err := dependencies.newCallEvents(config, deviceIdentity, session.Calls().Events())
 	if err != nil {

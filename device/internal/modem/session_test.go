@@ -167,6 +167,68 @@ var _ = Describe("Modem session", func() {
 		Expect(session.SendSMS(context.Background(), "invalid", "hello", 1)).To(MatchError(ContainSubstring("encode outbound SMS")))
 	})
 
+	It("retries a deferred durable SMS without restarting the modem", func() {
+		attempts := make(chan sms.ReceivedMessage, 1)
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(_ context.Context, message sms.ReceivedMessage) error {
+			attempts <- message
+			return nil
+		}))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+		session.messageRetryInterval = 5 * time.Millisecond
+		_, created, err := session.inbox.AddSegment(sms.Message{
+			Sender: "13500000000", Timestamp: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC), Text: "retry me",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
+		ctx, cancel := context.WithCancel(context.Background())
+		result := make(chan error, 1)
+		go func() { result <- session.Run(ctx) }()
+
+		Eventually(attempts).Should(Receive(WithTransform(func(message sms.ReceivedMessage) string { return message.Text }, Equal("retry me"))))
+		Eventually(session.inbox.PendingMessages).Should(BeEmpty())
+		cancel()
+		Eventually(result).Should(Receive(MatchError(context.Canceled)))
+	})
+
+	It("surfaces a terminal pending SMS delivery failure", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error {
+			return errors.New("encrypted outbox failed")
+		}))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+		_, created, err := session.inbox.AddSegment(sms.Message{
+			Sender: "13500000000", Timestamp: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC), Text: "keep me",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
+
+		Expect(session.RetryPendingSMS(context.Background())).To(MatchError("deliver imported SMS: encrypted outbox failed"))
+		Expect(session.inbox.PendingMessages()).To(HaveLen(1))
+	})
+
+	It("stops when periodic pending SMS delivery fails terminally", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error {
+			return errors.New("encrypted outbox failed")
+		}))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+		session.messageRetryInterval = 5 * time.Millisecond
+		_, created, err := session.inbox.AddSegment(sms.Message{
+			Sender: "13500000000", Timestamp: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC), Text: "retry fails",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
+
+		Expect(session.Run(context.Background())).To(MatchError("deliver imported SMS: encrypted outbox failed"))
+	})
+
 	It("fails initialization when the modem does not answer before the timeout", func() {
 		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
 		DeferCleanup(func() {

@@ -29,6 +29,8 @@ var ErrMessageDeliveryDeferred = errors.New("SMS delivery deferred")
 
 const defaultCallPollInterval = time.Second
 
+const defaultMessageRetryInterval = time.Minute
+
 // MessageSink receives one complete, durably deduplicated SMS.
 type MessageSink interface {
 	ReceiveSMS(context.Context, sms.ReceivedMessage) error
@@ -44,13 +46,14 @@ func (function MessageSinkFunc) ReceiveSMS(ctx context.Context, message sms.Rece
 
 // Session owns modem initialization and routes unsolicited SMS and call events.
 type Session struct {
-	client           *at.Client
-	inbox            *sms.Inbox
-	calls            *call.Controller
-	sink             MessageSink
-	logger           *slog.Logger
-	timeout          time.Duration
-	callPollInterval time.Duration
+	client               *at.Client
+	inbox                *sms.Inbox
+	calls                *call.Controller
+	sink                 MessageSink
+	logger               *slog.Logger
+	timeout              time.Duration
+	callPollInterval     time.Duration
+	messageRetryInterval time.Duration
 }
 
 // NewSession creates a modem session from endpoint-local dependencies.
@@ -59,13 +62,14 @@ func NewSession(client *at.Client, inbox *sms.Inbox, sink MessageSink, logger *s
 		return nil, errors.New("modem session dependencies and positive timeout are required")
 	}
 	return &Session{
-		client:           client,
-		inbox:            inbox,
-		calls:            call.NewController(client),
-		sink:             sink,
-		logger:           logger,
-		timeout:          timeout,
-		callPollInterval: defaultCallPollInterval,
+		client:               client,
+		inbox:                inbox,
+		calls:                call.NewController(client),
+		sink:                 sink,
+		logger:               logger,
+		timeout:              timeout,
+		callPollInterval:     defaultCallPollInterval,
+		messageRetryInterval: defaultMessageRetryInterval,
 	}, nil
 }
 
@@ -134,6 +138,11 @@ func (session *Session) Initialize(ctx context.Context) error {
 	if extractionError != nil || importError != nil {
 		session.logger.Warn("some modem SMS history entries were skipped", "error", errors.Join(extractionError, importError))
 	}
+	return session.RetryPendingSMS(ctx)
+}
+
+// RetryPendingSMS delivers every durable incoming message not yet accepted downstream.
+func (session *Session) RetryPendingSMS(ctx context.Context) error {
 	for _, message := range session.inbox.PendingMessages() {
 		if err := session.sink.ReceiveSMS(ctx, message); err != nil {
 			if errors.Is(err, ErrMessageDeliveryDeferred) {
@@ -167,6 +176,8 @@ func parseSIMStatus(lines []string) (string, bool) {
 func (session *Session) Run(ctx context.Context) error {
 	callPoll := time.NewTicker(session.callPollInterval)
 	defer callPoll.Stop()
+	messageRetry := time.NewTicker(session.messageRetryInterval)
+	defer messageRetry.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -179,6 +190,10 @@ func (session *Session) Run(ctx context.Context) error {
 			}
 		case <-callPoll.C:
 			if err := session.refreshCallState(ctx); err != nil {
+				return err
+			}
+		case <-messageRetry.C:
+			if err := session.RetryPendingSMS(ctx); err != nil {
 				return err
 			}
 		}

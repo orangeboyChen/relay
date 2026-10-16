@@ -55,8 +55,12 @@ isolated even when several containers run on one host.
 
 Use `SIM_DECK_AUDIO_MODE=raw-pcm` only when the modem firmware exposes a tested
 full-duplex raw PCM character device. That mode opens `SIM_DECK_PCM_DEVICE`,
-which defaults to `/dev/sim-deck/pcm`, directly. Audio mode is configured per
-container; one modem may use UAC/ALSA while another uses raw PCM.
+which defaults to `/dev/sim-deck/pcm`, directly. The Compose example defaults
+to ALSA and therefore does not require or map a raw PCM device. For raw PCM,
+remove that service's three `/dev/snd` mappings, add
+`HOST_PCM_PATH:/dev/sim-deck/pcm`, and set `SIM_DECK_AUDIO_MODE=raw-pcm`.
+Audio mode is configured per container; one modem may use UAC/ALSA while
+another uses raw PCM.
 
 ## Stable Linux device paths
 

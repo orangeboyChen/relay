@@ -1,7 +1,6 @@
 x-device-environment: &device-environment
   SIM_DECK_SERVER_URL: "${SIM_DECK_SERVER_URL:?set SIM_DECK_SERVER_URL}"
   SIM_DECK_AT_DEVICE: /dev/sim-deck/at
-  SIM_DECK_PCM_DEVICE: /dev/sim-deck/pcm
   SIM_DECK_STATE_DIRECTORY: /var/lib/sim-deck
   SIM_DECK_PAIRING_TOKEN_FILE: /run/secrets/sim_deck_pairing_token
   SIM_DECK_COMMAND_POLL_INTERVAL: 1s
@@ -33,7 +32,6 @@ services:
       SIM_DECK_ALSA_PLAYBACK_DEVICE: "${SIM_DECK_MODEM_1_ALSA_PLAYBACK_DEVICE:-hw:0,0}"
     devices:
       - "${SIM_DECK_MODEM_1_AT_DEVICE:-/dev/sim-deck/modem-1-at}:/dev/sim-deck/at"
-      - "${SIM_DECK_MODEM_1_PCM_DEVICE:-/dev/sim-deck/modem-1-pcm}:/dev/sim-deck/pcm"
       - "${SIM_DECK_MODEM_1_AUDIO_CONTROL:-/dev/sim-deck/modem-1-audio-control}:/dev/snd/controlC0"
       - "${SIM_DECK_MODEM_1_AUDIO_CAPTURE:-/dev/sim-deck/modem-1-audio-capture}:/dev/snd/pcmC0D0c"
       - "${SIM_DECK_MODEM_1_AUDIO_PLAYBACK:-/dev/sim-deck/modem-1-audio-playback}:/dev/snd/pcmC0D0p"
@@ -55,7 +53,6 @@ services:
       SIM_DECK_ALSA_PLAYBACK_DEVICE: "${SIM_DECK_MODEM_2_ALSA_PLAYBACK_DEVICE:-hw:0,0}"
     devices:
       - "${SIM_DECK_MODEM_2_AT_DEVICE:-/dev/sim-deck/modem-2-at}:/dev/sim-deck/at"
-      - "${SIM_DECK_MODEM_2_PCM_DEVICE:-/dev/sim-deck/modem-2-pcm}:/dev/sim-deck/pcm"
       - "${SIM_DECK_MODEM_2_AUDIO_CONTROL:-/dev/sim-deck/modem-2-audio-control}:/dev/snd/controlC0"
       - "${SIM_DECK_MODEM_2_AUDIO_CAPTURE:-/dev/sim-deck/modem-2-audio-capture}:/dev/snd/pcmC0D0c"
       - "${SIM_DECK_MODEM_2_AUDIO_PLAYBACK:-/dev/sim-deck/modem-2-audio-playback}:/dev/snd/pcmC0D0p"

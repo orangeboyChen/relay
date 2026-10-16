@@ -26,6 +26,7 @@ var _ = Describe("Agent configuration", func() {
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(config.ATDevice).To(Equal("/dev/sim-deck/at"))
+		Expect(config.ATTLSCAFile).To(BeEmpty())
 		Expect(config.DeviceUUID).To(Equal(configDeviceUUID))
 		Expect(config.AudioMode).To(Equal(AudioModeALSA))
 		Expect(config.ALSACaptureDevice).To(Equal("hw:0,0"))
@@ -39,6 +40,19 @@ var _ = Describe("Agent configuration", func() {
 		Expect(config.RadioStatusPoll).To(Equal(15 * time.Second))
 		Expect(config.StateDirectory).To(Equal("/var/lib/sim-deck"))
 		Expect(config.AllowInsecureHTTP).To(BeFalse())
+	})
+
+	It("accepts an explicitly CA-authenticated TLS AT bridge", func() {
+		config, err := LoadConfig(configLookup(map[string]string{
+			"SIM_DECK_DEVICE_UUID":    configDeviceUUID,
+			"SIM_DECK_SERVER_URL":     "https://deck.example",
+			"SIM_DECK_AT_DEVICE":      "tls://host.docker.internal:19001",
+			"SIM_DECK_AT_TLS_CA_FILE": "/run/secrets/at_bridge_ca.pem",
+		}))
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(config.ATDevice).To(Equal("tls://host.docker.internal:19001"))
+		Expect(config.ATTLSCAFile).To(Equal("/run/secrets/at_bridge_ca.pem"))
 	})
 
 	It("reads explicit development and device overrides", func() {
@@ -107,6 +121,11 @@ var _ = Describe("Agent configuration", func() {
 		Entry("invalid radio status interval", map[string]string{"SIM_DECK_RADIO_STATUS_INTERVAL": "later"}, "RADIO_STATUS_INTERVAL"),
 		Entry("zero radio status interval", map[string]string{"SIM_DECK_RADIO_STATUS_INTERVAL": "0s"}, "RADIO_STATUS_INTERVAL"),
 		Entry("empty AT device", map[string]string{"SIM_DECK_AT_DEVICE": " "}, "AT_DEVICE"),
+		Entry("plaintext AT bridge", map[string]string{"SIM_DECK_AT_DEVICE": "tcp://bridge:19001"}, "TLS endpoint"),
+		Entry("TLS bridge without port", map[string]string{"SIM_DECK_AT_DEVICE": "tls://bridge", "SIM_DECK_AT_TLS_CA_FILE": "/tmp/ca.pem"}, "tls://host:port"),
+		Entry("TLS bridge without CA", map[string]string{"SIM_DECK_AT_DEVICE": "tls://bridge:19001"}, "AT_TLS_CA_FILE"),
+		Entry("TLS bridge relative CA", map[string]string{"SIM_DECK_AT_DEVICE": "tls://bridge:19001", "SIM_DECK_AT_TLS_CA_FILE": "ca.pem"}, "absolute path"),
+		Entry("TTY with TLS CA", map[string]string{"SIM_DECK_AT_TLS_CA_FILE": "/tmp/ca.pem"}, "requires a TLS AT endpoint"),
 		Entry("invalid audio mode", map[string]string{"SIM_DECK_AUDIO_MODE": "automatic"}, "AUDIO_MODE"),
 		Entry("missing ALSA capture", map[string]string{"SIM_DECK_ALSA_CAPTURE_DEVICE": " "}, "ALSA_CAPTURE_DEVICE"),
 		Entry("missing ALSA playback", map[string]string{"SIM_DECK_ALSA_PLAYBACK_DEVICE": " "}, "ALSA_PLAYBACK_DEVICE"),

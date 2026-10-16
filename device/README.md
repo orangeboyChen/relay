@@ -133,6 +133,14 @@ physical device. If a modem does not expose a unique serial number, replace the
 serial match with a stable physical USB-port match from the `udevadm` attribute
 walk; never distinguish identical modems by their transient `ttyUSB` number.
 
+For local Docker Desktop end-to-end testing on a host that cannot pass the USB
+interface into the Linux VM, `SIM_DECK_AT_DEVICE` may instead use an explicit
+`tls://host:port` endpoint. Set `SIM_DECK_AT_TLS_CA_FILE` to an absolute path to
+the bridge CA mounted read-only in the container. The agent requires TLS 1.3,
+validates the bridge hostname, and rejects plaintext network endpoints. This is
+a development adapter only; Linux deployments should continue to map the modem
+TTY directly into the container.
+
 ## App-controlled discovery
 
 Device admission is controlled from the iOS app and does not require copying a

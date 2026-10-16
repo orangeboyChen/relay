@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-// Open reports that the production serial transport is Linux-only.
-func Open(_ string, _ int) (*os.File, error) {
+// openTTY reports that the production serial transport is Linux-only.
+func openTTY(_ string, _ int) (*os.File, error) {
 	return nil, fmt.Errorf("serial modem access is supported only on Linux")
 }

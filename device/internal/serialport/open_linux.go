@@ -9,8 +9,8 @@ import (
 	"unsafe"
 )
 
-// Open opens a Linux TTY and configures it for raw 8-N-1 modem communication.
-func Open(path string, baud int) (*os.File, error) {
+// openTTY opens a Linux TTY and configures it for raw 8-N-1 modem communication.
+func openTTY(path string, baud int) (*os.File, error) {
 	speed, err := baudConstant(baud)
 	if err != nil {
 		return nil, err

@@ -33,6 +33,7 @@ const (
 type Config struct {
 	DeviceUUID         string
 	ATDevice           string
+	ATTLSCAFile        string
 	AudioMode          AudioMode
 	ALSACaptureDevice  string
 	ALSAPlaybackDevice string
@@ -53,6 +54,7 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 	config := Config{
 		DeviceUUID:         strings.ToLower(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_DEVICE_UUID", ""))),
 		ATDevice:           valueOrDefault(lookup, "SIM_DECK_AT_DEVICE", defaultATDevice),
+		ATTLSCAFile:        strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_AT_TLS_CA_FILE", "")),
 		AudioMode:          AudioMode(strings.ToLower(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_AUDIO_MODE", string(AudioModeALSA))))),
 		ALSACaptureDevice:  valueOrDefault(lookup, "SIM_DECK_ALSA_CAPTURE_DEVICE", defaultALSACaptureDevice),
 		ALSAPlaybackDevice: valueOrDefault(lookup, "SIM_DECK_ALSA_PLAYBACK_DEVICE", defaultALSAPlaybackDevice),
@@ -114,6 +116,19 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 	}
 	if strings.TrimSpace(config.ATDevice) == "" {
 		return Config{}, fmt.Errorf("SIM_DECK_AT_DEVICE must not be empty")
+	}
+	if strings.HasPrefix(config.ATDevice, "tls://") {
+		endpoint, err := url.Parse(config.ATDevice)
+		if err != nil || endpoint.Scheme != "tls" || endpoint.Host == "" || endpoint.Port() == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") {
+			return Config{}, fmt.Errorf("SIM_DECK_AT_DEVICE TLS endpoint must be tls://host:port")
+		}
+		if !filepath.IsAbs(config.ATTLSCAFile) {
+			return Config{}, fmt.Errorf("SIM_DECK_AT_TLS_CA_FILE must be an absolute path for a TLS AT endpoint")
+		}
+	} else if strings.Contains(config.ATDevice, "://") {
+		return Config{}, fmt.Errorf("SIM_DECK_AT_DEVICE supports only a local TTY or TLS endpoint")
+	} else if config.ATTLSCAFile != "" {
+		return Config{}, fmt.Errorf("SIM_DECK_AT_TLS_CA_FILE requires a TLS AT endpoint")
 	}
 	switch config.AudioMode {
 	case AudioModeALSA:

@@ -150,7 +150,7 @@ type messageEventPublisher interface {
 }
 
 type deviceDependencies struct {
-	openTransport    func(string, int) (io.ReadWriteCloser, error)
+	openTransport    func(string, int, string) (io.ReadWriteCloser, error)
 	bindIdentity     func(context.Context, agent.Config, identity.Store, identity.State) (identity.State, error)
 	openInbox        func(string, time.Duration, []byte) (*sms.Inbox, error)
 	newSession       func(*at.Client, *sms.Inbox, modem.MessageSink, *slog.Logger, time.Duration) (deviceSession, error)
@@ -166,8 +166,8 @@ type deviceDependencies struct {
 
 func productionDependencies(httpClient *http.Client) deviceDependencies {
 	return deviceDependencies{
-		openTransport: func(path string, baud int) (io.ReadWriteCloser, error) {
-			return serialport.Open(path, baud)
+		openTransport: func(path string, baud int, tlsCAFile string) (io.ReadWriteCloser, error) {
+			return serialport.Open(path, baud, tlsCAFile)
 		},
 		bindIdentity: func(ctx context.Context, config agent.Config, store identity.Store, state identity.State) (identity.State, error) {
 			return agent.EnsureBinding(ctx, config, store, state, serverapi.NewClient(config.ServerURL, httpClient))
@@ -232,7 +232,7 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 		"device_uuid", deviceIdentity.DeviceUUID,
 		"identity_fingerprint", deviceIdentity.IdentityFingerprint(),
 	)
-	transport, err := dependencies.openTransport(config.ATDevice, config.Baud)
+	transport, err := dependencies.openTransport(config.ATDevice, config.Baud, config.ATTLSCAFile)
 	if err != nil {
 		return err
 	}

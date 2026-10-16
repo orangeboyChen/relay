@@ -1,0 +1,13 @@
+services:
+  server:
+    environment:
+      APNS_KEY_ID: ${APNS_KEY_ID:?Set APNS_KEY_ID}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:?Set APNS_TEAM_ID}
+      APNS_TOPIC: ${APNS_TOPIC:-com.nowcent.simdeck.voip}
+      APNS_PRIVATE_KEY_FILE: /run/secrets/apns_private_key
+    secrets:
+      - apns_private_key
+
+secrets:
+  apns_private_key:
+    file: ${APNS_PRIVATE_KEY_FILE:?Set APNS_PRIVATE_KEY_FILE}

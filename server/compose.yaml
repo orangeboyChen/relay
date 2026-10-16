@@ -30,15 +30,10 @@ services:
       MEDIA_TCP_PORT: ${MEDIA_TCP_PORT:-49153}
       ADMIN_PASSWORD_FILE: /run/secrets/admin_password
       RECOVERY_PUBLIC_KEY_FILE: /run/secrets/recovery_public_key
-      APNS_KEY_ID: ${APNS_KEY_ID:?Set APNS_KEY_ID}
-      APNS_TEAM_ID: ${APNS_TEAM_ID:?Set APNS_TEAM_ID}
-      APNS_TOPIC: ${APNS_TOPIC:-com.nowcent.simdeck.voip}
-      APNS_PRIVATE_KEY_FILE: /run/secrets/apns_private_key
       ATTACHMENT_ROOT: /var/lib/sim-deck/attachments
     secrets:
       - admin_password
       - recovery_public_key
-      - apns_private_key
     ports:
       - "${SERVER_PORT:-8443}:8080"
       - "${MEDIA_UDP_PORT:-49152}:${MEDIA_UDP_PORT:-49152}/udp"
@@ -51,9 +46,6 @@ secrets:
     file: ${ADMIN_PASSWORD_FILE:-./secrets/admin_password.txt}
   recovery_public_key:
     file: ${RECOVERY_PUBLIC_KEY_FILE:-./secrets/recovery_public_key.txt}
-  apns_private_key:
-    file: ${APNS_PRIVATE_KEY_FILE:?Set APNS_PRIVATE_KEY_FILE}
-
 volumes:
   postgres-data:
   attachment-data:

@@ -27,8 +27,8 @@ One container controls exactly one modem. Every container must have all of the
 following resources kept separate from every other instance:
 
 - one stable AT device path;
-- one stable raw PCM path and the exact ALSA control, capture, and playback
-  device nodes for that modem;
+- either one separately verified raw PCM path or the exact ALSA control,
+  capture, and playback device nodes for that modem;
 - one persistent `/var/lib/sim-deck` volume;
 - one operator-assigned `SIM_DECK_DEVICE_UUID`;
 
@@ -54,6 +54,49 @@ and `aplay` PCM bridges.
 to `hw:0,0`. The Compose example maps only one modem's control, capture, and
 playback nodes into each container as card zero, so identical ALSA names remain
 isolated even when several containers run on one host.
+
+### Provision Quectel UAC before starting the container
+
+Quectel USB voice has two separate switches:
+
+1. `AT+QCFG="usbcfg"` stores whether the USB Audio Class interface is part of
+   the persistent USB composition. Its final value is the UAC flag. A change to
+   this composition takes effect after the modem reboots.
+2. `AT+QPCMV=1,2` enables the voice PCM route to that sound card for the current
+   modem boot. This setting is not persistent. The device agent issues it and
+   verifies `+QPCMV: 1,2` on every startup when audio mode is `alsa`.
+
+Provision each modem once from its AT port before starting its container:
+
+```text
+AT+QCFG="usbcfg"
++QCFG: "usbcfg",0x2C7C,0x0125,1,1,1,1,1,0,0
+
+AT+QCFG="usbcfg",0x2C7C,0x0125,1,1,1,1,1,0,1
+OK
+```
+
+The values above are an example. Always copy the values returned by that
+specific modem and change only the final UAC flag from `0` to `1`. Changing or
+reordering any other flag can remove its AT, diagnostic, modem, or network
+interface. Reboot the modem, query `AT+QCFG="usbcfg"` again, and require the
+final value to be `1`.
+
+On the Linux host, verify that the re-enumerated modem exposes both playback
+and capture before creating udev links:
+
+```sh
+cat /proc/asound/cards
+aplay -l
+arecord -l
+```
+
+The EC20/EC25 UAC format is fixed at signed 16-bit, 8 kHz, mono. If the final
+UAC flag is `0`, missing, or the firmware rejects `AT+QPCMV=1,2`, do not invent
+a PCM serial mapping. Use matching UAC-capable firmware from the module vendor
+or a separately verified hardware PCM interface. The agent now refuses ALSA
+readiness when the composition is disabled or UAC voice routing cannot be
+confirmed.
 
 Use `SIM_DECK_AUDIO_MODE=raw-pcm` only when the modem firmware exposes a tested
 full-duplex raw PCM character device. That mode opens `SIM_DECK_PCM_DEVICE`,

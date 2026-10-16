@@ -2,7 +2,6 @@
 
 # Modem 1 serial interfaces.
 SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="2c7c", ENV{ID_SERIAL_SHORT}=="MODEM_ONE_SERIAL", ENV{ID_USB_INTERFACE_NUM}=="02", SYMLINK+="sim-deck/modem-1-at", GROUP="dialout", MODE="0660"
-SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="2c7c", ENV{ID_SERIAL_SHORT}=="MODEM_ONE_SERIAL", ENV{ID_USB_INTERFACE_NUM}=="03", SYMLINK+="sim-deck/modem-1-pcm", GROUP="dialout", MODE="0660"
 
 # Modem 1 UAC nodes. Match the USB parent serial so ALSA card numbers may change safely.
 SUBSYSTEM=="sound", KERNEL=="controlC*", ENV{ID_VENDOR_ID}=="2c7c", ENV{ID_SERIAL_SHORT}=="MODEM_ONE_SERIAL", SYMLINK+="sim-deck/modem-1-audio-control", GROUP="audio", MODE="0660"
@@ -11,7 +10,6 @@ SUBSYSTEM=="sound", KERNEL=="pcmC*D*p", ENV{ID_VENDOR_ID}=="2c7c", ENV{ID_SERIAL
 
 # Modem 2 serial interfaces.
 SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="2c7c", ENV{ID_SERIAL_SHORT}=="MODEM_TWO_SERIAL", ENV{ID_USB_INTERFACE_NUM}=="02", SYMLINK+="sim-deck/modem-2-at", GROUP="dialout", MODE="0660"
-SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="2c7c", ENV{ID_SERIAL_SHORT}=="MODEM_TWO_SERIAL", ENV{ID_USB_INTERFACE_NUM}=="03", SYMLINK+="sim-deck/modem-2-pcm", GROUP="dialout", MODE="0660"
 
 # Modem 2 UAC nodes.
 SUBSYSTEM=="sound", KERNEL=="controlC*", ENV{ID_VENDOR_ID}=="2c7c", ENV{ID_SERIAL_SHORT}=="MODEM_TWO_SERIAL", SYMLINK+="sim-deck/modem-2-audio-control", GROUP="audio", MODE="0660"

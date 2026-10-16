@@ -14,6 +14,7 @@ struct DialerScreen: View {
     init(
         lines: [DeviceLineIdentity],
         initialLineID: UUID?,
+        initialNumber: String = "",
         callStarter: any CallStarting,
         onStarted: @escaping (UUID) -> Void
     ) {
@@ -21,6 +22,7 @@ struct DialerScreen: View {
         self.callStarter = callStarter
         self.onStarted = onStarted
         _selectedLineID = State(initialValue: initialLineID)
+        _number = State(initialValue: initialNumber)
     }
 
     var body: some View {
@@ -143,5 +145,18 @@ struct DialerScreen: View {
         onStarted: { _ in }
     )
     .preferredColorScheme(.dark)
+}
+
+#Preview("Dialer - Prefilled External Call") {
+    DialerScreen(
+        lines: PreviewFixtures.devices,
+        initialLineID: nil,
+        initialNumber: "13500000000",
+        callStarter: CallKitCoordinator(
+            transport: PreviewCallTransport(),
+            integratesWithSystem: false
+        ),
+        onStarted: { _ in }
+    )
 }
 #endif

@@ -1,4 +1,45 @@
 import Foundation
+import Intents
+
+struct ExternalDialRequest: Identifiable, Equatable {
+    let id: UUID
+    let number: String
+
+    init(id: UUID = UUID(), number: String) {
+        self.id = id
+        self.number = number
+    }
+}
+
+enum DefaultCallingRequestParser {
+    static func number(from activity: NSUserActivity) -> String? {
+        if let intent = activity.interaction?.intent as? INStartCallIntent,
+           let number = number(from: intent) {
+            return number
+        }
+        return activity.webpageURL.flatMap(number(from:))
+    }
+
+    static func number(from intent: INStartCallIntent) -> String? {
+        let contacts = intent.contacts ?? []
+        let callbackParticipants = intent.callRecordToCallBack?.participants ?? []
+
+        return (contacts + callbackParticipants)
+            .lazy
+            .compactMap(\.personHandle?.value)
+            .map(DialString.normalized)
+            .first(where: DialString.isValid)
+    }
+
+    static func number(from url: URL) -> String? {
+        guard url.scheme?.lowercased() == "tel" else { return nil }
+
+        let encodedNumber = url.absoluteString.dropFirst("tel:".count)
+        let decodedNumber = String(encodedNumber).removingPercentEncoding ?? String(encodedNumber)
+        let number = DialString.normalized(String(decodedNumber.drop(while: { $0 == "/" })))
+        return DialString.isValid(number) ? number : nil
+    }
+}
 
 enum OutgoingCallLineResolution: Equatable {
     case ready(DeviceLineIdentity)

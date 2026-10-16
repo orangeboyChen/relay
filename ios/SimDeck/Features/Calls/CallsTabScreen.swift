@@ -4,7 +4,7 @@ import SwiftUI
 struct CallsTabScreen: View {
     @Bindable var model: AppModel
 
-    @State private var isDialerPresented = false
+    @State private var dialerPresentation: DialerPresentation?
 
     var body: some View {
         CallHistoryScreen(
@@ -17,18 +17,26 @@ struct CallsTabScreen: View {
         }
         .safeAreaInset(edge: .bottom) {
             DialerLauncherButton {
-                isDialerPresented = true
+                dialerPresentation = .manual()
             }
         }
-        .sheet(isPresented: $isDialerPresented) {
+        .sheet(item: $dialerPresentation) { presentation in
             DialerScreen(
                 lines: model.devices,
-                initialLineID: preferredLineID,
+                initialLineID: presentation.isExternal ? externalPreferredLineID : preferredLineID,
+                initialNumber: presentation.number,
                 callStarter: model.callCoordinator
             ) { lineID in
                 model.lastSuccessfulDialLineID = lineID
             }
             .presentationDetents([.large])
+        }
+        .onChange(of: model.pendingExternalDialRequest, initial: true) { _, request in
+            presentExternalDialRequestIfPossible(request)
+        }
+        .onChange(of: model.callCoordinator.activeCall?.id) { _, callID in
+            guard callID == nil else { return }
+            presentExternalDialRequestIfPossible(model.pendingExternalDialRequest)
         }
     }
 
@@ -42,6 +50,36 @@ struct CallsTabScreen: View {
             return lastID
         }
         return model.devices.first(where: \.isOnline)?.id
+    }
+
+    private var externalPreferredLineID: UUID? {
+        guard case .ready(let line) = OutgoingCallLineRouter.resolve(
+            lines: model.devices,
+            preferredLineID: model.defaultCallLineID
+        ) else {
+            return nil
+        }
+        return line.id
+    }
+
+    private func presentExternalDialRequestIfPossible(_ request: ExternalDialRequest?) {
+        guard let request, model.callCoordinator.activeCall == nil else { return }
+        dialerPresentation = .external(request)
+        model.pendingExternalDialRequest = nil
+    }
+}
+
+private struct DialerPresentation: Identifiable {
+    let id: UUID
+    let number: String
+    let isExternal: Bool
+
+    static func manual() -> DialerPresentation {
+        DialerPresentation(id: UUID(), number: "", isExternal: false)
+    }
+
+    static func external(_ request: ExternalDialRequest) -> DialerPresentation {
+        DialerPresentation(id: request.id, number: request.number, isExternal: true)
     }
 }
 

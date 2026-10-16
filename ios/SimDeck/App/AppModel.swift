@@ -20,6 +20,7 @@ final class AppModel {
             defaultLineStore.messageLineID = defaultMessageLineID
         }
     }
+    var pendingExternalDialRequest: ExternalDialRequest?
     var selectedTab: AppTab
     var keyRecoveryState: KeyRecoveryState
     var installationID: UUID?
@@ -55,6 +56,7 @@ final class AppModel {
         self.lastSuccessfulDialLineID = lastSuccessfulDialLineID
         self.defaultCallLineID = defaultCallLineID ?? resolvedDefaultLineStore.callLineID
         self.defaultMessageLineID = defaultMessageLineID ?? resolvedDefaultLineStore.messageLineID
+        self.pendingExternalDialRequest = nil
         self.selectedTab = selectedTab
         self.keyRecoveryState = keyRecoveryState
         self.installationTrust = nil
@@ -117,6 +119,39 @@ final class AppModel {
             }
         }
         voipPushCoordinator?.start(installationID: installationIdentity.id)
+    }
+
+    func handleExternalDial(number rawNumber: String) async {
+        let number = DialString.normalized(rawNumber)
+        guard DialString.isValid(number) else { return }
+
+        selectedTab = .calls
+        let request = ExternalDialRequest(number: number)
+        pendingExternalDialRequest = nil
+        guard callCoordinator.activeCall == nil else {
+            pendingExternalDialRequest = request
+            return
+        }
+
+        switch OutgoingCallLineRouter.resolve(
+            lines: devices,
+            preferredLineID: defaultCallLineID
+        ) {
+        case .ready(let line):
+            do {
+                try await callCoordinator.startCall(to: number, using: line.id)
+                lastSuccessfulDialLineID = line.id
+            } catch {
+                pendingExternalDialRequest = request
+            }
+        case .selectionRequired, .unavailable:
+            pendingExternalDialRequest = request
+        }
+    }
+
+    func handleDefaultCallingActivity(_ activity: NSUserActivity) async {
+        guard let number = DefaultCallingRequestParser.number(from: activity) else { return }
+        await handleExternalDial(number: number)
     }
 
     func testServerConnection() async throws {

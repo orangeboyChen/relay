@@ -1,3 +1,4 @@
+import Intents
 import SwiftUI
 
 struct RootTabView: View {
@@ -42,6 +43,17 @@ struct RootTabView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: model.callCoordinator.activeCall != nil)
+        .onContinueUserActivity(INStartCallIntentIdentifier) { activity in
+            Task {
+                await model.handleDefaultCallingActivity(activity)
+            }
+        }
+        .onOpenURL { url in
+            guard let number = DefaultCallingRequestParser.number(from: url) else { return }
+            Task {
+                await model.handleExternalDial(number: number)
+            }
+        }
     }
 }
 

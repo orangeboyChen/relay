@@ -14,6 +14,8 @@ extension AppModel {
             callHistory: .loaded(PreviewFixtures.calls),
             messages: .loaded(PreviewFixtures.conversations),
             lastSuccessfulDialLineID: PreviewFixtures.devices[0].id,
+            defaultCallLineID: PreviewFixtures.devices[0].id,
+            defaultMessageLineID: PreviewFixtures.devices[0].id,
             selectedTab: selectedTab,
             keyRecoveryState: .available,
             serverConnection: serverConnection,

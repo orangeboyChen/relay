@@ -78,6 +78,11 @@ type fakeRepository struct {
 	updatedCommandKeyDevice     string
 	updatedCommandKey           []byte
 	updateCommandKeyError       error
+	updatedRadioDevice          string
+	updatedRadioTechnology      string
+	updatedSignalBars           *int
+	updatedRadioAt              time.Time
+	updateRadioError            error
 	installationOwnerID         string
 	installation                store.AppInstallationRegistration
 	installationRecord          store.AppInstallationRecord
@@ -108,6 +113,14 @@ type fakeRepository struct {
 	incomingClaimInstallationID string
 	incomingClaimNow            time.Time
 	incomingClaimError          error
+}
+
+func (fake *fakeRepository) UpdateDeviceRadioStatus(_ context.Context, deviceID string, technology string, signalBars *int, now time.Time) error {
+	fake.updatedRadioDevice = deviceID
+	fake.updatedRadioTechnology = technology
+	fake.updatedSignalBars = signalBars
+	fake.updatedRadioAt = now
+	return fake.updateRadioError
 }
 
 func (fake *fakeRepository) UpsertPushToken(

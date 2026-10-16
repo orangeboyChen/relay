@@ -89,6 +89,9 @@ func (repository *memoryRepository) CommandStatus(context.Context, string, strin
 func (repository *memoryRepository) UpdateDeviceCommandPublicKey(context.Context, string, []byte) error {
 	return nil
 }
+func (repository *memoryRepository) UpdateDeviceRadioStatus(context.Context, string, string, *int, time.Time) error {
+	return nil
+}
 func (repository *memoryRepository) RegisterAppInstallation(_ context.Context, _ string, registration store.AppInstallationRegistration, now time.Time) (store.AppInstallationRecord, bool, error) {
 	approvedAt := now.UTC()
 	return store.AppInstallationRecord{

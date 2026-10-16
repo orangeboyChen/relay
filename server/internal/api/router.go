@@ -39,6 +39,7 @@ type Repository interface {
 	CompleteCommand(context.Context, string, string, domain.EncryptedCommandResult, time.Time) error
 	CommandStatus(context.Context, string, string, time.Time) (domain.CommandStatus, error)
 	UpdateDeviceCommandPublicKey(context.Context, string, []byte) error
+	UpdateDeviceRadioStatus(context.Context, string, string, *int, time.Time) error
 	RegisterAppInstallation(context.Context, string, store.AppInstallationRegistration, time.Time) (store.AppInstallationRecord, bool, error)
 	UpsertPushToken(context.Context, string, string, string, string, []byte, time.Time) error
 	DeletePushToken(context.Context, string, string, string, string) error
@@ -79,6 +80,7 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("GET /v1/device-commands/next", router.claimCommand)
 	mux.HandleFunc("POST /v1/device-commands/{commandID}/complete", router.completeCommand)
 	mux.HandleFunc("PUT /v1/device-command-key", router.updateDeviceCommandKey)
+	mux.HandleFunc("PUT /v1/device-radio-status", router.updateDeviceRadioStatus)
 	mux.HandleFunc("POST /v1/auth/bootstrap", router.bootstrapLogin)
 	mux.HandleFunc("POST /v1/auth/refresh", router.refreshSession)
 	mux.HandleFunc("POST /v1/auth/logout", router.logout)
@@ -713,6 +715,56 @@ func (router *router) updateDeviceCommandKey(writer http.ResponseWriter, request
 		return
 	}
 	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (router *router) updateDeviceRadioStatus(writer http.ResponseWriter, request *http.Request) {
+	var body struct {
+		DeviceUUID            string `json:"device_uuid"`
+		RadioAccessTechnology string `json:"radio_access_technology"`
+		SignalBars            *int   `json:"signal_bars"`
+	}
+	if err := decodeJSON(request, &body); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	token, ok := bearerToken(request.Header.Get("Authorization"))
+	if !ok || !validUUID(body.DeviceUUID) {
+		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is required.")
+		return
+	}
+	if !validRadioAccessTechnology(body.RadioAccessTechnology) ||
+		(body.SignalBars != nil && (*body.SignalBars < 0 || *body.SignalBars > 4)) {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_radio_status", "Device radio status is invalid.")
+		return
+	}
+	if _, err := router.repository.AuthenticateDevice(request.Context(), body.DeviceUUID, token, router.now()); err != nil {
+		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is invalid or revoked.")
+		return
+	}
+	if err := router.repository.UpdateDeviceRadioStatus(
+		request.Context(),
+		body.DeviceUUID,
+		body.RadioAccessTechnology,
+		body.SignalBars,
+		router.now(),
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(writer, http.StatusNotFound, "device_not_found", "Device not found.")
+			return
+		}
+		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to update device radio status.")
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func validRadioAccessTechnology(value string) bool {
+	switch value {
+	case "unknown", "gsm", "edge", "umts", "hspa", "lte", "nr_nsa", "nr_sa":
+		return true
+	default:
+		return false
+	}
 }
 
 func (router *router) bootstrapLogin(writer http.ResponseWriter, request *http.Request) {

@@ -31,6 +31,8 @@ import (
 	"sim-deck-device/internal/sms"
 )
 
+var errSMSDeliveryUnavailable = errors.New("encrypted SMS synchronization is not configured")
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	config, err := agent.LoadConfig(os.LookupEnv)
@@ -145,7 +147,7 @@ type callMediaRuntime interface {
 type deviceDependencies struct {
 	openTransport    func(string, int) (io.ReadWriteCloser, error)
 	bindIdentity     func(context.Context, agent.Config, identity.Store, identity.State) (identity.State, error)
-	openInbox        func(string, time.Duration) (*sms.Inbox, error)
+	openInbox        func(string, time.Duration, []byte) (*sms.Inbox, error)
 	newSession       func(*at.Client, *sms.Inbox, modem.MessageSink, *slog.Logger, time.Duration) (deviceSession, error)
 	syncCommandKey   func(context.Context, agent.Config, identity.State) error
 	newCallEvents    func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error)
@@ -216,13 +218,17 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 		return fmt.Errorf("load device identity: %w", err)
 	}
 
-	inbox, err := dependencies.openInbox(filepath.Join(config.StateDirectory, "sms-inbox.json"), 365*24*time.Hour)
+	inbox, err := dependencies.openInbox(
+		filepath.Join(config.StateDirectory, "sms-inbox.json"),
+		365*24*time.Hour,
+		deviceIdentity.CommandPrivateKey,
+	)
 	if err != nil {
 		return fmt.Errorf("open SMS inbox: %w", err)
 	}
 	messageSink := modem.MessageSinkFunc(func(_ context.Context, message sms.ReceivedMessage) error {
-		logger.Info("SMS ready for encrypted synchronization", "message_id", message.ID, "segments", message.Segments)
-		return nil
+		logger.Warn("SMS retained pending encrypted synchronization", "message_id", message.ID, "segments", message.Segments)
+		return errSMSDeliveryUnavailable
 	})
 	session, err := dependencies.newSession(client, inbox, messageSink, logger, config.CommandTimeout)
 	if err != nil {

@@ -89,13 +89,16 @@ func (session *Session) Initialize(ctx context.Context) error {
 		return fmt.Errorf("modem rejected SMS history import: %s", response.Terminal)
 	}
 	pdus, extractionError := historyPDUs(response.Lines)
-	messages, importError := session.inbox.ImportPDUs(pdus)
+	_, importError := session.inbox.ImportPDUs(pdus)
 	if extractionError != nil || importError != nil {
 		session.logger.Warn("some modem SMS history entries were skipped", "error", errors.Join(extractionError, importError))
 	}
-	for _, message := range messages {
+	for _, message := range session.inbox.PendingMessages() {
 		if err := session.sink.ReceiveSMS(ctx, message); err != nil {
 			return fmt.Errorf("deliver imported SMS: %w", err)
+		}
+		if err := session.inbox.Acknowledge(message.ID); err != nil {
+			return fmt.Errorf("acknowledge imported SMS: %w", err)
 		}
 	}
 	return nil
@@ -169,6 +172,9 @@ func (session *Session) handleURC(ctx context.Context, urc string) error {
 		}
 		if err := session.sink.ReceiveSMS(ctx, received); err != nil {
 			return fmt.Errorf("deliver direct SMS: %w", err)
+		}
+		if err := session.inbox.Acknowledge(received.ID); err != nil {
+			return fmt.Errorf("acknowledge direct SMS: %w", err)
 		}
 	case strings.HasPrefix(urc, "+CDS:"):
 		session.logger.Info("SMS delivery status report received")

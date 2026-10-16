@@ -1,7 +1,14 @@
 # sim-deck-device
 
-`sim-deck-device` controls one Quectel modem, encrypts messages at the endpoint,
-and bridges cellular voice audio to an end-to-end encrypted WebRTC session.
+`sim-deck-device` controls one Quectel modem and bridges cellular voice audio to
+an end-to-end encrypted WebRTC session.
+
+Incoming SMS decoding, multipart assembly, history import, and durable
+deduplication are implemented. Complete messages remain in an encrypted local
+pending queue until a downstream encrypted synchronization sink acknowledges
+them. The server and iOS SMS synchronization path is not implemented yet, so
+the agent deliberately reports SMS delivery as unavailable instead of marking
+messages delivered or silently discarding their content.
 
 ## Development
 

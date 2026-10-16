@@ -205,9 +205,9 @@ func testDependencies(transport io.ReadWriteCloser, session deviceSession) devic
 			state.NumericID = 2
 			return state, nil
 		},
-		openInbox: func(string, time.Duration) (*sms.Inbox, error) { return sms.NewInbox(time.Hour), nil },
+		openInbox: func(string, time.Duration, []byte) (*sms.Inbox, error) { return sms.NewInbox(time.Hour), nil },
 		newSession: func(_ *at.Client, _ *sms.Inbox, sink modem.MessageSink, _ *slog.Logger, _ time.Duration) (deviceSession, error) {
-			Expect(sink.ReceiveSMS(context.Background(), sms.ReceivedMessage{ID: "message-id", Segments: 1})).To(Succeed())
+			Expect(sink.ReceiveSMS(context.Background(), sms.ReceivedMessage{ID: "message-id", Segments: 1})).To(MatchError(errSMSDeliveryUnavailable))
 			return session, nil
 		},
 		syncCommandKey: func(context.Context, agent.Config, identity.State) error { return nil },
@@ -381,7 +381,7 @@ var _ = Describe("Device command runtime", func() {
 	It("returns an inbox initialization failure", func() {
 		transport := newBlockingTransport()
 		dependencies := testDependencies(transport, &fakeDeviceSession{})
-		dependencies.openInbox = func(string, time.Duration) (*sms.Inbox, error) {
+		dependencies.openInbox = func(string, time.Duration, []byte) (*sms.Inbox, error) {
 			return nil, errors.New("inbox unavailable")
 		}
 
@@ -617,7 +617,11 @@ var _ = Describe("Device command runtime", func() {
 		stateDirectory := GinkgoT().TempDir()
 		_, err := dependencies.openTransport(filepath.Join(stateDirectory, "missing-at"), 115200)
 		Expect(err).To(HaveOccurred())
-		_, err = dependencies.openInbox(filepath.Join(stateDirectory, "wired-inbox.json"), time.Hour)
+		_, err = dependencies.openInbox(
+			filepath.Join(stateDirectory, "wired-inbox.json"),
+			time.Hour,
+			bytes.Repeat([]byte{1}, 32),
+		)
 		Expect(err).NotTo(HaveOccurred())
 		stateStore := identity.NewStore(stateDirectory)
 		state, err := stateStore.LoadOrCreate()

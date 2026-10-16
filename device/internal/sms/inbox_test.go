@@ -122,9 +122,9 @@ var _ = Describe("SMS inbox", func() {
 		Expect(completeB.Text).To(Equal("B1B2"))
 	})
 
-	It("persists only fingerprints and suppresses duplicates after restart", func() {
+	It("persists pending messages encrypted and suppresses duplicates after acknowledgement", func() {
 		statePath := filepath.Join(GinkgoT().TempDir(), "sms-inbox.json")
-		inbox, err := newPersistentInbox(statePath, 24*time.Hour, func() time.Time { return now })
+		inbox, err := newPersistentInbox(statePath, 24*time.Hour, func() time.Time { return now }, testInboxStorageKey())
 		Expect(err).NotTo(HaveOccurred())
 		message := Message{Sender: "+8613500000000", Timestamp: now, Text: "private message"}
 
@@ -141,8 +141,16 @@ var _ = Describe("SMS inbox", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o600)))
 
-		restarted, err := newPersistentInbox(statePath, 24*time.Hour, func() time.Time { return now })
+		restarted, err := newPersistentInbox(statePath, 24*time.Hour, func() time.Time { return now }, testInboxStorageKey())
 		Expect(err).NotTo(HaveOccurred())
+		Expect(restarted.PendingMessages()).To(Equal([]ReceivedMessage{received}))
+		_, created, err = restarted.AddSegment(message)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeFalse())
+		Expect(restarted.Acknowledge(received.ID)).To(Succeed())
+		restarted, err = newPersistentInbox(statePath, 24*time.Hour, func() time.Time { return now }, testInboxStorageKey())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(restarted.PendingMessages()).To(BeEmpty())
 		_, created, err = restarted.AddSegment(message)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(created).To(BeFalse())
@@ -151,15 +159,16 @@ var _ = Describe("SMS inbox", func() {
 	It("expires persistent fingerprints after the retention period", func() {
 		statePath := filepath.Join(GinkgoT().TempDir(), "sms-inbox.json")
 		clock := now
-		inbox, err := newPersistentInbox(statePath, time.Hour, func() time.Time { return clock })
+		inbox, err := newPersistentInbox(statePath, time.Hour, func() time.Time { return clock }, testInboxStorageKey())
 		Expect(err).NotTo(HaveOccurred())
 		message := Message{Sender: "10086", Timestamp: now, Text: "balance"}
 		_, created, err := inbox.AddSegment(message)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(created).To(BeTrue())
+		Expect(inbox.Acknowledge(inbox.PendingMessages()[0].ID)).To(Succeed())
 
 		clock = clock.Add(2 * time.Hour)
-		restarted, err := newPersistentInbox(statePath, time.Hour, func() time.Time { return clock })
+		restarted, err := newPersistentInbox(statePath, time.Hour, func() time.Time { return clock }, testInboxStorageKey())
 		Expect(err).NotTo(HaveOccurred())
 		_, created, err = restarted.AddSegment(message)
 		Expect(err).NotTo(HaveOccurred())
@@ -169,7 +178,7 @@ var _ = Describe("SMS inbox", func() {
 	It("rolls back an in-memory fingerprint when durable persistence fails", func() {
 		directory := GinkgoT().TempDir()
 		statePath := filepath.Join(directory, "sms-inbox.json")
-		inbox, err := newPersistentInbox(statePath, time.Hour, func() time.Time { return now })
+		inbox, err := newPersistentInbox(statePath, time.Hour, func() time.Time { return now }, testInboxStorageKey())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(os.Mkdir(statePath, 0o700)).To(Succeed())
 		message := Message{Sender: "10086", Timestamp: now, Text: "retry me"}
@@ -184,12 +193,49 @@ var _ = Describe("SMS inbox", func() {
 		Expect(created).To(BeTrue())
 	})
 
+	It("keeps a pending message when acknowledgement persistence fails", func() {
+		statePath := filepath.Join(GinkgoT().TempDir(), "sms-inbox.json")
+		inbox, err := newPersistentInbox(statePath, time.Hour, func() time.Time { return now }, testInboxStorageKey())
+		Expect(err).NotTo(HaveOccurred())
+		received, created, err := inbox.AddSegment(Message{Sender: "10086", Timestamp: now, Text: "retry me"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
+		Expect(os.Remove(statePath)).To(Succeed())
+		Expect(os.Mkdir(statePath, 0o700)).To(Succeed())
+
+		err = inbox.Acknowledge(received.ID)
+
+		Expect(err).To(MatchError(ContainSubstring("replace SMS inbox state")))
+		Expect(inbox.PendingMessages()).To(Equal([]ReceivedMessage{received}))
+		Expect(os.Remove(statePath)).To(Succeed())
+		Expect(inbox.Acknowledge(received.ID)).To(Succeed())
+		Expect(inbox.PendingMessages()).To(BeEmpty())
+	})
+
+	It("rejects pending ciphertext when the storage key changes", func() {
+		statePath := filepath.Join(GinkgoT().TempDir(), "sms-inbox.json")
+		inbox, err := newPersistentInbox(statePath, time.Hour, func() time.Time { return now }, testInboxStorageKey())
+		Expect(err).NotTo(HaveOccurred())
+		_, created, err := inbox.AddSegment(Message{Sender: "10086", Timestamp: now, Text: "private"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
+
+		_, err = newPersistentInbox(
+			statePath,
+			time.Hour,
+			func() time.Time { return now },
+			[]byte("abcdef0123456789abcdef0123456789"),
+		)
+
+		Expect(err).To(MatchError("SMS inbox state is invalid"))
+	})
+
 	DescribeTable("rejects invalid persistent state",
 		func(content string) {
 			statePath := filepath.Join(GinkgoT().TempDir(), "sms-inbox.json")
 			Expect(os.WriteFile(statePath, []byte(content), 0o600)).To(Succeed())
 
-			_, err := NewPersistentInbox(statePath, time.Hour)
+			_, err := NewPersistentInbox(statePath, time.Hour, testInboxStorageKey())
 
 			Expect(err).To(MatchError("SMS inbox state is invalid"))
 		},
@@ -200,7 +246,16 @@ var _ = Describe("SMS inbox", func() {
 	)
 
 	It("requires an absolute persistent state path", func() {
-		_, err := NewPersistentInbox("relative.json", time.Hour)
+		_, err := NewPersistentInbox("relative.json", time.Hour, testInboxStorageKey())
 		Expect(err).To(MatchError("SMS inbox state path must be absolute"))
 	})
+
+	It("requires a 32-byte persistent storage key", func() {
+		_, err := NewPersistentInbox(filepath.Join(GinkgoT().TempDir(), "state.json"), time.Hour, []byte("short"))
+		Expect(err).To(MatchError("SMS inbox storage key must contain 32 bytes"))
+	})
 })
+
+func testInboxStorageKey() []byte {
+	return []byte("0123456789abcdef0123456789abcdef")
+}

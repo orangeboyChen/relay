@@ -116,7 +116,13 @@ private struct DeviceDiscoveryControlSection: View {
                 .frame(minHeight: 44)
             } else if isEnabled, let session {
                 LabeledContent("Time Remaining") {
-                    Text(timerInterval: now...session.expiresAt, countsDown: true)
+                    Text(
+                        timerInterval: DeviceDiscoveryTimer.interval(
+                            now: now,
+                            expiresAt: session.expiresAt
+                        ),
+                        countsDown: true
+                    )
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }

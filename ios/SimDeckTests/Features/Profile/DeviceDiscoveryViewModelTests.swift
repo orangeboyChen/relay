@@ -56,6 +56,49 @@ final class DeviceDiscoveryViewModelTests: XCTestCase {
         XCTAssertEqual(model.loadState, .failed(TestFailure.unavailable.localizedDescription))
     }
 
+    func testEnablingWithExpiredRetainedSessionMarksChangeSynchronously() {
+        let now = Date(timeIntervalSince1970: 1_792_108_800)
+        let expiredSession = DeviceDiscoverySession(
+            openedAt: now.addingTimeInterval(-1_200),
+            expiresAt: now.addingTimeInterval(-600),
+            closedAt: nil
+        )
+        let api = DeviceDiscoveryAPISpy(
+            state: DeviceDiscoverySessionState(active: false, session: expiredSession),
+            discoveries: []
+        )
+        let model = DeviceDiscoveryViewModel(
+            api: api,
+            clock: TestDeviceDiscoveryClock(),
+            session: expiredSession,
+            loadState: .loaded
+        )
+
+        model.isDiscoveryEnabled = true
+
+        XCTAssertTrue(model.isChangingDiscovery)
+    }
+
+    func testExpiredDiscoveryTimerClampsToCurrentTime() {
+        let now = Date(timeIntervalSince1970: 1_792_108_800)
+
+        let interval = DeviceDiscoveryTimer.interval(
+            now: now,
+            expiresAt: now.addingTimeInterval(-1)
+        )
+
+        XCTAssertEqual(interval, now...now)
+    }
+
+    func testActiveDiscoveryTimerPreservesFutureExpiry() {
+        let now = Date(timeIntervalSince1970: 1_792_108_800)
+        let expiresAt = now.addingTimeInterval(600)
+
+        let interval = DeviceDiscoveryTimer.interval(now: now, expiresAt: expiresAt)
+
+        XCTAssertEqual(interval, now...expiresAt)
+    }
+
     func testApprovalAndRejectionRemoveOnlyTheDecidedCandidate() async {
         let approvedCandidate = makeCandidate(id: UUID())
         let rejectedCandidate = makeCandidate(id: UUID())

@@ -36,6 +36,7 @@ final class DeviceDiscoveryViewModel {
     var isDiscoveryEnabled: Bool {
         didSet {
             guard isDiscoveryEnabled != oldValue, !isApplyingServerState else { return }
+            isChangingDiscovery = true
             let requestedValue = isDiscoveryEnabled
             Task { await updateDiscovery(requestedValue, fallback: oldValue) }
         }
@@ -167,6 +168,12 @@ final class DeviceDiscoveryViewModel {
         isApplyingServerState = true
         isDiscoveryEnabled = enabled
         isApplyingServerState = false
+    }
+}
+
+enum DeviceDiscoveryTimer {
+    static func interval(now: Date, expiresAt: Date) -> ClosedRange<Date> {
+        now...max(now, expiresAt)
     }
 }
 

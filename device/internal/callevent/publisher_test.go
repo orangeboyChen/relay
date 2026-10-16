@@ -150,6 +150,13 @@ var _ = Describe("Encrypted call event publisher", func() {
 		Expect(publisher.Run(ctx)).To(MatchError(context.Canceled))
 	})
 
+	It("stops when the call snapshot source closes", func() {
+		close(snapshots)
+
+		Expect(publisher.Run(context.Background())).To(MatchError("call event snapshot stream closed"))
+		Expect(remote.envelopes).To(BeEmpty())
+	})
+
 	It("validates dependencies and registrations", func() {
 		_, err := NewPublisher(nil, state, snapshots)
 		Expect(err).To(HaveOccurred())

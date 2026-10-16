@@ -120,7 +120,10 @@ func (publisher *Publisher) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case snapshot := <-publisher.snapshots:
+		case snapshot, ok := <-publisher.snapshots:
+			if !ok {
+				return errors.New("call event snapshot stream closed")
+			}
 			if err := publisher.publish(ctx, snapshot); err != nil {
 				return err
 			}

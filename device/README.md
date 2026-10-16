@@ -30,10 +30,13 @@ following resources kept separate from every other instance:
 - one stable raw PCM path and the exact ALSA control, capture, and playback
   device nodes for that modem;
 - one persistent `/var/lib/sim-deck` volume;
+- one operator-assigned `SIM_DECK_DEVICE_UUID`;
 - one short-lived, one-time pairing token.
 
 Never share or copy a state volume between two running modem containers. The
-volume contains the modem endpoint's UUID, Ed25519 signing identity, X25519
+The configured UUID is immutable for that state volume. Startup fails if
+`SIM_DECK_DEVICE_UUID` does not match the persisted identity. The volume also
+contains the modem endpoint's Ed25519 signing identity, X25519
 command-decryption identity, server URL, device credential, and visible SIM numeric ID. Copying it would create two
 agents with the same identity. Moving the volume together with the same physical
 modem is appropriate when replacing a host.
@@ -140,14 +143,17 @@ server URL and host device group IDs:
 
 ```sh
 export SIM_DECK_SERVER_URL=https://sim-deck.example
+export SIM_DECK_MODEM_1_DEVICE_UUID=01900000-0000-7000-8000-000000000001
+export SIM_DECK_MODEM_2_DEVICE_UUID=01900000-0000-7000-8000-000000000002
 export SIM_DECK_DIALOUT_GID="$(getent group dialout | cut -d: -f3)"
 export SIM_DECK_AUDIO_GID="$(getent group audio | cut -d: -f3)"
 docker compose -f compose.example.yaml up --build
 ```
 
-The server sees two independent device UUIDs and allocates the smallest free SIM
+Generate a different UUID for every modem container and keep it with that
+modem's deployment configuration. The server sees two independent device UUIDs and allocates the smallest free SIM
 numeric ID to each. To add another modem, copy one service block and change all
-host device paths, the state volume, the pairing secret, and the host health
+host device paths, the configured UUID, the state volume, the pairing secret, and the host health
 port. Do not add multiple modem mappings to one container.
 
 The local readiness endpoints in the example are

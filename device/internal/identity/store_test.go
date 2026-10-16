@@ -16,6 +16,8 @@ import (
 
 type errorReader struct{}
 
+const testDeviceUUID = "01900000-0000-7000-8000-000000000001"
+
 func (errorReader) Read([]byte) (int, error) {
 	return 0, io.ErrUnexpectedEOF
 }
@@ -23,7 +25,7 @@ func (errorReader) Read([]byte) (int, error) {
 var _ = Describe("Device identity store", func() {
 	It("reports cryptographic entropy failures without creating partial state", func() {
 		directory := GinkgoT().TempDir()
-		store := NewStore(directory)
+		store := NewStore(directory, testDeviceUUID)
 		store.random = errorReader{}
 
 		_, err := store.LoadOrCreate()
@@ -33,20 +35,8 @@ var _ = Describe("Device identity store", func() {
 		Expect(errors.Is(statErr, os.ErrNotExist)).To(BeTrue())
 	})
 
-	It("reports UUID entropy exhaustion after generating the identity key", func() {
-		directory := GinkgoT().TempDir()
-		store := NewStore(directory)
-		store.random = bytes.NewReader(make([]byte, ed25519.SeedSize))
-
-		_, err := store.LoadOrCreate()
-
-		Expect(err).To(MatchError(ContainSubstring("generate device UUID")))
-		_, statErr := os.Stat(filepath.Join(directory, stateFile))
-		Expect(errors.Is(statErr, os.ErrNotExist)).To(BeTrue())
-	})
-
 	It("reports entropy exhaustion before persisting a pairing credential", func() {
-		store := NewStore(GinkgoT().TempDir())
+		store := NewStore(GinkgoT().TempDir(), testDeviceUUID)
 		state, err := store.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
 		store.random = errorReader{}
@@ -58,12 +48,12 @@ var _ = Describe("Device identity store", func() {
 
 	It("creates one private identity and reloads it without replacement", func() {
 		directory := GinkgoT().TempDir()
-		store := NewStore(directory)
+		store := NewStore(directory, testDeviceUUID)
 
 		created, err := store.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(created.Version).To(Equal(2))
-		Expect(created.DeviceUUID).To(HaveLen(36))
+		Expect(created.DeviceUUID).To(Equal(testDeviceUUID))
 		Expect(created.IdentityPrivateKey).To(HaveLen(ed25519.PrivateKeySize))
 		Expect(created.PublicKey()).To(HaveLen(ed25519.PublicKeySize))
 		Expect(created.CommandPrivateKey).To(HaveLen(32))
@@ -79,9 +69,42 @@ var _ = Describe("Device identity store", func() {
 		Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o600)))
 	})
 
+	It("rejects a configured UUID that differs from persisted identity", func() {
+		directory := GinkgoT().TempDir()
+		created, err := NewStore(directory, testDeviceUUID).LoadOrCreate()
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = NewStore(directory, "01900000-0000-7000-8000-000000000002").LoadOrCreate()
+
+		Expect(errors.Is(err, ErrDeviceUUIDMismatch)).To(BeTrue())
+		reloaded, reloadErr := NewStore(directory, testDeviceUUID).LoadOrCreate()
+		Expect(reloadErr).NotTo(HaveOccurred())
+		Expect(reloaded).To(Equal(created))
+	})
+
+	It("rejects a malformed configured UUID before creating state", func() {
+		directory := filepath.Join(GinkgoT().TempDir(), "state")
+
+		_, err := NewStore(directory, "device-one").LoadOrCreate()
+
+		Expect(errors.Is(err, ErrInvalidState)).To(BeTrue())
+		_, statErr := os.Stat(directory)
+		Expect(errors.Is(statErr, os.ErrNotExist)).To(BeTrue())
+	})
+
+	DescribeTable("validates canonical device UUIDs",
+		func(value string, expected bool) {
+			Expect(ValidDeviceUUID(value)).To(Equal(expected))
+		},
+		Entry("lowercase UUID", testDeviceUUID, true),
+		Entry("uppercase UUID", "01900000-0000-7000-8000-00000000000A", false),
+		Entry("missing separators", "01900000000070008000000000000001", false),
+		Entry("invalid hex", "01900000-0000-7000-8000-00000000000z", false),
+	)
+
 	It("atomically persists the server credential and numeric SIM ID", func() {
 		directory := GinkgoT().TempDir()
-		store := NewStore(directory)
+		store := NewStore(directory, testDeviceUUID)
 		state, err := store.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
 		prepared, err := store.PreparePairing(state)
@@ -102,7 +125,7 @@ var _ = Describe("Device identity store", func() {
 
 	It("migrates a version-one identity without replacing its signing key or UUID", func() {
 		directory := GinkgoT().TempDir()
-		store := NewStore(directory)
+		store := NewStore(directory, testDeviceUUID)
 		created, err := store.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
 		legacy := created
@@ -122,19 +145,19 @@ var _ = Describe("Device identity store", func() {
 	})
 
 	It("refuses to initialize an empty state path", func() {
-		_, err := NewStore(" ").LoadOrCreate()
+		_, err := NewStore(" ", testDeviceUUID).LoadOrCreate()
 		Expect(errors.Is(err, ErrInvalidState)).To(BeTrue())
 	})
 
 	It("reports filesystem failures without generating a replacement identity", func() {
-		_, err := NewStore("/dev/null/sim-deck").LoadOrCreate()
+		_, err := NewStore("/dev/null/sim-deck", testDeviceUUID).LoadOrCreate()
 		Expect(err).To(MatchError(ContainSubstring("create state directory")))
 	})
 
 	DescribeTable("rejects corrupt state instead of silently replacing the identity",
 		func(mutate func(*State)) {
 			directory := GinkgoT().TempDir()
-			store := NewStore(directory)
+			store := NewStore(directory, testDeviceUUID)
 			state, err := store.LoadOrCreate()
 			Expect(err).NotTo(HaveOccurred())
 			mutate(&state)
@@ -160,7 +183,7 @@ var _ = Describe("Device identity store", func() {
 	)
 
 	It("reuses the pending credential across pairing retries", func() {
-		store := NewStore(GinkgoT().TempDir())
+		store := NewStore(GinkgoT().TempDir(), testDeviceUUID)
 		state, err := store.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
 
@@ -173,7 +196,7 @@ var _ = Describe("Device identity store", func() {
 	})
 
 	It("leaves an already bound identity unchanged when pairing is prepared again", func() {
-		store := NewStore(GinkgoT().TempDir())
+		store := NewStore(GinkgoT().TempDir(), testDeviceUUID)
 		state, err := store.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
 		prepared, err := store.PreparePairing(state)
@@ -189,20 +212,20 @@ var _ = Describe("Device identity store", func() {
 
 	It("reports a state directory failure while persisting a pending credential", func() {
 		directory := GinkgoT().TempDir()
-		goodStore := NewStore(directory)
+		goodStore := NewStore(directory, testDeviceUUID)
 		state, err := goodStore.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
 		occupiedPath := filepath.Join(directory, "occupied")
 		Expect(os.WriteFile(occupiedPath, []byte("not a directory"), 0o600)).To(Succeed())
 
-		_, err = NewStore(occupiedPath).PreparePairing(state)
+		_, err = NewStore(occupiedPath, testDeviceUUID).PreparePairing(state)
 
 		Expect(err).To(MatchError(ContainSubstring("create state directory")))
 	})
 
 	It("reports failure to create an atomic temporary state file", func() {
 		directory := GinkgoT().TempDir()
-		store := NewStore(directory)
+		store := NewStore(directory, testDeviceUUID)
 		state, err := store.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(os.Chmod(directory, 0o500)).To(Succeed())
@@ -218,7 +241,7 @@ var _ = Describe("Device identity store", func() {
 			directory := GinkgoT().TempDir()
 			Expect(os.WriteFile(filepath.Join(directory, stateFile), []byte(content), 0o600)).To(Succeed())
 
-			_, err := NewStore(directory).LoadOrCreate()
+			_, err := NewStore(directory, testDeviceUUID).LoadOrCreate()
 
 			Expect(errors.Is(err, ErrInvalidState)).To(BeTrue())
 		},
@@ -227,7 +250,7 @@ var _ = Describe("Device identity store", func() {
 	)
 
 	It("validates a binding before replacing durable state", func() {
-		store := NewStore(GinkgoT().TempDir())
+		store := NewStore(GinkgoT().TempDir(), testDeviceUUID)
 		state, err := store.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
 
@@ -242,7 +265,7 @@ var _ = Describe("Device identity store", func() {
 
 	It("surfaces an atomic replacement failure and leaves no credential behind", func() {
 		directory := GinkgoT().TempDir()
-		store := NewStore(directory)
+		store := NewStore(directory, testDeviceUUID)
 		state, err := store.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
 		path := filepath.Join(directory, stateFile)

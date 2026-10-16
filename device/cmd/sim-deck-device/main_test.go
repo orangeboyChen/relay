@@ -178,6 +178,7 @@ func (session *fakeDeviceSession) Run(ctx context.Context) error {
 
 func testConfig(stateDirectory string) agent.Config {
 	return agent.Config{
+		DeviceUUID:         "01900000-0000-7000-8000-000000000001",
 		ATDevice:           "/dev/sim-deck/at",
 		AudioMode:          agent.AudioModeALSA,
 		ALSACaptureDevice:  "hw:0,0",
@@ -372,10 +373,16 @@ var _ = Describe("Device command runtime", func() {
 	It("returns an identity persistence failure", func() {
 		transport := newBlockingTransport()
 		dependencies := testDependencies(transport, &fakeDeviceSession{})
+		openedTransport := false
+		dependencies.openTransport = func(string, int) (io.ReadWriteCloser, error) {
+			openedTransport = true
+			return transport, nil
+		}
 
 		err := runDevice(context.Background(), testConfig("/dev/null/sim-deck"), logger, &atomic.Bool{}, dependencies)
 
 		Expect(err).To(MatchError(ContainSubstring("load device identity")))
+		Expect(openedTransport).To(BeFalse())
 	})
 
 	It("returns an inbox initialization failure", func() {
@@ -623,7 +630,9 @@ var _ = Describe("Device command runtime", func() {
 			bytes.Repeat([]byte{1}, 32),
 		)
 		Expect(err).NotTo(HaveOccurred())
-		stateStore := identity.NewStore(stateDirectory)
+		config := testConfig(stateDirectory)
+		config.ServerURL = "https://deck.example"
+		stateStore := identity.NewStore(stateDirectory, config.DeviceUUID)
 		state, err := stateStore.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
 		state, err = stateStore.PreparePairing(state)
@@ -631,8 +640,6 @@ var _ = Describe("Device command runtime", func() {
 		state, err = stateStore.Bind(state, "https://deck.example", 1)
 		Expect(err).NotTo(HaveOccurred())
 		expectedState = state
-		config := testConfig(stateDirectory)
-		config.ServerURL = "https://deck.example"
 		bound, err := dependencies.bindIdentity(context.Background(), config, stateStore, state)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(bound.DeviceUUID).To(Equal(state.DeviceUUID))

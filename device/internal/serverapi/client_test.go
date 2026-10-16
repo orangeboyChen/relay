@@ -234,7 +234,7 @@ var _ = Describe("Server pairing client", func() {
 
 	BeforeEach(func() {
 		var err error
-		state, err = identity.NewStore(GinkgoT().TempDir()).LoadOrCreate()
+		state, err = identity.NewStore(GinkgoT().TempDir(), "01900000-0000-7000-8000-000000000001").LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -343,7 +343,7 @@ var _ = Describe("Server pairing client", func() {
 	})
 
 	It("registers the current command public key", func() {
-		state, err := identity.NewStore(GinkgoT().TempDir()).LoadOrCreate()
+		state, err := identity.NewStore(GinkgoT().TempDir(), "01900000-0000-7000-8000-000000000001").LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
 		state.Credential = "device-secret"
 		client := clientWithHandler(func(request *http.Request) (*http.Response, error) {
@@ -364,7 +364,7 @@ var _ = Describe("Server pairing client", func() {
 	})
 
 	It("maps command key request, transport, and server errors", func() {
-		state, err := identity.NewStore(GinkgoT().TempDir()).LoadOrCreate()
+		state, err := identity.NewStore(GinkgoT().TempDir(), "01900000-0000-7000-8000-000000000001").LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(NewClient("://invalid", nil).UpdateCommandKey(context.Background(), state)).To(MatchError(ContainSubstring("create command key update request")))
 

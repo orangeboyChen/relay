@@ -8,6 +8,8 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+const configDeviceUUID = "01900000-0000-7000-8000-000000000001"
+
 func configLookup(values map[string]string) func(string) (string, bool) {
 	return func(key string) (string, bool) {
 		value, ok := values[key]
@@ -18,11 +20,13 @@ func configLookup(values map[string]string) func(string) (string, bool) {
 var _ = Describe("Agent configuration", func() {
 	It("uses stable device and persistence defaults", func() {
 		config, err := LoadConfig(configLookup(map[string]string{
-			"SIM_DECK_SERVER_URL": "https://deck.example",
+			"SIM_DECK_DEVICE_UUID": configDeviceUUID,
+			"SIM_DECK_SERVER_URL":  "https://deck.example",
 		}))
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(config.ATDevice).To(Equal("/dev/sim-deck/at"))
+		Expect(config.DeviceUUID).To(Equal(configDeviceUUID))
 		Expect(config.AudioMode).To(Equal(AudioModeALSA))
 		Expect(config.ALSACaptureDevice).To(Equal("hw:0,0"))
 		Expect(config.ALSAPlaybackDevice).To(Equal("hw:0,0"))
@@ -39,6 +43,7 @@ var _ = Describe("Agent configuration", func() {
 
 	It("reads explicit development and device overrides", func() {
 		config, err := LoadConfig(configLookup(map[string]string{
+			"SIM_DECK_DEVICE_UUID":           "01900000-0000-7000-8000-0000000000AB",
 			"SIM_DECK_AT_DEVICE":             "/dev/ttyUSB2",
 			"SIM_DECK_AUDIO_MODE":            "raw-pcm",
 			"SIM_DECK_ALSA_CAPTURE_DEVICE":   "plughw:2,0",
@@ -57,6 +62,7 @@ var _ = Describe("Agent configuration", func() {
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(config.ATDevice).To(Equal("/dev/ttyUSB2"))
+		Expect(config.DeviceUUID).To(Equal("01900000-0000-7000-8000-0000000000ab"))
 		Expect(config.AudioMode).To(Equal(AudioModeRawPCM))
 		Expect(config.ALSACaptureDevice).To(Equal("plughw:2,0"))
 		Expect(config.ALSAPlaybackDevice).To(Equal("plughw:2,1"))
@@ -74,7 +80,10 @@ var _ = Describe("Agent configuration", func() {
 
 	DescribeTable("rejects invalid environment values",
 		func(overrides map[string]string, expectedMessage string) {
-			values := map[string]string{"SIM_DECK_SERVER_URL": "https://deck.example"}
+			values := map[string]string{
+				"SIM_DECK_DEVICE_UUID": configDeviceUUID,
+				"SIM_DECK_SERVER_URL":  "https://deck.example",
+			}
 			for key, value := range overrides {
 				values[key] = value
 			}
@@ -84,6 +93,8 @@ var _ = Describe("Agent configuration", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring(expectedMessage))
 		},
+		Entry("missing device UUID", map[string]string{"SIM_DECK_DEVICE_UUID": ""}, "DEVICE_UUID"),
+		Entry("malformed device UUID", map[string]string{"SIM_DECK_DEVICE_UUID": "device-one"}, "DEVICE_UUID"),
 		Entry("invalid insecure HTTP flag", map[string]string{"SIM_DECK_ALLOW_INSECURE_HTTP": "perhaps"}, "ALLOW_INSECURE_HTTP"),
 		Entry("invalid baud", map[string]string{"SIM_DECK_BAUD": "fast"}, "BAUD"),
 		Entry("zero baud", map[string]string{"SIM_DECK_BAUD": "0"}, "BAUD"),
@@ -110,6 +121,7 @@ var _ = Describe("Agent configuration", func() {
 
 	It("does not treat whitespace-only overrides as values", func() {
 		config, err := LoadConfig(configLookup(map[string]string{
+			"SIM_DECK_DEVICE_UUID":         configDeviceUUID,
 			"SIM_DECK_SERVER_URL":          "https://deck.example/",
 			"SIM_DECK_BAUD":                " ",
 			"SIM_DECK_COMMAND_TIMEOUT":     " ",

@@ -204,17 +204,17 @@ func productionDependencies(httpClient *http.Client) deviceDependencies {
 }
 
 func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, ready *atomic.Bool, dependencies deviceDependencies) error {
+	identityStore := identity.NewStore(config.StateDirectory, config.DeviceUUID)
+	deviceIdentity, err := identityStore.LoadOrCreate()
+	if err != nil {
+		return fmt.Errorf("load device identity: %w", err)
+	}
 	transport, err := dependencies.openTransport(config.ATDevice, config.Baud)
 	if err != nil {
 		return err
 	}
 	client := at.NewClient(transport)
 	defer client.Close()
-	identityStore := identity.NewStore(config.StateDirectory)
-	deviceIdentity, err := identityStore.LoadOrCreate()
-	if err != nil {
-		return fmt.Errorf("load device identity: %w", err)
-	}
 
 	inbox, err := dependencies.openInbox(
 		filepath.Join(config.StateDirectory, "sms-inbox.json"),

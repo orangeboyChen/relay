@@ -34,13 +34,13 @@ var _ = Describe("Device server binding", func() {
 
 	BeforeEach(func() {
 		directory = GinkgoT().TempDir()
-		store = identity.NewStore(filepath.Join(directory, "state"))
+		store = identity.NewStore(filepath.Join(directory, "state"), "01900000-0000-7000-8000-000000000001")
 		var err error
 		state, err = store.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
 		secretPath := filepath.Join(directory, "pairing-token")
 		Expect(os.WriteFile(secretPath, []byte("one-time-token\n"), 0o600)).To(Succeed())
-		config = Config{ServerURL: "https://deck.example", PairingTokenFile: secretPath}
+		config = Config{DeviceUUID: state.DeviceUUID, ServerURL: "https://deck.example", PairingTokenFile: secretPath}
 	})
 
 	It("persists the same pending credential across a failed request and retry", func() {
@@ -103,7 +103,7 @@ var _ = Describe("Device server binding", func() {
 	})
 
 	It("reports a durable prepare failure before contacting the server", func() {
-		badStore := identity.NewStore(filepath.Join(directory, "not-a-directory"))
+		badStore := identity.NewStore(filepath.Join(directory, "not-a-directory"), state.DeviceUUID)
 		Expect(os.WriteFile(filepath.Join(directory, "not-a-directory"), []byte("occupied"), 0o600)).To(Succeed())
 		client := &fakePairingClient{}
 

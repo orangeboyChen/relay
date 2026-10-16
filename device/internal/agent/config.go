@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"sim-deck-device/internal/identity"
 )
 
 const (
@@ -30,6 +32,7 @@ const (
 
 // Config describes the host devices and local health endpoint used by one agent instance.
 type Config struct {
+	DeviceUUID         string
 	ATDevice           string
 	AudioMode          AudioMode
 	ALSACaptureDevice  string
@@ -49,6 +52,7 @@ type Config struct {
 // LoadConfig reads agent configuration from an environment lookup function.
 func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 	config := Config{
+		DeviceUUID:         strings.ToLower(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_DEVICE_UUID", ""))),
 		ATDevice:           valueOrDefault(lookup, "SIM_DECK_AT_DEVICE", defaultATDevice),
 		AudioMode:          AudioMode(strings.ToLower(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_AUDIO_MODE", string(AudioModeALSA))))),
 		ALSACaptureDevice:  valueOrDefault(lookup, "SIM_DECK_ALSA_CAPTURE_DEVICE", defaultALSACaptureDevice),
@@ -62,6 +66,9 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 		ServerURL:          strings.TrimRight(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_SERVER_URL", "")), "/"),
 		StateDirectory:     valueOrDefault(lookup, "SIM_DECK_STATE_DIRECTORY", defaultStateDir),
 		PairingTokenFile:   valueOrDefault(lookup, "SIM_DECK_PAIRING_TOKEN_FILE", defaultPairingFile),
+	}
+	if !identity.ValidDeviceUUID(config.DeviceUUID) {
+		return Config{}, fmt.Errorf("SIM_DECK_DEVICE_UUID must be a canonical UUID")
 	}
 	if value, ok := lookup("SIM_DECK_ALLOW_INSECURE_HTTP"); ok && strings.TrimSpace(value) != "" {
 		allow, err := strconv.ParseBool(value)

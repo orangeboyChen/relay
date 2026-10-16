@@ -5,7 +5,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +21,8 @@ const (
 )
 
 var ErrInvalidState = errors.New("device identity state is invalid")
+
+var ErrDeviceUUIDMismatch = errors.New("configured device UUID does not match persisted identity")
 
 // State is the durable identity and server binding for one modem container.
 type State struct {
@@ -55,13 +56,14 @@ func (state State) PublicKey() ed25519.PublicKey {
 
 // Store persists the identity in a container-specific state directory.
 type Store struct {
-	directory string
-	random    io.Reader
+	directory  string
+	deviceUUID string
+	random     io.Reader
 }
 
 // NewStore creates an identity store rooted at a private persistent directory.
-func NewStore(directory string) Store {
-	return Store{directory: directory, random: rand.Reader}
+func NewStore(directory string, deviceUUID string) Store {
+	return Store{directory: directory, deviceUUID: deviceUUID, random: rand.Reader}
 }
 
 // LoadOrCreate returns the existing identity or atomically creates a new one.
@@ -69,12 +71,18 @@ func (store Store) LoadOrCreate() (State, error) {
 	if strings.TrimSpace(store.directory) == "" {
 		return State{}, fmt.Errorf("%w: state directory is required", ErrInvalidState)
 	}
+	if !ValidDeviceUUID(store.deviceUUID) {
+		return State{}, fmt.Errorf("%w: configured device UUID is malformed", ErrInvalidState)
+	}
 	if err := os.MkdirAll(store.directory, 0o700); err != nil {
 		return State{}, fmt.Errorf("create state directory: %w", err)
 	}
 	path := filepath.Join(store.directory, stateFile)
 	state, err := load(path)
 	if err == nil {
+		if state.DeviceUUID != store.deviceUUID {
+			return State{}, fmt.Errorf("%w: configured %s, persisted %s", ErrDeviceUUIDMismatch, store.deviceUUID, state.DeviceUUID)
+		}
 		if state.Version == 1 {
 			commandKey, keyError := ecdh.X25519().GenerateKey(store.randomSource())
 			if keyError != nil {
@@ -96,17 +104,13 @@ func (store Store) LoadOrCreate() (State, error) {
 	if err != nil {
 		return State{}, fmt.Errorf("generate device identity key: %w", err)
 	}
-	deviceUUID, err := randomUUID(store.randomSource())
-	if err != nil {
-		return State{}, err
-	}
 	commandKey, err := ecdh.X25519().GenerateKey(store.randomSource())
 	if err != nil {
 		return State{}, fmt.Errorf("generate device command key: %w", err)
 	}
 	state = State{
 		Version:            stateVersion,
-		DeviceUUID:         deviceUUID,
+		DeviceUUID:         store.deviceUUID,
 		IdentityPrivateKey: privateKey,
 		CommandPrivateKey:  commandKey.Bytes(),
 	}
@@ -169,6 +173,9 @@ func load(path string) (State, error) {
 }
 
 func (store Store) save(state State) error {
+	if state.DeviceUUID != store.deviceUUID {
+		return fmt.Errorf("%w: configured %s, state %s", ErrDeviceUUIDMismatch, store.deviceUUID, state.DeviceUUID)
+	}
 	if err := validate(state); err != nil {
 		return err
 	}
@@ -211,7 +218,7 @@ func validate(state State) error {
 	if state.Version != 1 && state.Version != stateVersion {
 		return fmt.Errorf("%w: unsupported version", ErrInvalidState)
 	}
-	if !validUUID(state.DeviceUUID) {
+	if !ValidDeviceUUID(state.DeviceUUID) {
 		return fmt.Errorf("%w: malformed device UUID", ErrInvalidState)
 	}
 	if len(state.IdentityPrivateKey) != ed25519.PrivateKeySize || len(state.PublicKey()) != ed25519.PublicKeySize {
@@ -258,22 +265,18 @@ func (store Store) randomSource() io.Reader {
 	return store.random
 }
 
-func randomUUID(random io.Reader) (string, error) {
-	value := make([]byte, 16)
-	if _, err := io.ReadFull(random, value); err != nil {
-		return "", fmt.Errorf("generate device UUID: %w", err)
-	}
-	value[6] = (value[6] & 0x0f) | 0x40
-	value[8] = (value[8] & 0x3f) | 0x80
-	encoded := hex.EncodeToString(value)
-	return encoded[0:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:32], nil
-}
-
-func validUUID(value string) bool {
+// ValidDeviceUUID reports whether value is a canonical lowercase UUID.
+func ValidDeviceUUID(value string) bool {
 	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {
 		return false
 	}
-	decoded := make([]byte, 16)
-	_, err := hex.Decode(decoded, []byte(strings.ReplaceAll(value, "-", "")))
-	return err == nil
+	for index, character := range value {
+		if index == 8 || index == 13 || index == 18 || index == 23 {
+			continue
+		}
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')) {
+			return false
+		}
+	}
+	return true
 }

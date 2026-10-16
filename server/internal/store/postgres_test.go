@@ -411,6 +411,30 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(errors.Is(err, domain.ErrDeviceDiscoveryRejected)).To(BeTrue())
 	})
 
+	It("distinguishes missing, expired, and already approved discovery rejections", func() {
+		owner := createOwner()
+		Expect(database.RejectDeviceDiscovery(context.Background(), owner.ID, firstDeviceID, now)).To(MatchError(pgx.ErrNoRows))
+		_, err := database.OpenDeviceDiscovery(context.Background(), owner.ID, now, now.Add(10*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+
+		for index, deviceID := range []string{firstDeviceID, secondDeviceID} {
+			_, err = database.SubmitDeviceDiscovery(context.Background(), now, DeviceDiscoveryRequest{
+				DeviceUUID: deviceID, IdentityPublicKey: bytes.Repeat([]byte{byte(index + 1)}, ed25519.PublicKeySize),
+				CommandPublicKey: bytes.Repeat([]byte{byte(index + 3)}, 32), CredentialHash: bytes.Repeat([]byte{byte(index + 5)}, 32),
+			})
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		_, err = database.ApproveDeviceDiscovery(context.Background(), owner.ID, firstDeviceID, now.Add(time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(database.RejectDeviceDiscovery(context.Background(), owner.ID, firstDeviceID, now.Add(2*time.Minute))).To(
+			MatchError(domain.ErrDeviceExists),
+		)
+		Expect(database.RejectDeviceDiscovery(context.Background(), owner.ID, secondDeviceID, now.Add(11*time.Minute))).To(
+			MatchError(domain.ErrDeviceDiscoveryExpired),
+		)
+	})
+
 	It("rejects expired, unknown, and conflicting pairing tokens", func() {
 		owner := createOwner()
 		expired := newToken()
@@ -1063,6 +1087,61 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(err).To(MatchError(ContainSubstring("list devices")))
 		_, _, err = database.InsertEvent(ctx, domain.EventEnvelope{}, now)
 		Expect(err).To(MatchError(ContainSubstring("insert event")))
+		_, _, err = database.RegisterAppInstallation(ctx, owner.ID, AppInstallationRegistration{}, now)
+		Expect(err).To(MatchError(ContainSubstring("begin app installation registration")))
+		_, err = database.ListApprovedAppInstallationRecipients(ctx)
+		Expect(err).To(MatchError(ContainSubstring("list approved app installation recipients")))
+		Expect(database.UpsertPushToken(ctx, owner.ID, "installation", "sandbox", "voip", nil, now)).To(
+			MatchError(ContainSubstring("upsert push token")),
+		)
+		Expect(database.DeletePushToken(ctx, owner.ID, "installation", "sandbox", "voip")).To(
+			MatchError(ContainSubstring("delete push token")),
+		)
+		_, err = database.InsertIncomingCall(ctx, domain.IncomingCallNotification{}, now)
+		Expect(err).To(MatchError(ContainSubstring("begin incoming call insert")))
+		_, err = database.ClaimIncomingCall(ctx, owner.ID, "notification", "installation", now)
+		Expect(err).To(MatchError(ContainSubstring("begin incoming call claim")))
+		_, err = database.ClaimVoIPPushJob(ctx, now, time.Minute)
+		Expect(err).To(MatchError(ContainSubstring("begin outbox claim")))
+		Expect(database.CompletePushJob(ctx, 1, 1, now)).To(MatchError(ContainSubstring("finish push job")))
+		Expect(database.DiscardPushJob(ctx, 1, 1, now, "discarded")).To(MatchError(ContainSubstring("finish push job")))
+		Expect(database.RetryPushJob(ctx, 1, 1, now, "retry")).To(MatchError(ContainSubstring("retry push job")))
+		Expect(database.DeleteVoIPPushToken(ctx, "installation", "sandbox", nil)).To(
+			MatchError(ContainSubstring("delete VoIP push token")),
+		)
+		_, err = database.OpenDeviceDiscovery(ctx, owner.ID, now, now.Add(time.Minute))
+		Expect(err).To(MatchError(ContainSubstring("open device discovery")))
+		Expect(database.CloseDeviceDiscovery(ctx, owner.ID, now)).To(MatchError(ContainSubstring("close device discovery")))
+		_, err = database.GetDeviceDiscoverySession(ctx, owner.ID)
+		Expect(err).To(HaveOccurred())
+		_, err = database.SubmitDeviceDiscovery(ctx, now, DeviceDiscoveryRequest{})
+		Expect(err).To(MatchError(ContainSubstring("begin device discovery submission")))
+		_, err = database.ListPendingDeviceDiscoveries(ctx, owner.ID, now)
+		Expect(err).To(MatchError(ContainSubstring("list pending device discoveries")))
+		_, err = database.ApproveDeviceDiscovery(ctx, owner.ID, firstDeviceID, now)
+		Expect(err).To(MatchError(ContainSubstring("begin device discovery approval")))
+		Expect(database.RejectDeviceDiscovery(ctx, owner.ID, firstDeviceID, now)).To(
+			MatchError(ContainSubstring("reject device discovery")),
+		)
+		_, err = database.DeviceDiscoveryStatus(ctx, firstDeviceID, nil, now)
+		Expect(err).To(HaveOccurred())
+		Expect(database.UpdateDeviceRadioStatus(ctx, firstDeviceID, "LTE", nil, now)).To(
+			MatchError(ContainSubstring("update device radio status")),
+		)
+		_, err = database.ListEvents(ctx, 0, 100, now)
+		Expect(err).To(MatchError(ContainSubstring("list encrypted events")))
+		_, err = database.EnqueueCommand(ctx, domain.EncryptedCommand{})
+		Expect(err).To(MatchError(ContainSubstring("enqueue encrypted command")))
+		_, err = database.ClaimCommand(ctx, firstDeviceID, now, now.Add(time.Minute))
+		Expect(err).To(HaveOccurred())
+		Expect(database.CompleteCommand(ctx, firstDeviceID, "command", domain.EncryptedCommandResult{}, now)).To(
+			MatchError(ContainSubstring("complete encrypted command")),
+		)
+		_, err = database.CommandStatus(ctx, firstDeviceID, "command", now)
+		Expect(err).To(HaveOccurred())
+		Expect(database.UpdateDeviceCommandPublicKey(ctx, firstDeviceID, nil)).To(
+			MatchError(ContainSubstring("update device command public key")),
+		)
 	})
 
 	It("reports ping and migration failures", func() {

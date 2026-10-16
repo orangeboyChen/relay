@@ -26,7 +26,7 @@ final class LiveMessageTransportTests: XCTestCase {
                 MessageCommandPayload(
                     version: 1,
                     operation: "message.send",
-                    messageID: messageID,
+                    messageID: messageID.uuidString.lowercased(),
                     number: "+8613500000000",
                     body: body
                 ),

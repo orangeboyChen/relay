@@ -114,7 +114,7 @@ final class LiveMessageTransport: MessageTransport {
         let payload = MessageCommandPayload(
             version: 1,
             operation: "message.send",
-            messageID: messageID,
+            messageID: messageID.uuidString.lowercased(),
             number: remoteNumber,
             body: body
         )
@@ -216,7 +216,7 @@ final class LiveMessageTransport: MessageTransport {
 struct MessageCommandPayload: Codable, Equatable, Sendable {
     let version: Int
     let operation: String
-    let messageID: UUID
+    let messageID: String
     let number: String
     let body: String
 

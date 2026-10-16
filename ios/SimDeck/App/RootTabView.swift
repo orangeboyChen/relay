@@ -16,7 +16,24 @@ struct RootTabView: View {
                 .tag(AppTab.calls)
 
                 NavigationStack {
-                    MessagesScreen(state: model.messages, lines: model.devices)
+                    MessagesScreen(
+                        state: model.messages,
+                        lines: model.devices,
+                        defaultLineID: model.defaultMessageLineID,
+                        refreshAction: {
+                            await model.refreshMessages()
+                        },
+                        sendAction: { lineID, remoteNumber, body in
+                            try await model.sendMessage(
+                                lineID: lineID,
+                                remoteNumber: remoteNumber,
+                                body: body
+                            )
+                        },
+                        retryAction: { messageID in
+                            try await model.retryMessage(id: messageID)
+                        }
+                    )
                 }
                 .tabItem {
                     Label("Messages", systemImage: "message.fill")

@@ -3,10 +3,30 @@ import SwiftUI
 struct MessagesScreen: View {
     let state: MessageListState
     let lines: [DeviceLineIdentity]
+    let defaultLineID: UUID?
+    let refreshAction: () async -> Void
+    let sendAction: (UUID, String, String) async throws -> Void
+    let retryAction: (UUID) async throws -> Void
 
     @State private var searchText = ""
     @State private var selectedLineID: UUID?
     @State private var isComposing = false
+
+    init(
+        state: MessageListState,
+        lines: [DeviceLineIdentity],
+        defaultLineID: UUID? = nil,
+        refreshAction: @escaping () async -> Void = {},
+        sendAction: @escaping (UUID, String, String) async throws -> Void = { _, _, _ in },
+        retryAction: @escaping (UUID) async throws -> Void = { _ in }
+    ) {
+        self.state = state
+        self.lines = lines
+        self.defaultLineID = defaultLineID
+        self.refreshAction = refreshAction
+        self.sendAction = sendAction
+        self.retryAction = retryAction
+    }
 
     var body: some View {
         Group {
@@ -31,6 +51,12 @@ struct MessagesScreen: View {
         }
         .navigationTitle("Messages")
         .searchable(text: $searchText, prompt: "Search messages")
+        .task {
+            await refreshAction()
+        }
+        .refreshable {
+            await refreshAction()
+        }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 SIMFilterMenu(lines: lines, selection: $selectedLineID)
@@ -42,7 +68,11 @@ struct MessagesScreen: View {
             }
         }
         .sheet(isPresented: $isComposing) {
-            NewMessageScreen(lines: lines)
+            NewMessageScreen(
+                lines: lines,
+                selectedLineID: defaultLineID,
+                sendAction: sendAction
+            )
         }
     }
 
@@ -64,7 +94,9 @@ struct MessagesScreen: View {
                                 conversations: conversations.filter {
                                     $0.remoteNumber == conversation.remoteNumber
                                 },
-                                lines: lines
+                                lines: lines,
+                                sendAction: sendAction,
+                                retryAction: retryAction
                             )
                         } label: {
                             ConversationRow(conversation: conversation, line: line)

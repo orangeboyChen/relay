@@ -4,6 +4,8 @@ import UIKit
 struct ConversationScreen: View {
     let conversations: [MessageConversation]
     let lines: [DeviceLineIdentity]
+    let sendAction: (UUID, String, String) async throws -> Void
+    let retryAction: (UUID) async throws -> Void
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -14,14 +16,20 @@ struct ConversationScreen: View {
     @State private var activeSheet: ConversationSheet?
     @State private var messagePendingDeletion: MessageItem?
     @State private var deletedMessageIDs: Set<UUID> = []
+    @State private var isSending = false
+    @State private var errorMessage: String?
 
     init(
         initialID: ConversationID,
         conversations: [MessageConversation],
-        lines: [DeviceLineIdentity]
+        lines: [DeviceLineIdentity],
+        sendAction: @escaping (UUID, String, String) async throws -> Void = { _, _, _ in },
+        retryAction: @escaping (UUID) async throws -> Void = { _ in }
     ) {
         self.conversations = conversations
         self.lines = lines
+        self.sendAction = sendAction
+        self.retryAction = retryAction
         _selectedID = State(initialValue: initialID)
     }
 
@@ -51,6 +59,9 @@ struct ConversationScreen: View {
                             detailsAction: {
                                 activeSheet = .details(message)
                             },
+                            retryAction: {
+                                retry(message)
+                            },
                             deleteAction: {
                                 messagePendingDeletion = message
                             }
@@ -75,21 +86,31 @@ struct ConversationScreen: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            MessageComposer(
-                draft: $draft,
-                replyPreview: replyTarget.map(messagePreview),
-                cancelReplyAction: {
-                    withAnimation(motionAnimation) {
-                        replyTarget = nil
-                    }
-                },
-                sendAction: {
-                    withAnimation(motionAnimation) {
-                        draft = ""
-                        replyTarget = nil
-                    }
+            VStack(spacing: 0) {
+                if let errorMessage {
+                    Label(errorMessage, systemImage: "exclamationmark.circle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(.bar)
                 }
-            )
+                MessageComposer(
+                    draft: $draft,
+                    isTextEntryEnabled: line.isOnline && !isSending,
+                    canSend: line.isOnline
+                        && !isSending
+                        && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    replyPreview: replyTarget.map(messagePreview),
+                    cancelReplyAction: {
+                        withAnimation(motionAnimation) {
+                            replyTarget = nil
+                        }
+                    },
+                    sendAction: send
+                )
+            }
         }
         .navigationTitle(conversation.displayName)
         .navigationBarTitleDisplayMode(.inline)
@@ -112,7 +133,8 @@ struct ConversationScreen: View {
                 NewMessageScreen(
                     lines: lines,
                     selectedLineID: line.id,
-                    message: message.body
+                    message: message.body,
+                    sendAction: sendAction
                 )
             case let .details(message):
                 MessageDetailsScreen(message: message, line: line)
@@ -183,6 +205,41 @@ struct ConversationScreen: View {
             return message.body
         }
         return String(localized: "Image")
+    }
+
+    private func send() {
+        guard line.isOnline,
+              !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !isSending else { return }
+        let body = draft
+        let lineID = line.id
+        let remoteNumber = conversation.remoteNumber
+        errorMessage = nil
+        isSending = true
+        Task {
+            do {
+                try await sendAction(lineID, remoteNumber, body)
+                withAnimation(motionAnimation) {
+                    draft = ""
+                    replyTarget = nil
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isSending = false
+        }
+    }
+
+    private func retry(_ message: MessageItem) {
+        guard message.status == .failed else { return }
+        errorMessage = nil
+        Task {
+            do {
+                try await retryAction(message.id)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
     }
 
     private func scrollToBottom(using proxy: ScrollViewProxy, animated: Bool = false) {

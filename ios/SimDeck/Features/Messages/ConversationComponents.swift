@@ -63,6 +63,7 @@ struct MessageBubble: View {
     let copyAction: () -> Void
     let forwardAction: () -> Void
     let detailsAction: () -> Void
+    let retryAction: () -> Void
     let deleteAction: () -> Void
 
     init(
@@ -73,6 +74,7 @@ struct MessageBubble: View {
         copyAction: @escaping () -> Void = {},
         forwardAction: @escaping () -> Void = {},
         detailsAction: @escaping () -> Void = {},
+        retryAction: @escaping () -> Void = {},
         deleteAction: @escaping () -> Void = {}
     ) {
         self.message = message
@@ -82,6 +84,7 @@ struct MessageBubble: View {
         self.copyAction = copyAction
         self.forwardAction = forwardAction
         self.detailsAction = detailsAction
+        self.retryAction = retryAction
         self.deleteAction = deleteAction
     }
 
@@ -124,10 +127,12 @@ struct MessageBubble: View {
             MessageContextMenu(
                 canCopy: !message.body.isEmpty,
                 canForward: !message.body.isEmpty,
+                canRetry: message.direction == .sent && message.status == .failed,
                 replyAction: replyAction,
                 copyAction: copyAction,
                 forwardAction: forwardAction,
                 detailsAction: detailsAction,
+                retryAction: retryAction,
                 deleteAction: deleteAction
             )
         } preview: {

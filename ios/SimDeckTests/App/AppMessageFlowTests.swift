@@ -1,0 +1,267 @@
+import Foundation
+import XCTest
+@testable import SimDeck
+
+@MainActor
+final class AppMessageFlowTests: XCTestCase {
+    private let firstLine = DeviceLineIdentity(
+        id: UUID(uuidString: "01900000-0000-7000-8000-000000000301")!,
+        numericID: 1,
+        deviceName: "EC20F 1",
+        lineName: "Primary",
+        phoneNumber: "13500000000",
+        isOnline: true
+    )
+    private let secondLine = DeviceLineIdentity(
+        id: UUID(uuidString: "01900000-0000-7000-8000-000000000302")!,
+        numericID: 2,
+        deviceName: "EC20F 2",
+        lineName: "Secondary",
+        phoneNumber: "13000000002",
+        isOnline: true
+    )
+
+    func testSendPublishesSendingThenSentAndUsesNormalizedRecipient() async throws {
+        let transport = MessageTransportFake(sendMode: .suspended)
+        let model = makeModel(transport: transport)
+
+        let sendTask = Task {
+            try await model.sendMessage(
+                lineID: firstLine.id,
+                remoteNumber: "+86 135 0000 0000",
+                body: "hello"
+            )
+        }
+        await transport.waitUntilSendStarted()
+
+        let pending = try XCTUnwrap(model.messageItems.first)
+        XCTAssertEqual(pending.status, .sending)
+        XCTAssertEqual(pending.body, "hello")
+        XCTAssertEqual(model.conversations.first?.remoteNumber, "+8613500000000")
+
+        transport.finishSuspendedSend()
+        let messageID = try await sendTask.value
+
+        XCTAssertEqual(model.messageItems.first?.id, messageID)
+        XCTAssertEqual(model.messageItems.first?.status, .sent)
+        XCTAssertEqual(transport.sent.first?.lineID, firstLine.id)
+        XCTAssertEqual(transport.sent.first?.remoteNumber, "+8613500000000")
+        XCTAssertEqual(transport.sent.first?.body, "hello")
+    }
+
+    func testSendFailureKeepsDraftContentAsFailedMessageAndRetryUsesSameID() async throws {
+        let transport = MessageTransportFake(sendMode: .failure)
+        let model = makeModel(transport: transport)
+
+        do {
+            try await model.sendMessage(
+                lineID: firstLine.id,
+                remoteNumber: "10086",
+                body: "please retry"
+            )
+            XCTFail("Expected the transport error")
+        } catch {
+            XCTAssertEqual(error as? MessageTransportFake.Error, .sendFailed)
+        }
+
+        let failed = try XCTUnwrap(model.messageItems.first)
+        XCTAssertEqual(failed.status, .failed)
+        XCTAssertEqual(failed.body, "please retry")
+        transport.sendMode = .success
+
+        try await model.retryMessage(id: failed.id)
+
+        XCTAssertEqual(model.messageItems.first?.status, .sent)
+        XCTAssertEqual(transport.sent.map(\.messageID), [failed.id, failed.id])
+    }
+
+    func testRefreshDeduplicatesIncomingMessagesAndSeparatesSIMConversations() async {
+        let sourceID = String(repeating: "e", count: 64)
+        let transport = MessageTransportFake(
+            deliveries: [
+                IncomingMessageDelivery(
+                    id: UUID(),
+                    sourceID: sourceID,
+                    lineID: firstLine.id,
+                    remoteNumber: "13800138000",
+                    body: "first SIM",
+                    receivedAt: Date(timeIntervalSince1970: 100)
+                ),
+                IncomingMessageDelivery(
+                    id: UUID(),
+                    sourceID: sourceID,
+                    lineID: firstLine.id,
+                    remoteNumber: "13800138000",
+                    body: "duplicate",
+                    receivedAt: Date(timeIntervalSince1970: 101)
+                ),
+                IncomingMessageDelivery(
+                    id: UUID(),
+                    sourceID: String(repeating: "f", count: 64),
+                    lineID: secondLine.id,
+                    remoteNumber: "13800138000",
+                    body: "second SIM",
+                    receivedAt: Date(timeIntervalSince1970: 102)
+                ),
+            ]
+        )
+        let model = makeModel(transport: transport)
+
+        await model.refreshMessages()
+
+        XCTAssertEqual(model.conversations.count, 2)
+        XCTAssertEqual(Set(model.conversations.map(\.lineID)), [firstLine.id, secondLine.id])
+        XCTAssertEqual(model.conversations.flatMap(\.messages).count, 2)
+        XCTAssertEqual(model.conversations.map(\.unreadCount), [1, 1])
+        XCTAssertEqual(transport.synchronizedLineIDs, [[firstLine.id, secondLine.id]])
+    }
+
+    func testSendRejectsOfflineLineBeforeTransport() async {
+        var offlineLine = firstLine
+        offlineLine.isOnline = false
+        let transport = MessageTransportFake()
+        let model = makeModel(transport: transport, devices: [offlineLine])
+
+        do {
+            try await model.sendMessage(
+                lineID: offlineLine.id,
+                remoteNumber: "10086",
+                body: "hello"
+            )
+            XCTFail("Expected offline line rejection")
+        } catch {
+            XCTAssertEqual(error as? ServerConnectionError, .deviceUnavailable)
+        }
+
+        XCTAssertTrue(transport.sent.isEmpty)
+        XCTAssertTrue(model.messageItems.isEmpty)
+    }
+
+    private func makeModel(
+        transport: MessageTransportFake,
+        devices: [DeviceLineIdentity]? = nil
+    ) -> AppModel {
+        let defaults = UserDefaults(suiteName: "AppMessageFlowTests.\(UUID().uuidString)")!
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let connection = ServerConnectionManager(
+            network: MessageServerNetwork(),
+            sessionStore: MessageSessionStore(value: Self.activeSession),
+            defaults: defaults
+        )
+        return AppModel(
+            devices: devices ?? [firstLine, secondLine],
+            messages: .loaded([]),
+            serverConnection: connection,
+            messageTransport: transport
+        )
+    }
+
+    private static let activeSession = Data("""
+    {"access_token":"access","refresh_token":"refresh","access_expires_at":"2098-01-01T00:00:00Z","refresh_expires_at":"2099-01-01T00:00:00Z"}
+    """.utf8)
+}
+
+private extension AppModel {
+    var conversations: [MessageConversation] {
+        guard case .loaded(let conversations) = messages else { return [] }
+        return conversations
+    }
+
+    var messageItems: [MessageItem] {
+        conversations.flatMap(\.messages)
+    }
+}
+
+@MainActor
+private final class MessageTransportFake: MessageTransport {
+    enum Error: Swift.Error, Equatable {
+        case sendFailed
+    }
+
+    enum SendMode {
+        case success
+        case failure
+        case suspended
+    }
+
+    struct SentMessage: Equatable {
+        let messageID: UUID
+        let lineID: UUID
+        let remoteNumber: String
+        let body: String
+    }
+
+    var sendMode: SendMode
+    var deliveries: [IncomingMessageDelivery]
+    private(set) var sent: [SentMessage] = []
+    private(set) var synchronizedLineIDs: [[UUID]] = []
+    private var sendStartedContinuations: [CheckedContinuation<Void, Never>] = []
+    private var sendCompletion: CheckedContinuation<Void, Never>?
+    private var didStartSend = false
+
+    init(sendMode: SendMode = .success, deliveries: [IncomingMessageDelivery] = []) {
+        self.sendMode = sendMode
+        self.deliveries = deliveries
+    }
+
+    func send(messageID: UUID, lineID: UUID, remoteNumber: String, body: String) async throws {
+        sent.append(
+            SentMessage(
+                messageID: messageID,
+                lineID: lineID,
+                remoteNumber: remoteNumber,
+                body: body
+            )
+        )
+        didStartSend = true
+        sendStartedContinuations.forEach { $0.resume() }
+        sendStartedContinuations.removeAll()
+
+        switch sendMode {
+        case .success:
+            return
+        case .failure:
+            throw Error.sendFailed
+        case .suspended:
+            await withCheckedContinuation { continuation in
+                sendCompletion = continuation
+            }
+        }
+    }
+
+    func synchronize(lines: [DeviceLineIdentity]) async throws -> [IncomingMessageDelivery] {
+        synchronizedLineIDs.append(lines.map(\.id))
+        return deliveries
+    }
+
+    func waitUntilSendStarted() async {
+        guard !didStartSend else { return }
+        await withCheckedContinuation { continuation in
+            sendStartedContinuations.append(continuation)
+        }
+    }
+
+    func finishSuspendedSend() {
+        sendCompletion?.resume()
+        sendCompletion = nil
+    }
+}
+
+@MainActor
+private struct MessageServerNetwork: ServerNetworking {
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        throw URLError(.unsupportedURL)
+    }
+}
+
+private final class MessageSessionStore: SecureValueStoring, @unchecked Sendable {
+    private var value: Data?
+
+    init(value: Data?) {
+        self.value = value
+    }
+
+    func read() -> Data? { value }
+    func write(_ value: Data) { self.value = value }
+    func delete() { value = nil }
+}

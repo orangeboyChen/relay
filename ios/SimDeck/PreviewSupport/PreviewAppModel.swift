@@ -29,10 +29,20 @@ extension AppModel {
                 integratesWithSystem: false
             ),
             installationBootstrapper: PreviewInstallationBootstrapper(),
+            messageTransport: PreviewMessageTransport(),
             onboardingStore: PreviewOnboardingStore(isCompleted: onboardingCompleted)
         )
         model.bootstrapInstallation()
         return model
+    }
+}
+
+@MainActor
+private final class PreviewMessageTransport: MessageTransport {
+    func send(messageID: UUID, lineID: UUID, remoteNumber: String, body: String) async throws {}
+
+    func synchronize(lines: [DeviceLineIdentity]) async throws -> [IncomingMessageDelivery] {
+        []
     }
 }
 

@@ -37,11 +37,30 @@ struct MessageConversation: Identifiable, Equatable, Sendable {
 
 struct MessageItem: Identifiable, Equatable, Sendable {
     let id: UUID
+    let sourceID: String?
     let direction: MessageDirection
     let body: String
     let attachment: MessageImageAttachment?
     let sentAt: Date
-    let status: MessageDeliveryStatus
+    var status: MessageDeliveryStatus
+
+    init(
+        id: UUID,
+        sourceID: String? = nil,
+        direction: MessageDirection,
+        body: String,
+        attachment: MessageImageAttachment?,
+        sentAt: Date,
+        status: MessageDeliveryStatus
+    ) {
+        self.id = id
+        self.sourceID = sourceID
+        self.direction = direction
+        self.body = body
+        self.attachment = attachment
+        self.sentAt = sentAt
+        self.status = status
+    }
 }
 
 struct MessageImageAttachment: Identifiable, Equatable, Sendable {

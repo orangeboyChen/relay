@@ -47,17 +47,24 @@ protocol MessageCursorStoring: AnyObject {
 @MainActor
 final class UserDefaultsMessageCursorStore: MessageCursorStoring {
     private let defaults: UserDefaults
-    private let key: String
+    private let installationID: () -> UUID?
 
-    init(defaults: UserDefaults = .standard, installationID: UUID? = nil) {
+    init(
+        defaults: UserDefaults = .standard,
+        installationID: @escaping () -> UUID? = { nil }
+    ) {
         self.defaults = defaults
-        let suffix = installationID?.uuidString.lowercased() ?? "pending"
-        key = "sim-deck.message-cursor.v1.\(suffix)"
+        self.installationID = installationID
     }
 
     var sequence: Int64 {
         get { Int64(defaults.integer(forKey: key)) }
         set { defaults.set(newValue, forKey: key) }
+    }
+
+    private var key: String {
+        let suffix = installationID()?.uuidString.lowercased() ?? "pending"
+        return "sim-deck.message-cursor.v1.\(suffix)"
     }
 }
 

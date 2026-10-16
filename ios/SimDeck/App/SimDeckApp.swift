@@ -41,6 +41,7 @@ struct SimDeckApp: App {
                     model.bootstrapInstallation()
                     model.startVoIPPushes()
                     await model.refreshDevices()
+                    await model.refreshMessages()
                 }
         }
     }

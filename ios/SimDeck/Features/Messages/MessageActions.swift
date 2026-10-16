@@ -3,10 +3,12 @@ import SwiftUI
 struct MessageContextMenu: View {
     let canCopy: Bool
     let canForward: Bool
+    let canRetry: Bool
     let replyAction: () -> Void
     let copyAction: () -> Void
     let forwardAction: () -> Void
     let detailsAction: () -> Void
+    let retryAction: () -> Void
     let deleteAction: () -> Void
 
     var body: some View {
@@ -23,6 +25,12 @@ struct MessageContextMenu: View {
         if canForward {
             Button(action: forwardAction) {
                 Label("Forward", systemImage: "arrowshape.turn.up.right")
+            }
+        }
+
+        if canRetry {
+            Button(action: retryAction) {
+                Label("Try Again", systemImage: "arrow.clockwise")
             }
         }
 
@@ -97,10 +105,12 @@ struct MessageDetailsScreen: View {
     MessageContextMenu(
         canCopy: true,
         canForward: true,
+        canRetry: false,
         replyAction: {},
         copyAction: {},
         forwardAction: {},
         detailsAction: {},
+        retryAction: {},
         deleteAction: {}
     )
 }

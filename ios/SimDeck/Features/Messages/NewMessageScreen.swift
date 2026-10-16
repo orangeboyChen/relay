@@ -2,19 +2,24 @@ import SwiftUI
 
 struct NewMessageScreen: View {
     let lines: [DeviceLineIdentity]
+    let sendAction: (UUID, String, String) async throws -> Void
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @FocusState private var focusedField: Field?
     @State private var draft: NewMessageDraft
+    @State private var isSending = false
+    @State private var errorMessage: String?
 
     init(
         lines: [DeviceLineIdentity],
         selectedLineID: UUID? = nil,
         recipient: String = "",
-        message: String = ""
+        message: String = "",
+        sendAction: @escaping (UUID, String, String) async throws -> Void = { _, _, _ in }
     ) {
         self.lines = lines
+        self.sendAction = sendAction
         _draft = State(
             initialValue: NewMessageDraft(
                 selectedLineID: selectedLineID,
@@ -33,7 +38,7 @@ struct NewMessageScreen: View {
                 if onlineLines.isEmpty {
                     ContentUnavailableView(
                         "No online SIM",
-                        systemImage: "simcard.slash",
+                        systemImage: "simcard",
                         description: Text("Connect a SIM before starting a new message.")
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -47,13 +52,24 @@ struct NewMessageScreen: View {
             }
             .background(Color(uiColor: .systemBackground))
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                MessageComposer(
-                    draft: $draft.body,
-                    isTextEntryEnabled: canEditMessage,
-                    canSend: draft.canSend(using: lines),
-                    attachmentAction: {},
-                    sendAction: send
-                )
+                VStack(spacing: 0) {
+                    if let errorMessage {
+                        Label(errorMessage, systemImage: "exclamationmark.circle.fill")
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(.bar)
+                    }
+                    MessageComposer(
+                        draft: $draft.body,
+                        isTextEntryEnabled: canEditMessage && !isSending,
+                        canSend: draft.canSend(using: lines) && !isSending,
+                        attachmentAction: {},
+                        sendAction: send
+                    )
+                }
             }
             .navigationTitle("New Message")
             .navigationBarTitleDisplayMode(.inline)
@@ -160,7 +176,7 @@ struct NewMessageScreen: View {
     @ViewBuilder
     private var linePicker: some View {
         if onlineLines.isEmpty {
-            Label("No online SIM", systemImage: "simcard.slash")
+            Label("No online SIM", systemImage: "simcard")
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
@@ -238,8 +254,22 @@ struct NewMessageScreen: View {
     }
 
     private func send() {
-        guard draft.canSend(using: lines) else { return }
-        dismiss()
+        guard draft.canSend(using: lines),
+              let lineID = draft.selectedLineID,
+              !isSending else { return }
+        let recipient = draft.recipient
+        let body = draft.body
+        errorMessage = nil
+        isSending = true
+        Task {
+            do {
+                try await sendAction(lineID, recipient, body)
+                dismiss()
+            } catch {
+                errorMessage = error.localizedDescription
+                isSending = false
+            }
+        }
     }
 }
 

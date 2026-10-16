@@ -288,7 +288,7 @@ private extension NewMessageScreen {
     NewMessageScreen(
         lines: PreviewFixtures.devices,
         selectedLineID: PreviewFixtures.devices[0].id,
-        recipient: "13800138000",
+        recipient: "13800000000",
         message: "See you at seven."
     )
 }

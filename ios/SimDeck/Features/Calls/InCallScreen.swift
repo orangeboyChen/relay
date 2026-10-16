@@ -395,7 +395,7 @@ private extension ActiveCallStatus {
     let call = ActiveCallSession(
         id: UUID(uuidString: "30000000-0000-0000-0000-000000000001")!,
         lineID: PreviewFixtures.devices[0].id,
-        remoteNumber: "10086",
+        remoteNumber: "13800000000",
         displayName: "China Mobile",
         status: .active(connectedAt: PreviewFixtures.now.addingTimeInterval(-75)),
         isMuted: false

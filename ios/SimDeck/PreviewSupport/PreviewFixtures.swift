@@ -19,7 +19,7 @@ enum PreviewFixtures {
             numericID: 2,
             deviceName: "Bedroom EC20",
             lineName: "Backup",
-            phoneNumber: "13000000002",
+            phoneNumber: "13800000000",
             isOnline: true,
             radioStatus: CellularRadioStatus(technology: .nrNSA, signalBars: 4)
         ),
@@ -37,7 +37,7 @@ enum PreviewFixtures {
         CallRecord(
             id: UUID(uuidString: "10000000-0000-0000-0000-000000000001")!,
             lineID: devices[0].id,
-            remoteNumber: "10086",
+            remoteNumber: "13800000000",
             contactName: "China Mobile",
             direction: .incoming,
             result: .answered,
@@ -47,7 +47,7 @@ enum PreviewFixtures {
         CallRecord(
             id: UUID(uuidString: "10000000-0000-0000-0000-000000000002")!,
             lineID: devices[1].id,
-            remoteNumber: "13800138000",
+            remoteNumber: "13500000000",
             contactName: nil,
             direction: .incoming,
             result: .missed,
@@ -57,7 +57,7 @@ enum PreviewFixtures {
         CallRecord(
             id: UUID(uuidString: "10000000-0000-0000-0000-000000000003")!,
             lineID: devices[0].id,
-            remoteNumber: "0755 1234 5678",
+            remoteNumber: "13800000000",
             contactName: "Service Desk",
             direction: .outgoing,
             result: .answered,
@@ -69,7 +69,7 @@ enum PreviewFixtures {
     static let conversations = [
         MessageConversation(
             lineID: devices[0].id,
-            remoteNumber: "13800138000",
+            remoteNumber: "13800000000",
             contactName: "Alex",
             unreadCount: 2,
             messages: [
@@ -104,7 +104,7 @@ enum PreviewFixtures {
         ),
         MessageConversation(
             lineID: devices[1].id,
-            remoteNumber: "13800138000",
+            remoteNumber: "13800000000",
             contactName: "Alex",
             unreadCount: 0,
             messages: [

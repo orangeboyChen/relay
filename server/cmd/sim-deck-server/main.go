@@ -55,6 +55,16 @@ type dependencies struct {
 	newPushWorker  func(push.Repository, apns.Config) (backgroundWorker, error)
 }
 
+type runtimeConfig struct {
+	databaseURL   string
+	publicBaseURL string
+	httpAddress   string
+	mediaUDPPort  int
+	mediaTCPPort  int
+	certificate   string
+	privateKey    string
+}
+
 func productionDependencies() dependencies {
 	return dependencies{
 		getenv:   os.Getenv,
@@ -83,12 +93,11 @@ func productionDependencies() dependencies {
 
 func run(ctx context.Context, dependencies dependencies) error {
 	getenv := dependencies.getenv
-
-	databaseURL := getenv("DATABASE_URL")
-	if databaseURL == "" {
-		return errors.New("DATABASE_URL is required")
+	config, err := loadRuntimeConfig(getenv)
+	if err != nil {
+		return err
 	}
-	repository, err := dependencies.openRepository(ctx, databaseURL)
+	repository, err := dependencies.openRepository(ctx, config.databaseURL)
 	if err != nil {
 		return err
 	}
@@ -107,35 +116,20 @@ func run(ctx context.Context, dependencies dependencies) error {
 		slog.Warn("generated initial admin password; save it now because it will not be shown again", "username", "admin", "password", bootstrapResult.GeneratedPassword)
 	}
 
-	udpPort, err := api.ParsePort(getenv("MEDIA_UDP_PORT"), 49152)
-	if err != nil {
-		return err
-	}
-	tcpPort, err := api.ParsePort(getenv("MEDIA_TCP_PORT"), 49153)
-	if err != nil {
-		return err
-	}
-
 	server := dependencies.newHTTPServer(
-		envOrDefault(getenv, "HTTP_ADDR", ":8080"),
-		api.Handler(repository, api.Config{PublicBaseURL: getenv("PUBLIC_BASE_URL"), MediaUDPPort: udpPort, MediaTCPPort: tcpPort}),
+		config.httpAddress,
+		api.Handler(repository, api.Config{PublicBaseURL: config.publicBaseURL, MediaUDPPort: config.mediaUDPPort, MediaTCPPort: config.mediaTCPPort}),
 	)
 	worker, err := configuredPushWorker(repository, dependencies)
 	if err != nil {
 		return err
 	}
-	certificate := getenv("TLS_CERT_FILE")
-	privateKey := getenv("TLS_KEY_FILE")
-	if (certificate == "") != (privateKey == "") {
-		return errors.New("serve HTTP: TLS_CERT_FILE and TLS_KEY_FILE must be configured together")
-	}
-
 	runContext, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 	serverResult := make(chan error, 1)
 	go func() {
-		if certificate != "" {
-			serverResult <- server.ListenAndServeTLS(certificate, privateKey)
+		if config.certificate != "" {
+			serverResult <- server.ListenAndServeTLS(config.certificate, config.privateKey)
 			return
 		}
 		serverResult <- server.ListenAndServe()
@@ -174,6 +168,39 @@ func run(ctx context.Context, dependencies dependencies) error {
 		}
 		return errors.Join(workerError, stopHTTPServer(shutdownContext, server, serverResult))
 	}
+}
+
+func loadRuntimeConfig(getenv func(string) string) (runtimeConfig, error) {
+	databaseURL := strings.TrimSpace(getenv("DATABASE_URL"))
+	if databaseURL == "" {
+		return runtimeConfig{}, errors.New("DATABASE_URL is required")
+	}
+	publicBaseURL, err := api.ParsePublicBaseURL(getenv("PUBLIC_BASE_URL"))
+	if err != nil {
+		return runtimeConfig{}, err
+	}
+	udpPort, err := api.ParsePort(getenv("MEDIA_UDP_PORT"), 49152)
+	if err != nil {
+		return runtimeConfig{}, err
+	}
+	tcpPort, err := api.ParsePort(getenv("MEDIA_TCP_PORT"), 49153)
+	if err != nil {
+		return runtimeConfig{}, err
+	}
+	certificate := strings.TrimSpace(getenv("TLS_CERT_FILE"))
+	privateKey := strings.TrimSpace(getenv("TLS_KEY_FILE"))
+	if (certificate == "") != (privateKey == "") {
+		return runtimeConfig{}, errors.New("serve HTTP: TLS_CERT_FILE and TLS_KEY_FILE must be configured together")
+	}
+	return runtimeConfig{
+		databaseURL:   databaseURL,
+		publicBaseURL: publicBaseURL,
+		httpAddress:   envOrDefault(getenv, "HTTP_ADDR", ":8080"),
+		mediaUDPPort:  udpPort,
+		mediaTCPPort:  tcpPort,
+		certificate:   certificate,
+		privateKey:    privateKey,
+	}, nil
 }
 
 func stopHTTPServer(ctx context.Context, server httpServer, result <-chan error) error {

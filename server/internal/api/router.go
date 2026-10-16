@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -357,6 +358,24 @@ func websocketBaseURL(baseURL string) string {
 	default:
 		return baseURL
 	}
+}
+
+// ParsePublicBaseURL validates and normalizes the externally reachable HTTP API URL.
+func ParsePublicBaseURL(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", errors.New("PUBLIC_BASE_URL is required")
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("invalid PUBLIC_BASE_URL: %w", err)
+	}
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" || parsed.User != nil || parsed.Opaque != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("PUBLIC_BASE_URL must be an absolute HTTP or HTTPS URL without credentials, a query, or a fragment")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.RawPath = strings.TrimRight(parsed.RawPath, "/")
+	return parsed.String(), nil
 }
 
 func (router *router) listDevices(writer http.ResponseWriter, request *http.Request) {

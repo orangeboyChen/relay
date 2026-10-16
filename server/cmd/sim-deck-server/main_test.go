@@ -246,7 +246,10 @@ var _ = Describe("Server command", func() {
 	)
 
 	BeforeEach(func() {
-		environment = map[string]string{"DATABASE_URL": "postgres://memory"}
+		environment = map[string]string{
+			"DATABASE_URL":    "postgres://memory",
+			"PUBLIC_BASE_URL": "https://deck.example",
+		}
 		memoryStore = &memoryRepository{}
 		server = newMemoryHTTPServer()
 		openError = nil
@@ -295,6 +298,23 @@ var _ = Describe("Server command", func() {
 		Expect(openedDatabaseURL).To(BeEmpty())
 	})
 
+	DescribeTable("rejects an invalid public URL before opening storage",
+		func(publicURL string) {
+			environment["PUBLIC_BASE_URL"] = publicURL
+
+			err := run(context.Background(), testDependencies)
+
+			Expect(err).To(MatchError(ContainSubstring("PUBLIC_BASE_URL")))
+			Expect(openedDatabaseURL).To(BeEmpty())
+			Expect(serverHandler).To(BeNil())
+		},
+		Entry("missing", ""),
+		Entry("relative", "deck.example"),
+		Entry("WebSocket scheme", "wss://deck.example"),
+		Entry("credentials", "https://admin:secret@deck.example"),
+		Entry("query", "https://deck.example?tenant=owner"),
+	)
+
 	It("propagates repository open and migration failures", func() {
 		openError = errors.New("open failed")
 		Expect(run(context.Background(), testDependencies)).To(MatchError("open failed"))
@@ -322,7 +342,7 @@ var _ = Describe("Server command", func() {
 
 			Expect(err).To(MatchError(ContainSubstring("invalid port")))
 			Expect(serverHandler).To(BeNil())
-			Expect(memoryStore.closed).To(BeTrue())
+			Expect(openedDatabaseURL).To(BeEmpty())
 		},
 		Entry("UDP", "MEDIA_UDP_PORT"),
 		Entry("TCP", "MEDIA_TCP_PORT"),
@@ -351,6 +371,7 @@ var _ = Describe("Server command", func() {
 		err := run(context.Background(), testDependencies)
 
 		Expect(err).To(MatchError("serve HTTP: TLS_CERT_FILE and TLS_KEY_FILE must be configured together"))
+		Expect(openedDatabaseURL).To(BeEmpty())
 		Expect(server.plainCalls).To(BeZero())
 		Expect(server.tlsCalls).To(BeZero())
 	})

@@ -366,6 +366,31 @@ var _ = Describe("HTTP API", func() {
 		Entry("unspecified", "deck.example", "deck.example"),
 	)
 
+	DescribeTable("validates and normalizes public API URLs",
+		func(value string, expected string) {
+			parsed, err := ParsePublicBaseURL(value)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(parsed).To(Equal(expected))
+		},
+		Entry("secure", " https://deck.example/ ", "https://deck.example"),
+		Entry("plaintext", "http://127.0.0.1:8080", "http://127.0.0.1:8080"),
+		Entry("reverse proxy prefix", "https://deck.example/sim-deck/", "https://deck.example/sim-deck"),
+	)
+
+	DescribeTable("rejects invalid public API URLs",
+		func(value string) {
+			_, err := ParsePublicBaseURL(value)
+			Expect(err).To(HaveOccurred())
+		},
+		Entry("missing", ""),
+		Entry("relative", "deck.example"),
+		Entry("unsupported scheme", "wss://deck.example"),
+		Entry("missing host", "https:///sim-deck"),
+		Entry("credentials", "https://admin:secret@deck.example"),
+		Entry("query", "https://deck.example?tenant=owner"),
+		Entry("fragment", "https://deck.example#settings"),
+	)
+
 	It("lists devices for an authenticated owner", func() {
 		repository.devices = []store.DeviceRecord{{ID: "device-1", NumericID: 1}}
 

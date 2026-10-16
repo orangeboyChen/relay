@@ -4,13 +4,15 @@ import "time"
 
 // EncryptedCommand is an opaque end-to-end encrypted instruction routed to one device.
 type EncryptedCommand struct {
-	ID              string    `json:"id"`
-	DeviceUUID      string    `json:"device_uuid"`
-	SenderPublicKey []byte    `json:"sender_public_key"`
-	Nonce           []byte    `json:"nonce"`
-	Ciphertext      []byte    `json:"ciphertext"`
-	CreatedAt       time.Time `json:"created_at"`
-	ExpiresAt       time.Time `json:"expires_at"`
+	ID                   string    `json:"id"`
+	DeviceUUID           string    `json:"device_uuid"`
+	SenderInstallationID string    `json:"sender_installation_id"`
+	SenderPublicKey      []byte    `json:"sender_public_key"`
+	Nonce                []byte    `json:"nonce"`
+	Ciphertext           []byte    `json:"ciphertext"`
+	Signature            []byte    `json:"signature"`
+	CreatedAt            time.Time `json:"created_at"`
+	ExpiresAt            time.Time `json:"expires_at"`
 }
 
 // EncryptedCommandResult is an opaque response encrypted by the target device.

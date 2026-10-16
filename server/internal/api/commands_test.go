@@ -17,8 +17,9 @@ import (
 
 var _ = Describe("Encrypted device commands", func() {
 	const (
-		deviceID  = "01900000-0000-7000-8000-000000000001"
-		commandID = "01900000-0000-7000-8000-000000000010"
+		deviceID       = "01900000-0000-7000-8000-000000000001"
+		commandID      = "01900000-0000-7000-8000-000000000010"
+		installationID = "01900000-0000-7000-8000-000000000101"
 	)
 	var (
 		now        time.Time
@@ -34,12 +35,14 @@ var _ = Describe("Encrypted device commands", func() {
 
 	validCommand := func() domain.EncryptedCommand {
 		return domain.EncryptedCommand{
-			ID:              commandID,
-			SenderPublicKey: bytes.Repeat([]byte{1}, commandPublicKeyBytes),
-			Nonce:           bytes.Repeat([]byte{2}, commandNonceBytes),
-			Ciphertext:      []byte("opaque command"),
-			CreatedAt:       now,
-			ExpiresAt:       now.Add(time.Minute),
+			ID:                   commandID,
+			SenderInstallationID: installationID,
+			SenderPublicKey:      bytes.Repeat([]byte{1}, commandPublicKeyBytes),
+			Nonce:                bytes.Repeat([]byte{2}, commandNonceBytes),
+			Ciphertext:           []byte("opaque command"),
+			Signature:            bytes.Repeat([]byte{3}, commandSignatureBytes),
+			CreatedAt:            now,
+			ExpiresAt:            now.Add(time.Minute),
 		}
 	}
 
@@ -73,9 +76,11 @@ var _ = Describe("Encrypted device commands", func() {
 			Expect(repository.enqueuedCommand.ID).To(BeEmpty())
 		},
 		Entry("invalid id", func(command *domain.EncryptedCommand) { command.ID = "invalid" }),
+		Entry("invalid installation id", func(command *domain.EncryptedCommand) { command.SenderInstallationID = "invalid" }),
 		Entry("wrong public key size", func(command *domain.EncryptedCommand) { command.SenderPublicKey = []byte{1} }),
 		Entry("wrong nonce size", func(command *domain.EncryptedCommand) { command.Nonce = []byte{1} }),
 		Entry("empty ciphertext", func(command *domain.EncryptedCommand) { command.Ciphertext = nil }),
+		Entry("wrong signature size", func(command *domain.EncryptedCommand) { command.Signature = []byte{1} }),
 		Entry("stale creation", func(command *domain.EncryptedCommand) { command.CreatedAt = now.Add(-6 * time.Minute) }),
 		Entry("expired", func(command *domain.EncryptedCommand) { command.ExpiresAt = now }),
 		Entry("excessive lifetime", func(command *domain.EncryptedCommand) { command.ExpiresAt = now.Add(6 * time.Minute) }),

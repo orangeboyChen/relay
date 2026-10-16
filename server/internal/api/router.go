@@ -129,6 +129,7 @@ const (
 	maxCommandLifetime         = 5 * time.Minute
 	commandPublicKeyBytes      = 32
 	commandNonceBytes          = 12
+	commandSignatureBytes      = ed25519.SignatureSize
 	maxCommandCiphertextBytes  = 64 << 10
 	defaultEventPageSize       = 100
 	maxEventPageSize           = 500
@@ -654,9 +655,11 @@ func (router *router) enqueueCommand(writer http.ResponseWriter, request *http.R
 	encrypted.DeviceUUID = request.PathValue("deviceID")
 	now := router.now()
 	if !validUUID(encrypted.ID) || !validUUID(encrypted.DeviceUUID) ||
+		!validUUID(encrypted.SenderInstallationID) ||
 		len(encrypted.SenderPublicKey) != commandPublicKeyBytes ||
 		len(encrypted.Nonce) != commandNonceBytes ||
 		len(encrypted.Ciphertext) == 0 || len(encrypted.Ciphertext) > maxCommandCiphertextBytes ||
+		len(encrypted.Signature) != commandSignatureBytes ||
 		encrypted.CreatedAt.After(now.Add(maxEventFutureSkew)) ||
 		encrypted.CreatedAt.Before(now.Add(-maxEventFutureSkew)) ||
 		!encrypted.ExpiresAt.After(now) ||

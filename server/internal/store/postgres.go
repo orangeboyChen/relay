@@ -82,6 +82,7 @@ type AppInstallationRecord struct {
 // AppInstallationRecipient is the public routing identity of one approved iPhone.
 type AppInstallationRecipient struct {
 	InstallationID        string `json:"installation_id"`
+	IdentityPublicKey     []byte `json:"identity_public_key"`
 	KeyAgreementPublicKey []byte `json:"key_agreement_public_key"`
 }
 
@@ -411,7 +412,7 @@ func (store *Postgres) RegisterAppInstallation(ctx context.Context, ownerID stri
 // ListApprovedAppInstallationRecipients returns only active public encryption identities.
 func (store *Postgres) ListApprovedAppInstallationRecipients(ctx context.Context) ([]AppInstallationRecipient, error) {
 	rows, err := store.pool.Query(ctx, `
-		SELECT id, key_agreement_public_key
+		SELECT id, identity_public_key, key_agreement_public_key
 		FROM app_installations
 		WHERE approved_at IS NOT NULL
 		  AND revoked_at IS NULL
@@ -425,7 +426,7 @@ func (store *Postgres) ListApprovedAppInstallationRecipients(ctx context.Context
 	recipients := make([]AppInstallationRecipient, 0)
 	for rows.Next() {
 		var recipient AppInstallationRecipient
-		if err := rows.Scan(&recipient.InstallationID, &recipient.KeyAgreementPublicKey); err != nil {
+		if err := rows.Scan(&recipient.InstallationID, &recipient.IdentityPublicKey, &recipient.KeyAgreementPublicKey); err != nil {
 			return nil, fmt.Errorf("scan approved app installation recipient: %w", err)
 		}
 		recipients = append(recipients, recipient)
@@ -1212,17 +1213,23 @@ func (store *Postgres) ListEvents(ctx context.Context, afterSequence int64, limi
 func (store *Postgres) EnqueueCommand(ctx context.Context, encrypted domain.EncryptedCommand) (bool, error) {
 	command, err := store.pool.Exec(ctx, `
 		INSERT INTO encrypted_device_commands (
-			id, device_id, sender_public_key, nonce, ciphertext, created_at, expires_at
+			id, device_id, sender_installation_id, sender_public_key, nonce,
+			ciphertext, signature, created_at, expires_at
 		)
-		SELECT $1, $2, $3, $4, $5, $6, $7
-		FROM devices
-		WHERE id = $2 AND revoked_at IS NULL
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9
+		FROM devices, app_installations
+		WHERE devices.id = $2 AND devices.revoked_at IS NULL
+		  AND app_installations.id = $3
+		  AND app_installations.approved_at IS NOT NULL
+		  AND app_installations.revoked_at IS NULL
 		ON CONFLICT (id) DO NOTHING`,
 		encrypted.ID,
 		encrypted.DeviceUUID,
+		encrypted.SenderInstallationID,
 		encrypted.SenderPublicKey,
 		encrypted.Nonce,
 		encrypted.Ciphertext,
+		encrypted.Signature,
 		encrypted.CreatedAt.UTC(),
 		encrypted.ExpiresAt.UTC(),
 	)
@@ -1236,18 +1243,22 @@ func (store *Postgres) EnqueueCommand(ctx context.Context, encrypted domain.Encr
 	var matches bool
 	err = store.pool.QueryRow(ctx, `
 		SELECT device_id = $2
-		   AND sender_public_key = $3
-		   AND nonce = $4
-		   AND ciphertext = $5
-		   AND created_at = $6
-		   AND expires_at = $7
+		   AND sender_installation_id = $3
+		   AND sender_public_key = $4
+		   AND nonce = $5
+		   AND ciphertext = $6
+		   AND signature = $7
+		   AND created_at = $8
+		   AND expires_at = $9
 		FROM encrypted_device_commands
 		WHERE id = $1`,
 		encrypted.ID,
 		encrypted.DeviceUUID,
+		encrypted.SenderInstallationID,
 		encrypted.SenderPublicKey,
 		encrypted.Nonce,
 		encrypted.Ciphertext,
+		encrypted.Signature,
 		encrypted.CreatedAt.UTC(),
 		encrypted.ExpiresAt.UTC(),
 	).Scan(&matches)
@@ -1284,9 +1295,11 @@ func (store *Postgres) ClaimCommand(ctx context.Context, deviceID string, now ti
 		WHERE encrypted_device_commands.id = next_command.id
 		RETURNING encrypted_device_commands.id,
 		          encrypted_device_commands.device_id,
+		          encrypted_device_commands.sender_installation_id,
 		          encrypted_device_commands.sender_public_key,
 		          encrypted_device_commands.nonce,
 		          encrypted_device_commands.ciphertext,
+		          encrypted_device_commands.signature,
 		          encrypted_device_commands.created_at,
 		          encrypted_device_commands.expires_at`,
 		deviceID,
@@ -1295,9 +1308,11 @@ func (store *Postgres) ClaimCommand(ctx context.Context, deviceID string, now ti
 	).Scan(
 		&encrypted.ID,
 		&encrypted.DeviceUUID,
+		&encrypted.SenderInstallationID,
 		&encrypted.SenderPublicKey,
 		&encrypted.Nonce,
 		&encrypted.Ciphertext,
+		&encrypted.Signature,
 		&encrypted.CreatedAt,
 		&encrypted.ExpiresAt,
 	)

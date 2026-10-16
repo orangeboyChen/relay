@@ -55,6 +55,7 @@ var _ = Describe("Embedded migrations", func() {
 		Entry("incoming call claims", "migrations/009_incoming_call_claims.sql", "incoming_call_claims"),
 		Entry("outbox expiry", "migrations/010_outbox_expiry.sql", "expires_at"),
 		Entry("device discovery", "migrations/012_device_discovery.sql", "device_discoveries"),
+		Entry("signed device commands", "migrations/013_signed_device_commands.sql", "sender_installation_id"),
 	)
 })
 
@@ -201,6 +202,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(recipients).To(Equal([]AppInstallationRecipient{{
 			InstallationID:        first.ID,
+			IdentityPublicKey:     first.IdentityPublicKey,
 			KeyAgreementPublicKey: first.KeyAgreementPublicKey,
 		}}))
 
@@ -540,6 +542,15 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 	})
 
 	It("tracks radio state and routes encrypted commands through their full lifecycle", func() {
+		owner := createOwner()
+		installation := AppInstallationRegistration{
+			ID:                    "01900000-0000-7000-8000-000000000101",
+			IdentityPublicKey:     bytes.Repeat([]byte{31}, 32),
+			KeyAgreementPublicKey: bytes.Repeat([]byte{32}, 32),
+		}
+		_, created, err := database.RegisterAppInstallation(context.Background(), owner.ID, installation, now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
 		device := createDevice(firstDeviceID)
 		commandKey := bytes.Repeat([]byte{21}, 32)
 		signalBars := 3
@@ -557,13 +568,15 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(*records[0].RadioStatusUpdatedAt).To(Equal(now))
 
 		encrypted := domain.EncryptedCommand{
-			ID:              "01900000-0000-7000-8000-000000000050",
-			DeviceUUID:      device.ID,
-			SenderPublicKey: bytes.Repeat([]byte{22}, 32),
-			Nonce:           bytes.Repeat([]byte{23}, 12),
-			Ciphertext:      []byte("opaque dial command"),
-			CreatedAt:       now,
-			ExpiresAt:       now.Add(time.Hour),
+			ID:                   "01900000-0000-7000-8000-000000000050",
+			DeviceUUID:           device.ID,
+			SenderInstallationID: installation.ID,
+			SenderPublicKey:      bytes.Repeat([]byte{22}, 32),
+			Nonce:                bytes.Repeat([]byte{23}, 12),
+			Ciphertext:           []byte("opaque dial command"),
+			Signature:            bytes.Repeat([]byte{24}, ed25519.SignatureSize),
+			CreatedAt:            now,
+			ExpiresAt:            now.Add(time.Hour),
 		}
 		inserted, err := database.EnqueueCommand(context.Background(), encrypted)
 		Expect(err).NotTo(HaveOccurred())
@@ -618,6 +631,20 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		unknownDeviceCommand.ID = "01900000-0000-7000-8000-000000000051"
 		unknownDeviceCommand.DeviceUUID = secondDeviceID
 		_, err = database.EnqueueCommand(context.Background(), unknownDeviceCommand)
+		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
+
+		unapproved := AppInstallationRegistration{
+			ID:                    "01900000-0000-7000-8000-000000000102",
+			IdentityPublicKey:     bytes.Repeat([]byte{41}, 32),
+			KeyAgreementPublicKey: bytes.Repeat([]byte{42}, 32),
+		}
+		_, created, err = database.RegisterAppInstallation(context.Background(), owner.ID, unapproved, now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
+		untrustedCommand := encrypted
+		untrustedCommand.ID = "01900000-0000-7000-8000-000000000052"
+		untrustedCommand.SenderInstallationID = unapproved.ID
+		_, err = database.EnqueueCommand(context.Background(), untrustedCommand)
 		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
 	})
 

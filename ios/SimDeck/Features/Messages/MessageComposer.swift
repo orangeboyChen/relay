@@ -10,6 +10,8 @@ struct MessageComposer: View {
     let cancelReplyAction: () -> Void
     let sendAction: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     init(
         draft: Binding<String>,
         isTextEntryEnabled: Bool = true,
@@ -35,6 +37,11 @@ struct MessageComposer: View {
                     preview: replyPreview,
                     cancelAction: cancelReplyAction
                 )
+                .transition(
+                    reduceMotion
+                        ? .opacity
+                        : .move(edge: .bottom).combined(with: .opacity)
+                )
             }
 
             HStack(alignment: .bottom, spacing: 8) {
@@ -45,7 +52,7 @@ struct MessageComposer: View {
                         .background(.quaternary, in: Circle())
                         .frame(width: 44, height: 44, alignment: .bottom)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressFeedbackButtonStyle())
                 .disabled(!isTextEntryEnabled)
                 .accessibilityLabel("Add image")
 
@@ -61,6 +68,7 @@ struct MessageComposer: View {
                             .font(.system(size: 30))
                             .frame(width: 36, height: 36)
                     }
+                    .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
                     .disabled(!canSend)
                     .accessibilityLabel("Send message")
                 }
@@ -75,6 +83,7 @@ struct MessageComposer: View {
             .padding(.vertical, 5)
         }
         .background(.bar)
+        .animation(reduceMotion ? nil : .snappy, value: replyPreview)
     }
 
     private var canSend: Bool {

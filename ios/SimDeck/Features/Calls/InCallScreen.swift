@@ -5,6 +5,7 @@ struct InCallScreen: View {
     let lines: [DeviceLineIdentity]
     var referenceDate: Date?
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isKeypadVisible = false
     @State private var presentedError: InCallPresentedError?
 
@@ -29,6 +30,7 @@ struct InCallScreen: View {
                                 try await coordinator.playDTMF(digit)
                             }
                         }
+                        .transition(keypadTransition)
                     } else {
                         InCallControls(
                             call: call,
@@ -39,7 +41,11 @@ struct InCallScreen: View {
                                     try await coordinator.setMuted(!call.isMuted)
                                 }
                             },
-                            onKeypad: { isKeypadVisible = true },
+                            onKeypad: {
+                                withAnimation(motionAnimation) {
+                                    isKeypadVisible = true
+                                }
+                            },
                             onAudioRoute: { route in
                                 do {
                                     try coordinator.audioRoutes.select(route)
@@ -55,6 +61,7 @@ struct InCallScreen: View {
                                 }
                             }
                         )
+                        .transition(keypadTransition)
                     }
 
                     Spacer(minLength: 30)
@@ -70,12 +77,15 @@ struct InCallScreen: View {
                             .frame(width: 72, height: 72)
                             .background(.red, in: Circle())
                     }
+                    .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
                     .accessibilityLabel("End call")
                     .disabled(call.status == .ending)
 
                     if isKeypadVisible {
                         Button("Hide Keypad") {
-                            isKeypadVisible = false
+                            withAnimation(motionAnimation) {
+                                isKeypadVisible = false
+                            }
                         }
                         .font(.headline)
                         .foregroundStyle(.white)
@@ -101,6 +111,16 @@ struct InCallScreen: View {
 
     private func line(for call: ActiveCallSession) -> DeviceLineIdentity? {
         lines.first(where: { $0.id == call.lineID })
+    }
+
+    private var motionAnimation: Animation? {
+        reduceMotion ? nil : .snappy
+    }
+
+    private var keypadTransition: AnyTransition {
+        reduceMotion
+            ? .opacity
+            : .scale(scale: 0.96).combined(with: .opacity)
     }
 
     private func perform(_ operation: @escaping @MainActor () async throws -> Void) {
@@ -251,6 +271,8 @@ private struct CallAudioRouteMenu: View {
     let controller: CallAudioRouteController
     let onSelect: (CallAudioRoute) -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         Menu {
             ForEach(controller.availableRoutes) { route in
@@ -268,6 +290,13 @@ private struct CallAudioRouteMenu: View {
                     .frame(width: 72, height: 72)
                     .foregroundStyle(.black)
                     .background(.white, in: Circle())
+                    .contentTransition(
+                        reduceMotion ? .identity : .symbolEffect(.replace)
+                    )
+                    .animation(
+                        reduceMotion ? nil : .snappy,
+                        value: controller.currentRoute.id
+                    )
 
                 Text("Audio")
                     .font(.caption)
@@ -276,7 +305,7 @@ private struct CallAudioRouteMenu: View {
             }
             .frame(width: 84)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.92))
         .accessibilityLabel("Audio")
         .accessibilityValue(Text(verbatim: controller.currentRoute.name))
     }
@@ -289,6 +318,8 @@ private struct CallControlButton: View {
     let isEnabled: Bool
     let action: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         Button(action: action) {
             VStack(spacing: 8) {
@@ -297,6 +328,9 @@ private struct CallControlButton: View {
                     .frame(width: 72, height: 72)
                     .foregroundStyle(isSelected ? .black : .white)
                     .background(isSelected ? .white : .white.opacity(0.16), in: Circle())
+                    .contentTransition(
+                        reduceMotion ? .identity : .symbolEffect(.replace)
+                    )
 
                 Text(title)
                     .font(.caption)
@@ -305,9 +339,10 @@ private struct CallControlButton: View {
             }
             .frame(width: 84)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.92))
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.35)
+        .animation(reduceMotion ? nil : .snappy, value: isSelected)
         .accessibilityValue(isSelected ? "On" : "Off")
     }
 }
@@ -315,6 +350,8 @@ private struct CallControlButton: View {
 private struct InCallKeypad: View {
     let onDigit: (String) -> Void
     private let keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"]
+
+    @State private var feedbackTrigger = 0
 
     var body: some View {
         LazyVGrid(
@@ -324,6 +361,7 @@ private struct InCallKeypad: View {
             ForEach(keys, id: \.self) { key in
                 Button {
                     onDigit(key)
+                    feedbackTrigger += 1
                 } label: {
                     Text(verbatim: key)
                         .font(.system(size: 30, weight: .regular, design: .rounded))
@@ -331,11 +369,12 @@ private struct InCallKeypad: View {
                         .frame(width: 66, height: 66)
                         .background(.white.opacity(0.16), in: Circle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
                 .accessibilityLabel(Text(verbatim: key))
             }
         }
         .frame(maxWidth: 300)
+        .sensoryFeedback(.selection, trigger: feedbackTrigger)
     }
 }
 

@@ -113,6 +113,7 @@ private struct DialerLauncherButton: View {
                     .background(.blue, in: Circle())
                     .shadow(radius: 5, y: 2)
             }
+            .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.92))
             .accessibilityLabel("Open dialer")
         }
         .padding(.horizontal)

@@ -64,6 +64,8 @@ struct LinePicker: View {
 struct NumberEntry: View {
     @Binding var number: String
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         ZStack(alignment: .trailing) {
             TextField("Phone number", text: $number, prompt: Text("Phone number").foregroundStyle(.tertiary))
@@ -85,15 +87,24 @@ struct NumberEntry: View {
                         .foregroundStyle(.secondary)
                         .frame(width: 44, height: 44)
                 }
+                .buttonStyle(PressFeedbackButtonStyle())
                 .accessibilityLabel("Delete digit")
+                .transition(
+                    reduceMotion
+                        ? .opacity
+                        : .scale(scale: 0.8, anchor: .trailing).combined(with: .opacity)
+                )
             }
         }
         .frame(height: 54)
+        .animation(reduceMotion ? nil : .snappy, value: number.isEmpty)
     }
 }
 
 struct DialPad: View {
     @Binding var number: String
+
+    @State private var feedbackTrigger = 0
 
     private let keys = [
         DialPadKeyContent(symbol: "1", letters: ""),
@@ -121,10 +132,12 @@ struct DialPad: View {
                         return
                     }
                     number.append(contentsOf: input)
+                    feedbackTrigger += 1
                 }
             }
         }
         .frame(maxWidth: 318)
+        .sensoryFeedback(.selection, trigger: feedbackTrigger)
     }
 }
 
@@ -180,7 +193,7 @@ private struct DialPadKey: View {
             .background(Color(uiColor: .systemGray5), in: Circle())
             .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
         .simultaneousGesture(
             LongPressGesture(minimumDuration: 0.5)
                 .onEnded { _ in
@@ -228,7 +241,9 @@ struct CallButton: View {
             .foregroundStyle(.white)
             .background(.green, in: Circle())
         }
+        .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
         .disabled(!isEnabled || isCalling)
+        .animation(.easeInOut(duration: 0.15), value: isCalling)
         .accessibilityLabel("Call")
     }
 }

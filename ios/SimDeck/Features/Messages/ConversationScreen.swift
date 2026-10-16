@@ -6,6 +6,7 @@ struct ConversationScreen: View {
     let lines: [DeviceLineIdentity]
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var selectedID: ConversationID
     @State private var draft = ""
@@ -37,7 +38,9 @@ struct ConversationScreen: View {
                                 activeSheet = .attachment(attachment)
                             },
                             replyAction: {
-                                replyTarget = message
+                                withAnimation(motionAnimation) {
+                                    replyTarget = message
+                                }
                             },
                             copyAction: {
                                 UIPasteboard.general.string = message.body
@@ -56,6 +59,8 @@ struct ConversationScreen: View {
                     }
                 }
                 .padding()
+                .id(selectedID)
+                .transition(.opacity)
             }
             .onChange(of: conversation.messages.count, initial: true) {
                 scrollToBottom(using: proxy)
@@ -66,6 +71,7 @@ struct ConversationScreen: View {
             .onChange(of: selectedID) {
                 replyTarget = nil
                 messagePendingDeletion = nil
+                scrollToBottom(using: proxy, animated: true)
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -73,11 +79,15 @@ struct ConversationScreen: View {
                 draft: $draft,
                 replyPreview: replyTarget.map(messagePreview),
                 cancelReplyAction: {
-                    replyTarget = nil
+                    withAnimation(motionAnimation) {
+                        replyTarget = nil
+                    }
                 },
                 sendAction: {
-                    draft = ""
-                    replyTarget = nil
+                    withAnimation(motionAnimation) {
+                        draft = ""
+                        replyTarget = nil
+                    }
                 }
             )
         }
@@ -90,7 +100,7 @@ struct ConversationScreen: View {
                     line: line,
                     alternatives: conversations,
                     lines: lines,
-                    selectedID: $selectedID
+                    selectedID: animatedSelectedID
                 )
             }
         }
@@ -114,9 +124,11 @@ struct ConversationScreen: View {
         ) {
             Button("Delete", role: .destructive) {
                 guard let messagePendingDeletion else { return }
-                deletedMessageIDs.insert(messagePendingDeletion.id)
-                if replyTarget?.id == messagePendingDeletion.id {
-                    replyTarget = nil
+                withAnimation(motionAnimation) {
+                    deletedMessageIDs.insert(messagePendingDeletion.id)
+                    if replyTarget?.id == messagePendingDeletion.id {
+                        replyTarget = nil
+                    }
                 }
                 self.messagePendingDeletion = nil
             }
@@ -151,6 +163,21 @@ struct ConversationScreen: View {
         )
     }
 
+    private var animatedSelectedID: Binding<ConversationID> {
+        Binding(
+            get: { selectedID },
+            set: { newValue in
+                withAnimation(motionAnimation) {
+                    selectedID = newValue
+                }
+            }
+        )
+    }
+
+    private var motionAnimation: Animation? {
+        reduceMotion ? nil : .snappy
+    }
+
     private func messagePreview(_ message: MessageItem) -> String {
         if !message.body.isEmpty {
             return message.body
@@ -158,12 +185,18 @@ struct ConversationScreen: View {
         return String(localized: "Image")
     }
 
-    private func scrollToBottom(using proxy: ScrollViewProxy) {
+    private func scrollToBottom(using proxy: ScrollViewProxy, animated: Bool = false) {
         guard let lastID = visibleMessages.last?.id else { return }
 
         Task { @MainActor in
             await Task.yield()
-            proxy.scrollTo(lastID, anchor: .bottom)
+            if animated {
+                withAnimation(motionAnimation) {
+                    proxy.scrollTo(lastID, anchor: .bottom)
+                }
+            } else {
+                proxy.scrollTo(lastID, anchor: .bottom)
+            }
         }
     }
 }

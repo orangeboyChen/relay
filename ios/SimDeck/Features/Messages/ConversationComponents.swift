@@ -108,7 +108,7 @@ struct MessageBubble: View {
                 Button(action: openAttachment) {
                     MessageImage(attachment: attachment)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.98))
                 .accessibilityLabel("Preview image")
             }
             if !message.body.isEmpty {

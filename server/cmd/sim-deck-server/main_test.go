@@ -153,8 +153,10 @@ type memoryHTTPServer struct {
 	listenError   error
 	shutdownError error
 	started       chan struct{}
+	stopped       chan struct{}
 	release       chan struct{}
 	startOnce     sync.Once
+	stopOnce      sync.Once
 	plainCalls    int
 	tlsCalls      int
 	certificate   string
@@ -163,10 +165,15 @@ type memoryHTTPServer struct {
 }
 
 func newMemoryHTTPServer() *memoryHTTPServer {
-	return &memoryHTTPServer{started: make(chan struct{}), release: make(chan struct{})}
+	return &memoryHTTPServer{
+		started: make(chan struct{}),
+		stopped: make(chan struct{}),
+		release: make(chan struct{}),
+	}
 }
 
 func (server *memoryHTTPServer) ListenAndServe() error {
+	defer server.stopOnce.Do(func() { close(server.stopped) })
 	server.plainCalls++
 	server.startOnce.Do(func() { close(server.started) })
 	if server.listenError != nil {
@@ -177,6 +184,7 @@ func (server *memoryHTTPServer) ListenAndServe() error {
 }
 
 func (server *memoryHTTPServer) ListenAndServeTLS(certificate string, privateKey string) error {
+	defer server.stopOnce.Do(func() { close(server.stopped) })
 	server.tlsCalls++
 	server.certificate = certificate
 	server.privateKey = privateKey
@@ -200,16 +208,22 @@ func (server *memoryHTTPServer) Shutdown(context.Context) error {
 }
 
 type memoryWorker struct {
-	started chan struct{}
-	err     error
+	started   chan struct{}
+	stopped   chan struct{}
+	stopDelay <-chan struct{}
+	err       error
 }
 
 func (worker *memoryWorker) Run(ctx context.Context) error {
+	defer close(worker.stopped)
 	close(worker.started)
 	if worker.err != nil {
 		return worker.err
 	}
 	<-ctx.Done()
+	if worker.stopDelay != nil {
+		<-worker.stopDelay
+	}
 	return nil
 }
 
@@ -241,7 +255,7 @@ var _ = Describe("Server command", func() {
 		openedDatabaseURL = ""
 		serverAddress = ""
 		serverHandler = nil
-		pushWorker = &memoryWorker{started: make(chan struct{})}
+		pushWorker = &memoryWorker{started: make(chan struct{}), stopped: make(chan struct{})}
 		pushConfig = apns.Config{}
 		pushConfigError = nil
 		privateKeyPath = ""
@@ -370,6 +384,7 @@ var _ = Describe("Server command", func() {
 
 		Eventually(result).Should(Receive(BeNil()))
 		Expect(server.shutdownCalls).To(Equal(1))
+		Expect(server.stopped).To(BeClosed())
 		Expect(memoryStore.closed).To(BeTrue())
 	})
 
@@ -402,8 +417,13 @@ var _ = Describe("Server command", func() {
 		Expect(pushConfig.Topic).To(Equal("com.nowcent.simdeck.voip"))
 		Expect(pushConfig.PrivateKeyPEM).To(Equal([]byte("private-key")))
 
+		workerRelease := make(chan struct{})
+		pushWorker.stopDelay = workerRelease
 		cancel()
+		Consistently(result, 50*time.Millisecond).ShouldNot(Receive())
+		close(workerRelease)
 		Eventually(result).Should(Receive(BeNil()))
+		Expect(pushWorker.stopped).To(BeClosed())
 	})
 
 	It("stops HTTP serving when the APNs worker fails", func() {

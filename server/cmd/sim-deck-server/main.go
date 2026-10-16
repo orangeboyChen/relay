@@ -124,28 +124,26 @@ func run(ctx context.Context, dependencies dependencies) error {
 	if err != nil {
 		return err
 	}
+	certificate := getenv("TLS_CERT_FILE")
+	privateKey := getenv("TLS_KEY_FILE")
+	if (certificate == "") != (privateKey == "") {
+		return errors.New("serve HTTP: TLS_CERT_FILE and TLS_KEY_FILE must be configured together")
+	}
 
 	runContext, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
-	result := make(chan error, 1)
+	serverResult := make(chan error, 1)
 	go func() {
-		certificate := getenv("TLS_CERT_FILE")
-		privateKey := getenv("TLS_KEY_FILE")
-		if certificate != "" || privateKey != "" {
-			if certificate == "" || privateKey == "" {
-				result <- errors.New("TLS_CERT_FILE and TLS_KEY_FILE must be configured together")
-				return
-			}
-			result <- server.ListenAndServeTLS(certificate, privateKey)
+		if certificate != "" {
+			serverResult <- server.ListenAndServeTLS(certificate, privateKey)
 			return
 		}
-		result <- server.ListenAndServe()
+		serverResult <- server.ListenAndServe()
 	}()
-	var workerResult <-chan error
+	var workerResult chan error
 	if worker != nil {
-		channel := make(chan error, 1)
-		workerResult = channel
-		go func() { channel <- worker.Run(runContext) }()
+		workerResult = make(chan error, 1)
+		go func() { workerResult <- worker.Run(runContext) }()
 	}
 
 	select {
@@ -153,13 +151,19 @@ func run(ctx context.Context, dependencies dependencies) error {
 		cancelRun()
 		shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return server.Shutdown(shutdownContext)
-	case err := <-result:
+		return errors.Join(
+			stopHTTPServer(shutdownContext, server, serverResult),
+			waitForWorker(shutdownContext, workerResult),
+		)
+	case err := <-serverResult:
 		cancelRun()
+		shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		workerErr := waitForWorker(shutdownContext, workerResult)
 		if errors.Is(err, http.ErrServerClosed) {
-			return nil
+			return workerErr
 		}
-		return fmt.Errorf("serve HTTP: %w", err)
+		return errors.Join(fmt.Errorf("serve HTTP: %w", err), workerErr)
 	case err := <-workerResult:
 		cancelRun()
 		shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -168,10 +172,38 @@ func run(ctx context.Context, dependencies dependencies) error {
 		if err != nil {
 			workerError = fmt.Errorf("run push worker: %w", err)
 		}
-		if shutdownErr := server.Shutdown(shutdownContext); shutdownErr != nil {
-			return errors.Join(workerError, shutdownErr)
+		return errors.Join(workerError, stopHTTPServer(shutdownContext, server, serverResult))
+	}
+}
+
+func stopHTTPServer(ctx context.Context, server httpServer, result <-chan error) error {
+	shutdownErr := server.Shutdown(ctx)
+	var serveErr error
+	select {
+	case serveErr = <-result:
+		if errors.Is(serveErr, http.ErrServerClosed) {
+			serveErr = nil
+		} else if serveErr != nil {
+			serveErr = fmt.Errorf("serve HTTP: %w", serveErr)
 		}
-		return workerError
+	case <-ctx.Done():
+		serveErr = fmt.Errorf("wait for HTTP server: %w", ctx.Err())
+	}
+	return errors.Join(shutdownErr, serveErr)
+}
+
+func waitForWorker(ctx context.Context, result <-chan error) error {
+	if result == nil {
+		return nil
+	}
+	select {
+	case err := <-result:
+		if err != nil {
+			return fmt.Errorf("stop push worker: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("wait for push worker: %w", ctx.Err())
 	}
 }
 

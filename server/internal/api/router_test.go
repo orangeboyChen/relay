@@ -60,6 +60,26 @@ type fakeRepository struct {
 	pairing                     store.DevicePairing
 	pairingRecord               store.DeviceRecord
 	pairingError                error
+	discoveryOwnerID            string
+	discoveryOpenedAt           time.Time
+	discoveryExpiresAt          time.Time
+	discoverySession            store.DeviceDiscoverySession
+	openDiscoveryError          error
+	closeDiscoveryError         error
+	getDiscoveryError           error
+	discoveryRequest            store.DeviceDiscoveryRequest
+	discoverySubmittedAt        time.Time
+	discoveryRecord             store.DeviceDiscoveryRecord
+	submitDiscoveryError        error
+	discoveryRecords            []store.DeviceDiscoveryRecord
+	listDiscoveriesError        error
+	discoveryDeviceID           string
+	discoveryDecisionAt         time.Time
+	discoveryDevice             store.DeviceRecord
+	approveDiscoveryError       error
+	rejectDiscoveryError        error
+	discoveryCredentialHash     []byte
+	discoveryStatusError        error
 	devicePublicKey             []byte
 	deviceAuthError             error
 	authenticatedDeviceID       string
@@ -264,6 +284,57 @@ func (fake *fakeRepository) CreatePairingToken(_ context.Context, ownerID string
 func (fake *fakeRepository) ConsumePairingToken(_ context.Context, _ []byte, _ time.Time, pairing store.DevicePairing) (store.DeviceRecord, error) {
 	fake.pairing = pairing
 	return fake.pairingRecord, fake.pairingError
+}
+
+func (fake *fakeRepository) OpenDeviceDiscovery(_ context.Context, ownerID string, now time.Time, expiresAt time.Time) (store.DeviceDiscoverySession, error) {
+	fake.discoveryOwnerID = ownerID
+	fake.discoveryOpenedAt = now
+	fake.discoveryExpiresAt = expiresAt
+	return fake.discoverySession, fake.openDiscoveryError
+}
+
+func (fake *fakeRepository) CloseDeviceDiscovery(_ context.Context, ownerID string, now time.Time) error {
+	fake.discoveryOwnerID = ownerID
+	fake.discoveryDecisionAt = now
+	return fake.closeDiscoveryError
+}
+
+func (fake *fakeRepository) GetDeviceDiscoverySession(_ context.Context, ownerID string) (store.DeviceDiscoverySession, error) {
+	fake.discoveryOwnerID = ownerID
+	return fake.discoverySession, fake.getDiscoveryError
+}
+
+func (fake *fakeRepository) SubmitDeviceDiscovery(_ context.Context, now time.Time, request store.DeviceDiscoveryRequest) (store.DeviceDiscoveryRecord, error) {
+	fake.discoverySubmittedAt = now
+	fake.discoveryRequest = request
+	return fake.discoveryRecord, fake.submitDiscoveryError
+}
+
+func (fake *fakeRepository) ListPendingDeviceDiscoveries(_ context.Context, ownerID string, now time.Time) ([]store.DeviceDiscoveryRecord, error) {
+	fake.discoveryOwnerID = ownerID
+	fake.discoverySubmittedAt = now
+	return fake.discoveryRecords, fake.listDiscoveriesError
+}
+
+func (fake *fakeRepository) ApproveDeviceDiscovery(_ context.Context, ownerID string, deviceID string, now time.Time) (store.DeviceRecord, error) {
+	fake.discoveryOwnerID = ownerID
+	fake.discoveryDeviceID = deviceID
+	fake.discoveryDecisionAt = now
+	return fake.discoveryDevice, fake.approveDiscoveryError
+}
+
+func (fake *fakeRepository) RejectDeviceDiscovery(_ context.Context, ownerID string, deviceID string, now time.Time) error {
+	fake.discoveryOwnerID = ownerID
+	fake.discoveryDeviceID = deviceID
+	fake.discoveryDecisionAt = now
+	return fake.rejectDiscoveryError
+}
+
+func (fake *fakeRepository) DeviceDiscoveryStatus(_ context.Context, deviceID string, credentialHash []byte, now time.Time) (store.DeviceDiscoveryRecord, error) {
+	fake.discoveryDeviceID = deviceID
+	fake.discoveryCredentialHash = append([]byte(nil), credentialHash...)
+	fake.discoverySubmittedAt = now
+	return fake.discoveryRecord, fake.discoveryStatusError
 }
 
 func (fake *fakeRepository) AuthenticateDevice(_ context.Context, deviceID string, credential string, _ time.Time) ([]byte, error) {

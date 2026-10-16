@@ -77,6 +77,30 @@ func (repository *memoryRepository) CreatePairingToken(context.Context, string, 
 func (repository *memoryRepository) ConsumePairingToken(context.Context, []byte, time.Time, store.DevicePairing) (store.DeviceRecord, error) {
 	return store.DeviceRecord{}, nil
 }
+func (repository *memoryRepository) OpenDeviceDiscovery(context.Context, string, time.Time, time.Time) (store.DeviceDiscoverySession, error) {
+	return store.DeviceDiscoverySession{}, nil
+}
+func (repository *memoryRepository) CloseDeviceDiscovery(context.Context, string, time.Time) error {
+	return nil
+}
+func (repository *memoryRepository) GetDeviceDiscoverySession(context.Context, string) (store.DeviceDiscoverySession, error) {
+	return store.DeviceDiscoverySession{}, pgx.ErrNoRows
+}
+func (repository *memoryRepository) SubmitDeviceDiscovery(context.Context, time.Time, store.DeviceDiscoveryRequest) (store.DeviceDiscoveryRecord, error) {
+	return store.DeviceDiscoveryRecord{}, nil
+}
+func (repository *memoryRepository) ListPendingDeviceDiscoveries(context.Context, string, time.Time) ([]store.DeviceDiscoveryRecord, error) {
+	return nil, nil
+}
+func (repository *memoryRepository) ApproveDeviceDiscovery(context.Context, string, string, time.Time) (store.DeviceRecord, error) {
+	return store.DeviceRecord{}, nil
+}
+func (repository *memoryRepository) RejectDeviceDiscovery(context.Context, string, string, time.Time) error {
+	return nil
+}
+func (repository *memoryRepository) DeviceDiscoveryStatus(context.Context, string, []byte, time.Time) (store.DeviceDiscoveryRecord, error) {
+	return store.DeviceDiscoveryRecord{}, nil
+}
 func (repository *memoryRepository) AuthenticateDevice(context.Context, string, string, time.Time) ([]byte, error) {
 	return make([]byte, ed25519.PublicKeySize), nil
 }

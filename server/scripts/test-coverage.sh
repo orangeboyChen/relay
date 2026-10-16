@@ -10,7 +10,7 @@ go test ./... -coverprofile="$coverage_profile"
 excluded_pattern='^$'
 coverage_label='repository'
 if [[ -z "${TEST_DATABASE_URL:-}" ]]; then
-  excluded_pattern='/internal/store/postgres\.go:'
+  excluded_pattern='/internal/store/(postgres|device_discovery)\.go:'
   coverage_label='in-memory unit scope'
 fi
 

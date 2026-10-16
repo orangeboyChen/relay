@@ -37,6 +37,14 @@ type Repository interface {
 	AuthenticateOwnerSession(context.Context, string, time.Time) (string, error)
 	CreatePairingToken(context.Context, string, []byte, time.Time) error
 	ConsumePairingToken(context.Context, []byte, time.Time, store.DevicePairing) (store.DeviceRecord, error)
+	OpenDeviceDiscovery(context.Context, string, time.Time, time.Time) (store.DeviceDiscoverySession, error)
+	CloseDeviceDiscovery(context.Context, string, time.Time) error
+	GetDeviceDiscoverySession(context.Context, string) (store.DeviceDiscoverySession, error)
+	SubmitDeviceDiscovery(context.Context, time.Time, store.DeviceDiscoveryRequest) (store.DeviceDiscoveryRecord, error)
+	ListPendingDeviceDiscoveries(context.Context, string, time.Time) ([]store.DeviceDiscoveryRecord, error)
+	ApproveDeviceDiscovery(context.Context, string, string, time.Time) (store.DeviceRecord, error)
+	RejectDeviceDiscovery(context.Context, string, string, time.Time) error
+	DeviceDiscoveryStatus(context.Context, string, []byte, time.Time) (store.DeviceDiscoveryRecord, error)
 	AuthenticateDevice(context.Context, string, string, time.Time) ([]byte, error)
 	EnqueueCommand(context.Context, domain.EncryptedCommand) (bool, error)
 	ClaimCommand(context.Context, string, time.Time, time.Time) (domain.EncryptedCommand, error)
@@ -71,6 +79,12 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("PUT /v1/devices/{deviceID}/profile", router.requireOwner(router.updateDeviceProfile))
 	mux.HandleFunc("DELETE /v1/devices/{deviceID}", router.requireOwner(router.revokeDevice))
 	mux.HandleFunc("POST /v1/device-pairing-tokens", router.requireOwner(router.createPairingToken))
+	mux.HandleFunc("POST /v1/device-discovery-session", router.requireOwner(router.openDeviceDiscovery))
+	mux.HandleFunc("GET /v1/device-discovery-session", router.requireOwner(router.getDeviceDiscoverySession))
+	mux.HandleFunc("DELETE /v1/device-discovery-session", router.requireOwner(router.closeDeviceDiscovery))
+	mux.HandleFunc("GET /v1/device-discoveries", router.requireOwner(router.listDeviceDiscoveries))
+	mux.HandleFunc("POST /v1/device-discoveries/{deviceID}/approve", router.requireOwner(router.approveDeviceDiscovery))
+	mux.HandleFunc("DELETE /v1/device-discoveries/{deviceID}", router.requireOwner(router.rejectDeviceDiscovery))
 	mux.HandleFunc("POST /v1/app-installations", router.requireOwner(router.registerAppInstallation))
 	mux.HandleFunc("PUT /v1/app-installations/{installationID}/push-tokens/{kind}", router.requireOwner(router.upsertPushToken))
 	mux.HandleFunc("DELETE /v1/app-installations/{installationID}/push-tokens/{kind}", router.requireOwner(router.deletePushToken))
@@ -78,6 +92,8 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("POST /v1/incoming-calls", router.insertIncomingCall)
 	mux.HandleFunc("POST /v1/incoming-calls/{notificationID}/claim", router.requireOwner(router.claimIncomingCall))
 	mux.HandleFunc("POST /v1/device-pairings", router.pairDevice)
+	mux.HandleFunc("POST /v1/device-discoveries", router.submitDeviceDiscovery)
+	mux.HandleFunc("GET /v1/device-discoveries/{deviceID}/status", router.deviceDiscoveryStatus)
 	mux.HandleFunc("POST /v1/events", router.insertEvent)
 	mux.HandleFunc("GET /v1/events", router.requireOwner(router.listEvents))
 	mux.HandleFunc("GET /v1/events/ws", router.requireOwner(router.streamEvents))
@@ -102,6 +118,7 @@ type ownerContextKey struct{}
 
 const (
 	pairingTokenLifetime       = 10 * time.Minute
+	deviceDiscoveryLifetime    = 10 * time.Minute
 	maxProfileCiphertextBytes  = 64 << 10
 	maxWrappedVaultKeyBytes    = 16 << 10
 	maxPushTokenBytes          = 256

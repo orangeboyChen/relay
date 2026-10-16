@@ -617,6 +617,74 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(tokens).To(BeZero())
 	})
 
+	It("updates owner-scoped push tokens and records discarded deliveries", func() {
+		owner := createOwner()
+		installation := AppInstallationRegistration{
+			ID:                    "01900000-0000-7000-8000-000000000101",
+			IdentityPublicKey:     bytes.Repeat([]byte{31}, 32),
+			KeyAgreementPublicKey: bytes.Repeat([]byte{32}, 32),
+		}
+		_, _, err := database.RegisterAppInstallation(context.Background(), owner.ID, installation, now)
+		Expect(err).NotTo(HaveOccurred())
+
+		firstToken := []byte("first encrypted alert token")
+		secondToken := []byte("replacement encrypted alert token")
+		Expect(database.UpsertPushToken(
+			context.Background(), owner.ID, installation.ID, "sandbox", "alert", firstToken, now,
+		)).To(Succeed())
+		Expect(database.UpsertPushToken(
+			context.Background(), owner.ID, installation.ID, "sandbox", "alert", secondToken, now.Add(time.Second),
+		)).To(Succeed())
+		Expect(database.UpsertPushToken(
+			context.Background(), "01900000-0000-7000-8000-000000000099", installation.ID,
+			"sandbox", "alert", firstToken, now,
+		)).To(MatchError(pgx.ErrNoRows))
+
+		var storedToken []byte
+		Expect(database.pool.QueryRow(context.Background(), `
+			SELECT token_ciphertext FROM push_tokens
+			WHERE installation_id = $1 AND environment = 'sandbox' AND kind = 'alert'`,
+			installation.ID,
+		).Scan(&storedToken)).To(Succeed())
+		Expect(storedToken).To(Equal(secondToken))
+
+		Expect(database.DeletePushToken(
+			context.Background(), owner.ID, installation.ID, "production", "alert",
+		)).To(MatchError(pgx.ErrNoRows))
+		Expect(database.DeletePushToken(
+			context.Background(), owner.ID, installation.ID, "sandbox", "alert",
+		)).To(Succeed())
+		Expect(database.DeletePushToken(
+			context.Background(), owner.ID, installation.ID, "sandbox", "alert",
+		)).To(MatchError(pgx.ErrNoRows))
+
+		var jobID int64
+		Expect(database.pool.QueryRow(context.Background(), `
+			INSERT INTO outbox_jobs (kind, routing_key, payload, available_at, expires_at)
+			VALUES ('voip.incoming_call', $1, $2, $3, $4)
+			RETURNING id`, installation.ID, []byte("opaque push"), now, now.Add(time.Minute),
+		).Scan(&jobID)).To(Succeed())
+		job, err := database.ClaimVoIPPushJob(context.Background(), now, 20*time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(job.ID).To(Equal(jobID))
+		Expect(database.DiscardPushJob(
+			context.Background(), job.ID, job.Attempt, now.Add(time.Second), "invalid device token",
+		)).To(Succeed())
+		Expect(database.DiscardPushJob(
+			context.Background(), job.ID, job.Attempt, now.Add(2*time.Second), "duplicate discard",
+		)).To(MatchError(pgx.ErrNoRows))
+
+		var completedAt *time.Time
+		var lastError *string
+		Expect(database.pool.QueryRow(context.Background(), `
+			SELECT completed_at, last_error FROM outbox_jobs WHERE id = $1`, job.ID,
+		).Scan(&completedAt, &lastError)).To(Succeed())
+		Expect(completedAt).NotTo(BeNil())
+		Expect(*completedAt).To(Equal(now.Add(time.Second)))
+		Expect(lastError).NotTo(BeNil())
+		Expect(*lastError).To(Equal("invalid device token"))
+	})
+
 	It("rolls back an incoming call batch containing an unapproved recipient", func() {
 		owner := createOwner()
 		pending := AppInstallationRegistration{

@@ -8,7 +8,10 @@ struct SimDeckApp: App {
 
     init() {
 #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--preview-profile") {
+        if ProcessInfo.processInfo.arguments.contains("--preview-onboarding") {
+            _model = State(initialValue: .preview(onboardingCompleted: false))
+            shouldStartLiveServices = false
+        } else if ProcessInfo.processInfo.arguments.contains("--preview-profile") {
             _model = State(initialValue: .preview(selectedTab: .profile))
             shouldStartLiveServices = false
         } else if ProcessInfo.processInfo.arguments.contains("--preview-fixtures") {
@@ -26,7 +29,13 @@ struct SimDeckApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootTabView(model: model)
+            Group {
+                if model.isOnboardingPresented {
+                    OnboardingScreen(model: model)
+                } else {
+                    RootTabView(model: model)
+                }
+            }
                 .task {
                     guard shouldStartLiveServices else { return }
                     model.bootstrapInstallation()

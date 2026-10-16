@@ -5,7 +5,8 @@ extension AppModel {
     static func preview(
         selectedTab: AppTab = .calls,
         devices: [DeviceLineIdentity] = PreviewFixtures.devices,
-        keyRecoveryState: KeyRecoveryState = .available
+        keyRecoveryState: KeyRecoveryState = .available,
+        onboardingCompleted: Bool = true
     ) -> AppModel {
         let serverConnection = ServerConnectionManager(
             network: PreviewServerNetworking(),
@@ -27,7 +28,8 @@ extension AppModel {
                 transport: PreviewCallTransport(),
                 integratesWithSystem: false
             ),
-            installationBootstrapper: PreviewInstallationBootstrapper()
+            installationBootstrapper: PreviewInstallationBootstrapper(),
+            onboardingStore: PreviewOnboardingStore(isCompleted: onboardingCompleted)
         )
     }
 }
@@ -43,5 +45,18 @@ private final class PreviewSecureValueStore: SecureValueStoring, @unchecked Send
     func read() -> Data? { nil }
     func write(_ value: Data) {}
     func delete() {}
+}
+
+@MainActor
+private final class PreviewOnboardingStore: OnboardingStoring {
+    private(set) var isCompleted: Bool
+
+    init(isCompleted: Bool) {
+        self.isCompleted = isCompleted
+    }
+
+    func markCompleted() {
+        isCompleted = true
+    }
 }
 #endif

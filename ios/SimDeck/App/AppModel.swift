@@ -22,6 +22,7 @@ final class AppModel {
     }
     var pendingExternalDialRequest: ExternalDialRequest?
     var selectedTab: AppTab
+    private(set) var isOnboardingPresented: Bool
     var keyRecoveryState: KeyRecoveryState
     var installationID: UUID?
     private(set) var installationTrust: AppInstallationTrust?
@@ -31,6 +32,7 @@ final class AppModel {
     let installationBootstrapper: any InstallationBootstrapping
     @ObservationIgnored private let defaultLineStore: any DefaultLineStoring
     @ObservationIgnored private let recentCallLineStore: any RecentCallLineStoring
+    @ObservationIgnored private let onboardingStore: any OnboardingStoring
     @ObservationIgnored private var installationIdentity: InstallationIdentity?
     @ObservationIgnored private var recoveredVaultKey: VaultKey?
     @ObservationIgnored private var voipPushCoordinator: VoIPPushCoordinator?
@@ -48,7 +50,8 @@ final class AppModel {
         callCoordinator: CallKitCoordinator? = nil,
         installationBootstrapper: any InstallationBootstrapping = InstallationBootstrapper.live(),
         defaultLineStore: (any DefaultLineStoring)? = nil,
-        recentCallLineStore: (any RecentCallLineStoring)? = nil
+        recentCallLineStore: (any RecentCallLineStoring)? = nil,
+        onboardingStore: (any OnboardingStoring)? = nil
     ) {
         let resolvedServerConnection = serverConnection ?? .live()
         let resolvedDefaultLineStore = defaultLineStore ?? UserDefaultsDefaultLineStore()
@@ -61,6 +64,8 @@ final class AppModel {
         self.defaultMessageLineID = defaultMessageLineID ?? resolvedDefaultLineStore.messageLineID
         self.pendingExternalDialRequest = nil
         self.selectedTab = selectedTab
+        let resolvedOnboardingStore = onboardingStore ?? UserDefaultsOnboardingStore()
+        self.isOnboardingPresented = !resolvedOnboardingStore.isCompleted
         self.keyRecoveryState = keyRecoveryState
         self.installationTrust = nil
         self.pendingInstallationRevocationIDs = []
@@ -73,6 +78,12 @@ final class AppModel {
         self.installationBootstrapper = installationBootstrapper
         self.defaultLineStore = resolvedDefaultLineStore
         self.recentCallLineStore = resolvedRecentCallLineStore
+        self.onboardingStore = resolvedOnboardingStore
+    }
+
+    func completeOnboarding() {
+        onboardingStore.markCompleted()
+        isOnboardingPresented = false
     }
 
     func bootstrapInstallation() {

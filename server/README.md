@@ -63,3 +63,71 @@ address.
 If no admin password secret exists during first startup, the server generates a
 random password and writes it to the log exactly once. A recovery public key is
 always required before the owner account can be created.
+
+### First server start
+
+Create deployment secrets on the Linux host. The recovery private key must
+remain outside every container and backup set that contains the server
+database:
+
+```sh
+mkdir -p secrets
+umask 077
+openssl rand -base64 32 > secrets/admin_password.txt
+openssl genpkey -algorithm ED25519 -out secrets/recovery-private.pem
+openssl pkey -in secrets/recovery-private.pem -pubout -outform DER \
+  | tail -c 32 \
+  | openssl base64 -A \
+  | tr -d '=' > secrets/recovery_public_key.txt
+cp .env.example .env
+```
+
+Set a URL-safe `POSTGRES_PASSWORD`, the externally reachable
+`PUBLIC_BASE_URL`, and `SERVER_PORT` in `.env`. For example, generate the
+database password with `openssl rand -hex 32`. `PUBLIC_BASE_URL` must be the URL
+that both the iPhone and device containers can reach; `localhost` is not valid
+for a modem container.
+
+Start the base stack and check readiness:
+
+```sh
+docker compose up --build -d
+docker compose ps
+curl --fail-with-body http://127.0.0.1:8443/healthz
+```
+
+The health URL uses HTTP when the provided base Compose stack is used directly.
+Use the reverse-proxy HTTPS URL instead when TLS terminates in front of the
+container.
+
+### Create a one-time modem pairing token
+
+The examples below require `curl` and `jq`. Read the administrator password
+without placing it in shell history, sign in, and create a ten-minute token:
+
+```sh
+export SIM_DECK_SERVER_URL=https://sim-deck.example.com
+read -r -s -p 'sim-deck admin password: ' SIM_DECK_ADMIN_PASSWORD
+printf '\n'
+
+session_json="$(
+  jq -nc --arg password "$SIM_DECK_ADMIN_PASSWORD" \
+    '{username:"admin",password:$password}' \
+  | curl --fail-with-body -sS \
+      -H 'Content-Type: application/json' \
+      --data-binary @- \
+      "$SIM_DECK_SERVER_URL/v1/auth/bootstrap"
+)"
+access_token="$(printf '%s' "$session_json" | jq -er '.access_token')"
+unset SIM_DECK_ADMIN_PASSWORD session_json
+
+pairing_json="$(curl --fail-with-body -sS -X POST \
+  -H "Authorization: Bearer $access_token" \
+  "$SIM_DECK_SERVER_URL/v1/device-pairing-tokens")"
+printf '%s\n' "$pairing_json" | jq
+pairing_token="$(printf '%s' "$pairing_json" | jq -er '.pairing_token')"
+```
+
+Write `pairing_token` to the matching device container's Docker secret file,
+start that container before `expires_at`, then clear the shell variables. Use a
+different token, state volume, and hardware mapping for every modem.

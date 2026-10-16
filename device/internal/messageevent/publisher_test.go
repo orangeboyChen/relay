@@ -83,6 +83,7 @@ var _ = Describe("Incoming message publisher", func() {
 		Expect(publisher.Publish(context.Background(), message)).To(Succeed())
 
 		Expect(remote.envelopes).To(HaveLen(2))
+		Expect(remote.envelopes[0].ID).NotTo(Equal(remote.envelopes[1].ID))
 		first := openEnvelope(state, remote.envelopes[0], privateOne)
 		second := openEnvelope(state, remote.envelopes[1], privateTwo)
 		firstInstallation := first.InstallationID
@@ -99,6 +100,7 @@ var _ = Describe("Incoming message publisher", func() {
 		Expect(firstInstallation).To(Equal("01900000-0000-7000-8000-000000000101"))
 		Expect(secondInstallation).To(Equal("01900000-0000-7000-8000-000000000102"))
 		for _, envelope := range remote.envelopes {
+			Expect(identity.ValidDeviceUUID(envelope.ID)).To(BeTrue())
 			Expect(envelope.Type).To(Equal("message.received"))
 			Expect(envelope.OccurredAt.Nanosecond()).To(Equal(987000000))
 			Expect(ed25519.Verify(state.PublicKey(), signedData(envelope), envelope.Signature)).To(BeTrue())

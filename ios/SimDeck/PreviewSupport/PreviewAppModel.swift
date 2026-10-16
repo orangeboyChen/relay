@@ -14,7 +14,7 @@ extension AppModel {
             defaults: UserDefaults(suiteName: "sim-deck.preview")!
         )
         serverConnection.address = "https://sim-deck.example.com"
-        return AppModel(
+        let model = AppModel(
             devices: devices,
             callHistory: .loaded(PreviewFixtures.calls),
             messages: .loaded(PreviewFixtures.conversations),
@@ -31,6 +31,8 @@ extension AppModel {
             installationBootstrapper: PreviewInstallationBootstrapper(),
             onboardingStore: PreviewOnboardingStore(isCompleted: onboardingCompleted)
         )
+        model.bootstrapInstallation()
+        return model
     }
 }
 

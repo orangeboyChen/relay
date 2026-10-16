@@ -11,7 +11,7 @@ struct ProfileScreen: View {
 
             Section {
                 NavigationLink {
-                    DeviceManagementScreen(devices: model.devices)
+                    DeviceManagementScreen(model: model)
                 } label: {
                     Label("Device Management", systemImage: "simcard.2")
                 }

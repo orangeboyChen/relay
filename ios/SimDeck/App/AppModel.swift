@@ -37,6 +37,8 @@ final class AppModel {
     @ObservationIgnored private var recoveredVaultKey: VaultKey?
     @ObservationIgnored private var voipPushCoordinator: VoIPPushCoordinator?
 
+    var canEditDeviceProfiles: Bool { recoveredVaultKey != nil }
+
     init(
         devices: [DeviceLineIdentity] = [],
         callHistory: CallHistoryState = .loaded([]),

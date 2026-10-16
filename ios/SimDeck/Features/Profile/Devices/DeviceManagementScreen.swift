@@ -1,111 +1,98 @@
 import SwiftUI
 
 struct DeviceManagementScreen: View {
-    let devices: [DeviceLineIdentity]
+    let model: AppModel
+
+    @State private var isAddingDevice = false
 
     var body: some View {
-        List(devices) { line in
-            NavigationLink {
-                DeviceSettingsScreen(line: line)
-            } label: {
-                HStack(spacing: 12) {
-                    SIMBadge(line: line)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(line.deviceName)
-                            .lineLimit(1)
-                        Text(line.displayName)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+        Group {
+            if model.devices.isEmpty {
+                DeviceManagementEmptyState {
+                    isAddingDevice = true
+                }
+            } else {
+                List(model.devices) { line in
+                    NavigationLink {
+                        DeviceSettingsScreen(model: model, line: line)
+                    } label: {
+                        DeviceManagementRow(line: line)
                     }
-                    Spacer()
-                    Text(line.isOnline ? "Online" : "Offline")
-                        .font(.caption)
-                        .foregroundStyle(line.isOnline ? .green : .secondary)
+                }
+                .refreshable {
+                    await model.refreshDevices()
                 }
             }
         }
         .navigationTitle("Device Management")
-    }
-}
-
-struct DeviceSettingsScreen: View {
-    @State private var numericID: Int
-    @State private var deviceName: String
-    @State private var lineName: String
-    @State private var phoneNumber: String
-
-    init(line: DeviceLineIdentity) {
-        _numericID = State(initialValue: line.numericID)
-        _deviceName = State(initialValue: line.deviceName)
-        _lineName = State(initialValue: line.lineName)
-        _phoneNumber = State(initialValue: line.phoneNumber)
-    }
-
-    var body: some View {
-        Form {
-            Section("Identity") {
-                Stepper("SIM ID: \(numericID)", value: $numericID, in: 1...99)
-                TextField("Device name", text: $deviceName)
-                TextField("Line name", text: $lineName)
-                TextField("Phone number", text: $phoneNumber)
-                    .keyboardType(.phonePad)
-            }
-
-            Section("MMS") {
-                NavigationLink("MMS Configuration") {
-                    MMSSettingsScreen()
-                }
-            }
-
-            Section {
-                Button("Revoke Device", role: .destructive) { }
-            }
-        }
-        .navigationTitle("Device")
         .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Save") { }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    isAddingDevice = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .accessibilityLabel("Add Device")
             }
+        }
+        .sheet(isPresented: $isAddingDevice) {
+            AddDeviceScreen(model: model)
         }
     }
 }
 
-struct MMSSettingsScreen: View {
-    @State private var apn = ""
-    @State private var mmsc = ""
-    @State private var proxy = ""
-    @State private var sizeLimit = 1_024
+private struct DeviceManagementRow: View {
+    let line: DeviceLineIdentity
 
     var body: some View {
-        Form {
-            TextField("APN", text: $apn)
-            TextField("MMSC", text: $mmsc)
-                .textInputAutocapitalization(.never)
-            TextField("Proxy", text: $proxy)
-                .textInputAutocapitalization(.never)
-            Stepper("Size limit: \(sizeLimit) KB", value: $sizeLimit, in: 128...10_240, step: 128)
+        HStack(spacing: 12) {
+            SIMBadge(line: line)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(line.deviceName.isEmpty ? String(localized: "Unnamed Device") : line.deviceName)
+                    .lineLimit(1)
+                Text(line.displayName)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 12)
+            Text(line.isOnline ? String(localized: "Online") : String(localized: "Offline"))
+                .font(.caption)
+                .foregroundStyle(line.isOnline ? .green : .secondary)
         }
-        .navigationTitle("MMS Configuration")
+        .frame(minHeight: 44)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct DeviceManagementEmptyState: View {
+    let addDevice: () -> Void
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("No Devices", systemImage: "simcard")
+        } description: {
+            Text("Pair one Linux modem container for each SIM you want to use.")
+        } actions: {
+            Button("Add Device") {
+                addDevice()
+            }
+                .buttonStyle(.borderedProminent)
+        }
     }
 }
 
 #if DEBUG
-#Preview("Device Management - Dark") {
+#Preview("Device Management") {
     NavigationStack {
-        DeviceManagementScreen(devices: PreviewFixtures.devices)
+        DeviceManagementScreen(model: .preview(selectedTab: .profile))
+    }
+}
+
+#Preview("Device Management - Empty") {
+    NavigationStack {
+        DeviceManagementScreen(model: .preview(selectedTab: .profile, devices: []))
     }
     .preferredColorScheme(.dark)
-}
-
-#Preview("Device Settings") {
-    NavigationStack {
-        DeviceSettingsScreen(line: PreviewFixtures.devices[0])
-    }
-}
-
-#Preview("MMS Settings") {
-    NavigationStack {
-        MMSSettingsScreen()
-    }
 }
 #endif

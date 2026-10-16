@@ -34,6 +34,7 @@ type fakeRemote struct {
 	credential     string
 	commandID      string
 	result         EncryptedResult
+	completed      chan struct{}
 	recipients     []incomingcall.Recipient
 	recipientError error
 }
@@ -62,6 +63,9 @@ func (remote *fakeRemote) Complete(_ context.Context, deviceID string, credentia
 	remote.credential = credential
 	remote.commandID = commandID
 	remote.result = result
+	if remote.completed != nil {
+		close(remote.completed)
+	}
 	return remote.completeError
 }
 
@@ -416,6 +420,12 @@ var _ = Describe("Encrypted command runtime", func() {
 			{Version: 2, Operation: "call.end", CallID: "call-1"},
 			{Version: 1, Operation: "call.end"},
 			{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086"},
+			{Version: 1, Operation: "call.answer", MediaOffer: "offer-sdp"},
+			{Version: 1, Operation: "call.reject"},
+			{Version: 1, Operation: "call.hold"},
+			{Version: 1, Operation: "call.resume"},
+			{Version: 1, Operation: "call.swap"},
+			{Version: 1, Operation: "call.dtmf", CallID: "call-1"},
 			{Version: 1, Operation: "message.send", Number: "10086", Body: "hello"},
 			{Version: 1, Operation: "message.send", MessageID: "not-a-uuid", Number: "10086", Body: "hello"},
 			{Version: 1, Operation: "message.send", MessageID: "01900000-0000-7000-8000-000000000020", Body: "hello"},
@@ -467,6 +477,26 @@ var _ = Describe("Encrypted command runtime", func() {
 
 		remote.claimError = errors.New("server unavailable")
 		Expect(runtime.Run(context.Background())).To(MatchError("server unavailable"))
+	})
+
+	It("claims, executes, and completes a command before continuing to poll", func() {
+		envelope, _ := sealCommand(state, senderKey, commandID, Payload{
+			Version: 1, Operation: "message.send", MessageID: "01900000-0000-7000-8000-000000000020",
+			Number: "10086", Body: "runtime delivery",
+		})
+		remote.claims = []*Envelope{&envelope}
+		remote.completed = make(chan struct{})
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-remote.completed
+			cancel()
+		}()
+
+		Expect(runtime.Run(ctx)).To(MatchError(context.Canceled))
+
+		Expect(messages.destination).To(Equal("10086"))
+		Expect(messages.body).To(Equal("runtime delivery"))
+		Expect(remote.commandID).To(Equal(commandID))
 	})
 
 	It("validates runtime dependencies", func() {

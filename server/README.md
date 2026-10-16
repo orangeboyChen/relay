@@ -32,7 +32,7 @@ key. Keep its private key on the Linux host and never mount it into the server
 container.
 
 The base Compose stack does not require Apple credentials, so PostgreSQL,
-owner bootstrap, iOS login, and modem pairing work before APNs is configured.
+owner bootstrap, iOS login, and app-controlled modem discovery work before APNs is configured.
 VoIP pushes use an Apple token-signing `.p8` key mounted through the optional
 `compose.apns.yaml` overlay. Set `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_TOPIC`, and
 `APNS_PRIVATE_KEY_FILE` in `.env`. The topic must be the iOS bundle identifier
@@ -100,34 +100,35 @@ The health URL uses HTTP when the provided base Compose stack is used directly.
 Use the reverse-proxy HTTPS URL instead when TLS terminates in front of the
 container.
 
-### Create a one-time modem pairing token
+### Add modem devices from the iOS app
 
-The examples below require `curl` and `jq`. Read the administrator password
-without placing it in shell history, sign in, and create a ten-minute token:
+Device admission is controlled by the owner in the iOS app. A token does not
+need to be copied between the app and Docker:
 
-```sh
-export SIM_DECK_SERVER_URL=https://sim-deck.example.com
-read -r -s -p 'sim-deck admin password: ' SIM_DECK_ADMIN_PASSWORD
-printf '\n'
+1. Sign in to the server from the app and open **My > Device Management > Add Device**.
+2. Turn on **Device Discovery**. The server accepts candidates for ten minutes,
+   or until the switch is turned off.
+3. Start one modem container with a manually configured, unique
+   `SIM_DECK_DEVICE_UUID`.
+4. Compare the UUID and identity fingerprint in the app with the device
+   container log, then tap **Allow** or **Don't Allow**.
+5. Repeat step 3 for additional modem containers, using a different UUID,
+   hardware mapping, and state volume for each one.
+6. Turn off **Device Discovery** when the intended devices have joined.
 
-session_json="$(
-  jq -nc --arg password "$SIM_DECK_ADMIN_PASSWORD" \
-    '{username:"admin",password:$password}' \
-  | curl --fail-with-body -sS \
-      -H 'Content-Type: application/json' \
-      --data-binary @- \
-      "$SIM_DECK_SERVER_URL/v1/auth/bootstrap"
-)"
-access_token="$(printf '%s' "$session_json" | jq -er '.access_token')"
-unset SIM_DECK_ADMIN_PASSWORD session_json
+The owner APIs are:
 
-pairing_json="$(curl --fail-with-body -sS -X POST \
-  -H "Authorization: Bearer $access_token" \
-  "$SIM_DECK_SERVER_URL/v1/device-pairing-tokens")"
-printf '%s\n' "$pairing_json" | jq
-pairing_token="$(printf '%s' "$pairing_json" | jq -er '.pairing_token')"
-```
+- `POST /v1/device-discovery-session` to open or replace the ten-minute window.
+- `GET /v1/device-discovery-session` to read its current state.
+- `DELETE /v1/device-discovery-session` to close it immediately.
+- `GET /v1/device-discoveries` to list pending candidates.
+- `POST /v1/device-discoveries/{device_uuid}/approve` to admit a candidate and
+  atomically allocate the smallest free SIM numeric ID.
+- `DELETE /v1/device-discoveries/{device_uuid}` to reject a candidate.
 
-Write `pairing_token` to the matching device container's Docker secret file,
-start that container before `expires_at`, then clear the shell variables. Use a
-different token, state volume, and hardware mapping for every modem.
+The modem submits a signed proof of possession and polls its result with a
+private pending credential. The server stores only the credential hash. An
+approved device persists its issued server credential in its private state
+volume, so restarting the same container does not require another approval.
+Changing `SIM_DECK_DEVICE_UUID` while reusing that volume fails startup instead
+of silently changing the device identity.

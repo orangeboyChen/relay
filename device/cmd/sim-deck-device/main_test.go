@@ -118,6 +118,8 @@ type fakeDeviceSession struct {
 
 func (session *fakeDeviceSession) Calls() *call.Controller { return session.calls }
 
+func (*fakeDeviceSession) SendSMS(context.Context, string, string, byte) error { return nil }
+
 type fakeCommandRuntime struct {
 	runError   error
 	runStarted chan struct{}
@@ -683,7 +685,7 @@ var _ = Describe("Device command runtime", func() {
 		callMedia, err := dependencies.newCallMedia(config)
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { _ = callMedia.Close() })
-		commands, err := dependencies.newCommands(config, state, session.Calls(), command.Dependencies{Events: events, Media: callMedia})
+		commands, err := dependencies.newCommands(config, state, session.Calls(), command.Dependencies{Events: events, Media: callMedia, Messages: session})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(commands).NotTo(BeNil())
 	})

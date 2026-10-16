@@ -124,6 +124,7 @@ type deviceSession interface {
 	Initialize(context.Context) error
 	Run(context.Context) error
 	Calls() *call.Controller
+	command.Messages
 }
 
 type commandRuntime interface {
@@ -270,7 +271,7 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 		return fmt.Errorf("create call media runtime: %w", err)
 	}
 	defer callMedia.Close()
-	commands, err := dependencies.newCommands(config, deviceIdentity, session.Calls(), command.Dependencies{Events: events, Media: callMedia})
+	commands, err := dependencies.newCommands(config, deviceIdentity, session.Calls(), command.Dependencies{Events: events, Media: callMedia, Messages: session})
 	if err != nil {
 		return fmt.Errorf("create encrypted command runtime: %w", err)
 	}

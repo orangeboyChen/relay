@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -145,6 +146,20 @@ type fakeCallMedia struct {
 	stopped      []string
 }
 
+type fakeMessages struct {
+	destination string
+	body        string
+	reference   byte
+	err         error
+}
+
+func (messages *fakeMessages) SendSMS(_ context.Context, destination string, body string, reference byte) error {
+	messages.destination = destination
+	messages.body = body
+	messages.reference = reference
+	return messages.err
+}
+
 func (media *fakeCallMedia) Negotiate(_ context.Context, callID string, offer string) (string, error) {
 	media.callID = callID
 	media.offer = offer
@@ -168,6 +183,7 @@ var _ = Describe("Encrypted command runtime", func() {
 		calls     *fakeCalls
 		events    *fakeEventRegistrar
 		media     *fakeCallMedia
+		messages  *fakeMessages
 		runtime   *Runtime
 	)
 
@@ -188,8 +204,44 @@ var _ = Describe("Encrypted command runtime", func() {
 		calls = &fakeCalls{state: call.StateIdle}
 		events = &fakeEventRegistrar{}
 		media = &fakeCallMedia{answer: "answer-sdp"}
-		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: events, Media: media})
+		messages = &fakeMessages{}
+		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: events, Media: media, Messages: messages})
 		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("executes an encrypted SMS command without exposing its content", func() {
+		messageID := "01900000-0000-7000-8000-000000000020"
+		body := "你好，this message is longer than one short example " + strings.Repeat("文本", 80)
+		payload := Payload{
+			Version: 1, Operation: "message.send", MessageID: messageID,
+			Number: "+8613500000000", Body: body,
+		}
+		envelope, sharedSecret := sealCommand(state, senderKey, commandID, payload)
+
+		Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+
+		Expect(messages.destination).To(Equal("+8613500000000"))
+		Expect(messages.body).To(Equal(body))
+		expectedReference := sha256.Sum256([]byte(messageID))
+		Expect(messages.reference).To(Equal(expectedReference[0]))
+		Expect(openResult(sharedSecret, envelope, remote.result).Success).To(BeTrue())
+		Expect(string(envelope.Ciphertext)).NotTo(ContainSubstring("13500000000"))
+		Expect(string(envelope.Ciphertext)).NotTo(ContainSubstring("你好"))
+	})
+
+	It("returns an encrypted modem error for a rejected SMS", func() {
+		messages.err = errors.New("+CMS ERROR: exposed modem detail")
+		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{
+			Version: 1, Operation: "message.send", MessageID: "01900000-0000-7000-8000-000000000020",
+			Number: "10086", Body: "hello",
+		})
+
+		Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+
+		result := openResult(sharedSecret, envelope, remote.result)
+		Expect(result.Success).To(BeFalse())
+		Expect(result.ErrorCode).To(Equal("modem_rejected"))
+		Expect(string(remote.result.Ciphertext)).NotTo(ContainSubstring("CMS ERROR"))
 	})
 
 	DescribeTable("executes supported call operations from authenticated plaintext",
@@ -323,7 +375,7 @@ var _ = Describe("Encrypted command runtime", func() {
 	It("registers the outgoing call secret before dialing", func() {
 		registrar := &fakeEventRegistrar{}
 		var err error
-		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: registrar, Media: media})
+		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: registrar, Media: media, Messages: messages})
 		Expect(err).NotTo(HaveOccurred())
 		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086", MediaOffer: "offer-sdp"})
 
@@ -338,7 +390,7 @@ var _ = Describe("Encrypted command runtime", func() {
 		registrar := &fakeEventRegistrar{}
 		calls.error = errors.New("modem rejected")
 		var err error
-		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: registrar, Media: media})
+		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: registrar, Media: media, Messages: messages})
 		Expect(err).NotTo(HaveOccurred())
 		envelope, _ := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086", MediaOffer: "offer-sdp"})
 
@@ -350,7 +402,7 @@ var _ = Describe("Encrypted command runtime", func() {
 	It("fails closed when outgoing event registration fails", func() {
 		registrar := &fakeEventRegistrar{err: errors.New("event key unavailable")}
 		var err error
-		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: registrar, Media: media})
+		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: registrar, Media: media, Messages: messages})
 		Expect(err).NotTo(HaveOccurred())
 		envelope, _ := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086", MediaOffer: "offer-sdp"})
 
@@ -364,6 +416,10 @@ var _ = Describe("Encrypted command runtime", func() {
 			{Version: 2, Operation: "call.end", CallID: "call-1"},
 			{Version: 1, Operation: "call.end"},
 			{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086"},
+			{Version: 1, Operation: "message.send", Number: "10086", Body: "hello"},
+			{Version: 1, Operation: "message.send", MessageID: "not-a-uuid", Number: "10086", Body: "hello"},
+			{Version: 1, Operation: "message.send", MessageID: "01900000-0000-7000-8000-000000000020", Body: "hello"},
+			{Version: 1, Operation: "message.send", MessageID: "01900000-0000-7000-8000-000000000020", Number: "10086"},
 			{Version: 1, Operation: "unknown", CallID: "call-1"},
 		} {
 			envelope, sharedSecret := sealCommand(state, senderKey, commandID, payload)
@@ -414,7 +470,7 @@ var _ = Describe("Encrypted command runtime", func() {
 	})
 
 	It("validates runtime dependencies", func() {
-		dependencies := Dependencies{Events: events, Media: media}
+		dependencies := Dependencies{Events: events, Media: media, Messages: messages}
 		_, err := NewRuntime(nil, state, calls, time.Second, dependencies)
 		Expect(err).To(HaveOccurred())
 		_, err = NewRuntime(remote, identity.State{}, calls, time.Second, dependencies)
@@ -423,9 +479,11 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(err).To(HaveOccurred())
 		_, err = NewRuntime(remote, state, calls, 0, dependencies)
 		Expect(err).To(HaveOccurred())
-		_, err = NewRuntime(remote, state, calls, time.Second, Dependencies{Media: media})
+		_, err = NewRuntime(remote, state, calls, time.Second, Dependencies{Media: media, Messages: messages})
 		Expect(err).To(HaveOccurred())
-		_, err = NewRuntime(remote, state, calls, time.Second, Dependencies{Events: events})
+		_, err = NewRuntime(remote, state, calls, time.Second, Dependencies{Events: events, Messages: messages})
+		Expect(err).To(HaveOccurred())
+		_, err = NewRuntime(remote, state, calls, time.Second, Dependencies{Events: events, Media: media})
 		Expect(err).To(HaveOccurred())
 	})
 })

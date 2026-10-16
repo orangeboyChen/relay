@@ -51,8 +51,10 @@ type EncryptedResult struct {
 type Payload struct {
 	Version    int    `json:"version"`
 	Operation  string `json:"operation"`
-	CallID     string `json:"call_id"`
+	CallID     string `json:"call_id,omitempty"`
+	MessageID  string `json:"message_id,omitempty"`
 	Number     string `json:"number,omitempty"`
+	Body       string `json:"body,omitempty"`
 	Digits     string `json:"digits,omitempty"`
 	MediaOffer string `json:"media_offer,omitempty"`
 }
@@ -87,6 +89,11 @@ type Calls interface {
 	State() call.State
 }
 
+// Messages is the modem SMS capability used by encrypted commands.
+type Messages interface {
+	SendSMS(context.Context, string, string, byte) error
+}
+
 // CallEventRegistrar binds modem state changes to the initiating encrypted call.
 type CallEventRegistrar interface {
 	RegisterOutgoing(string, []byte) error
@@ -101,8 +108,9 @@ type CallMedia interface {
 
 // Dependencies contains the endpoint capabilities used by the command runtime.
 type Dependencies struct {
-	Events CallEventRegistrar
-	Media  CallMedia
+	Events   CallEventRegistrar
+	Media    CallMedia
+	Messages Messages
 }
 
 // Runtime polls, decrypts, executes, and acknowledges commands for one modem.
@@ -114,6 +122,7 @@ type Runtime struct {
 	random       io.Reader
 	events       CallEventRegistrar
 	media        CallMedia
+	messages     Messages
 	now          func() time.Time
 }
 
@@ -122,12 +131,12 @@ func NewRuntime(remote Remote, state identity.State, calls Calls, pollInterval t
 	if remote == nil || calls == nil || state.Credential == "" || len(state.CommandPrivateKey) != keyBytes || pollInterval <= 0 {
 		return nil, errors.New("command runtime requires a bound identity, remote, call controller, and positive poll interval")
 	}
-	if dependencies.Events == nil || dependencies.Media == nil {
-		return nil, errors.New("command runtime requires call event and media dependencies")
+	if dependencies.Events == nil || dependencies.Media == nil || dependencies.Messages == nil {
+		return nil, errors.New("command runtime requires call event, media, and message dependencies")
 	}
 	return &Runtime{
 		remote: remote, identity: state, calls: calls, pollInterval: pollInterval,
-		random: rand.Reader, events: dependencies.Events, media: dependencies.Media, now: time.Now,
+		random: rand.Reader, events: dependencies.Events, media: dependencies.Media, messages: dependencies.Messages, now: time.Now,
 	}, nil
 }
 
@@ -201,12 +210,18 @@ func (runtime *Runtime) process(ctx context.Context, envelope Envelope) error {
 }
 
 func (runtime *Runtime) execute(ctx context.Context, payload Payload) (string, error) {
-	if payload.Version != protocolVersion || strings.TrimSpace(payload.CallID) == "" {
+	if payload.Version != protocolVersion {
 		return "", errInvalidCommand
 	}
 	switch payload.Operation {
+	case "message.send":
+		if !identity.ValidDeviceUUID(payload.MessageID) || strings.TrimSpace(payload.Number) == "" || strings.TrimSpace(payload.Body) == "" {
+			return "", errInvalidCommand
+		}
+		reference := sha256.Sum256([]byte(payload.MessageID))
+		return "", runtime.messages.SendSMS(ctx, payload.Number, payload.Body, reference[0])
 	case "call.start":
-		if strings.TrimSpace(payload.MediaOffer) == "" {
+		if strings.TrimSpace(payload.CallID) == "" || strings.TrimSpace(payload.MediaOffer) == "" {
 			return "", errInvalidCommand
 		}
 		answer, err := runtime.media.Negotiate(ctx, payload.CallID, payload.MediaOffer)
@@ -219,7 +234,7 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload) (string, e
 		}
 		return answer, nil
 	case "call.answer":
-		if strings.TrimSpace(payload.MediaOffer) == "" {
+		if strings.TrimSpace(payload.CallID) == "" || strings.TrimSpace(payload.MediaOffer) == "" {
 			return "", errInvalidCommand
 		}
 		answer, err := runtime.media.Negotiate(ctx, payload.CallID, payload.MediaOffer)
@@ -237,20 +252,38 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload) (string, e
 		}
 		return answer, nil
 	case "call.reject":
+		if strings.TrimSpace(payload.CallID) == "" {
+			return "", errInvalidCommand
+		}
 		return "", runtime.calls.Reject(ctx)
 	case "call.end":
+		if strings.TrimSpace(payload.CallID) == "" {
+			return "", errInvalidCommand
+		}
 		if err := runtime.calls.Hangup(ctx); err != nil {
 			return "", err
 		}
 		_ = runtime.media.Stop(payload.CallID)
 		return "", nil
 	case "call.hold":
+		if strings.TrimSpace(payload.CallID) == "" {
+			return "", errInvalidCommand
+		}
 		return "", runtime.calls.Hold(ctx)
 	case "call.resume":
+		if strings.TrimSpace(payload.CallID) == "" {
+			return "", errInvalidCommand
+		}
 		return "", runtime.calls.Resume(ctx)
 	case "call.swap":
+		if strings.TrimSpace(payload.CallID) == "" {
+			return "", errInvalidCommand
+		}
 		return "", runtime.calls.Swap(ctx)
 	case "call.dtmf":
+		if strings.TrimSpace(payload.CallID) == "" || strings.TrimSpace(payload.Digits) == "" {
+			return "", errInvalidCommand
+		}
 		return "", runtime.calls.SendDTMF(ctx, payload.Digits)
 	default:
 		return "", errInvalidCommand

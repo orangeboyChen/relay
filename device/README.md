@@ -31,10 +31,9 @@ following resources kept separate from every other instance:
   device nodes for that modem;
 - one persistent `/var/lib/sim-deck` volume;
 - one operator-assigned `SIM_DECK_DEVICE_UUID`;
-- one short-lived, one-time pairing token.
 
 Never share or copy a state volume between two running modem containers. The
-The configured UUID is immutable for that state volume. Startup fails if
+configured UUID is immutable for that state volume. Startup fails if
 `SIM_DECK_DEVICE_UUID` does not match the persisted identity. The volume also
 contains the modem endpoint's Ed25519 signing identity, X25519
 command-decryption identity, server URL, device credential, and visible SIM numeric ID. Copying it would create two
@@ -91,34 +90,42 @@ physical device. If a modem does not expose a unique serial number, replace the
 serial match with a stable physical USB-port match from the `udevadm` attribute
 walk; never distinguish identical modems by their transient `ttyUSB` number.
 
-## Pairing with the server
+## App-controlled discovery
 
-The owner-authenticated server endpoint `POST /v1/device-pairing-tokens` creates
-a token valid for ten minutes. Create a different token for every modem and
-write only the token value to the matching file under `secrets/`. Keep those
-files mode `0600` and do not place tokens in environment variables or commit
-them.
+Device admission is controlled from the iOS app and does not require copying a
+pairing token into Docker. The intended first-start sequence is:
+
+1. In the app, open device management and enable device discovery. The server
+   accepts new candidates for ten minutes or until discovery is disabled.
+2. Start one modem container. It connects to the configured server and appears
+   as a pending device in the app.
+3. Compare the immutable device UUID and public-key fingerprint shown in the
+   app with the deployment you started, then tap Allow or Don't Allow.
+4. After allowing the candidate, configure its editable device and line names.
+   The server assigns the smallest free visible SIM numeric ID atomically.
+5. Disable device discovery when no more modems need to be admitted.
 
 On first startup, the agent:
 
-1. creates and durably stores a UUID, Ed25519 identity, X25519 command key, and pending credential;
-2. sends the public identities and one-time token to the configured server over
-   HTTPS;
-3. stores the server-assigned SIM numeric ID after the server confirms pairing;
-4. becomes ready only after the binding has been persisted.
+1. validates the operator-supplied `SIM_DECK_DEVICE_UUID` and binds it to the
+   private state volume;
+2. creates and durably stores an Ed25519 identity, X25519 command key, and random
+   pending credential;
+3. signs its discovery request and sends only public keys plus the pending
+   credential to the server over HTTPS;
+4. polls with that pending credential until the owner allows or rejects it;
+5. stores the server-assigned SIM numeric ID after approval;
+6. becomes ready only after the binding has been persisted.
 
-If the request is interrupted, the same pending credential is reused so the
-one-time token can be retried safely. A bound state volume refuses to connect to
-a different server URL. To move intentionally to another server, revoke the old
-device and pair with a new empty state volume.
-
-After the first successful binding, the consumed token is no longer needed.
-The secret mount may be removed from that service; subsequent starts use the
-credential in its private state volume.
+If the request is interrupted, the same pending credential is reused. If the
+server approved the device just before a container restart, the agent retrieves
+that result instead of creating a second candidate. A bound state volume
+refuses to connect to a different server URL. To move intentionally to another
+server, revoke the old device and start with a new private state volume.
 
 ## Encrypted call commands
 
-After pairing, the agent authenticates with its device credential and polls for
+After approval, the agent authenticates with its device credential and polls for
 opaque commands. The iPhone encrypts every call operation directly to the
 device's X25519 public key with AES-256-GCM. The server can route and expire a
 command but cannot read the number, call identifier, DTMF digits, or execution
@@ -137,9 +144,8 @@ own queue and must keep its state volume private.
 
 ## Running two modems
 
-`compose.example.yaml` defines two fully isolated modem services. Create
-`secrets/modem-1-pairing-token` and `secrets/modem-2-pairing-token`, then set the
-server URL and host device group IDs:
+`compose.example.yaml` defines two fully isolated modem services. Set the
+server URL, a different UUID for each modem, and the host device group IDs:
 
 ```sh
 export SIM_DECK_SERVER_URL=https://sim-deck.example
@@ -153,7 +159,7 @@ docker compose -f compose.example.yaml up --build
 Generate a different UUID for every modem container and keep it with that
 modem's deployment configuration. The server sees two independent device UUIDs and allocates the smallest free SIM
 numeric ID to each. To add another modem, copy one service block and change all
-host device paths, the configured UUID, the state volume, the pairing secret, and the host health
+host device paths, the configured UUID, the state volume, and the host health
 port. Do not add multiple modem mappings to one container.
 
 The local readiness endpoints in the example are
@@ -165,27 +171,18 @@ while its modem or server binding is unavailable.
 
 Plain HTTP is rejected by default. It can be enabled only for an isolated local
 development network or encrypted VPN with
-`SIM_DECK_ALLOW_INSECURE_HTTP=true`; production pairing over an untrusted
+`SIM_DECK_ALLOW_INSECURE_HTTP=true`; production discovery over an untrusted
 network must use HTTPS because device credentials still require transport
 protection even though message and call content is end-to-end encrypted.
 
-## Start and pair the first Linux modem
-
-Generate a one-time pairing token from the server as described in the server
-README. From this repository on the Linux modem host, store it in the secret
-file without putting the token on a Docker command line:
-
-```sh
-install -m 600 /dev/null secrets/modem-1-pairing-token
-printf '%s' "$pairing_token" > secrets/modem-1-pairing-token
-unset pairing_token pairing_json access_token
-```
+## Start and approve the first Linux modem
 
 Set the server URL and the stable host paths created by the udev rules. These
 example paths must be replaced with the paths for the first physical modem:
 
 ```sh
 export SIM_DECK_SERVER_URL=https://sim-deck.example.com
+export SIM_DECK_MODEM_1_DEVICE_UUID=01900000-0000-7000-8000-000000000001
 export SIM_DECK_MODEM_1_AT_DEVICE=/dev/sim-deck/modem-1-at
 export SIM_DECK_MODEM_1_AUDIO_CONTROL=/dev/sim-deck/modem-1-audio-control
 export SIM_DECK_MODEM_1_AUDIO_CAPTURE=/dev/sim-deck/modem-1-audio-capture
@@ -198,26 +195,32 @@ For a server reached over plain HTTP on a trusted LAN or encrypted VPN, also
 set `SIM_DECK_ALLOW_INSECURE_HTTP=true`. Do not enable that option across an
 untrusted network.
 
-Start only the first modem service and inspect its readiness and logs:
+Enable device discovery in the iOS app, then start only the first modem service
+and inspect its logs:
 
 ```sh
 docker compose -f compose.example.yaml up --build -d modem-1
 docker compose -f compose.example.yaml ps modem-1
+docker compose -f compose.example.yaml logs --tail=100 modem-1
+```
+
+The container remains `starting` while it is awaiting approval. In the app,
+select the pending UUID, verify its fingerprint, and tap Allow. Then verify
+readiness:
+
+```sh
 curl --fail-with-body http://127.0.0.1:18081/healthz
 docker compose -f compose.example.yaml logs --tail=100 modem-1
 ```
 
 A successful log entry contains `device agent ready`, the immutable device
-UUID, and the assigned numeric SIM ID. The server's authenticated
+UUID, and the assigned numeric SIM ID. Disable discovery in the app when the
+last intended modem has joined. The server's authenticated
 `GET /v1/devices` endpoint and the iOS device-management screen then show the
-same device. After successful pairing, clear the consumed token while keeping
-the empty secret file for future Compose recreations:
-
-```sh
-install -m 600 /dev/null secrets/modem-1-pairing-token
-```
+same device.
 
 The named `modem-1-state` volume must remain attached to this modem. Removing
-or replacing it creates a new endpoint identity and requires a new pairing
-token. For a second modem, repeat the process with a new token, the `modem-2`
+or replacing it creates new cryptographic keys. Revoke the old device first,
+then enable discovery and approve the replacement using the configured UUID.
+For a second modem, repeat the process with a distinct UUID, the `modem-2`
 paths, and the independent `modem-2-state` volume.

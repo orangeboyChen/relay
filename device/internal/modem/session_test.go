@@ -143,6 +143,33 @@ var _ = Describe("Modem session", func() {
 		Expect(err).To(MatchError("deliver imported SMS: outbox unavailable"))
 	})
 
+	It("keeps imported SMS pending when encrypted delivery is deferred", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error {
+			return ErrMessageDeliveryDeferred
+		}))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			for index := 0; index < len(initializationCommands)+1; index++ {
+				command, _ := reader.ReadString('\r')
+				if command == "AT+CMGL=4\r" {
+					_, _ = modemTransport.Write([]byte("+CMGL: 1,0,,23\r\n" + testDeliverPDU + "\r\nOK\r\n"))
+				} else {
+					_, _ = modemTransport.Write([]byte("OK\r\n"))
+				}
+			}
+		}()
+
+		Expect(session.Initialize(context.Background())).To(Succeed())
+
+		pending := session.inbox.PendingMessages()
+		Expect(pending).To(HaveLen(1))
+		Expect(pending[0].Text).To(Equal("你好"))
+	})
+
 	It("routes direct SMS and concurrent call notifications", func() {
 		received := make(chan sms.ReceivedMessage, 1)
 		session, modemTransport, client := newTestSession(MessageSinkFunc(func(_ context.Context, message sms.ReceivedMessage) error {
@@ -199,6 +226,26 @@ var _ = Describe("Modem session", func() {
 		_, _ = modemTransport.Write([]byte("+CMT: ,23\r\n" + testDeliverPDU + "\r\n"))
 
 		Eventually(result).Should(Receive(MatchError("deliver direct SMS: outbox unavailable")))
+	})
+
+	It("keeps running when direct SMS delivery is deferred", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error {
+			return ErrMessageDeliveryDeferred
+		}))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		result := make(chan error, 1)
+		go func() { result <- session.Run(ctx) }()
+
+		_, _ = modemTransport.Write([]byte("+CMT: ,23\r\n" + testDeliverPDU + "\r\n"))
+
+		Eventually(session.inbox.PendingMessages).Should(HaveLen(1))
+		Consistently(result, 50*time.Millisecond).ShouldNot(Receive())
+		cancel()
+		Eventually(result).Should(Receive(MatchError(context.Canceled)))
 	})
 
 	It("returns the terminal serial error", func() {

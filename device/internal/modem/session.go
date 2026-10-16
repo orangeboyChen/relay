@@ -22,6 +22,9 @@ var initializationCommands = []string{
 	"AT+CCWA=1,1",
 }
 
+// ErrMessageDeliveryDeferred keeps a durable SMS pending without stopping unrelated modem services.
+var ErrMessageDeliveryDeferred = errors.New("SMS delivery deferred")
+
 const defaultCallPollInterval = time.Second
 
 // MessageSink receives one complete, durably deduplicated SMS.
@@ -95,6 +98,10 @@ func (session *Session) Initialize(ctx context.Context) error {
 	}
 	for _, message := range session.inbox.PendingMessages() {
 		if err := session.sink.ReceiveSMS(ctx, message); err != nil {
+			if errors.Is(err, ErrMessageDeliveryDeferred) {
+				session.logger.Warn("SMS delivery deferred", "message_id", message.ID)
+				continue
+			}
 			return fmt.Errorf("deliver imported SMS: %w", err)
 		}
 		if err := session.inbox.Acknowledge(message.ID); err != nil {
@@ -171,6 +178,10 @@ func (session *Session) handleURC(ctx context.Context, urc string) error {
 			return nil
 		}
 		if err := session.sink.ReceiveSMS(ctx, received); err != nil {
+			if errors.Is(err, ErrMessageDeliveryDeferred) {
+				session.logger.Warn("SMS delivery deferred", "message_id", received.ID)
+				return nil
+			}
 			return fmt.Errorf("deliver direct SMS: %w", err)
 		}
 		if err := session.inbox.Acknowledge(received.ID); err != nil {

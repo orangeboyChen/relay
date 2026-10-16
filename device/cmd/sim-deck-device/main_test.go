@@ -207,7 +207,7 @@ func testDependencies(transport io.ReadWriteCloser, session deviceSession) devic
 		},
 		openInbox: func(string, time.Duration, []byte) (*sms.Inbox, error) { return sms.NewInbox(time.Hour), nil },
 		newSession: func(_ *at.Client, _ *sms.Inbox, sink modem.MessageSink, _ *slog.Logger, _ time.Duration) (deviceSession, error) {
-			Expect(sink.ReceiveSMS(context.Background(), sms.ReceivedMessage{ID: "message-id", Segments: 1})).To(MatchError(errSMSDeliveryUnavailable))
+			Expect(sink.ReceiveSMS(context.Background(), sms.ReceivedMessage{ID: "message-id", Segments: 1})).To(MatchError(modem.ErrMessageDeliveryDeferred))
 			return session, nil
 		},
 		syncCommandKey: func(context.Context, agent.Config, identity.State) error { return nil },

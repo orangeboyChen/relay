@@ -31,8 +31,6 @@ import (
 	"sim-deck-device/internal/sms"
 )
 
-var errSMSDeliveryUnavailable = errors.New("encrypted SMS synchronization is not configured")
-
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	config, err := agent.LoadConfig(os.LookupEnv)
@@ -228,7 +226,7 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	}
 	messageSink := modem.MessageSinkFunc(func(_ context.Context, message sms.ReceivedMessage) error {
 		logger.Warn("SMS retained pending encrypted synchronization", "message_id", message.ID, "segments", message.Segments)
-		return errSMSDeliveryUnavailable
+		return modem.ErrMessageDeliveryDeferred
 	})
 	session, err := dependencies.newSession(client, inbox, messageSink, logger, config.CommandTimeout)
 	if err != nil {

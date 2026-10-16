@@ -17,7 +17,11 @@ struct InstallationBootstrapper: InstallationBootstrapping {
     }
 
     func bootstrap() throws -> InstallationBootstrapResult {
+        let wasInstalled = markerStore.isInstalled()
         var previousIdentity = try loadIdentity()
+        let hadPersistedIdentity = previousIdentity != nil
+        var recoveredVaultKey = try vaultStore.read().map(VaultKey.init(data:))
+
         if let loadedIdentity = previousIdentity,
            loadedIdentity.keyAgreementPrivateKey.isEmpty {
             let upgradedIdentity = loadedIdentity.addingKeyAgreementIdentity()
@@ -26,7 +30,7 @@ struct InstallationBootstrapper: InstallationBootstrapping {
         }
         var identity = previousIdentity
 
-        if !markerStore.isInstalled(), let previousIdentity {
+        if !wasInstalled, let previousIdentity {
             let pendingRevocationIDs = previousIdentity.pendingRevocationIDs + [previousIdentity.id]
             try identityStore.delete()
             let generated = InstallationIdentity.generate(pendingRevocationIDs: pendingRevocationIDs)
@@ -35,15 +39,20 @@ struct InstallationBootstrapper: InstallationBootstrapping {
         }
         if identity == nil {
             let generated = InstallationIdentity.generate()
+            if recoveredVaultKey == nil, !wasInstalled, !hadPersistedIdentity {
+                let generatedVaultKey = VaultKey.random()
+                try vaultStore.write(generatedVaultKey.data)
+                recoveredVaultKey = generatedVaultKey
+            }
             try saveIdentity(generated)
             identity = generated
         }
+
         markerStore.markInstalled()
 
         guard let identity else {
             throw KeyRecoveryError.invalidInstallationIdentity
         }
-        let recoveredVaultKey = try vaultStore.read().map(VaultKey.init(data:))
         return InstallationBootstrapResult(
             identity: identity,
             recoveredVaultKey: recoveredVaultKey,

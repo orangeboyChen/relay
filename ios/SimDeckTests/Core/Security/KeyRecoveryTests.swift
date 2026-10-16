@@ -15,8 +15,7 @@ final class KeyRecoveryTests: XCTestCase {
         )
 
         let first = try bootstrapper.bootstrap()
-        let vaultKey = try VaultKey(data: Data(repeating: 7, count: VaultKey.length))
-        try bootstrapper.saveVaultKey(vaultKey)
+        let vaultKey = try XCTUnwrap(first.recoveredVaultKey)
 
         let relaunched = try bootstrapper.bootstrap()
         XCTAssertEqual(relaunched.identity.id, first.identity.id)
@@ -34,6 +33,61 @@ final class KeyRecoveryTests: XCTestCase {
         try bootstrapper.markInstallationRevoked(first.identity.id)
         let restartedAfterRevocation = try bootstrapper.bootstrap()
         XCTAssertTrue(restartedAfterRevocation.pendingRevocationIDs.isEmpty)
+    }
+
+    func testFreshInstallGeneratesAndPersistsVaultKey() throws {
+        let identityStore = MemorySecureValueStore()
+        let vaultStore = MemorySecureValueStore()
+        let markerStore = MemoryInstallMarkerStore()
+        let bootstrapper = InstallationBootstrapper(
+            identityStore: identityStore,
+            vaultStore: vaultStore,
+            markerStore: markerStore
+        )
+
+        let result = try bootstrapper.bootstrap()
+        let vaultKey = try XCTUnwrap(result.recoveredVaultKey)
+
+        XCTAssertEqual(vaultKey.data.count, VaultKey.length)
+        XCTAssertEqual(try vaultStore.read(), vaultKey.data)
+        XCTAssertTrue(markerStore.isInstalled())
+    }
+
+    func testReinstallWithoutRecoverableVaultKeyRequiresApproval() throws {
+        let identityStore = MemorySecureValueStore()
+        let vaultStore = MemorySecureValueStore()
+        let markerStore = MemoryInstallMarkerStore()
+        let bootstrapper = InstallationBootstrapper(
+            identityStore: identityStore,
+            vaultStore: vaultStore,
+            markerStore: markerStore
+        )
+
+        let first = try bootstrapper.bootstrap()
+        try vaultStore.delete()
+        markerStore.removeMarkerToSimulateReinstall()
+
+        let reinstalled = try bootstrapper.bootstrap()
+
+        XCTAssertNotEqual(reinstalled.identity.id, first.identity.id)
+        XCTAssertEqual(reinstalled.pendingRevocationIDs, [first.identity.id])
+        XCTAssertNil(reinstalled.recoveredVaultKey)
+        XCTAssertNil(try vaultStore.read())
+    }
+
+    func testVaultWriteFailureDoesNotMarkInstallationComplete() throws {
+        let identityStore = MemorySecureValueStore()
+        let vaultStore = FailingWriteSecureValueStore()
+        let markerStore = MemoryInstallMarkerStore()
+        let bootstrapper = InstallationBootstrapper(
+            identityStore: identityStore,
+            vaultStore: vaultStore,
+            markerStore: markerStore
+        )
+
+        XCTAssertThrowsError(try bootstrapper.bootstrap())
+        XCTAssertFalse(markerStore.isInstalled())
+        XCTAssertNil(try identityStore.read())
     }
 
     func testVaultKeyRequires256Bits() {
@@ -94,6 +148,22 @@ private final class MemorySecureValueStore: SecureValueStoring, @unchecked Senda
     func delete() {
         lock.withLock { value = nil }
     }
+}
+
+private final class FailingWriteSecureValueStore: SecureValueStoring, @unchecked Sendable {
+    private enum Failure: Error {
+        case writeFailed
+    }
+
+    func read() -> Data? {
+        nil
+    }
+
+    func write(_ value: Data) throws {
+        throw Failure.writeFailed
+    }
+
+    func delete() {}
 }
 
 private final class MemoryInstallMarkerStore: InstallMarkerStoring, @unchecked Sendable {

@@ -75,6 +75,14 @@ func (runtime *Runtime) publish(ctx context.Context) error {
 }
 
 func (runtime *Runtime) read(ctx context.Context) (Status, error) {
+	registered, err := runtime.readRegistration(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	if !registered {
+		return Status{RadioAccessTechnology: "unknown"}, nil
+	}
+
 	network, err := runtime.send(ctx, "AT+QNWINFO")
 	if err != nil {
 		return Status{}, fmt.Errorf("query radio access technology: %w", err)
@@ -93,6 +101,31 @@ func (runtime *Runtime) read(ctx context.Context) (Status, error) {
 		RadioAccessTechnology: parseTechnology(network.Lines),
 		SignalBars:            parseSignalBars(signal.Lines),
 	}, nil
+}
+
+func (runtime *Runtime) readRegistration(ctx context.Context) (bool, error) {
+	eps, err := runtime.send(ctx, "AT+CEREG?")
+	if err != nil {
+		return false, fmt.Errorf("query EPS registration: %w", err)
+	}
+	if eps.OK() {
+		if registered, found := parseRegistration(eps.Lines, "+CEREG:"); found && registered {
+			return true, nil
+		}
+	}
+
+	circuit, err := runtime.send(ctx, "AT+CREG?")
+	if err != nil {
+		return false, fmt.Errorf("query circuit registration: %w", err)
+	}
+	if !circuit.OK() {
+		return false, fmt.Errorf("modem rejected registration queries: EPS %s, circuit %s", eps.Terminal, circuit.Terminal)
+	}
+	registered, found := parseRegistration(circuit.Lines, "+CREG:")
+	if !found {
+		return false, errors.New("modem registration response is missing +CEREG and +CREG status")
+	}
+	return registered, nil
 }
 
 func (runtime *Runtime) send(ctx context.Context, command string) (at.Response, error) {
@@ -128,6 +161,25 @@ func parseTechnology(lines []string) string {
 		}
 	}
 	return "unknown"
+}
+
+func parseRegistration(lines []string, prefix string) (bool, bool) {
+	for _, line := range lines {
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		fields := strings.Split(strings.TrimSpace(strings.TrimPrefix(line, prefix)), ",")
+		statusIndex := 0
+		if len(fields) > 1 {
+			statusIndex = 1
+		}
+		status, err := strconv.Atoi(strings.Trim(strings.TrimSpace(fields[statusIndex]), "\""))
+		if err != nil {
+			return false, false
+		}
+		return status == 1 || status == 5, true
+	}
+	return false, false
 }
 
 func parseSignalBars(lines []string) *int {

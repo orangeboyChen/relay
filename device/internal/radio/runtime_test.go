@@ -49,6 +49,7 @@ var _ = Describe("Radio status runtime", func() {
 
 	It("parses LTE access and four signal levels from EC20 responses", func() {
 		commander := &fakeCommander{responses: map[string]at.Response{
+			"AT+CEREG?":  {Lines: []string{"+CEREG: 0,1"}, Terminal: "OK"},
 			"AT+QNWINFO": {Lines: []string{`+QNWINFO: "FDD LTE","46000","LTE BAND 3",1850`}, Terminal: "OK"},
 			"AT+CSQ":     {Lines: []string{"+CSQ: 17,99"}, Terminal: "OK"},
 		}}
@@ -66,6 +67,52 @@ var _ = Describe("Radio status runtime", func() {
 		Expect(remote.statuses()[0].SignalBars).NotTo(BeNil())
 		Expect(*remote.statuses()[0].SignalBars).To(Equal(3))
 	})
+
+	It("falls back to circuit registration when EPS registration is unavailable", func() {
+		commander := &fakeCommander{responses: map[string]at.Response{
+			"AT+CEREG?":  {Terminal: "ERROR"},
+			"AT+CREG?":   {Lines: []string{"+CREG: 0,5"}, Terminal: "OK"},
+			"AT+QNWINFO": {Lines: []string{`+QNWINFO: "GSM","46000"`}, Terminal: "OK"},
+			"AT+CSQ":     {Lines: []string{"+CSQ: 9,99"}, Terminal: "OK"},
+		}}
+		runtime, err := NewRuntime(commander, &fakeRemote{}, state, time.Hour, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+
+		status, err := runtime.read(context.Background())
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status.RadioAccessTechnology).To(Equal("gsm"))
+		Expect(status.SignalBars).NotTo(BeNil())
+		Expect(*status.SignalBars).To(Equal(1))
+	})
+
+	It("publishes an unavailable status while the SIM is not registered", func() {
+		commander := &fakeCommander{responses: map[string]at.Response{
+			"AT+CEREG?": {Lines: []string{"+CEREG: 0,2"}, Terminal: "OK"},
+			"AT+CREG?":  {Lines: []string{"+CREG: 0,0"}, Terminal: "OK"},
+		}}
+		runtime, err := NewRuntime(commander, &fakeRemote{}, state, time.Hour, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+
+		status, err := runtime.read(context.Background())
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status.RadioAccessTechnology).To(Equal("unknown"))
+		Expect(status.SignalBars).To(BeNil())
+	})
+
+	DescribeTable("parses modem registration states",
+		func(prefix string, line string, registered bool, found bool) {
+			actualRegistered, actualFound := parseRegistration([]string{line}, prefix)
+			Expect(actualRegistered).To(Equal(registered))
+			Expect(actualFound).To(Equal(found))
+		},
+		Entry("home", "+CEREG:", "+CEREG: 0,1", true, true),
+		Entry("roaming", "+CREG:", "+CREG: 5", true, true),
+		Entry("searching", "+CEREG:", "+CEREG: 0,2", false, true),
+		Entry("malformed", "+CREG:", "+CREG: modem", false, false),
+		Entry("missing", "+CREG:", "+CEREG: 0,1", false, false),
+	)
 
 	DescribeTable("normalizes network names",
 		func(value string, expected string) {
@@ -106,6 +153,22 @@ var _ = Describe("Radio status runtime", func() {
 		runtime, err := NewRuntime(commander, &fakeRemote{}, state, time.Second, time.Second)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(runtime.Run(context.Background())).To(MatchError(ContainSubstring("serial failed")))
+
+		commander = &fakeCommander{responses: map[string]at.Response{
+			"AT+CEREG?": {Terminal: "ERROR"},
+			"AT+CREG?":  {Terminal: "+CME ERROR: operation not supported"},
+		}}
+		runtime, err = NewRuntime(commander, &fakeRemote{}, state, time.Second, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(runtime.Run(context.Background())).To(MatchError(ContainSubstring("modem rejected registration queries")))
+
+		commander = &fakeCommander{responses: map[string]at.Response{
+			"AT+CEREG?": {Lines: []string{"unexpected"}, Terminal: "OK"},
+			"AT+CREG?":  {Lines: []string{"unexpected"}, Terminal: "OK"},
+		}}
+		runtime, err = NewRuntime(commander, &fakeRemote{}, state, time.Second, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(runtime.Run(context.Background())).To(MatchError("modem registration response is missing +CEREG and +CREG status"))
 	})
 })
 

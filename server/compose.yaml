@@ -40,7 +40,7 @@ services:
       - recovery_public_key
       - apns_private_key
     ports:
-      - "${HTTPS_PORT:-8443}:8080"
+      - "${SERVER_PORT:-8443}:8080"
       - "${MEDIA_UDP_PORT:-49152}:${MEDIA_UDP_PORT:-49152}/udp"
       - "${MEDIA_TCP_PORT:-49153}:${MEDIA_TCP_PORT:-49153}/tcp"
     volumes:

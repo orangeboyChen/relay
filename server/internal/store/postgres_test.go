@@ -84,8 +84,12 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 	BeforeEach(func() {
 		now = time.Date(2026, 10, 16, 1, 0, 0, 0, time.UTC)
 		_, err := database.pool.Exec(context.Background(), `
-			TRUNCATE TABLE owner_accounts, devices, pairing_tokens, events,
-			       auth_sessions, device_credentials
+			TRUNCATE TABLE owner_accounts, webauthn_credentials, app_installations,
+			       push_tokens, devices, device_certificates, pairing_tokens, events,
+			       messages, attachments, calls, outbox_jobs, audit_events,
+			       auth_sessions, device_credentials, encrypted_device_commands,
+			       incoming_call_notifications, incoming_call_recipients,
+			       incoming_call_claims
 			RESTART IDENTITY CASCADE`)
 		Expect(err).NotTo(HaveOccurred())
 	})

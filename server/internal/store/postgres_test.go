@@ -371,6 +371,88 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(database.RevokeDevice(context.Background(), firstDeviceID, now.Add(3*time.Minute))).To(MatchError(pgx.ErrNoRows))
 	})
 
+	It("tracks radio state and routes encrypted commands through their full lifecycle", func() {
+		device := createDevice(firstDeviceID)
+		commandKey := bytes.Repeat([]byte{21}, 32)
+		signalBars := 3
+		Expect(database.UpdateDeviceCommandPublicKey(context.Background(), device.ID, commandKey)).To(Succeed())
+		Expect(database.UpdateDeviceRadioStatus(context.Background(), device.ID, "5G", &signalBars, now)).To(Succeed())
+
+		records, err := database.ListDevices(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(records).To(HaveLen(1))
+		Expect(records[0].CommandPublicKey).To(Equal(commandKey))
+		Expect(records[0].RadioAccessTechnology).To(Equal("5G"))
+		Expect(records[0].SignalBars).NotTo(BeNil())
+		Expect(*records[0].SignalBars).To(Equal(3))
+		Expect(records[0].RadioStatusUpdatedAt).NotTo(BeNil())
+		Expect(*records[0].RadioStatusUpdatedAt).To(Equal(now))
+
+		encrypted := domain.EncryptedCommand{
+			ID:              "01900000-0000-7000-8000-000000000050",
+			DeviceUUID:      device.ID,
+			SenderPublicKey: bytes.Repeat([]byte{22}, 32),
+			Nonce:           bytes.Repeat([]byte{23}, 12),
+			Ciphertext:      []byte("opaque dial command"),
+			CreatedAt:       now,
+			ExpiresAt:       now.Add(time.Hour),
+		}
+		inserted, err := database.EnqueueCommand(context.Background(), encrypted)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(inserted).To(BeTrue())
+
+		inserted, err = database.EnqueueCommand(context.Background(), encrypted)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(inserted).To(BeFalse())
+
+		conflicting := encrypted
+		conflicting.Ciphertext = []byte("different ciphertext")
+		_, err = database.EnqueueCommand(context.Background(), conflicting)
+		Expect(errors.Is(err, domain.ErrIdempotencyConflict)).To(BeTrue())
+
+		status, err := database.CommandStatus(context.Background(), device.ID, encrypted.ID, now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status.State).To(Equal("pending"))
+		Expect(status.Result).To(BeNil())
+
+		leaseUntil := now.Add(30 * time.Second)
+		claimed, err := database.ClaimCommand(context.Background(), device.ID, now, leaseUntil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(claimed).To(Equal(encrypted))
+		_, err = database.ClaimCommand(context.Background(), device.ID, now.Add(time.Second), leaseUntil)
+		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
+
+		status, err = database.CommandStatus(context.Background(), device.ID, encrypted.ID, now.Add(time.Second))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status.State).To(Equal("processing"))
+
+		result := domain.EncryptedCommandResult{
+			Nonce:      bytes.Repeat([]byte{24}, 12),
+			Ciphertext: []byte("opaque modem result"),
+		}
+		completedAt := now.Add(2 * time.Second)
+		Expect(database.CompleteCommand(context.Background(), device.ID, encrypted.ID, result, completedAt)).To(Succeed())
+		Expect(database.CompleteCommand(context.Background(), device.ID, encrypted.ID, result, completedAt)).To(MatchError(pgx.ErrNoRows))
+
+		status, err = database.CommandStatus(context.Background(), device.ID, encrypted.ID, now.Add(3*time.Second))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status.State).To(Equal("completed"))
+		Expect(status.Result).To(Equal(&result))
+		Expect(status.CompletedAt).NotTo(BeNil())
+		Expect(*status.CompletedAt).To(Equal(completedAt))
+
+		_, err = database.ClaimCommand(context.Background(), device.ID, now.Add(3*time.Second), now.Add(time.Minute))
+		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
+		Expect(database.UpdateDeviceCommandPublicKey(context.Background(), secondDeviceID, commandKey)).To(MatchError(pgx.ErrNoRows))
+		Expect(database.UpdateDeviceRadioStatus(context.Background(), secondDeviceID, "LTE", nil, now)).To(MatchError(pgx.ErrNoRows))
+
+		unknownDeviceCommand := encrypted
+		unknownDeviceCommand.ID = "01900000-0000-7000-8000-000000000051"
+		unknownDeviceCommand.DeviceUUID = secondDeviceID
+		_, err = database.EnqueueCommand(context.Background(), unknownDeviceCommand)
+		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
+	})
+
 	It("returns no numeric ID after all visible identifiers are occupied", func() {
 		for numericID := domain.MinNumericID; numericID <= domain.MaxNumericID; numericID++ {
 			_, err := database.pool.Exec(context.Background(), `

@@ -2,6 +2,7 @@ package at
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -32,8 +33,11 @@ type commandResult struct {
 }
 
 type pendingCommand struct {
-	lines  []string
-	result chan commandResult
+	lines         []string
+	result        chan commandResult
+	prompt        chan struct{}
+	expectsPrompt bool
+	promptSeen    bool
 }
 
 // Client serializes AT commands while delivering unsolicited result codes separately.
@@ -122,6 +126,80 @@ func (client *Client) Send(ctx context.Context, command string) (Response, error
 	}
 }
 
+// SendPrompt writes a command, waits for the modem prompt, then writes the payload and Ctrl-Z.
+func (client *Client) SendPrompt(ctx context.Context, command string, payload []byte) (Response, error) {
+	if strings.TrimSpace(command) == "" || strings.ContainsAny(command, "\r\n") {
+		return Response{}, errors.New("AT command must be one non-empty line")
+	}
+	if len(payload) == 0 || bytes.Contains(payload, []byte{0x1a}) {
+		return Response{}, errors.New("AT prompt payload must be non-empty and must not contain Ctrl-Z")
+	}
+	client.commands.Lock()
+	defer client.commands.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return Response{}, err
+	}
+	select {
+	case <-client.done:
+		return Response{}, ErrClosed
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		return Response{}, ctx.Err()
+	case <-client.done:
+		return Response{}, ErrClosed
+	case <-client.idle:
+	}
+
+	pending := &pendingCommand{
+		result:        make(chan commandResult, 1),
+		prompt:        make(chan struct{}, 1),
+		expectsPrompt: true,
+	}
+	client.state.Lock()
+	client.pending = pending
+	client.state.Unlock()
+
+	if _, err := io.WriteString(client.transport, command+"\r"); err != nil {
+		client.clearPending(pending)
+		return Response{}, fmt.Errorf("write AT command: %w", err)
+	}
+
+	select {
+	case result := <-pending.result:
+		return result.response, result.err
+	case <-pending.prompt:
+	case <-ctx.Done():
+		return Response{}, ctx.Err()
+	case <-client.done:
+		return Response{}, ErrClosed
+	}
+
+	framedPayload := make([]byte, 0, len(payload)+1)
+	framedPayload = append(framedPayload, payload...)
+	framedPayload = append(framedPayload, 0x1a)
+	if _, err := client.transport.Write(framedPayload); err != nil {
+		client.clearPending(pending)
+		return Response{}, fmt.Errorf("write AT prompt payload: %w", err)
+	}
+
+	select {
+	case result := <-pending.result:
+		return result.response, result.err
+	case <-ctx.Done():
+		return Response{}, ctx.Err()
+	case <-client.done:
+		select {
+		case result := <-pending.result:
+			return result.response, result.err
+		default:
+		}
+		return Response{}, ErrClosed
+	}
+}
+
 // Close stops the client and closes its transport.
 func (client *Client) Close() error {
 	var closeError error
@@ -134,6 +212,7 @@ func (client *Client) Close() error {
 
 func (client *Client) readLoop() {
 	scanner := bufio.NewScanner(client.transport)
+	scanner.Split(splitATResponse)
 	pendingDirectURC := ""
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -178,6 +257,13 @@ func (client *Client) routeLine(line string) error {
 		client.state.Unlock()
 		return client.deliverURC(line)
 	}
+	if line == ">" && client.pending.expectsPrompt && !client.pending.promptSeen {
+		client.pending.promptSeen = true
+		prompt := client.pending.prompt
+		client.state.Unlock()
+		prompt <- struct{}{}
+		return nil
+	}
 	if isTerminal(line) {
 		pending := client.pending
 		client.pending = nil
@@ -189,6 +275,20 @@ func (client *Client) routeLine(line string) error {
 	client.pending.lines = append(client.pending.lines, line)
 	client.state.Unlock()
 	return nil
+}
+
+func splitATResponse(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if index := bytes.IndexByte(data, '\n'); index >= 0 {
+		return index + 1, data[:index], nil
+	}
+	trimmed := bytes.TrimLeft(data, "\r")
+	if len(trimmed) >= 2 && trimmed[0] == '>' && trimmed[1] == ' ' {
+		return len(data) - len(trimmed) + 2, trimmed[:1], nil
+	}
+	if atEOF && len(data) > 0 {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
 }
 
 func (client *Client) clearPending(expected *pendingCommand) {

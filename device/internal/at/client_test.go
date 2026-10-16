@@ -92,6 +92,51 @@ var _ = Describe("AT client", func() {
 		Eventually(commands).Should(Receive(Or(Equal("AT+ONE\r"), Equal("AT+TWO\r"))))
 	})
 
+	It("sends an interactive prompt payload and waits for the final result", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := NewClient(clientTransport)
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			command, _ := reader.ReadString('\r')
+			Expect(command).To(Equal("AT+CMGS=12\r"))
+			_, _ = modemTransport.Write([]byte("\r\n> "))
+			payload, _ := reader.ReadBytes(0x1a)
+			Expect(payload).To(Equal([]byte{'A', 'A', 'B', 'B', 0x1a}))
+			_, _ = modemTransport.Write([]byte("\r\n+CMGS: 42\r\n\r\nOK\r\n"))
+		}()
+
+		response, err := client.SendPrompt(context.Background(), "AT+CMGS=12", []byte("AABB"))
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(response.OK()).To(BeTrue())
+		Expect(response.Lines).To(Equal([]string{"+CMGS: 42"}))
+	})
+
+	It("returns a prompt command rejection without writing its payload", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := NewClient(clientTransport)
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			_, _ = reader.ReadString('\r')
+			_, _ = modemTransport.Write([]byte("+CMS ERROR: 304\r\n"))
+		}()
+
+		response, err := client.SendPrompt(context.Background(), "AT+CMGS=12", []byte("AABB"))
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(response.Terminal).To(Equal("+CMS ERROR: 304"))
+	})
+
 	It("drains a timed-out response before sending the next command", func() {
 		clientTransport, modemTransport := net.Pipe()
 		client := NewClient(clientTransport)
@@ -207,6 +252,20 @@ var _ = Describe("AT client", func() {
 			_, err := client.Send(context.Background(), command)
 			Expect(err).To(MatchError("AT command must be one non-empty line"))
 		}
+	})
+
+	It("validates interactive prompt payloads before writing", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := NewClient(clientTransport)
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+
+		_, err := client.SendPrompt(context.Background(), "AT+CMGS=12", nil)
+		Expect(err).To(MatchError(ContainSubstring("prompt payload")))
+		_, err = client.SendPrompt(context.Background(), "AT+CMGS=12", []byte{'A', 0x1a})
+		Expect(err).To(MatchError(ContainSubstring("Ctrl-Z")))
 	})
 
 	It("returns a contextual write failure and releases the pending command", func() {

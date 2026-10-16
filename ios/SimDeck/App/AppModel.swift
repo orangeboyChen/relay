@@ -8,6 +8,18 @@ final class AppModel {
     var callHistory: CallHistoryState
     var messages: MessageListState
     var lastSuccessfulDialLineID: UUID?
+    var defaultCallLineID: UUID? {
+        didSet {
+            guard defaultCallLineID != oldValue else { return }
+            defaultLineStore.callLineID = defaultCallLineID
+        }
+    }
+    var defaultMessageLineID: UUID? {
+        didSet {
+            guard defaultMessageLineID != oldValue else { return }
+            defaultLineStore.messageLineID = defaultMessageLineID
+        }
+    }
     var selectedTab: AppTab
     var keyRecoveryState: KeyRecoveryState
     var installationID: UUID?
@@ -16,6 +28,7 @@ final class AppModel {
     let serverConnection: ServerConnectionManager
     let callCoordinator: CallKitCoordinator
     let installationBootstrapper: any InstallationBootstrapping
+    @ObservationIgnored private let defaultLineStore: any DefaultLineStoring
     @ObservationIgnored private var installationIdentity: InstallationIdentity?
     @ObservationIgnored private var recoveredVaultKey: VaultKey?
     @ObservationIgnored private var voipPushCoordinator: VoIPPushCoordinator?
@@ -25,17 +38,23 @@ final class AppModel {
         callHistory: CallHistoryState = .loaded([]),
         messages: MessageListState = .loaded([]),
         lastSuccessfulDialLineID: UUID? = nil,
+        defaultCallLineID: UUID? = nil,
+        defaultMessageLineID: UUID? = nil,
         selectedTab: AppTab = .calls,
         keyRecoveryState: KeyRecoveryState = .checking,
         serverConnection: ServerConnectionManager? = nil,
         callCoordinator: CallKitCoordinator? = nil,
-        installationBootstrapper: any InstallationBootstrapping = InstallationBootstrapper.live()
+        installationBootstrapper: any InstallationBootstrapping = InstallationBootstrapper.live(),
+        defaultLineStore: (any DefaultLineStoring)? = nil
     ) {
         let resolvedServerConnection = serverConnection ?? .live()
+        let resolvedDefaultLineStore = defaultLineStore ?? UserDefaultsDefaultLineStore()
         self.devices = devices
         self.callHistory = callHistory
         self.messages = messages
         self.lastSuccessfulDialLineID = lastSuccessfulDialLineID
+        self.defaultCallLineID = defaultCallLineID ?? resolvedDefaultLineStore.callLineID
+        self.defaultMessageLineID = defaultMessageLineID ?? resolvedDefaultLineStore.messageLineID
         self.selectedTab = selectedTab
         self.keyRecoveryState = keyRecoveryState
         self.installationTrust = nil
@@ -46,6 +65,7 @@ final class AppModel {
             incomingCallClaimer: resolvedServerConnection
         )
         self.installationBootstrapper = installationBootstrapper
+        self.defaultLineStore = resolvedDefaultLineStore
     }
 
     func bootstrapInstallation() {

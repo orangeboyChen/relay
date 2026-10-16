@@ -33,6 +33,10 @@ struct CallsTabScreen: View {
     }
 
     private var preferredLineID: UUID? {
+        if let defaultID = model.defaultCallLineID,
+           model.devices.contains(where: { $0.id == defaultID && $0.isOnline }) {
+            return defaultID
+        }
         if let lastID = model.lastSuccessfulDialLineID,
            model.devices.contains(where: { $0.id == lastID && $0.isOnline }) {
             return lastID

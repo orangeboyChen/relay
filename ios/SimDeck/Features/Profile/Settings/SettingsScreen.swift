@@ -10,7 +10,7 @@ struct SettingsScreen: View {
                     ServerSettingsScreen(model: model)
                 }
                 SettingsLink("Default Lines", symbol: "simcard.2") {
-                    DefaultLineSettingsScreen(lines: model.devices)
+                    DefaultLineSettingsScreen(model: model)
                 }
                 SettingsLink("Notifications", symbol: "bell") {
                     NotificationSettingsScreen()

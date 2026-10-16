@@ -199,14 +199,20 @@ struct ServerConnectionStatusRow: View {
 }
 
 struct DefaultLineSettingsScreen: View {
-    let lines: [DeviceLineIdentity]
-    @State private var defaultCallLineID: UUID?
-    @State private var defaultMessageLineID: UUID?
+    @Bindable var model: AppModel
 
     var body: some View {
         Form {
-            LinePickerRow("Default call SIM", lines: lines, selection: $defaultCallLineID)
-            LinePickerRow("Default message SIM", lines: lines, selection: $defaultMessageLineID)
+            LinePickerRow(
+                "Default call SIM",
+                lines: model.devices,
+                selection: $model.defaultCallLineID
+            )
+            LinePickerRow(
+                "Default message SIM",
+                lines: model.devices,
+                selection: $model.defaultMessageLineID
+            )
         }
         .navigationTitle("Default Lines")
     }
@@ -264,7 +270,7 @@ struct ContactsSettingsScreen: View {
 }
 
 #Preview("Default Lines") {
-    NavigationStack { DefaultLineSettingsScreen(lines: PreviewFixtures.devices) }
+    NavigationStack { DefaultLineSettingsScreen(model: .preview(selectedTab: .profile)) }
 }
 
 #Preview("Notification Settings") {

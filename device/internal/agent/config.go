@@ -141,6 +141,12 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 	if config.MediaPublicIP != "" && net.ParseIP(config.MediaPublicIP) == nil {
 		return Config{}, fmt.Errorf("SIM_DECK_MEDIA_PUBLIC_IP must be a valid IP address")
 	}
+	if (config.MediaUDPPort == 0) != (config.MediaTCPPort == 0) {
+		return Config{}, fmt.Errorf("SIM_DECK_MEDIA_UDP_PORT and SIM_DECK_MEDIA_TCP_PORT must be configured together")
+	}
+	if (config.MediaUDPPort > 0 || config.MediaTCPPort > 0) && config.MediaPublicIP == "" {
+		return Config{}, fmt.Errorf("SIM_DECK_MEDIA_PUBLIC_IP is required when fixed media ports are configured")
+	}
 	if strings.HasPrefix(config.ATDevice, "tls://") {
 		endpoint, err := url.Parse(config.ATDevice)
 		if err != nil || endpoint.Scheme != "tls" || endpoint.Host == "" || endpoint.Port() == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") {

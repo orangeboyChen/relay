@@ -150,6 +150,8 @@ var _ = Describe("Agent configuration", func() {
 		Entry("invalid media UDP port", map[string]string{"SIM_DECK_MEDIA_UDP_PORT": "70000"}, "MEDIA_UDP_PORT"),
 		Entry("invalid media TCP port", map[string]string{"SIM_DECK_MEDIA_TCP_PORT": "tcp"}, "MEDIA_TCP_PORT"),
 		Entry("invalid media public IP", map[string]string{"SIM_DECK_MEDIA_PUBLIC_IP": "media.example"}, "MEDIA_PUBLIC_IP"),
+		Entry("media ports must be paired", map[string]string{"SIM_DECK_MEDIA_UDP_PORT": "49160"}, "configured together"),
+		Entry("media public IP is required", map[string]string{"SIM_DECK_MEDIA_UDP_PORT": "49160", "SIM_DECK_MEDIA_TCP_PORT": "49161"}, "PUBLIC_IP is required"),
 		Entry("missing server URL", map[string]string{"SIM_DECK_SERVER_URL": ""}, "SERVER_URL"),
 		Entry("relative server URL", map[string]string{"SIM_DECK_SERVER_URL": "server:8080"}, "SERVER_URL"),
 		Entry("HTTP without opt in", map[string]string{"SIM_DECK_SERVER_URL": "http://server:8080"}, "must use HTTPS"),

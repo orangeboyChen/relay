@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -84,6 +85,86 @@ var _ = Describe("Modem session", func() {
 		err := session.Initialize(context.Background())
 
 		Expect(err).To(MatchError("modem rejected initialization command ATE0: +CME ERROR: 3"))
+	})
+
+	It("submits an outbound SMS PDU after the modem prompt", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+		commands := make(chan string, 1)
+		payloads := make(chan string, 1)
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			command, _ := reader.ReadString('\r')
+			commands <- command
+			_, _ = modemTransport.Write([]byte("\r\n> "))
+			payload, _ := reader.ReadBytes(0x1a)
+			payloads <- string(payload[:len(payload)-1])
+			_, _ = modemTransport.Write([]byte("\r\n+CMGS: 99\r\nOK\r\n"))
+		}()
+
+		Expect(session.SendSMS(context.Background(), "+8613500000000", "hello", 7)).To(Succeed())
+		Eventually(commands).Should(Receive(HavePrefix("AT+CMGS=")))
+		Eventually(payloads).Should(Receive(HavePrefix("0011000B913105000000F0")))
+	})
+
+	It("submits every segment of a multipart outbound SMS", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+		commands := make(chan string, 2)
+		payloads := make(chan string, 2)
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			for index := 0; index < 2; index++ {
+				command, _ := reader.ReadString('\r')
+				commands <- strings.TrimSuffix(command, "\r")
+				_, _ = modemTransport.Write([]byte("\r\n> "))
+				payload, _ := reader.ReadBytes(0x1a)
+				payloads <- string(payload)
+				_, _ = modemTransport.Write([]byte("\r\n+CMGS: 12\r\nOK\r\n"))
+			}
+		}()
+
+		Expect(session.SendSMS(context.Background(), "13500000000", strings.Repeat("你", 71), 0x2a)).To(Succeed())
+		Eventually(commands).Should(Receive(HavePrefix("AT+CMGS=")))
+		Eventually(commands).Should(Receive(HavePrefix("AT+CMGS=")))
+		for index := 0; index < 2; index++ {
+			Eventually(payloads).Should(Receive(ContainSubstring(fmt.Sprintf("0500032A02%02X", index+1))))
+		}
+	})
+
+	It("does not accept a rejected or incomplete SMS submission", func() {
+		for _, response := range []string{"+CMS ERROR: 500\r\n", "OK\r\n"} {
+			session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+			go func(response string) {
+				reader := bufio.NewReader(modemTransport)
+				_, _ = reader.ReadString('\r')
+				_, _ = modemTransport.Write([]byte("\r\n> "))
+				_, _ = reader.ReadBytes(0x1a)
+				_, _ = modemTransport.Write([]byte(response))
+			}(response)
+
+			err := session.SendSMS(context.Background(), "13500000000", "hello", 1)
+
+			Expect(err).To(HaveOccurred())
+			_ = client.Close()
+			_ = modemTransport.Close()
+		}
+	})
+
+	It("rejects an invalid outbound SMS before writing to the modem", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+
+		Expect(session.SendSMS(context.Background(), "invalid", "hello", 1)).To(MatchError(ContainSubstring("encode outbound SMS")))
 	})
 
 	It("fails initialization when the modem does not answer before the timeout", func() {

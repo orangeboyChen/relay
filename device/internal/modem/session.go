@@ -74,6 +74,27 @@ func (session *Session) Calls() *call.Controller {
 	return session.calls
 }
 
+// SendSMS encodes and submits every segment of one SMS through the modem.
+func (session *Session) SendSMS(ctx context.Context, destination string, text string, reference byte) error {
+	pdus, err := sms.EncodeSubmit(destination, text, reference)
+	if err != nil {
+		return fmt.Errorf("encode outbound SMS: %w", err)
+	}
+	for _, pdu := range pdus {
+		response, err := session.sendPrompt(ctx, fmt.Sprintf("AT+CMGS=%d", pdu.TPDULength), []byte(pdu.Hex))
+		if err != nil {
+			return fmt.Errorf("submit SMS segment %d of %d: %w", pdu.Segment, pdu.Total, err)
+		}
+		if !response.OK() {
+			return fmt.Errorf("modem rejected SMS segment %d of %d: %s", pdu.Segment, pdu.Total, response.Terminal)
+		}
+		if !hasMessageReference(response.Lines) {
+			return fmt.Errorf("modem SMS segment %d of %d response is missing +CMGS", pdu.Segment, pdu.Total)
+		}
+	}
+	return nil
+}
+
 // Initialize configures modem notifications and imports stored messages before readiness.
 func (session *Session) Initialize(ctx context.Context) error {
 	response, err := session.send(ctx, simReadinessCommand)
@@ -186,6 +207,21 @@ func (session *Session) send(ctx context.Context, command string) (at.Response, 
 	commandContext, cancel := context.WithTimeout(ctx, session.timeout)
 	defer cancel()
 	return session.client.Send(commandContext, command)
+}
+
+func (session *Session) sendPrompt(ctx context.Context, command string, payload []byte) (at.Response, error) {
+	commandContext, cancel := context.WithTimeout(ctx, session.timeout)
+	defer cancel()
+	return session.client.SendPrompt(commandContext, command, payload)
+}
+
+func hasMessageReference(lines []string) bool {
+	for _, line := range lines {
+		if strings.HasPrefix(line, "+CMGS:") && strings.TrimSpace(strings.TrimPrefix(line, "+CMGS:")) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (session *Session) handleURC(ctx context.Context, urc string) error {

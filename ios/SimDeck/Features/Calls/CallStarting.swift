@@ -11,5 +11,4 @@ protocol CallControlling: AnyObject {
     func setHeld(_ isHeld: Bool) async throws
     func setMuted(_ isMuted: Bool) async throws
     func playDTMF(_ digits: String) async throws
-    func setSpeakerEnabled(_ isEnabled: Bool) throws
 }

@@ -7,9 +7,9 @@ import Observation
 @Observable
 final class CallKitCoordinator: NSObject, CallStarting, CallControlling, IncomingCallReporting {
     private(set) var activeCall: ActiveCallSession?
-    private(set) var isSpeakerEnabled = false
 
     let capabilities: CallCapabilities
+    let audioRoutes: CallAudioRouteController
 
     @ObservationIgnored private let provider: any SystemCallProviding
     @ObservationIgnored private let controller: CXCallController
@@ -28,9 +28,11 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
         controller: CXCallController = CXCallController(),
         integratesWithSystem: Bool = true,
         initialCall: ActiveCallSession? = nil,
-        recentCallLineStore: any RecentCallLineStoring = NullRecentCallLineStore()
+        recentCallLineStore: any RecentCallLineStoring = NullRecentCallLineStore(),
+        audioRoutes: CallAudioRouteController? = nil
     ) {
         activeCall = initialCall
+        self.audioRoutes = audioRoutes ?? CallAudioRouteController()
         self.transport = transport
         self.incomingCallClaimer = incomingCallClaimer
         self.controller = controller
@@ -246,11 +248,6 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
         )
     }
 
-    func setSpeakerEnabled(_ isEnabled: Bool) throws {
-        try AVAudioSession.sharedInstance().overrideOutputAudioPort(isEnabled ? .speaker : .none)
-        isSpeakerEnabled = isEnabled
-    }
-
     func updateDisplayName(_ displayName: String?, for callID: UUID) {
         guard activeCall?.id == callID else { return }
         activeCall?.displayName = displayName
@@ -282,6 +279,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
             mode: .voiceChat,
             options: [.allowBluetoothHFP]
         )
+        audioRoutes.refresh()
     }
 
     private func incomingCallUpdate(for call: IncomingCallPresentation) -> CXCallUpdate {
@@ -345,7 +343,6 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
     private func finishCall(callID: UUID) {
         guard activeCall?.id == callID else { return }
         activeCall = nil
-        isSpeakerEnabled = false
         pendingOutgoing.removeValue(forKey: callID)
         incomingCalls.removeValue(forKey: callID)
         if let completion = startCompletions.removeValue(forKey: callID) {
@@ -467,6 +464,7 @@ extension CallKitCoordinator: @preconcurrency CXProviderDelegate {
     }
 
     func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
+        audioRoutes.refresh()
         Task {
             await transport.audioSessionDidActivate(audioSession)
         }

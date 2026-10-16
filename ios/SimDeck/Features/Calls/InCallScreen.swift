@@ -33,16 +33,16 @@ struct InCallScreen: View {
                         InCallControls(
                             call: call,
                             capabilities: coordinator.capabilities,
-                            isSpeakerEnabled: coordinator.isSpeakerEnabled,
+                            audioRoutes: coordinator.audioRoutes,
                             onMute: {
                                 perform {
                                     try await coordinator.setMuted(!call.isMuted)
                                 }
                             },
                             onKeypad: { isKeypadVisible = true },
-                            onSpeaker: {
+                            onAudioRoute: { route in
                                 do {
-                                    try coordinator.setSpeakerEnabled(!coordinator.isSpeakerEnabled)
+                                    try coordinator.audioRoutes.select(route)
                                 } catch {
                                     presentedError = InCallPresentedError(
                                         message: "Could not change the audio route."
@@ -197,10 +197,10 @@ private struct CallDurationText: View {
 private struct InCallControls: View {
     let call: ActiveCallSession
     let capabilities: CallCapabilities
-    let isSpeakerEnabled: Bool
+    let audioRoutes: CallAudioRouteController
     let onMute: () -> Void
     let onKeypad: () -> Void
-    let onSpeaker: () -> Void
+    let onAudioRoute: (CallAudioRoute) -> Void
     let onHold: () -> Void
 
     var body: some View {
@@ -220,12 +220,9 @@ private struct InCallControls: View {
                     isEnabled: capabilities.supportsDTMF,
                     action: onKeypad
                 )
-                CallControlButton(
-                    title: "Audio",
-                    systemImage: isSpeakerEnabled ? "speaker.wave.3.fill" : "speaker.wave.3",
-                    isSelected: isSpeakerEnabled,
-                    isEnabled: true,
-                    action: onSpeaker
+                CallAudioRouteMenu(
+                    controller: audioRoutes,
+                    onSelect: onAudioRoute
                 )
             }
 
@@ -247,6 +244,41 @@ private struct InCallControls: View {
             }
         }
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+    }
+}
+
+private struct CallAudioRouteMenu: View {
+    let controller: CallAudioRouteController
+    let onSelect: (CallAudioRoute) -> Void
+
+    var body: some View {
+        Menu {
+            ForEach(controller.availableRoutes) { route in
+                Button {
+                    onSelect(route)
+                } label: {
+                    Label(route.name, systemImage: route.systemImage)
+                }
+                .disabled(!route.isSelectable || route.id == controller.currentRoute.id)
+            }
+        } label: {
+            VStack(spacing: 8) {
+                Image(systemName: controller.currentRoute.systemImage)
+                    .font(.system(size: 27, weight: .medium))
+                    .frame(width: 72, height: 72)
+                    .foregroundStyle(.black)
+                    .background(.white, in: Circle())
+
+                Text("Audio")
+                    .font(.caption)
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+            }
+            .frame(width: 84)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Audio")
+        .accessibilityValue(Text(verbatim: controller.currentRoute.name))
     }
 }
 
@@ -332,7 +364,8 @@ private extension ActiveCallStatus {
     let coordinator = CallKitCoordinator(
         transport: PreviewCallTransport(),
         integratesWithSystem: false,
-        initialCall: call
+        initialCall: call,
+        audioRoutes: CallAudioRouteController(source: PreviewCallAudioRouteSource())
     )
 
     InCallScreen(
@@ -354,7 +387,10 @@ private extension ActiveCallStatus {
     let coordinator = CallKitCoordinator(
         transport: PreviewCallTransport(),
         integratesWithSystem: false,
-        initialCall: call
+        initialCall: call,
+        audioRoutes: CallAudioRouteController(
+            source: PreviewCallAudioRouteSource(currentDeviceName: "AirPods Max")
+        )
     )
 
     InCallScreen(

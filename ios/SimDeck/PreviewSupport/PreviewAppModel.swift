@@ -2,7 +2,11 @@
 import Foundation
 
 extension AppModel {
-    static func preview(selectedTab: AppTab = .calls) -> AppModel {
+    static func preview(
+        selectedTab: AppTab = .calls,
+        devices: [DeviceLineIdentity] = PreviewFixtures.devices,
+        keyRecoveryState: KeyRecoveryState = .available
+    ) -> AppModel {
         let serverConnection = ServerConnectionManager(
             network: PreviewServerNetworking(),
             sessionStore: PreviewSecureValueStore(),
@@ -10,14 +14,14 @@ extension AppModel {
         )
         serverConnection.address = "https://sim-deck.example.com"
         return AppModel(
-            devices: PreviewFixtures.devices,
+            devices: devices,
             callHistory: .loaded(PreviewFixtures.calls),
             messages: .loaded(PreviewFixtures.conversations),
             lastSuccessfulDialLineID: PreviewFixtures.devices[0].id,
             defaultCallLineID: PreviewFixtures.devices[0].id,
             defaultMessageLineID: PreviewFixtures.devices[0].id,
             selectedTab: selectedTab,
-            keyRecoveryState: .available,
+            keyRecoveryState: keyRecoveryState,
             serverConnection: serverConnection,
             callCoordinator: CallKitCoordinator(
                 transport: PreviewCallTransport(),

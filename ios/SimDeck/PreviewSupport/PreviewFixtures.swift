@@ -11,13 +11,23 @@ enum PreviewFixtures {
             deviceName: "Office EC20",
             lineName: "Work",
             phoneNumber: "13500000000",
-            isOnline: true
+            isOnline: true,
+            radioStatus: CellularRadioStatus(technology: .lte, signalBars: 3)
         ),
         DeviceLineIdentity(
             id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
             numericID: 2,
-            deviceName: "Backup modem with a deliberately long management name",
+            deviceName: "Bedroom EC20",
             lineName: "Backup",
+            phoneNumber: "13000000002",
+            isOnline: true,
+            radioStatus: CellularRadioStatus(technology: .nrNSA, signalBars: 4)
+        ),
+        DeviceLineIdentity(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!,
+            numericID: 3,
+            deviceName: "Backup modem with a deliberately long management name",
+            lineName: "Travel",
             phoneNumber: "",
             isOnline: false
         )

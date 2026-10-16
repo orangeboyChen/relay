@@ -30,7 +30,10 @@ final class ServerConnectionManagerTests: XCTestCase {
                       "identity_public_key":"\(identityKey.base64EncodedString())",
                       "command_public_key":"\(commandKey.base64EncodedString())",
                       "paired_at":"2026-10-16T00:00:00Z",
-                      "last_seen_at":"2026-10-16T00:00:30Z"
+                      "last_seen_at":"2026-10-16T00:00:30Z",
+                      "radio_access_technology":"lte",
+                      "signal_bars":3,
+                      "radio_status_updated_at":"2026-10-16T00:00:40Z"
                     },{
                       "device_uuid":"\(futureDeviceID.uuidString.lowercased())",
                       "numeric_id":4,
@@ -64,10 +67,64 @@ final class ServerConnectionManagerTests: XCTestCase {
         XCTAssertEqual(devices[0].id, deviceID)
         XCTAssertEqual(devices[0].numericID, 2)
         XCTAssertEqual(devices[0].commandPublicKey, commandKey)
+        XCTAssertEqual(
+            devices[0].radioStatus,
+            CellularRadioStatus(technology: .lte, signalBars: 3)
+        )
         let loadedIdentityKey = try await manager.eventVerificationKey(deviceID: deviceID)
         XCTAssertEqual(loadedIdentityKey, identityKey)
         XCTAssertTrue(devices[0].isOnline)
         XCTAssertFalse(devices[1].isOnline)
+        XCTAssertNil(devices[1].radioStatus)
+    }
+
+    func testDeviceRadioStatusSuppressesStaleValuesAndRejectsInvalidBars() async throws {
+        let staleDeviceID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-000000000001")!
+        let invalidBarsDeviceID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-000000000002")!
+        let commandKey = Data(repeating: 7, count: 32)
+        let identityKey = Data(repeating: 8, count: 32)
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
+        )
+        let network = ScriptedServerNetwork { request in
+            XCTAssertEqual(request.url?.path, "/v1/devices")
+            return Self.response(
+                status: 200,
+                body: """
+                {"devices":[{
+                  "device_uuid":"\(staleDeviceID.uuidString.lowercased())",
+                  "numeric_id":1,
+                  "identity_public_key":"\(identityKey.base64EncodedString())",
+                  "command_public_key":"\(commandKey.base64EncodedString())",
+                  "last_seen_at":"2026-10-16T00:00:50Z",
+                  "radio_access_technology":"lte",
+                  "signal_bars":4,
+                  "radio_status_updated_at":"2026-10-16T00:00:00Z"
+                },{
+                  "device_uuid":"\(invalidBarsDeviceID.uuidString.lowercased())",
+                  "numeric_id":2,
+                  "identity_public_key":"\(identityKey.base64EncodedString())",
+                  "command_public_key":"\(commandKey.base64EncodedString())",
+                  "last_seen_at":"2026-10-16T00:00:50Z",
+                  "radio_access_technology":"nr_sa",
+                  "signal_bars":9,
+                  "radio_status_updated_at":"2026-10-16T00:00:50Z"
+                }]}
+                """
+            )
+        }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+
+        let devices = try await manager.loadDevices(
+            now: Date(timeIntervalSince1970: 1_792_108_860)
+        )
+
+        XCTAssertTrue(devices.allSatisfy(\.isOnline))
+        XCTAssertNil(devices[0].radioStatus)
+        XCTAssertEqual(devices[1].radioStatus?.technology, .nrSA)
+        XCTAssertNil(devices[1].radioStatus?.signalBars)
     }
 
     func testExpiredAccessTokenRefreshesBeforeLoadingDevices() async throws {

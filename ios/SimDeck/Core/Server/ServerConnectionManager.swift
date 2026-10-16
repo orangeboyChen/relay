@@ -311,17 +311,25 @@ final class ServerConnectionManager {
                 }
             )
             let devices = body.devices.map { device in
-                let recentlySeen = device.lastSeenAt.map {
-                    let age = now.timeIntervalSince($0)
-                    return age >= 0 && age < 60
-                } ?? false
+                let recentlySeen = Self.isFresh(device.lastSeenAt, now: now)
+                let isOnline = recentlySeen && device.commandPublicKey?.count == 32
+                let hasFreshRadioStatus = Self.isFresh(device.radioStatusUpdatedAt, now: now)
+                let radioStatus: CellularRadioStatus? = if isOnline && hasFreshRadioStatus {
+                    CellularRadioStatus(
+                        technology: device.radioAccessTechnology ?? .unknown,
+                        signalBars: device.signalBars
+                    )
+                } else {
+                    nil
+                }
                 return DeviceLineIdentity(
                     id: device.deviceUUID,
                     numericID: device.numericID,
                     deviceName: "",
                     lineName: "",
                     phoneNumber: "",
-                    isOnline: recentlySeen && device.commandPublicKey?.count == 32,
+                    isOnline: isOnline,
+                    radioStatus: radioStatus,
                     commandPublicKey: device.commandPublicKey
                 )
             }
@@ -333,6 +341,12 @@ final class ServerConnectionManager {
             lastErrorDescription = error.localizedDescription
             throw error
         }
+    }
+
+    private static func isFresh(_ date: Date?, now: Date) -> Bool {
+        guard let date else { return false }
+        let age = now.timeIntervalSince(date)
+        return age >= 0 && age < 60
     }
 
     func commandRecipient(deviceID: UUID) async throws -> Data {
@@ -674,6 +688,9 @@ private struct ServerDeviceRecord: Decodable {
     let identityPublicKey: Data
     let commandPublicKey: Data?
     let lastSeenAt: Date?
+    let radioAccessTechnology: CellularRadioAccessTechnology?
+    let signalBars: Int?
+    let radioStatusUpdatedAt: Date?
 
     enum CodingKeys: String, CodingKey {
         case deviceUUID = "device_uuid"
@@ -681,6 +698,9 @@ private struct ServerDeviceRecord: Decodable {
         case identityPublicKey = "identity_public_key"
         case commandPublicKey = "command_public_key"
         case lastSeenAt = "last_seen_at"
+        case radioAccessTechnology = "radio_access_technology"
+        case signalBars = "signal_bars"
+        case radioStatusUpdatedAt = "radio_status_updated_at"
     }
 }
 

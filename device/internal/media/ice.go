@@ -44,8 +44,17 @@ func NewICESettings(config ICEConfig) (webrtc.SettingEngine, func(), error) {
 		}
 		mux := webrtc.NewICETCPMux(nil, listener, 8)
 		settings.SetICETCPMux(mux)
-		settings.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4, webrtc.NetworkTypeTCP4})
 		closers = append(closers, mux.Close)
+	}
+	if config.UDPPort > 0 || config.TCPPort > 0 {
+		networkTypes := make([]webrtc.NetworkType, 0, 2)
+		if config.UDPPort > 0 {
+			networkTypes = append(networkTypes, webrtc.NetworkTypeUDP4)
+		}
+		if config.TCPPort > 0 {
+			networkTypes = append(networkTypes, webrtc.NetworkTypeTCP4)
+		}
+		settings.SetNetworkTypes(networkTypes)
 	}
 	return settings, func() {
 		for _, closeListener := range closers {

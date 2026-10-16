@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -47,19 +48,76 @@ func main() {
 }
 
 func run(ctx context.Context, config agent.Config, logger *slog.Logger) error {
+	return runWithDependencies(ctx, config, logger, runtimeDependencies{
+		listen: func(ctx context.Context, network, address string) (net.Listener, error) {
+			var listener net.ListenConfig
+			return listener.Listen(ctx, network, address)
+		},
+		runDevice:          runDevice,
+		deviceDependencies: productionDependencies(nil),
+	})
+}
+
+type runtimeDependencies struct {
+	listen             func(context.Context, string, string) (net.Listener, error)
+	runDevice          func(context.Context, agent.Config, *slog.Logger, *atomic.Bool, deviceDependencies) error
+	deviceDependencies deviceDependencies
+}
+
+func runWithDependencies(ctx context.Context, config agent.Config, logger *slog.Logger, dependencies runtimeDependencies) error {
 	var ready atomic.Bool
+	listener, err := dependencies.listen(ctx, "tcp", config.HealthAddress)
+	if err != nil {
+		return fmt.Errorf("listen for health checks: %w", err)
+	}
 	server := healthServer(config.HealthAddress, &ready)
+	runContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	serverResult := make(chan error, 1)
 	go func() {
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("health server stopped", "error", err)
-		}
+		serverResult <- server.Serve(listener)
 	}()
-	defer func() {
-		shutdownContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownContext)
+	deviceResult := make(chan error, 1)
+	go func() {
+		deviceResult <- dependencies.runDevice(runContext, config, logger, &ready, dependencies.deviceDependencies)
 	}()
-	return runDevice(ctx, config, logger, &ready, productionDependencies(nil))
+
+	var deviceError error
+	var serverError error
+	deviceCompleted := false
+	serverCompleted := false
+	select {
+	case deviceError = <-deviceResult:
+		deviceCompleted = true
+		cancel()
+	case serverError = <-serverResult:
+		serverCompleted = true
+		cancel()
+	}
+
+	shutdownContext, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shutdownCancel()
+	shutdownError := server.Shutdown(shutdownContext)
+	if !deviceCompleted {
+		deviceError = <-deviceResult
+	}
+	if !serverCompleted {
+		serverError = <-serverResult
+	}
+
+	return errors.Join(
+		meaningfulRuntimeError("device runtime", deviceError),
+		meaningfulRuntimeError("health server", serverError),
+		meaningfulRuntimeError("shut down health server", shutdownError),
+	)
+}
+
+func meaningfulRuntimeError(operation string, err error) error {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", operation, err)
 }
 
 type deviceSession interface {

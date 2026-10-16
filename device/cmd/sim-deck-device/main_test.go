@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -55,6 +56,40 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return function(request)
 }
+
+type failingListener struct {
+	err error
+}
+
+func (listener *failingListener) Accept() (net.Conn, error) { return nil, listener.err }
+func (*failingListener) Close() error                       { return nil }
+func (*failingListener) Addr() net.Addr                     { return testAddress("health") }
+
+type testAddress string
+
+func (address testAddress) Network() string { return "test" }
+func (address testAddress) String() string  { return string(address) }
+
+type blockingListener struct {
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+func newBlockingListener() *blockingListener {
+	return &blockingListener{closed: make(chan struct{})}
+}
+
+func (listener *blockingListener) Accept() (net.Conn, error) {
+	<-listener.closed
+	return nil, net.ErrClosed
+}
+
+func (listener *blockingListener) Close() error {
+	listener.closeOnce.Do(func() { close(listener.closed) })
+	return nil
+}
+
+func (*blockingListener) Addr() net.Addr { return testAddress("health") }
 
 func newBlockingTransport() *blockingTransport {
 	return &blockingTransport{done: make(chan struct{})}
@@ -203,6 +238,95 @@ var _ = Describe("Device command runtime", func() {
 
 	BeforeEach(func() {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	})
+
+	It("fails before starting the device when the health address cannot bind", func() {
+		deviceStarted := false
+		dependencies := runtimeDependencies{
+			listen: func(context.Context, string, string) (net.Listener, error) {
+				return nil, errors.New("address already in use")
+			},
+			runDevice: func(context.Context, agent.Config, *slog.Logger, *atomic.Bool, deviceDependencies) error {
+				deviceStarted = true
+				return nil
+			},
+		}
+
+		err := runWithDependencies(context.Background(), testConfig(GinkgoT().TempDir()), logger, dependencies)
+
+		Expect(err).To(MatchError("listen for health checks: address already in use"))
+		Expect(deviceStarted).To(BeFalse())
+	})
+
+	It("stops and awaits the device when the health server fails", func() {
+		healthFailure := errors.New("health listener failed")
+		deviceCanceled := make(chan struct{})
+		releaseDevice := make(chan struct{})
+		result := make(chan error, 1)
+		dependencies := runtimeDependencies{
+			listen: func(context.Context, string, string) (net.Listener, error) {
+				return &failingListener{err: healthFailure}, nil
+			},
+			runDevice: func(ctx context.Context, _ agent.Config, _ *slog.Logger, _ *atomic.Bool, _ deviceDependencies) error {
+				<-ctx.Done()
+				close(deviceCanceled)
+				<-releaseDevice
+				return ctx.Err()
+			},
+		}
+
+		go func() {
+			result <- runWithDependencies(context.Background(), testConfig(GinkgoT().TempDir()), logger, dependencies)
+		}()
+
+		Eventually(deviceCanceled).Should(BeClosed())
+		Consistently(result).ShouldNot(Receive())
+		close(releaseDevice)
+		Eventually(result).Should(Receive(MatchError("health server: health listener failed")))
+	})
+
+	It("shuts down the health listener after device cancellation", func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		deviceStarted := make(chan struct{})
+		listener := newBlockingListener()
+		dependencies := runtimeDependencies{
+			listen: func(context.Context, string, string) (net.Listener, error) {
+				return listener, nil
+			},
+			runDevice: func(ctx context.Context, _ agent.Config, _ *slog.Logger, _ *atomic.Bool, _ deviceDependencies) error {
+				close(deviceStarted)
+				<-ctx.Done()
+				return ctx.Err()
+			},
+		}
+		result := make(chan error, 1)
+
+		go func() {
+			result <- runWithDependencies(ctx, testConfig(GinkgoT().TempDir()), logger, dependencies)
+		}()
+		Eventually(deviceStarted).Should(BeClosed())
+		cancel()
+		Eventually(result).Should(Receive(BeNil()))
+		Expect(listener.closed).To(BeClosed())
+	})
+
+	It("returns after a successful device runtime exit", func() {
+		listener := newBlockingListener()
+		dependencies := runtimeDependencies{
+			listen: func(context.Context, string, string) (net.Listener, error) {
+				return listener, nil
+			},
+			runDevice: func(context.Context, agent.Config, *slog.Logger, *atomic.Bool, deviceDependencies) error {
+				return nil
+			},
+		}
+
+		result := make(chan error, 1)
+		go func() {
+			result <- runWithDependencies(context.Background(), testConfig(GinkgoT().TempDir()), logger, dependencies)
+		}()
+
+		Eventually(result).Should(Receive(BeNil()))
 	})
 
 	It("sets readiness only for the initialized and bound session lifetime", func() {

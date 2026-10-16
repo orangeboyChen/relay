@@ -6,3 +6,5 @@
 - Run the relevant tests before committing.
 - Write all code comments and documentation comments in English.
 - Always request elevated permissions before running `gh`.
+- Real modem calls and SMS tests may target only `13800000000` or `13500000000`.
+- Validate every real modem test destination with `scripts/check-real-test-number.sh` before issuing `ATD` or `AT+CMGS`.

@@ -116,6 +116,18 @@ struct IncomingCallClaim: Decodable, Equatable, Sendable {
     }
 }
 
+struct DeviceDiscoverySession: Decodable, Equatable, Sendable {
+    let openedAt: Date
+    let expiresAt: Date
+    let closedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case openedAt = "opened_at"
+        case expiresAt = "expires_at"
+        case closedAt = "closed_at"
+    }
+}
+
 struct DevicePairingToken: Decodable, Equatable, Sendable {
     let value: String
     let expiresAt: Date
@@ -124,6 +136,59 @@ struct DevicePairingToken: Decodable, Equatable, Sendable {
         case value = "pairing_token"
         case expiresAt = "expires_at"
     }
+}
+
+struct DeviceDiscoverySessionState: Decodable, Equatable, Sendable {
+    let active: Bool
+    let session: DeviceDiscoverySession?
+}
+
+enum DeviceDiscoveryStatus: String, Decodable, Equatable, Sendable {
+    case pending
+    case approved
+    case rejected
+}
+
+struct DiscoveredDevice: Decodable, Equatable, Identifiable, Sendable {
+    let deviceUUID: UUID
+    let identityPublicKey: Data
+    let commandPublicKey: Data
+    let status: DeviceDiscoveryStatus
+    let firstSeenAt: Date
+    let lastSeenAt: Date
+    let expiresAt: Date
+
+    var id: UUID { deviceUUID }
+
+    enum CodingKeys: String, CodingKey {
+        case deviceUUID = "device_uuid"
+        case identityPublicKey = "identity_public_key"
+        case commandPublicKey = "command_public_key"
+        case status
+        case firstSeenAt = "first_seen_at"
+        case lastSeenAt = "last_seen_at"
+        case expiresAt = "expires_at"
+    }
+}
+
+struct ApprovedDevice: Decodable, Equatable, Sendable {
+    let deviceUUID: UUID
+    let numericID: Int
+
+    enum CodingKeys: String, CodingKey {
+        case deviceUUID = "device_uuid"
+        case numericID = "numeric_id"
+    }
+}
+
+@MainActor
+protocol DeviceDiscoveryAPI: AnyObject {
+    func openDeviceDiscovery() async throws -> DeviceDiscoverySessionState
+    func deviceDiscoverySession() async throws -> DeviceDiscoverySessionState
+    func closeDeviceDiscovery() async throws
+    func discoveredDevices() async throws -> [DiscoveredDevice]
+    func approveDiscoveredDevice(id: UUID) async throws -> ApprovedDevice
+    func rejectDiscoveredDevice(id: UUID) async throws
 }
 
 @MainActor
@@ -362,6 +427,17 @@ final class ServerConnectionManager {
         }
     }
 
+    func openDeviceDiscovery() async throws -> DeviceDiscoverySessionState {
+        let (data, response) = try await authenticatedRequest(
+            path: "v1/device-discovery-session",
+            method: "POST"
+        )
+        guard response.statusCode == 201 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
+        }
+        return try Self.decoder.decode(DeviceDiscoverySessionState.self, from: data)
+    }
+
     func createDevicePairingToken() async throws -> DevicePairingToken {
         let (data, response) = try await authenticatedRequest(
             path: "v1/device-pairing-tokens",
@@ -371,6 +447,59 @@ final class ServerConnectionManager {
             throw ServerConnectionError.requestFailed(response.statusCode)
         }
         return try Self.decoder.decode(DevicePairingToken.self, from: data)
+    }
+
+    func deviceDiscoverySession() async throws -> DeviceDiscoverySessionState {
+        let (data, response) = try await authenticatedRequest(
+            path: "v1/device-discovery-session",
+            method: "GET"
+        )
+        guard response.statusCode == 200 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
+        }
+        return try Self.decoder.decode(DeviceDiscoverySessionState.self, from: data)
+    }
+
+    func closeDeviceDiscovery() async throws {
+        let (_, response) = try await authenticatedRequest(
+            path: "v1/device-discovery-session",
+            method: "DELETE"
+        )
+        guard response.statusCode == 204 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
+        }
+    }
+
+    func discoveredDevices() async throws -> [DiscoveredDevice] {
+        let (data, response) = try await authenticatedRequest(
+            path: "v1/device-discoveries",
+            method: "GET"
+        )
+        guard response.statusCode == 200 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
+        }
+        return try Self.decoder.decode(DeviceDiscoveriesResponse.self, from: data).discoveries
+    }
+
+    func approveDiscoveredDevice(id: UUID) async throws -> ApprovedDevice {
+        let (data, response) = try await authenticatedRequest(
+            path: "v1/device-discoveries/\(id.uuidString.lowercased())/approve",
+            method: "POST"
+        )
+        guard response.statusCode == 200 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
+        }
+        return try Self.decoder.decode(DeviceApprovalResponse.self, from: data).device
+    }
+
+    func rejectDiscoveredDevice(id: UUID) async throws {
+        let (_, response) = try await authenticatedRequest(
+            path: "v1/device-discoveries/\(id.uuidString.lowercased())",
+            method: "DELETE"
+        )
+        guard response.statusCode == 204 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
+        }
     }
 
     func updateDeviceNumericID(deviceID: UUID, numericID: Int) async throws {
@@ -701,6 +830,7 @@ extension ServerConnectionManager: EncryptedCallCommandAPI {}
 extension ServerConnectionManager: EncryptedEventStreamOpening {}
 extension ServerConnectionManager: IncomingCallClaiming {}
 extension ServerConnectionManager: PushTokenRegistering {}
+extension ServerConnectionManager: DeviceDiscoveryAPI {}
 
 private struct BootstrapRequest: Encodable {
     let username: String
@@ -768,6 +898,14 @@ private struct DeviceProfileRequest: Encodable {
 
 private struct DeviceListResponse: Decodable {
     let devices: [ServerDeviceRecord]
+}
+
+private struct DeviceDiscoveriesResponse: Decodable {
+    let discoveries: [DiscoveredDevice]
+}
+
+private struct DeviceApprovalResponse: Decodable {
+    let device: ApprovedDevice
 }
 
 private struct ServerDeviceRecord: Decodable {

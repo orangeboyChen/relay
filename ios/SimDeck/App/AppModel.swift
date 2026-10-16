@@ -188,8 +188,34 @@ final class AppModel {
         devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
     }
 
+    func openDeviceDiscovery() async throws -> DeviceDiscoverySessionState {
+        try await serverConnection.openDeviceDiscovery()
+    }
+
     func createDevicePairingToken() async throws -> DevicePairingToken {
         try await serverConnection.createDevicePairingToken()
+    }
+
+    func deviceDiscoverySession() async throws -> DeviceDiscoverySessionState {
+        try await serverConnection.deviceDiscoverySession()
+    }
+
+    func closeDeviceDiscovery() async throws {
+        try await serverConnection.closeDeviceDiscovery()
+    }
+
+    func discoveredDevices() async throws -> [DiscoveredDevice] {
+        try await serverConnection.discoveredDevices()
+    }
+
+    func approveDiscoveredDevice(id: UUID) async throws -> ApprovedDevice {
+        let approved = try await serverConnection.approveDiscoveredDevice(id: id)
+        await refreshDevices()
+        return approved
+    }
+
+    func rejectDiscoveredDevice(id: UUID) async throws {
+        try await serverConnection.rejectDiscoveredDevice(id: id)
     }
 
     func saveDevice(

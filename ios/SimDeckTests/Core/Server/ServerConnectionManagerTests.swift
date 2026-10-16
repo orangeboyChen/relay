@@ -164,27 +164,121 @@ final class ServerConnectionManagerTests: XCTestCase {
         XCTAssertEqual(devices.first?.phoneNumber, profile.phoneNumber)
     }
 
-    func testCreatesDevicePairingToken() async throws {
+    func testManagesAppControlledDeviceDiscovery() async throws {
         let store = MemoryServerSessionStore(
             value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
         )
+        let deviceID = UUID(uuidString: "01900000-0000-7000-8000-000000000401")!
+        let identityKey = Data(repeating: 4, count: 32)
+        let commandKey = Data(repeating: 5, count: 32)
         let network = ScriptedServerNetwork { request in
-            XCTAssertEqual(request.httpMethod, "POST")
-            XCTAssertEqual(request.url?.path, "/v1/device-pairing-tokens")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
-            return Self.response(
-                status: 201,
-                body: "{\"pairing_token\":\"pair-once\",\"expires_at\":\"2026-10-16T13:10:00Z\"}"
-            )
+            let discoveryPath = "/v1/device-discoveries/\(deviceID.uuidString.lowercased())"
+            switch (request.httpMethod, request.url?.path) {
+            case ("POST", "/v1/device-discovery-session"):
+                return Self.response(
+                    status: 201,
+                    body: """
+                    {"active":true,"session":{
+                      "opened_at":"2026-10-16T13:00:00Z",
+                      "expires_at":"2026-10-16T13:10:00Z"
+                    }}
+                    """
+                )
+            case ("GET", "/v1/device-discovery-session"):
+                return Self.response(
+                    status: 200,
+                    body: """
+                    {"active":true,"session":{
+                      "opened_at":"2026-10-16T13:00:00Z",
+                      "expires_at":"2026-10-16T13:10:00Z"
+                    }}
+                    """
+                )
+            case ("GET", "/v1/device-discoveries"):
+                return Self.response(
+                    status: 200,
+                    body: """
+                    {"discoveries":[{
+                      "device_uuid":"\(deviceID.uuidString.lowercased())",
+                      "identity_public_key":"\(identityKey.base64EncodedString())",
+                      "command_public_key":"\(commandKey.base64EncodedString())",
+                      "status":"pending",
+                      "first_seen_at":"2026-10-16T13:01:00Z",
+                      "last_seen_at":"2026-10-16T13:02:00Z",
+                      "expires_at":"2026-10-16T13:10:00Z"
+                    }]}
+                    """
+                )
+            case ("POST", "\(discoveryPath)/approve"):
+                return Self.response(
+                    status: 200,
+                    body: """
+                    {"device":{"device_uuid":"\(deviceID.uuidString.lowercased())","numeric_id":2}}
+                    """
+                )
+            case ("DELETE", discoveryPath), ("DELETE", "/v1/device-discovery-session"):
+                return Self.response(status: 204, body: "")
+            default:
+                XCTFail("Unexpected request: \(request.httpMethod ?? "") \(request.url?.path ?? "")")
+                return Self.response(status: 500, body: "{}")
+            }
         }
         let defaults = isolatedDefaults()
         defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
         let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
 
-        let token = try await manager.createDevicePairingToken()
+        let opened = try await manager.openDeviceDiscovery()
+        let loaded = try await manager.deviceDiscoverySession()
+        let discoveries = try await manager.discoveredDevices()
+        let approved = try await manager.approveDiscoveredDevice(id: deviceID)
+        try await manager.rejectDiscoveredDevice(id: deviceID)
+        try await manager.closeDeviceDiscovery()
 
-        XCTAssertEqual(token.value, "pair-once")
-        XCTAssertEqual(token.expiresAt, ISO8601DateFormatter().date(from: "2026-10-16T13:10:00Z"))
+        XCTAssertTrue(opened.active)
+        XCTAssertEqual(loaded, opened)
+        XCTAssertEqual(discoveries.first?.deviceUUID, deviceID)
+        XCTAssertEqual(discoveries.first?.identityPublicKey, identityKey)
+        XCTAssertEqual(discoveries.first?.commandPublicKey, commandKey)
+        XCTAssertEqual(discoveries.first?.status, .pending)
+        XCTAssertEqual(approved, ApprovedDevice(deviceUUID: deviceID, numericID: 2))
+        XCTAssertEqual(
+            network.requests.map { "\($0.httpMethod ?? "") \($0.url?.path ?? "")" },
+            [
+                "POST /v1/device-discovery-session",
+                "GET /v1/device-discovery-session",
+                "GET /v1/device-discoveries",
+                "POST /v1/device-discoveries/\(deviceID.uuidString.lowercased())/approve",
+                "DELETE /v1/device-discoveries/\(deviceID.uuidString.lowercased())",
+                "DELETE /v1/device-discovery-session",
+            ]
+        )
+    }
+
+    func testDeviceDiscoveryMapsFailureAndAllowsInactiveSessionWithoutMetadata() async throws {
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
+        )
+        let network = ScriptedServerNetwork { request in
+            if request.url?.path == "/v1/device-discovery-session" {
+                return Self.response(status: 200, body: "{\"active\":false}")
+            }
+            return Self.response(status: 410, body: "{}")
+        }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+
+        let session = try await manager.deviceDiscoverySession()
+        XCTAssertFalse(session.active)
+        XCTAssertNil(session.session)
+
+        do {
+            _ = try await manager.approveDiscoveredDevice(id: UUID())
+            XCTFail("Expected an expired discovery to fail")
+        } catch {
+            XCTAssertEqual(error as? ServerConnectionError, .requestFailed(410))
+        }
     }
 
     func testUpdatesEncryptedProfileAndNumericIDThenRevokesDevice() async throws {

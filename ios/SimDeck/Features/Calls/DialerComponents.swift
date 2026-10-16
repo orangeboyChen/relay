@@ -116,16 +116,31 @@ struct DialPad: View {
             spacing: 14
         ) {
             ForEach(keys, id: \.self) { key in
-                DialPadKey(content: key) {
-                    number.append(contentsOf: key.symbol)
-                } longPressAction: {
-                    if key.symbol == "0" {
-                        number.append("+")
+                DialPadKey(content: key) { press in
+                    guard let input = DialPadInput.output(for: key.symbol, press: press) else {
+                        return
                     }
+                    number.append(contentsOf: input)
                 }
             }
         }
         .frame(maxWidth: 318)
+    }
+}
+
+enum DialPadPress: Equatable {
+    case tap
+    case longPress
+}
+
+enum DialPadInput {
+    static func output(for symbol: String, press: DialPadPress) -> String? {
+        switch press {
+        case .tap:
+            symbol
+        case .longPress:
+            symbol == "0" ? "+" : nil
+        }
     }
 }
 
@@ -136,8 +151,7 @@ private struct DialPadKeyContent: Hashable {
 
 private struct DialPadKey: View {
     let content: DialPadKeyContent
-    let action: () -> Void
-    let longPressAction: () -> Void
+    let onPress: (DialPadPress) -> Void
 
     @State private var handledLongPress = false
     @ScaledMetric(relativeTo: .title) private var scaledSize = 72.0
@@ -147,7 +161,7 @@ private struct DialPadKey: View {
             if handledLongPress {
                 handledLongPress = false
             } else {
-                action()
+                onPress(.tap)
             }
         } label: {
             VStack(spacing: -2) {
@@ -167,11 +181,22 @@ private struct DialPadKey: View {
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .onLongPressGesture(minimumDuration: 0.5) {
-            handledLongPress = true
-            longPressAction()
-        }
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.5)
+                .onEnded { _ in
+                    handledLongPress = true
+                    onPress(.longPress)
+                },
+            including: content.symbol == "0" ? .all : .none
+        )
         .accessibilityLabel(accessibilityLabel)
+        .accessibilityActions {
+            if content.symbol == "0" {
+                Button("Enter plus") {
+                    onPress(.longPress)
+                }
+            }
+        }
     }
 
     private var accessibilityLabel: Text {

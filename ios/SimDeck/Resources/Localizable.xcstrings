@@ -52,6 +52,7 @@
     "Diagnostics" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "诊断" } } } },
     "Encryption" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "加密" } } } },
     "End-to-end encryption" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "端到端加密" } } } },
+    "Enter plus" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "输入加号" } } } },
     "Export Redacted Logs" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "导出脱敏日志" } } } },
     "Home iPhone" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "家中 iPhone" } } } },
     "Identity" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "身份信息" } } } },

@@ -22,6 +22,8 @@ var initializationCommands = []string{
 	"AT+CCWA=1,1",
 }
 
+const simReadinessCommand = "AT+CPIN?"
+
 // ErrMessageDeliveryDeferred keeps a durable SMS pending without stopping unrelated modem services.
 var ErrMessageDeliveryDeferred = errors.New("SMS delivery deferred")
 
@@ -74,8 +76,23 @@ func (session *Session) Calls() *call.Controller {
 
 // Initialize configures modem notifications and imports stored messages before readiness.
 func (session *Session) Initialize(ctx context.Context) error {
+	response, err := session.send(ctx, simReadinessCommand)
+	if err != nil {
+		return fmt.Errorf("query SIM readiness: %w", err)
+	}
+	if !response.OK() {
+		return fmt.Errorf("modem rejected SIM readiness query: %s", response.Terminal)
+	}
+	simStatus, ok := parseSIMStatus(response.Lines)
+	if !ok {
+		return errors.New("modem SIM readiness response is missing +CPIN")
+	}
+	if simStatus != "READY" {
+		return fmt.Errorf("modem SIM is not ready: %s", simStatus)
+	}
+
 	for _, command := range initializationCommands {
-		response, err := session.send(ctx, command)
+		response, err = session.send(ctx, command)
 		if err != nil {
 			return err
 		}
@@ -84,7 +101,7 @@ func (session *Session) Initialize(ctx context.Context) error {
 		}
 	}
 
-	response, err := session.send(ctx, "AT+CMGL=4")
+	response, err = session.send(ctx, "AT+CMGL=4")
 	if err != nil {
 		return err
 	}
@@ -109,6 +126,20 @@ func (session *Session) Initialize(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func parseSIMStatus(lines []string) (string, bool) {
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "+CPIN:") {
+			continue
+		}
+		status := strings.ToUpper(strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "+CPIN:")), "\""))
+		if status == "" {
+			return "", false
+		}
+		return status, true
+	}
+	return "", false
 }
 
 // Run routes modem notifications until cancellation or a terminal serial error.

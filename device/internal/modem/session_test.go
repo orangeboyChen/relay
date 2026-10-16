@@ -40,15 +40,18 @@ var _ = Describe("Modem session", func() {
 			_ = client.Close()
 			_ = modemTransport.Close()
 		})
-		commands := make(chan string, len(initializationCommands)+1)
+		commands := make(chan string, len(initializationCommands)+2)
 		go func() {
 			reader := bufio.NewReader(modemTransport)
-			for index := 0; index < len(initializationCommands)+1; index++ {
+			for index := 0; index < len(initializationCommands)+2; index++ {
 				command, _ := reader.ReadString('\r')
 				commands <- strings.TrimSuffix(command, "\r")
-				if command == "AT+CMGL=4\r" {
+				switch command {
+				case simReadinessCommand + "\r":
+					_, _ = modemTransport.Write([]byte("+CPIN: READY\r\nOK\r\n"))
+				case "AT+CMGL=4\r":
 					_, _ = modemTransport.Write([]byte("+CMGL: 1,0,,23\r\n" + testDeliverPDU + "\r\n+CMGL: 2,0,,1\r\nnot-hex\r\nOK\r\n"))
-				} else {
+				default:
 					_, _ = modemTransport.Write([]byte("OK\r\n"))
 				}
 			}
@@ -56,7 +59,9 @@ var _ = Describe("Modem session", func() {
 
 		Expect(session.Initialize(context.Background())).To(Succeed())
 
-		for _, expected := range append(append([]string(nil), initializationCommands...), "AT+CMGL=4") {
+		expectedCommands := append([]string{simReadinessCommand}, initializationCommands...)
+		expectedCommands = append(expectedCommands, "AT+CMGL=4")
+		for _, expected := range expectedCommands {
 			Eventually(commands).Should(Receive(Equal(expected)))
 		}
 		Eventually(received).Should(Receive(WithTransform(func(message sms.ReceivedMessage) string { return message.Text }, Equal("你好"))))
@@ -70,6 +75,8 @@ var _ = Describe("Modem session", func() {
 		})
 		go func() {
 			reader := bufio.NewReader(modemTransport)
+			_, _ = reader.ReadString('\r')
+			_, _ = modemTransport.Write([]byte("+CPIN: READY\r\nOK\r\n"))
 			_, _ = reader.ReadString('\r')
 			_, _ = modemTransport.Write([]byte("+CME ERROR: 3\r\n"))
 		}()
@@ -95,6 +102,26 @@ var _ = Describe("Modem session", func() {
 		Expect(errors.Is(err, context.DeadlineExceeded)).To(BeTrue())
 	})
 
+	DescribeTable("rejects a modem without a ready SIM",
+		func(response string, expected string) {
+			session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+			DeferCleanup(func() {
+				_ = client.Close()
+				_ = modemTransport.Close()
+			})
+			go func() {
+				reader := bufio.NewReader(modemTransport)
+				_, _ = reader.ReadString('\r')
+				_, _ = modemTransport.Write([]byte(response))
+			}()
+
+			Expect(session.Initialize(context.Background())).To(MatchError(expected))
+		},
+		Entry("when the SIM requires a PIN", "+CPIN: SIM PIN\r\nOK\r\n", "modem SIM is not ready: SIM PIN"),
+		Entry("when the modem omits CPIN status", "OK\r\n", "modem SIM readiness response is missing +CPIN"),
+		Entry("when the modem rejects the query", "+CME ERROR: SIM not inserted\r\n", "modem rejected SIM readiness query: +CME ERROR: SIM not inserted"),
+	)
+
 	It("fails initialization when the history command is rejected", func() {
 		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
 		DeferCleanup(func() {
@@ -103,11 +130,14 @@ var _ = Describe("Modem session", func() {
 		})
 		go func() {
 			reader := bufio.NewReader(modemTransport)
-			for index := 0; index < len(initializationCommands)+1; index++ {
+			for index := 0; index < len(initializationCommands)+2; index++ {
 				command, _ := reader.ReadString('\r')
-				if command == "AT+CMGL=4\r" {
+				switch command {
+				case simReadinessCommand + "\r":
+					_, _ = modemTransport.Write([]byte("+CPIN: READY\r\nOK\r\n"))
+				case "AT+CMGL=4\r":
 					_, _ = modemTransport.Write([]byte("ERROR\r\n"))
-				} else {
+				default:
 					_, _ = modemTransport.Write([]byte("OK\r\n"))
 				}
 			}
@@ -128,11 +158,14 @@ var _ = Describe("Modem session", func() {
 		})
 		go func() {
 			reader := bufio.NewReader(modemTransport)
-			for index := 0; index < len(initializationCommands)+1; index++ {
+			for index := 0; index < len(initializationCommands)+2; index++ {
 				command, _ := reader.ReadString('\r')
-				if command == "AT+CMGL=4\r" {
+				switch command {
+				case simReadinessCommand + "\r":
+					_, _ = modemTransport.Write([]byte("+CPIN: READY\r\nOK\r\n"))
+				case "AT+CMGL=4\r":
 					_, _ = modemTransport.Write([]byte("+CMGL: 1,0,,23\r\n" + testDeliverPDU + "\r\nOK\r\n"))
-				} else {
+				default:
 					_, _ = modemTransport.Write([]byte("OK\r\n"))
 				}
 			}
@@ -153,11 +186,14 @@ var _ = Describe("Modem session", func() {
 		})
 		go func() {
 			reader := bufio.NewReader(modemTransport)
-			for index := 0; index < len(initializationCommands)+1; index++ {
+			for index := 0; index < len(initializationCommands)+2; index++ {
 				command, _ := reader.ReadString('\r')
-				if command == "AT+CMGL=4\r" {
+				switch command {
+				case simReadinessCommand + "\r":
+					_, _ = modemTransport.Write([]byte("+CPIN: READY\r\nOK\r\n"))
+				case "AT+CMGL=4\r":
 					_, _ = modemTransport.Write([]byte("+CMGL: 1,0,,23\r\n" + testDeliverPDU + "\r\nOK\r\n"))
-				} else {
+				default:
 					_, _ = modemTransport.Write([]byte("OK\r\n"))
 				}
 			}

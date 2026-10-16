@@ -4,6 +4,7 @@ import (
 	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -52,6 +53,20 @@ func (state State) PublicKey() ed25519.PublicKey {
 	}
 	publicKey := state.IdentityPrivateKey.Public().(ed25519.PublicKey)
 	return append(ed25519.PublicKey(nil), publicKey...)
+}
+
+// IdentityFingerprint returns the short SHA-256 fingerprint shown during owner approval.
+func (state State) IdentityFingerprint() string {
+	publicKey := state.PublicKey()
+	if len(publicKey) != ed25519.PublicKeySize {
+		return ""
+	}
+	digest := sha256.Sum256(publicKey)
+	parts := make([]string, 6)
+	for index, value := range digest[:6] {
+		parts[index] = fmt.Sprintf("%02X", value)
+	}
+	return strings.Join(parts, " ")
 }
 
 // Store persists the identity in a container-specific state directory.

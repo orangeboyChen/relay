@@ -69,6 +69,13 @@ var _ = Describe("Device identity store", func() {
 		Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o600)))
 	})
 
+	It("formats the owner-verification fingerprint from the identity public key", func() {
+		state := State{IdentityPrivateKey: ed25519.NewKeyFromSeed(bytes.Repeat([]byte{4}, ed25519.SeedSize))}
+
+		Expect(state.IdentityFingerprint()).To(Equal("C5 B9 40 ED 3F 65"))
+		Expect(State{}.IdentityFingerprint()).To(BeEmpty())
+	})
+
 	It("rejects a configured UUID that differs from persisted identity", func() {
 		directory := GinkgoT().TempDir()
 		created, err := NewStore(directory, testDeviceUUID).LoadOrCreate()

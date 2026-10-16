@@ -209,6 +209,11 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	if err != nil {
 		return fmt.Errorf("load device identity: %w", err)
 	}
+	logger.Info(
+		"device identity ready for owner verification",
+		"device_uuid", deviceIdentity.DeviceUUID,
+		"identity_fingerprint", deviceIdentity.IdentityFingerprint(),
+	)
 	transport, err := dependencies.openTransport(config.ATDevice, config.Baud)
 	if err != nil {
 		return err

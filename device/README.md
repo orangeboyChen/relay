@@ -205,7 +205,8 @@ docker compose -f compose.example.yaml logs --tail=100 modem-1
 ```
 
 The container remains `starting` while it is awaiting approval. In the app,
-select the pending UUID, verify its fingerprint, and tap Allow. Then verify
+select the pending UUID, compare its fingerprint with the
+`identity_fingerprint` value in the container log, and tap Allow. Then verify
 readiness:
 
 ```sh

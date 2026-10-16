@@ -211,6 +211,7 @@ func testDependencies(transport io.ReadWriteCloser, session deviceSession) devic
 			Expect(sink.ReceiveSMS(context.Background(), sms.ReceivedMessage{ID: "message-id", Segments: 1})).To(MatchError(modem.ErrMessageDeliveryDeferred))
 			return session, nil
 		},
+		configureAudio: func(context.Context, agent.Config, *at.Client) error { return nil },
 		syncCommandKey: func(context.Context, agent.Config, identity.State) error { return nil },
 		newCallEvents: func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error) {
 			return eventRunner, nil
@@ -425,6 +426,24 @@ var _ = Describe("Device command runtime", func() {
 		Expect(bound).To(BeFalse())
 	})
 
+	It("does not bind when modem audio configuration fails", func() {
+		transport := newBlockingTransport()
+		dependencies := testDependencies(transport, &fakeDeviceSession{})
+		dependencies.configureAudio = func(context.Context, agent.Config, *at.Client) error {
+			return errors.New("UAC unavailable")
+		}
+		bound := false
+		dependencies.bindIdentity = func(context.Context, agent.Config, identity.Store, identity.State) (identity.State, error) {
+			bound = true
+			return identity.State{}, nil
+		}
+
+		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError("configure modem audio: UAC unavailable"))
+		Expect(bound).To(BeFalse())
+	})
+
 	It("returns a server binding failure before readiness", func() {
 		transport := newBlockingTransport()
 		dependencies := testDependencies(transport, &fakeDeviceSession{})
@@ -615,6 +634,7 @@ var _ = Describe("Device command runtime", func() {
 		Expect(dependencies.bindIdentity).NotTo(BeNil())
 		Expect(dependencies.openInbox).NotTo(BeNil())
 		Expect(dependencies.newSession).NotTo(BeNil())
+		Expect(dependencies.configureAudio).NotTo(BeNil())
 		Expect(dependencies.syncCommandKey).NotTo(BeNil())
 		Expect(dependencies.newCallEvents).NotTo(BeNil())
 		Expect(dependencies.newIncomingCalls).NotTo(BeNil())

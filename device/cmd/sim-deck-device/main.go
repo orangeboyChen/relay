@@ -147,6 +147,7 @@ type deviceDependencies struct {
 	bindIdentity     func(context.Context, agent.Config, identity.Store, identity.State) (identity.State, error)
 	openInbox        func(string, time.Duration, []byte) (*sms.Inbox, error)
 	newSession       func(*at.Client, *sms.Inbox, modem.MessageSink, *slog.Logger, time.Duration) (deviceSession, error)
+	configureAudio   func(context.Context, agent.Config, *at.Client) error
 	syncCommandKey   func(context.Context, agent.Config, identity.State) error
 	newCallEvents    func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error)
 	newIncomingCalls func(agent.Config, identity.State, <-chan call.Snapshot, incomingcall.EventRegistrar) (commandRuntime, error)
@@ -166,6 +167,12 @@ func productionDependencies(httpClient *http.Client) deviceDependencies {
 		openInbox: sms.NewPersistentInbox,
 		newSession: func(client *at.Client, inbox *sms.Inbox, sink modem.MessageSink, logger *slog.Logger, timeout time.Duration) (deviceSession, error) {
 			return modem.NewSession(client, inbox, sink, logger, timeout)
+		},
+		configureAudio: func(ctx context.Context, config agent.Config, client *at.Client) error {
+			if config.AudioMode == agent.AudioModeALSA {
+				return modem.ConfigureUAC(ctx, client, config.CommandTimeout)
+			}
+			return nil
 		},
 		syncCommandKey: func(ctx context.Context, config agent.Config, state identity.State) error {
 			return serverapi.NewClient(config.ServerURL, httpClient).UpdateCommandKey(ctx, state)
@@ -239,6 +246,9 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	}
 	if err := session.Initialize(ctx); err != nil {
 		return err
+	}
+	if err := dependencies.configureAudio(ctx, config, client); err != nil {
+		return fmt.Errorf("configure modem audio: %w", err)
 	}
 	deviceIdentity, err = dependencies.bindIdentity(ctx, config, identityStore, deviceIdentity)
 	if err != nil {

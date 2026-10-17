@@ -31,6 +31,10 @@ const defaultCallPollInterval = time.Second
 
 const defaultMessageRetryInterval = time.Minute
 
+const simReadinessAttempts = 3
+
+const simReadinessRetryDelay = 100 * time.Millisecond
+
 // MessageSink receives one complete, durably deduplicated SMS.
 type MessageSink interface {
 	ReceiveSMS(context.Context, sms.ReceivedMessage) error
@@ -107,21 +111,15 @@ func (session *Session) SendSMS(ctx context.Context, destination string, text st
 
 // Initialize configures modem notifications and imports stored messages before readiness.
 func (session *Session) Initialize(ctx context.Context) error {
-	response, err := session.send(ctx, simReadinessCommand)
+	simStatus, err := session.querySIMStatus(ctx)
 	if err != nil {
-		return fmt.Errorf("query SIM readiness: %w", err)
-	}
-	if !response.OK() {
-		return fmt.Errorf("modem rejected SIM readiness query: %s", response.Terminal)
-	}
-	simStatus, ok := parseSIMStatus(response.Lines)
-	if !ok {
-		return errors.New("modem SIM readiness response is missing +CPIN")
+		return err
 	}
 	if simStatus != "READY" {
 		return fmt.Errorf("modem SIM is not ready: %s", simStatus)
 	}
 
+	var response at.Response
 	for _, command := range initializationCommands {
 		response, err = session.send(ctx, command)
 		if err != nil {
@@ -145,6 +143,32 @@ func (session *Session) Initialize(ctx context.Context) error {
 		session.logger.Warn("some modem SMS history entries were skipped", "error", errors.Join(extractionError, importError))
 	}
 	return session.RetryPendingSMS(ctx)
+}
+
+func (session *Session) querySIMStatus(ctx context.Context) (string, error) {
+	for attempt := 0; attempt < simReadinessAttempts; attempt++ {
+		response, err := session.send(ctx, simReadinessCommand)
+		if err != nil {
+			return "", fmt.Errorf("query SIM readiness: %w", err)
+		}
+		if !response.OK() {
+			return "", fmt.Errorf("modem rejected SIM readiness query: %s", response.Terminal)
+		}
+		if simStatus, ok := parseSIMStatus(response.Lines); ok {
+			return simStatus, nil
+		}
+		if attempt+1 == simReadinessAttempts {
+			break
+		}
+		timer := time.NewTimer(simReadinessRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return "", errors.New("modem SIM readiness response is missing +CPIN")
 }
 
 // RetryPendingSMS delivers every durable incoming message not yet accepted downstream.

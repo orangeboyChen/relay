@@ -289,8 +289,12 @@ var _ = Describe("Modem session", func() {
 			})
 			go func() {
 				reader := bufio.NewReader(modemTransport)
-				_, _ = reader.ReadString('\r')
-				_, _ = modemTransport.Write([]byte(response))
+				for attempt := 0; attempt < simReadinessAttempts; attempt++ {
+					if _, err := reader.ReadString('\r'); err != nil {
+						return
+					}
+					_, _ = modemTransport.Write([]byte(response))
+				}
 			}()
 
 			Expect(session.Initialize(context.Background())).To(MatchError(expected))
@@ -299,6 +303,31 @@ var _ = Describe("Modem session", func() {
 		Entry("when the modem omits CPIN status", "OK\r\n", "modem SIM readiness response is missing +CPIN"),
 		Entry("when the modem rejects the query", "+CME ERROR: SIM not inserted\r\n", "modem rejected SIM readiness query: +CME ERROR: SIM not inserted"),
 	)
+
+	It("retries a successful SIM query when a stale response omits CPIN", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			command, _ := reader.ReadString('\r')
+			if command == simReadinessCommand+"\r" {
+				_, _ = modemTransport.Write([]byte("OK\r\n"))
+			}
+			command, _ = reader.ReadString('\r')
+			if command == simReadinessCommand+"\r" {
+				_, _ = modemTransport.Write([]byte("+CPIN: READY\r\nOK\r\n"))
+			}
+			for index := 0; index < len(initializationCommands)+1; index++ {
+				_, _ = reader.ReadString('\r')
+				_, _ = modemTransport.Write([]byte("OK\r\n"))
+			}
+		}()
+
+		Expect(session.Initialize(context.Background())).NotTo(HaveOccurred())
+	})
 
 	It("fails initialization when the history command is rejected", func() {
 		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))

@@ -93,6 +93,12 @@ def configure_api(usb):
     usb.libusb_close.argtypes = [ctypes.c_void_p]
     usb.libusb_claim_interface.argtypes = [ctypes.c_void_p, ctypes.c_int]
     usb.libusb_claim_interface.restype = ctypes.c_int
+    usb.libusb_kernel_driver_active.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    usb.libusb_kernel_driver_active.restype = ctypes.c_int
+    usb.libusb_detach_kernel_driver.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    usb.libusb_detach_kernel_driver.restype = ctypes.c_int
+    usb.libusb_attach_kernel_driver.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    usb.libusb_attach_kernel_driver.restype = ctypes.c_int
     usb.libusb_release_interface.argtypes = [ctypes.c_void_p, ctypes.c_int]
     usb.libusb_release_interface.restype = ctypes.c_int
     usb.libusb_set_interface_alt_setting.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
@@ -267,6 +273,7 @@ def main():
     config_pointer = ctypes.POINTER(ConfigDescriptor)()
     handle = ctypes.c_void_p()
     claimed = []
+    detached = []
     stopped = threading.Event()
     capture = playback = None
     listener = client = None
@@ -282,6 +289,12 @@ def main():
         if result != 0:
             raise RuntimeError(f"open: {error_name(usb, result)}")
         for interface in (CAPTURE_INTERFACE, PLAYBACK_INTERFACE):
+            active_driver = usb.libusb_kernel_driver_active(handle, interface)
+            if active_driver == 1:
+                result = usb.libusb_detach_kernel_driver(handle, interface)
+                if result != 0:
+                    raise RuntimeError(f"detach audio interface {interface} kernel driver: {error_name(usb, result)}")
+                detached.append(interface)
             result = usb.libusb_claim_interface(handle, interface)
             if result != 0:
                 raise RuntimeError(f"claim audio interface {interface}: {error_name(usb, result)}")
@@ -356,6 +369,8 @@ def main():
             listener.close()
         for interface in reversed(claimed):
             usb.libusb_release_interface(handle, interface)
+        for interface in reversed(detached):
+            usb.libusb_attach_kernel_driver(handle, interface)
         if handle:
             usb.libusb_close(handle)
         if config_pointer:

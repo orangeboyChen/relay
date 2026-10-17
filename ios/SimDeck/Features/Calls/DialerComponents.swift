@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct LinePicker: View {
     let lines: [DeviceLineIdentity]
@@ -68,14 +69,8 @@ struct NumberEntry: View {
 
     var body: some View {
         ZStack(alignment: .trailing) {
-            TextField("Phone number", text: $number, prompt: Text("Phone number").foregroundStyle(.tertiary))
-                .font(.system(.largeTitle, design: .rounded).weight(.regular).monospacedDigit())
-                .multilineTextAlignment(.center)
-                .keyboardType(.phonePad)
-                .textContentType(.telephoneNumber)
-                .textInputAutocapitalization(.never)
-                .lineLimit(1)
-                .minimumScaleFactor(0.55)
+            DialerNumberTextField(text: $number)
+                .frame(maxWidth: .infinity)
                 .padding(.horizontal, 48)
 
             if !number.isEmpty {
@@ -98,6 +93,50 @@ struct NumberEntry: View {
         }
         .frame(height: 54)
         .animation(reduceMotion ? nil : .snappy, value: number.isEmpty)
+    }
+}
+
+private struct DialerNumberTextField: UIViewRepresentable {
+    @Binding var text: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeUIView(context: Context) -> UITextField {
+        let field = UITextField()
+        field.delegate = context.coordinator
+        field.addTarget(context.coordinator, action: #selector(Coordinator.textDidChange(_:)), for: .editingChanged)
+        field.textAlignment = .center
+        field.font = UIFont.monospacedDigitSystemFont(ofSize: 34, weight: .regular)
+        field.textColor = .label
+        field.tintColor = .tintColor
+        field.adjustsFontSizeToFitWidth = true
+        field.minimumFontSize = 20
+        field.keyboardType = .phonePad
+        field.textContentType = .telephoneNumber
+        field.accessibilityLabel = String(localized: "Phone number")
+        // The dial pad is the primary input surface; keep paste and editing while suppressing the system keyboard.
+        field.inputView = UIView(frame: .zero)
+        return field
+    }
+
+    func updateUIView(_ field: UITextField, context: Context) {
+        if field.text != text {
+            field.text = text
+        }
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        private let textBinding: Binding<String>
+
+        init(text: Binding<String>) {
+            textBinding = text
+        }
+
+        @objc func textDidChange(_ field: UITextField) {
+            textBinding.wrappedValue = field.text ?? ""
+        }
     }
 }
 

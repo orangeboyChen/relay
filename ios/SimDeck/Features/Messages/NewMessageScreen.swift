@@ -20,9 +20,10 @@ struct NewMessageScreen: View {
     ) {
         self.lines = lines
         self.sendAction = sendAction
+        let initialLineID = selectedLineID ?? lines.first(where: \.isOnline)?.id
         _draft = State(
             initialValue: NewMessageDraft(
-                selectedLineID: selectedLineID,
+                selectedLineID: initialLineID,
                 recipient: recipient,
                 body: message
             )
@@ -79,6 +80,12 @@ struct NewMessageScreen: View {
                         dismiss()
                     }
                 }
+            }
+            .task {
+                selectAvailableLineIfNeeded()
+            }
+            .onChange(of: lines) {
+                selectAvailableLineIfNeeded()
             }
         }
     }
@@ -237,6 +244,11 @@ struct NewMessageScreen: View {
 
     private var canEditMessage: Bool {
         selectedLine != nil && draft.hasValidRecipient
+    }
+
+    private func selectAvailableLineIfNeeded() {
+        guard selectedLine == nil else { return }
+        draft.selectedLineID = onlineLines.first?.id
     }
 
     private var linePickerAccessibilityLabel: Text {

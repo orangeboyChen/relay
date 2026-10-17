@@ -10,7 +10,7 @@ struct MessagesScreen: View {
 
     @State private var searchText = ""
     @State private var selectedLineID: UUID?
-    @State private var isComposing = false
+    @State private var composition: MessageComposition?
 
     init(
         state: MessageListState,
@@ -61,18 +61,21 @@ struct MessagesScreen: View {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 SIMFilterMenu(lines: lines, selection: $selectedLineID)
                 Button {
-                    isComposing = true
+                    composition = MessageComposition()
                 } label: {
                     Label("New Message", systemImage: "square.and.pencil")
                 }
+                .disabled(!hasOnlineLine)
+                .accessibilityHint(hasOnlineLine ? Text("") : Text("An online SIM is required."))
             }
         }
-        .sheet(isPresented: $isComposing) {
+        .sheet(item: $composition) { composition in
             NewMessageScreen(
                 lines: lines,
                 selectedLineID: defaultLineID,
                 sendAction: sendAction
             )
+            .id(composition.id)
         }
     }
 
@@ -107,6 +110,14 @@ struct MessagesScreen: View {
             }
         }
     }
+
+    private var hasOnlineLine: Bool {
+        lines.contains(where: \.isOnline)
+    }
+}
+
+private struct MessageComposition: Identifiable {
+    let id = UUID()
 }
 
 #if DEBUG

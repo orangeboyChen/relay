@@ -16,7 +16,7 @@ struct CallsTabScreen: View {
             model.lastSuccessfulDialLineID = lineID
         }
         .safeAreaInset(edge: .bottom) {
-            DialerLauncherButton {
+            DialerLauncherButton(isEnabled: model.devices.contains(where: \.isOnline)) {
                 dialerPresentation = .manual()
             }
         }
@@ -100,6 +100,7 @@ private struct DialerPresentation: Identifiable {
 }
 
 private struct DialerLauncherButton: View {
+    let isEnabled: Bool
     let action: () -> Void
 
     var body: some View {
@@ -114,7 +115,9 @@ private struct DialerLauncherButton: View {
                     .shadow(radius: 5, y: 2)
             }
             .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.92))
+            .disabled(!isEnabled)
             .accessibilityLabel("Open dialer")
+            .accessibilityHint(isEnabled ? Text("") : Text("An online SIM is required."))
         }
         .padding(.horizontal)
         .padding(.vertical, 8)

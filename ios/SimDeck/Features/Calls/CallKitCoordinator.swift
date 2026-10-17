@@ -423,6 +423,10 @@ extension CallKitCoordinator: @preconcurrency CXProviderDelegate {
             finishCall(callID: callID)
         }
 
+        // The local hangup is complete before the remote modem command finishes.
+        // Fulfilling CallKit first prevents a slow or offline device from showing
+        // a system-level "Call Control Failed" error after the user hung up.
+        action.fulfill()
         Task {
             do {
                 if isIncoming {
@@ -430,9 +434,10 @@ extension CallKitCoordinator: @preconcurrency CXProviderDelegate {
                 } else {
                     try await transport.endCall(callID: callID)
                 }
-                action.fulfill()
             } catch {
-                action.fail()
+#if DEBUG
+                print("call end command failed after local hangup: \(String(reflecting: error))")
+#endif
             }
             pendingEndCallKinds.removeValue(forKey: callID)
         }

@@ -28,6 +28,12 @@ type fakeRepository struct {
 	updatedProfileDeviceID      string
 	updatedProfileCiphertext    []byte
 	updateDeviceProfileError    error
+	updatedSIMNumericIDTarget   string
+	updatedSIMNumericIDValue    int
+	updateSIMNumericIDError     error
+	updatedSIMProfileTarget     string
+	updatedSIMProfileCiphertext []byte
+	updateSIMProfileError       error
 	revokedDeviceID             string
 	revokedDeviceAt             time.Time
 	revokeDeviceError           error
@@ -222,6 +228,18 @@ func (fake *fakeRepository) UpdateDeviceProfile(_ context.Context, deviceID stri
 	fake.updatedProfileDeviceID = deviceID
 	fake.updatedProfileCiphertext = append([]byte(nil), profileCiphertext...)
 	return fake.updateDeviceProfileError
+}
+
+func (fake *fakeRepository) UpdateSIMNumericID(_ context.Context, simID string, numericID int) error {
+	fake.updatedSIMNumericIDTarget = simID
+	fake.updatedSIMNumericIDValue = numericID
+	return fake.updateSIMNumericIDError
+}
+
+func (fake *fakeRepository) UpdateSIMProfile(_ context.Context, simID string, profileCiphertext []byte) error {
+	fake.updatedSIMProfileTarget = simID
+	fake.updatedSIMProfileCiphertext = append([]byte(nil), profileCiphertext...)
+	return fake.updateSIMProfileError
 }
 
 func (fake *fakeRepository) RevokeDevice(_ context.Context, deviceID string, revokedAt time.Time) error {
@@ -563,6 +581,61 @@ var _ = Describe("HTTP API", func() {
 		Entry("empty ciphertext", "/v1/devices/01900000-0000-7000-8000-000000000001/profile", `{"profile_ciphertext":""}`, nil, http.StatusUnprocessableEntity, "invalid_device_profile"),
 		Entry("missing device", "/v1/devices/01900000-0000-7000-8000-000000000001/profile", `{"profile_ciphertext":"YQ=="}`, pgx.ErrNoRows, http.StatusNotFound, "device_not_found"),
 		Entry("storage failure", "/v1/devices/01900000-0000-7000-8000-000000000001/profile", `{"profile_ciphertext":"YQ=="}`, errors.New("database unavailable"), http.StatusInternalServerError, "storage_error"),
+	)
+
+	It("updates one SIM numeric ID", func() {
+		response := perform(
+			http.MethodPatch,
+			"/v1/sims/01900000-0000-7000-8000-000000000101/numeric-id",
+			`{"numeric_id":7}`,
+			"access-token",
+		)
+
+		Expect(response.Code).To(Equal(http.StatusNoContent))
+		Expect(repository.updatedSIMNumericIDTarget).To(Equal("01900000-0000-7000-8000-000000000101"))
+		Expect(repository.updatedSIMNumericIDValue).To(Equal(7))
+	})
+
+	DescribeTable("maps SIM numeric-ID update failures",
+		func(path string, body string, repositoryError error, expectedStatus int, expectedCode string) {
+			repository.updateSIMNumericIDError = repositoryError
+			response := perform(http.MethodPatch, path, body, "access-token")
+			Expect(response.Code).To(Equal(expectedStatus))
+			Expect(response.Body.String()).To(ContainSubstring(expectedCode))
+		},
+		Entry("malformed JSON", "/v1/sims/01900000-0000-7000-8000-000000000101/numeric-id", `{`, nil, http.StatusBadRequest, "invalid_request"),
+		Entry("invalid SIM ID", "/v1/sims/not-a-uuid/numeric-id", `{"numeric_id":7}`, nil, http.StatusUnprocessableEntity, "invalid_sim"),
+		Entry("invalid identifier", "/v1/sims/01900000-0000-7000-8000-000000000101/numeric-id", `{"numeric_id":0}`, domain.ErrInvalidNumericID, http.StatusUnprocessableEntity, "invalid_numeric_id"),
+		Entry("duplicate identifier", "/v1/sims/01900000-0000-7000-8000-000000000101/numeric-id", `{"numeric_id":7}`, domain.ErrDuplicateNumericID, http.StatusConflict, "duplicate_numeric_id"),
+		Entry("missing SIM", "/v1/sims/01900000-0000-7000-8000-000000000101/numeric-id", `{"numeric_id":7}`, pgx.ErrNoRows, http.StatusNotFound, "sim_not_found"),
+		Entry("storage failure", "/v1/sims/01900000-0000-7000-8000-000000000101/numeric-id", `{"numeric_id":7}`, errors.New("database unavailable"), http.StatusInternalServerError, "storage_error"),
+	)
+
+	It("updates only one opaque encrypted SIM profile", func() {
+		response := perform(
+			http.MethodPut,
+			"/v1/sims/01900000-0000-7000-8000-000000000101/profile",
+			`{"profile_ciphertext":"ZW5jcnlwdGVkLVNJTS1wcm9maWxl"}`,
+			"access-token",
+		)
+
+		Expect(response.Code).To(Equal(http.StatusNoContent))
+		Expect(repository.updatedSIMProfileTarget).To(Equal("01900000-0000-7000-8000-000000000101"))
+		Expect(repository.updatedSIMProfileCiphertext).To(Equal([]byte("encrypted-SIM-profile")))
+	})
+
+	DescribeTable("rejects invalid or unavailable encrypted SIM profiles",
+		func(path string, body string, repositoryError error, expectedStatus int, expectedCode string) {
+			repository.updateSIMProfileError = repositoryError
+			response := perform(http.MethodPut, path, body, "access-token")
+			Expect(response.Code).To(Equal(expectedStatus))
+			Expect(response.Body.String()).To(ContainSubstring(expectedCode))
+		},
+		Entry("malformed JSON", "/v1/sims/01900000-0000-7000-8000-000000000101/profile", `{`, nil, http.StatusBadRequest, "invalid_request"),
+		Entry("invalid SIM ID", "/v1/sims/not-a-uuid/profile", `{"profile_ciphertext":"YQ=="}`, nil, http.StatusUnprocessableEntity, "invalid_sim_profile"),
+		Entry("empty ciphertext", "/v1/sims/01900000-0000-7000-8000-000000000101/profile", `{"profile_ciphertext":""}`, nil, http.StatusUnprocessableEntity, "invalid_sim_profile"),
+		Entry("missing SIM", "/v1/sims/01900000-0000-7000-8000-000000000101/profile", `{"profile_ciphertext":"YQ=="}`, pgx.ErrNoRows, http.StatusNotFound, "sim_not_found"),
+		Entry("storage failure", "/v1/sims/01900000-0000-7000-8000-000000000101/profile", `{"profile_ciphertext":"YQ=="}`, errors.New("database unavailable"), http.StatusInternalServerError, "storage_error"),
 	)
 
 	It("revokes a device using the owner session", func() {

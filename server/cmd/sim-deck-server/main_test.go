@@ -49,6 +49,12 @@ func (repository *memoryRepository) UpdateNumericID(context.Context, string, int
 func (repository *memoryRepository) UpdateDeviceProfile(context.Context, string, []byte) error {
 	return nil
 }
+func (repository *memoryRepository) UpdateSIMNumericID(context.Context, string, int) error {
+	return nil
+}
+func (repository *memoryRepository) UpdateSIMProfile(context.Context, string, []byte) error {
+	return nil
+}
 func (repository *memoryRepository) RevokeDevice(context.Context, string, time.Time) error {
 	return nil
 }

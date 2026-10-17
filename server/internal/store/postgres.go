@@ -1090,6 +1090,71 @@ func (store *Postgres) UpdateDeviceProfile(ctx context.Context, deviceID string,
 	return nil
 }
 
+// UpdateSIMNumericID assigns a user-selected compact identifier to one active SIM card.
+func (store *Postgres) UpdateSIMNumericID(ctx context.Context, simID string, numericID int) error {
+	if numericID < domain.MinNumericID || numericID > domain.MaxNumericID {
+		return domain.ErrInvalidNumericID
+	}
+	var updatedSIMID string
+	err := store.pool.QueryRow(ctx, `
+		WITH updated_sim AS (
+			UPDATE sim_cards AS sim
+			SET numeric_id = $2
+			FROM device_slots AS slot, devices AS device
+			WHERE sim.id = $1
+			  AND sim.retired_at IS NULL
+			  AND slot.current_sim_id = sim.id
+			  AND slot.removed_at IS NULL
+			  AND device.id = slot.device_id
+			  AND device.revoked_at IS NULL
+			RETURNING sim.id
+		), updated_devices AS (
+			UPDATE devices AS device
+			SET numeric_id = $2
+			FROM device_slots AS slot, updated_sim
+			WHERE slot.device_id = device.id
+			  AND slot.current_sim_id = updated_sim.id
+		)
+		SELECT id::text FROM updated_sim`, simID, numericID).Scan(&updatedSIMID)
+	if err != nil {
+		var postgresError *pgconn.PgError
+		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
+			return domain.ErrDuplicateNumericID
+		}
+		return fmt.Errorf("update SIM numeric id: %w", err)
+	}
+	return nil
+}
+
+// UpdateSIMProfile replaces the opaque end-to-end encrypted profile for one active SIM card.
+func (store *Postgres) UpdateSIMProfile(ctx context.Context, simID string, profileCiphertext []byte) error {
+	var updatedSIMID string
+	err := store.pool.QueryRow(ctx, `
+		WITH updated_sim AS (
+			UPDATE sim_cards AS sim
+			SET profile_ciphertext = $2
+			FROM device_slots AS slot, devices AS device
+			WHERE sim.id = $1
+			  AND sim.retired_at IS NULL
+			  AND slot.current_sim_id = sim.id
+			  AND slot.removed_at IS NULL
+			  AND device.id = slot.device_id
+			  AND device.revoked_at IS NULL
+			RETURNING sim.id
+		), updated_devices AS (
+			UPDATE devices AS device
+			SET profile_ciphertext = $2
+			FROM device_slots AS slot, updated_sim
+			WHERE slot.device_id = device.id
+			  AND slot.current_sim_id = updated_sim.id
+		)
+		SELECT id::text FROM updated_sim`, simID, profileCiphertext).Scan(&updatedSIMID)
+	if err != nil {
+		return fmt.Errorf("update SIM profile: %w", err)
+	}
+	return nil
+}
+
 // RevokeDevice atomically disables the device and all credentials issued to it.
 func (store *Postgres) RevokeDevice(ctx context.Context, deviceID string, revokedAt time.Time) error {
 	tx, err := store.pool.Begin(ctx)

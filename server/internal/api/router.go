@@ -27,6 +27,8 @@ type Repository interface {
 	ListDevices(context.Context) ([]store.DeviceRecord, error)
 	UpdateNumericID(context.Context, string, int) error
 	UpdateDeviceProfile(context.Context, string, []byte) error
+	UpdateSIMNumericID(context.Context, string, int) error
+	UpdateSIMProfile(context.Context, string, []byte) error
 	RevokeDevice(context.Context, string, time.Time) error
 	InsertEvent(context.Context, domain.EventEnvelope, time.Time) (int64, bool, error)
 	ListEvents(context.Context, int64, int, time.Time) ([]domain.EventEnvelope, error)
@@ -78,6 +80,8 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("GET /v1/devices", router.requireOwner(router.listDevices))
 	mux.HandleFunc("PATCH /v1/devices/{deviceID}/numeric-id", router.requireOwner(router.updateNumericID))
 	mux.HandleFunc("PUT /v1/devices/{deviceID}/profile", router.requireOwner(router.updateDeviceProfile))
+	mux.HandleFunc("PATCH /v1/sims/{simID}/numeric-id", router.requireOwner(router.updateSIMNumericID))
+	mux.HandleFunc("PUT /v1/sims/{simID}/profile", router.requireOwner(router.updateSIMProfile))
 	mux.HandleFunc("DELETE /v1/devices/{deviceID}", router.requireOwner(router.revokeDevice))
 	mux.HandleFunc("POST /v1/device-pairing-tokens", router.requireOwner(router.createPairingToken))
 	mux.HandleFunc("POST /v1/device-discovery-session", router.requireOwner(router.openDeviceDiscovery))
@@ -449,6 +453,57 @@ func (router *router) updateDeviceProfile(writer http.ResponseWriter, request *h
 			writeError(writer, http.StatusNotFound, "device_not_found", "Device not found.")
 		} else {
 			writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to update the device profile.")
+		}
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (router *router) updateSIMNumericID(writer http.ResponseWriter, request *http.Request) {
+	var body struct {
+		NumericID int `json:"numeric_id"`
+	}
+	if err := decodeJSON(request, &body); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if !validUUID(request.PathValue("simID")) {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_sim", "SIM identifier is invalid.")
+		return
+	}
+	if err := router.repository.UpdateSIMNumericID(request.Context(), request.PathValue("simID"), body.NumericID); err != nil {
+		switch {
+		case errors.Is(err, domain.ErrInvalidNumericID):
+			writeError(writer, http.StatusUnprocessableEntity, "invalid_numeric_id", err.Error())
+		case errors.Is(err, domain.ErrDuplicateNumericID):
+			writeError(writer, http.StatusConflict, "duplicate_numeric_id", err.Error())
+		case errors.Is(err, pgx.ErrNoRows):
+			writeError(writer, http.StatusNotFound, "sim_not_found", "SIM not found.")
+		default:
+			writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to update the SIM.")
+		}
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (router *router) updateSIMProfile(writer http.ResponseWriter, request *http.Request) {
+	var body struct {
+		ProfileCiphertext []byte `json:"profile_ciphertext"`
+	}
+	if err := decodeJSON(request, &body); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if !validUUID(request.PathValue("simID")) || len(body.ProfileCiphertext) == 0 || len(body.ProfileCiphertext) > maxProfileCiphertextBytes {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_sim_profile", "Encrypted SIM profile is invalid.")
+		return
+	}
+	if err := router.repository.UpdateSIMProfile(request.Context(), request.PathValue("simID"), body.ProfileCiphertext); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(writer, http.StatusNotFound, "sim_not_found", "SIM not found.")
+		} else {
+			writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to update the SIM profile.")
 		}
 		return
 	}

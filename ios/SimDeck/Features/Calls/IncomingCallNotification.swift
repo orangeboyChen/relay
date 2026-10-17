@@ -45,6 +45,8 @@ struct IncomingCallPayload: Decodable, Equatable, Sendable {
     let version: Int
     let callID: UUID
     let deviceUUID: UUID
+    let slotID: UUID?
+    let simID: UUID?
     let numericID: Int
     let remoteNumber: String
     let state: String
@@ -55,6 +57,8 @@ struct IncomingCallPayload: Decodable, Equatable, Sendable {
         case version
         case callID = "call_id"
         case deviceUUID = "device_uuid"
+        case slotID = "slot_id"
+        case simID = "sim_id"
         case numericID = "numeric_id"
         case remoteNumber = "remote_number"
         case state

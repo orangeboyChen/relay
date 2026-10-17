@@ -125,6 +125,8 @@ final class AppModel {
         do {
             try await registerInstallationIfNeeded()
             devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
+            callCoordinator.updateLineRoutes(devices)
+            messageTransport.updateLineRoutes(devices)
             try? await voipPushCoordinator?.uploadPendingToken()
         } catch {
             devices = devices.map { device in
@@ -139,6 +141,8 @@ final class AppModel {
         try await serverConnection.signIn(password: password)
         try await registerInstallationIfNeeded()
         devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
+        callCoordinator.updateLineRoutes(devices)
+        messageTransport.updateLineRoutes(devices)
         try? await voipPushCoordinator?.uploadPendingToken()
     }
 
@@ -303,7 +307,7 @@ final class AppModel {
     }
 
     func saveDevice(
-        id: UUID,
+        line: DeviceLineIdentity,
         numericID: Int,
         deviceName: String,
         lineName: String,
@@ -318,26 +322,44 @@ final class AppModel {
             phoneNumber: phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines)
         )
         let ciphertext = try DeviceProfileCodec.seal(profile, using: recoveredVaultKey)
-        try await serverConnection.updateDeviceProfile(
-            deviceID: id,
-            profileCiphertext: ciphertext
-        )
-        try await serverConnection.updateDeviceNumericID(deviceID: id, numericID: numericID)
+        if let simID = line.simID {
+            try await serverConnection.updateSIMProfile(
+                simID: simID,
+                profileCiphertext: ciphertext
+            )
+            try await serverConnection.updateSIMNumericID(simID: simID, numericID: numericID)
+        } else {
+            try await serverConnection.updateDeviceProfile(
+                deviceID: line.deviceID,
+                profileCiphertext: ciphertext
+            )
+            try await serverConnection.updateDeviceNumericID(
+                deviceID: line.deviceID,
+                numericID: numericID
+            )
+        }
         devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
+        callCoordinator.updateLineRoutes(devices)
+        messageTransport.updateLineRoutes(devices)
     }
 
-    func removeDevice(id: UUID) async throws {
-        try await serverConnection.revokeDevice(deviceID: id)
-        devices.removeAll { $0.id == id }
-        if defaultCallLineID == id {
+    func removeDevice(line: DeviceLineIdentity) async throws {
+        try await serverConnection.revokeDevice(deviceID: line.deviceID)
+        let removedLineIDs = Set(
+            devices.lazy.filter { $0.deviceID == line.deviceID }.map(\.id)
+        )
+        devices.removeAll { $0.deviceID == line.deviceID }
+        if defaultCallLineID.map(removedLineIDs.contains) == true {
             defaultCallLineID = nil
         }
-        if defaultMessageLineID == id {
+        if defaultMessageLineID.map(removedLineIDs.contains) == true {
             defaultMessageLineID = nil
         }
-        if lastSuccessfulDialLineID == id {
+        if lastSuccessfulDialLineID.map(removedLineIDs.contains) == true {
             lastSuccessfulDialLineID = nil
         }
+        callCoordinator.updateLineRoutes(devices)
+        messageTransport.updateLineRoutes(devices)
     }
 
     func signOutFromServer() throws {
@@ -511,7 +533,9 @@ final class AppModel {
             IncomingCallPresentation(
                 notificationID: opened.delivery.notificationID,
                 callID: opened.payload.callID,
-                lineID: opened.payload.deviceUUID,
+                lineID: devices.first(where: {
+                    $0.deviceID == opened.payload.deviceUUID && $0.slotID == opened.payload.slotID
+                })?.id ?? opened.payload.deviceUUID,
                 installationID: installationIdentity.id,
                 numericID: opened.payload.numericID,
                 remoteNumber: opened.payload.remoteNumber,

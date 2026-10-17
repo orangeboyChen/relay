@@ -49,6 +49,9 @@ struct CellularRadioStatus: Equatable, Sendable {
 
 struct DeviceLineIdentity: Identifiable, Equatable, Sendable {
     let id: UUID
+    let deviceID: UUID
+    let slotID: UUID?
+    let simID: UUID?
     var numericID: Int
     var deviceName: String
     var lineName: String
@@ -68,6 +71,9 @@ struct DeviceLineIdentity: Identifiable, Equatable, Sendable {
     ) {
         self.init(
             id: id,
+            deviceID: id,
+            slotID: nil,
+            simID: nil,
             numericID: numericID,
             deviceName: deviceName,
             lineName: lineName,
@@ -80,6 +86,9 @@ struct DeviceLineIdentity: Identifiable, Equatable, Sendable {
 
     init(
         id: UUID,
+        deviceID: UUID? = nil,
+        slotID: UUID? = nil,
+        simID: UUID? = nil,
         numericID: Int,
         deviceName: String,
         lineName: String,
@@ -88,7 +97,10 @@ struct DeviceLineIdentity: Identifiable, Equatable, Sendable {
         radioStatus: CellularRadioStatus? = nil,
         commandPublicKey: Data?
     ) {
-        self.id = id
+        self.id = simID ?? slotID ?? id
+        self.deviceID = deviceID ?? id
+        self.slotID = slotID
+        self.simID = simID
         self.numericID = numericID
         self.deviceName = deviceName
         self.lineName = lineName

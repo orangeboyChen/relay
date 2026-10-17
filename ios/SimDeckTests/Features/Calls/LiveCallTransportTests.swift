@@ -247,6 +247,38 @@ final class LiveCallTransportTests: XCTestCase {
         }
     }
 
+    func testOutgoingCommandsCarrySelectedSlotAndSIMIdentity() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let media = CallMediaSessionFake()
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: api.commandSigner,
+            makeMediaSession: { media },
+            waitBeforePollingAgain: {},
+            automaticallyPollEvents: false
+        )
+        let slotID = UUID(uuidString: "01900000-0000-7000-8000-000000000301")!
+        let simID = UUID(uuidString: "01900000-0000-7000-8000-000000000302")!
+        let line = DeviceLineIdentity(
+            id: simID,
+            deviceID: deviceID,
+            slotID: slotID,
+            simID: simID,
+            numericID: 2,
+            deviceName: "EC20",
+            lineName: "Work",
+            phoneNumber: "13500000000",
+            isOnline: true,
+            commandPublicKey: nil
+        )
+        transport.updateLineRoutes([line])
+
+        try await transport.startOutgoingCall(callID: callID, number: "13500000000", lineID: simID)
+
+        XCTAssertEqual(api.payloads.first?.slotID, slotID)
+        XCTAssertEqual(api.payloads.first?.simID, simID)
+    }
+
     func testEncryptedModemFailureIsSurfacedWithoutLeakingModemDetails() async throws {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .modemRejected)
         let transport = LiveCallTransport(

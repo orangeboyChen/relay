@@ -281,8 +281,9 @@ final class ServerConnectionManagerTests: XCTestCase {
         }
     }
 
-    func testUpdatesEncryptedProfileAndNumericIDThenRevokesDevice() async throws {
+    func testUpdatesEncryptedDeviceAndSIMProfilesThenRevokesDevice() async throws {
         let deviceID = UUID(uuidString: "01900000-0000-7000-8000-000000000001")!
+        let simID = UUID(uuidString: "01900000-0000-7000-8000-000000000101")!
         let ciphertext = Data("opaque encrypted profile".utf8)
         let store = MemoryServerSessionStore(
             value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
@@ -290,8 +291,9 @@ final class ServerConnectionManagerTests: XCTestCase {
         let network = ScriptedServerNetwork { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
             let expectedBase = "/v1/devices/\(deviceID.uuidString.lowercased())"
+            let expectedSIMBase = "/v1/sims/\(simID.uuidString.lowercased())"
             switch (request.httpMethod, request.url?.path) {
-            case ("PUT", "\(expectedBase)/profile"):
+            case ("PUT", "\(expectedBase)/profile"), ("PUT", "\(expectedSIMBase)/profile"):
                 let object = try XCTUnwrap(
                     JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
                 )
@@ -300,7 +302,7 @@ final class ServerConnectionManagerTests: XCTestCase {
                     ciphertext.base64EncodedString()
                 )
                 XCTAssertEqual(object.count, 1)
-            case ("PATCH", "\(expectedBase)/numeric-id"):
+            case ("PATCH", "\(expectedBase)/numeric-id"), ("PATCH", "\(expectedSIMBase)/numeric-id"):
                 let object = try XCTUnwrap(
                     JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
                 )
@@ -318,9 +320,20 @@ final class ServerConnectionManagerTests: XCTestCase {
 
         try await manager.updateDeviceProfile(deviceID: deviceID, profileCiphertext: ciphertext)
         try await manager.updateDeviceNumericID(deviceID: deviceID, numericID: 7)
+        try await manager.updateSIMProfile(simID: simID, profileCiphertext: ciphertext)
+        try await manager.updateSIMNumericID(simID: simID, numericID: 7)
         try await manager.revokeDevice(deviceID: deviceID)
 
-        XCTAssertEqual(network.requests.count, 3)
+        XCTAssertEqual(
+            network.requests.compactMap(\.url?.path),
+            [
+                "/v1/devices/\(deviceID.uuidString.lowercased())/profile",
+                "/v1/devices/\(deviceID.uuidString.lowercased())/numeric-id",
+                "/v1/sims/\(simID.uuidString.lowercased())/profile",
+                "/v1/sims/\(simID.uuidString.lowercased())/numeric-id",
+                "/v1/devices/\(deviceID.uuidString.lowercased())"
+            ]
+        )
     }
 
     func testMapsDeviceManagementFailureStatus() async throws {

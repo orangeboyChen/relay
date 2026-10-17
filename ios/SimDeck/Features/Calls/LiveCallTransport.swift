@@ -35,7 +35,7 @@ final class InstallationCommandSigner {
 }
 
 @MainActor
-final class LiveCallTransport: CallTransport {
+final class LiveCallTransport: CallTransport, CallLineRouting {
     let capabilities = CallCapabilities.cellular
 
     private let api: any EncryptedCallCommandAPI
@@ -54,6 +54,7 @@ final class LiveCallTransport: CallTransport {
     private var eventCursor: Int64 = 0
     private var eventTask: Task<Void, Never>?
     private var activeEventStream: (any EncryptedEventStream)?
+    private var lineRoutes: [UUID: DeviceLineIdentity] = [:]
 
     init(
         api: any EncryptedCallCommandAPI,
@@ -87,6 +88,14 @@ final class LiveCallTransport: CallTransport {
         eventHandler = handler
     }
 
+    func updateLineRoutes(_ lines: [DeviceLineIdentity]) {
+        lineRoutes = Dictionary(uniqueKeysWithValues: lines.map { ($0.id, $0) })
+    }
+
+    func deviceID(for lineID: UUID) -> UUID {
+        lineRoutes[lineID]?.deviceID ?? lineID
+    }
+
     func registerIncomingCall(_ call: IncomingCallRegistration) throws {
         guard call.callSecret.count == 32, call.verificationKey.count == 32 else {
             throw LiveCallTransportError.invalidDeviceKey
@@ -94,6 +103,7 @@ final class LiveCallTransport: CallTransport {
         callLines[call.callID] = call.lineID
         callEvents[call.callID] = CallEventContext(
             lineID: call.lineID,
+            deviceID: deviceID(for: call.lineID),
             sharedSecret: call.callSecret,
             verificationKey: call.verificationKey,
             hasConnected: false
@@ -111,7 +121,8 @@ final class LiveCallTransport: CallTransport {
     }
 
     func startOutgoingCall(callID: UUID, number: String, lineID: UUID) async throws {
-        let verificationKey = try await api.eventVerificationKey(deviceID: lineID)
+        let deviceID = deviceID(for: lineID)
+        let verificationKey = try await api.eventVerificationKey(deviceID: deviceID)
         guard verificationKey.count == 32 else { throw LiveCallTransportError.invalidDeviceKey }
         let mediaSession = try makeMediaSession()
         var remoteCallStarted = false
@@ -133,6 +144,7 @@ final class LiveCallTransport: CallTransport {
             callLines[callID] = lineID
             callEvents[callID] = CallEventContext(
                 lineID: lineID,
+                deviceID: deviceID,
                 sharedSecret: exchange.sharedSecret.withUnsafeBytes { Data($0) },
                 verificationKey: verificationKey,
                 hasConnected: false
@@ -246,7 +258,8 @@ final class LiveCallTransport: CallTransport {
         digits: String? = nil,
         mediaOffer: String? = nil
     ) async throws -> CallCommandExchange {
-        let deviceKeyData = try await api.commandRecipient(deviceID: lineID)
+        let deviceID = deviceID(for: lineID)
+        let deviceKeyData = try await api.commandRecipient(deviceID: deviceID)
         let commandID = makeCommandID()
         let senderKey = makeSenderKey()
         guard let installationIdentity = commandSigner.identity else {
@@ -256,6 +269,8 @@ final class LiveCallTransport: CallTransport {
             version: 1,
             operation: operation,
             callID: callID.uuidString.lowercased(),
+            slotID: lineRoutes[lineID]?.slotID,
+            simID: lineRoutes[lineID]?.simID,
             number: number,
             digits: digits,
             mediaOffer: mediaOffer
@@ -268,17 +283,17 @@ final class LiveCallTransport: CallTransport {
                 senderPrivateKey: senderKey,
                 nonce: AES.GCM.Nonce(),
                 commandID: commandID,
-                deviceID: lineID,
+                deviceID: deviceID,
                 createdAt: Date(timeIntervalSince1970: floor(now().timeIntervalSince1970)),
                 installationIdentity: installationIdentity
             )
         } catch is CryptoKitError {
             throw LiveCallTransportError.invalidDeviceKey
         }
-        try await api.enqueueCommand(deviceID: lineID, command: sealed.request)
+        try await api.enqueueCommand(deviceID: deviceID, command: sealed.request)
 
         for attempt in 0..<60 {
-            let status = try await api.commandStatus(deviceID: lineID, commandID: commandID)
+            let status = try await api.commandStatus(deviceID: deviceID, commandID: commandID)
             if status.state == "completed" {
                 guard let encryptedResult = status.result else {
                     throw LiveCallTransportError.invalidResponse
@@ -289,7 +304,7 @@ final class LiveCallTransport: CallTransport {
                         encryptedResult,
                         sharedSecret: sealed.sharedSecret,
                         commandID: commandID,
-                        deviceID: lineID
+                        deviceID: deviceID
                     )
                 } catch {
                     throw LiveCallTransportError.invalidResponse
@@ -376,7 +391,7 @@ final class LiveCallTransport: CallTransport {
     private func process(_ envelope: EncryptedEventEnvelope) {
         guard envelope.type == "call.state" else { return }
         for callID in Array(callEvents.keys) {
-            guard var context = callEvents[callID], context.lineID == envelope.deviceUUID else {
+            guard var context = callEvents[callID], context.deviceID == envelope.deviceUUID else {
                 continue
             }
             guard let payload = try? EncryptedCallEventCodec.open(
@@ -439,6 +454,7 @@ private struct CallCommandExchange {
 
 private struct CallEventContext {
     let lineID: UUID
+    let deviceID: UUID
     let sharedSecret: Data
     let verificationKey: Data
     var hasConnected: Bool
@@ -466,6 +482,8 @@ struct CallCommandPayload: Codable, Equatable, Sendable {
     let version: Int
     let operation: String
     let callID: String
+    let slotID: UUID?
+    let simID: UUID?
     let number: String?
     let digits: String?
     let mediaOffer: String?
@@ -474,6 +492,8 @@ struct CallCommandPayload: Codable, Equatable, Sendable {
         version: Int,
         operation: String,
         callID: String,
+        slotID: UUID? = nil,
+        simID: UUID? = nil,
         number: String? = nil,
         digits: String? = nil,
         mediaOffer: String? = nil
@@ -481,6 +501,8 @@ struct CallCommandPayload: Codable, Equatable, Sendable {
         self.version = version
         self.operation = operation
         self.callID = callID
+        self.slotID = slotID
+        self.simID = simID
         self.number = number
         self.digits = digits
         self.mediaOffer = mediaOffer
@@ -490,9 +512,23 @@ struct CallCommandPayload: Codable, Equatable, Sendable {
         case version
         case operation
         case callID = "call_id"
+        case slotID = "slot_id"
+        case simID = "sim_id"
         case number
         case digits
         case mediaOffer = "media_offer"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(version, forKey: .version)
+        try values.encode(operation, forKey: .operation)
+        try values.encode(callID, forKey: .callID)
+        try values.encodeIfPresent(slotID, forKey: .slotID)
+        try values.encodeIfPresent(simID, forKey: .simID)
+        try values.encodeIfPresent(number, forKey: .number)
+        try values.encodeIfPresent(digits, forKey: .digits)
+        try values.encodeIfPresent(mediaOffer, forKey: .mediaOffer)
     }
 }
 

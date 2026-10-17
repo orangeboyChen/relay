@@ -121,7 +121,7 @@ struct DeviceSettingsScreen: View {
             errorDescription = nil
             do {
                 try await model.saveDevice(
-                    id: line.id,
+                    line: line,
                     numericID: draft.numericID,
                     deviceName: draft.deviceName,
                     lineName: draft.lineName,
@@ -140,7 +140,7 @@ struct DeviceSettingsScreen: View {
             isWorking = true
             errorDescription = nil
             do {
-                try await model.removeDevice(id: line.id)
+                try await model.removeDevice(line: line)
                 dismiss()
             } catch {
                 errorDescription = error.localizedDescription

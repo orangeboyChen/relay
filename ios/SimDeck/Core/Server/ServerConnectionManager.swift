@@ -379,7 +379,7 @@ final class ServerConnectionManager {
                     return (device.deviceUUID, device.identityPublicKey)
                 }
             )
-            let devices = try body.devices.map { device in
+            let devices = try body.devices.flatMap { device in
                 let recentlySeen = Self.isFresh(device.lastSeenAt, now: now)
                 let isOnline = recentlySeen && device.commandPublicKey?.count == 32
                 let hasFreshRadioStatus = Self.isFresh(device.radioStatusUpdatedAt, now: now)
@@ -400,16 +400,33 @@ final class ServerConnectionManager {
                 } else {
                     profile = .empty
                 }
-                return DeviceLineIdentity(
-                    id: device.deviceUUID,
-                    numericID: device.numericID,
-                    deviceName: profile.deviceName,
-                    lineName: profile.lineName,
-                    phoneNumber: profile.phoneNumber,
-                    isOnline: isOnline,
-                    radioStatus: radioStatus,
-                    commandPublicKey: device.commandPublicKey
-                )
+                let slots = device.slots.isEmpty ? [ServerDeviceSlot(slotID: nil, simID: nil, numericID: device.numericID, profileCiphertext: nil, radioAccessTechnology: device.radioAccessTechnology, signalBars: device.signalBars, radioStatusUpdatedAt: device.radioStatusUpdatedAt)] : device.slots
+                return try slots.map { slot in
+                    let slotProfile: DeviceProfile
+                    if let ciphertext = slot.profileCiphertext, !ciphertext.isEmpty, let profileKey {
+                        slotProfile = try DeviceProfileCodec.open(ciphertext, using: profileKey)
+                    } else {
+                        slotProfile = profile
+                    }
+                    let slotFresh = Self.isFresh(slot.radioStatusUpdatedAt, now: now)
+                    let slotRadioStatus: CellularRadioStatus? = if isOnline && slotFresh {
+                        CellularRadioStatus(technology: slot.radioAccessTechnology ?? .unknown, signalBars: slot.signalBars)
+                    } else { radioStatus }
+                    return DeviceLineIdentity(
+                        // Existing command transports address the modem by device UUID; slot IDs are carried separately.
+                        id: device.deviceUUID,
+                        deviceID: device.deviceUUID,
+                        slotID: slot.slotID,
+                        simID: slot.simID,
+                        numericID: slot.numericID ?? device.numericID,
+                        deviceName: slotProfile.deviceName,
+                        lineName: slotProfile.lineName,
+                        phoneNumber: slotProfile.phoneNumber,
+                        isOnline: isOnline,
+                        radioStatus: slotRadioStatus,
+                        commandPublicKey: device.commandPublicKey
+                    )
+                }
             }
             state = .connected
             lastErrorDescription = nil
@@ -517,6 +534,38 @@ final class ServerConnectionManager {
         }
     }
 
+    func updateSIMNumericID(simID: UUID, numericID: Int) async throws {
+        guard (1...99).contains(numericID) else {
+            throw ServerConnectionError.invalidResponse
+        }
+        let body = try Self.encoder.encode(DeviceNumericIDRequest(numericID: numericID))
+        let (_, response) = try await authenticatedRequest(
+            path: "v1/sims/\(simID.uuidString.lowercased())/numeric-id",
+            method: "PATCH",
+            body: body
+        )
+        guard response.statusCode == 204 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
+        }
+    }
+
+    func updateSIMProfile(simID: UUID, profileCiphertext: Data) async throws {
+        guard !profileCiphertext.isEmpty else {
+            throw ServerConnectionError.invalidResponse
+        }
+        let body = try Self.encoder.encode(
+            DeviceProfileRequest(profileCiphertext: profileCiphertext)
+        )
+        let (_, response) = try await authenticatedRequest(
+            path: "v1/sims/\(simID.uuidString.lowercased())/profile",
+            method: "PUT",
+            body: body
+        )
+        guard response.statusCode == 204 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
+        }
+    }
+
     func revokeDevice(deviceID: UUID) async throws {
         let (_, response) = try await authenticatedRequest(
             path: "v1/devices/\(deviceID.uuidString.lowercased())",
@@ -534,7 +583,7 @@ final class ServerConnectionManager {
     }
 
     func commandRecipient(deviceID: UUID) async throws -> Data {
-        guard let recipient = try await loadDevices().first(where: { $0.id == deviceID }),
+        guard let recipient = try await loadDevices().first(where: { $0.deviceID == deviceID }),
               recipient.isOnline,
               let publicKey = recipient.commandPublicKey,
               publicKey.count == 32 else {
@@ -901,6 +950,7 @@ private struct ServerDeviceRecord: Decodable {
     let radioAccessTechnology: CellularRadioAccessTechnology?
     let signalBars: Int?
     let radioStatusUpdatedAt: Date?
+    let slots: [ServerDeviceSlot]
 
     enum CodingKeys: String, CodingKey {
         case deviceUUID = "device_uuid"
@@ -912,6 +962,51 @@ private struct ServerDeviceRecord: Decodable {
         case radioAccessTechnology = "radio_access_technology"
         case signalBars = "signal_bars"
         case radioStatusUpdatedAt = "radio_status_updated_at"
+        case slots
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        deviceUUID = try values.decode(UUID.self, forKey: .deviceUUID)
+        numericID = try values.decode(Int.self, forKey: .numericID)
+        profileCiphertext = try values.decodeIfPresent(Data.self, forKey: .profileCiphertext)
+        identityPublicKey = try values.decode(Data.self, forKey: .identityPublicKey)
+        commandPublicKey = try values.decodeIfPresent(Data.self, forKey: .commandPublicKey)
+        lastSeenAt = try values.decodeIfPresent(Date.self, forKey: .lastSeenAt)
+        radioAccessTechnology = try values.decodeIfPresent(CellularRadioAccessTechnology.self, forKey: .radioAccessTechnology)
+        signalBars = try values.decodeIfPresent(Int.self, forKey: .signalBars)
+        radioStatusUpdatedAt = try values.decodeIfPresent(Date.self, forKey: .radioStatusUpdatedAt)
+        slots = try values.decodeIfPresent([ServerDeviceSlot].self, forKey: .slots) ?? []
+    }
+}
+
+private struct ServerDeviceSlot: Decodable {
+    let slotID: UUID?
+    let simID: UUID?
+    let numericID: Int?
+    let profileCiphertext: Data?
+    let radioAccessTechnology: CellularRadioAccessTechnology?
+    let signalBars: Int?
+    let radioStatusUpdatedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case slotID = "slot_id"
+        case simID = "sim_id"
+        case numericID = "numeric_id"
+        case profileCiphertext = "profile_ciphertext"
+        case radioAccessTechnology = "radio_access_technology"
+        case signalBars = "signal_bars"
+        case radioStatusUpdatedAt = "radio_status_updated_at"
+    }
+
+    init(slotID: UUID?, simID: UUID?, numericID: Int?, profileCiphertext: Data?, radioAccessTechnology: CellularRadioAccessTechnology?, signalBars: Int?, radioStatusUpdatedAt: Date?) {
+        self.slotID = slotID
+        self.simID = simID
+        self.numericID = numericID
+        self.profileCiphertext = profileCiphertext
+        self.radioAccessTechnology = radioAccessTechnology
+        self.signalBars = signalBars
+        self.radioStatusUpdatedAt = radioStatusUpdatedAt
     }
 }
 

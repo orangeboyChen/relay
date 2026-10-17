@@ -37,6 +37,11 @@ struct IncomingMessageDelivery: Equatable, Sendable {
 protocol MessageTransport: AnyObject {
     func send(messageID: UUID, lineID: UUID, remoteNumber: String, body: String) async throws
     func synchronize(lines: [DeviceLineIdentity]) async throws -> [IncomingMessageDelivery]
+    func updateLineRoutes(_ lines: [DeviceLineIdentity])
+}
+
+extension MessageTransport {
+    func updateLineRoutes(_ lines: [DeviceLineIdentity]) {}
 }
 
 @MainActor
@@ -77,6 +82,7 @@ final class LiveMessageTransport: MessageTransport {
     private let makeCommandID: () -> UUID
     private let makeSenderKey: () -> Curve25519.KeyAgreement.PrivateKey
     private let waitBeforePollingAgain: () async throws -> Void
+    private var lineRoutes: [UUID: DeviceLineIdentity] = [:]
 
     init(
         api: any EncryptedCallCommandAPI,
@@ -100,6 +106,10 @@ final class LiveMessageTransport: MessageTransport {
         self.waitBeforePollingAgain = waitBeforePollingAgain
     }
 
+    func updateLineRoutes(_ lines: [DeviceLineIdentity]) {
+        lineRoutes = Dictionary(uniqueKeysWithValues: lines.map { ($0.id, $0) })
+    }
+
     func send(
         messageID: UUID,
         lineID: UUID,
@@ -109,12 +119,16 @@ final class LiveMessageTransport: MessageTransport {
         guard let installationIdentity = commandSigner.identity else {
             throw LiveMessageTransportError.missingInstallationIdentity
         }
-        let recipientKey = try await api.commandRecipient(deviceID: lineID)
+        let line = lineRoutes[lineID]
+        let deviceID = line?.deviceID ?? lineID
+        let recipientKey = try await api.commandRecipient(deviceID: deviceID)
         let commandID = makeCommandID()
         let payload = MessageCommandPayload(
             version: 1,
             operation: "message.send",
             messageID: messageID.uuidString.lowercased(),
+            slotID: line?.slotID,
+            simID: line?.simID,
             number: remoteNumber,
             body: body
         )
@@ -126,17 +140,17 @@ final class LiveMessageTransport: MessageTransport {
                 senderPrivateKey: makeSenderKey(),
                 nonce: AES.GCM.Nonce(),
                 commandID: commandID,
-                deviceID: lineID,
+                deviceID: deviceID,
                 createdAt: Date(timeIntervalSince1970: floor(now().timeIntervalSince1970)),
                 installationIdentity: installationIdentity
             )
         } catch is CryptoKitError {
             throw LiveMessageTransportError.invalidDeviceKey
         }
-        try await api.enqueueCommand(deviceID: lineID, command: sealed.request)
+        try await api.enqueueCommand(deviceID: deviceID, command: sealed.request)
 
         for attempt in 0..<60 {
-            let status = try await api.commandStatus(deviceID: lineID, commandID: commandID)
+            let status = try await api.commandStatus(deviceID: deviceID, commandID: commandID)
             if status.state == "completed" {
                 guard let encryptedResult = status.result else {
                     throw LiveMessageTransportError.invalidResponse
@@ -147,7 +161,7 @@ final class LiveMessageTransport: MessageTransport {
                         encryptedResult,
                         sharedSecret: sealed.sharedSecret,
                         commandID: commandID,
-                        deviceID: lineID
+                        deviceID: deviceID
                     )
                 } catch {
                     throw LiveMessageTransportError.invalidResponse
@@ -171,13 +185,13 @@ final class LiveMessageTransport: MessageTransport {
             throw LiveMessageTransportError.missingInstallationIdentity
         }
         let page = try await api.encryptedEvents(afterSequence: cursorStore.sequence)
-        let linesByID = Dictionary(uniqueKeysWithValues: lines.map { ($0.id, $0) })
+        let linesByDevice = Dictionary(grouping: lines, by: { $0.deviceID })
         var verificationKeys: [UUID: Data] = [:]
         var deliveries: [IncomingMessageDelivery] = []
 
         for envelope in page.events where envelope.type == "message.received" {
-            guard let line = linesByID[envelope.deviceUUID],
-                  let commandPublicKey = line.commandPublicKey else {
+            guard let candidates = linesByDevice[envelope.deviceUUID],
+                  let commandPublicKey = candidates.first?.commandPublicKey else {
                 continue
             }
             let verificationKey: Data
@@ -201,7 +215,7 @@ final class LiveMessageTransport: MessageTransport {
                 IncomingMessageDelivery(
                     id: envelope.id,
                     sourceID: payload.messageID,
-                    lineID: payload.deviceUUID,
+                    lineID: candidates.first(where: { $0.slotID == payload.slotID })?.id ?? payload.deviceUUID,
                     remoteNumber: payload.remoteNumber,
                     body: payload.body,
                     receivedAt: payload.receivedAt
@@ -217,15 +231,48 @@ struct MessageCommandPayload: Codable, Equatable, Sendable {
     let version: Int
     let operation: String
     let messageID: String
+    let slotID: UUID?
+    let simID: UUID?
     let number: String
     let body: String
+
+    init(
+        version: Int,
+        operation: String,
+        messageID: String,
+        slotID: UUID? = nil,
+        simID: UUID? = nil,
+        number: String,
+        body: String
+    ) {
+        self.version = version
+        self.operation = operation
+        self.messageID = messageID
+        self.slotID = slotID
+        self.simID = simID
+        self.number = number
+        self.body = body
+    }
 
     enum CodingKeys: String, CodingKey {
         case version
         case operation
         case messageID = "message_id"
+        case slotID = "slot_id"
+        case simID = "sim_id"
         case number
         case body
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(version, forKey: .version)
+        try values.encode(operation, forKey: .operation)
+        try values.encode(messageID, forKey: .messageID)
+        try values.encodeIfPresent(slotID, forKey: .slotID)
+        try values.encodeIfPresent(simID, forKey: .simID)
+        try values.encode(number, forKey: .number)
+        try values.encode(body, forKey: .body)
     }
 }
 
@@ -233,6 +280,8 @@ struct IncomingMessagePayload: Codable, Equatable, Sendable {
     let version: Int
     let messageID: String
     let deviceUUID: UUID
+    let slotID: UUID?
+    let simID: UUID?
     let numericID: Int
     let remoteNumber: String
     let body: String
@@ -240,10 +289,38 @@ struct IncomingMessagePayload: Codable, Equatable, Sendable {
     let segments: Int
     let installationID: UUID
 
+    init(
+        version: Int,
+        messageID: String,
+        deviceUUID: UUID,
+        slotID: UUID? = nil,
+        simID: UUID? = nil,
+        numericID: Int,
+        remoteNumber: String,
+        body: String,
+        receivedAt: Date,
+        segments: Int,
+        installationID: UUID
+    ) {
+        self.version = version
+        self.messageID = messageID
+        self.deviceUUID = deviceUUID
+        self.slotID = slotID
+        self.simID = simID
+        self.numericID = numericID
+        self.remoteNumber = remoteNumber
+        self.body = body
+        self.receivedAt = receivedAt
+        self.segments = segments
+        self.installationID = installationID
+    }
+
     enum CodingKeys: String, CodingKey {
         case version
         case messageID = "message_id"
         case deviceUUID = "device_uuid"
+        case slotID = "slot_id"
+        case simID = "sim_id"
         case numericID = "numeric_id"
         case remoteNumber = "remote_number"
         case body

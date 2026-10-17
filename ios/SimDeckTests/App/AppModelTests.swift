@@ -23,7 +23,8 @@ final class AppModelTests: XCTestCase {
             deviceName: "Office EC20",
             lineName: "",
             phoneNumber: "",
-            isOnline: true
+            isOnline: true,
+            commandPublicKey: nil
         )
 
         XCTAssertEqual(line.displayName, "SIM 2")
@@ -164,7 +165,7 @@ final class AppModelTests: XCTestCase {
         model.bootstrapInstallation()
 
         try await model.saveDevice(
-            id: deviceID,
+            line: try XCTUnwrap(model.devices.first),
             numericID: 7,
             deviceName: "  Living Room EC20  ",
             lineName: "  Personal  ",
@@ -203,7 +204,7 @@ final class AppModelTests: XCTestCase {
 
         do {
             try await model.saveDevice(
-                id: deviceID,
+                line: try XCTUnwrap(model.devices.first),
                 numericID: 2,
                 deviceName: "Office",
                 lineName: "Work",
@@ -220,14 +221,21 @@ final class AppModelTests: XCTestCase {
     @MainActor
     func testRemovingDeviceClearsLineDefaults() async throws {
         let deviceID = UUID()
+        let firstSIMID = UUID()
+        let secondSIMID = UUID()
+        let otherDeviceID = UUID()
         let network = AppModelDeviceManagementNetwork(deviceID: deviceID)
         let defaults = UserDefaults(suiteName: "AppModelDeviceRemoveTests.\(UUID().uuidString)")!
         defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
         let model = AppModel(
-            devices: [Self.line(id: deviceID, numericID: 1)],
-            lastSuccessfulDialLineID: deviceID,
-            defaultCallLineID: deviceID,
-            defaultMessageLineID: deviceID,
+            devices: [
+                Self.line(id: firstSIMID, deviceID: deviceID, simID: firstSIMID, numericID: 1),
+                Self.line(id: secondSIMID, deviceID: deviceID, simID: secondSIMID, numericID: 2),
+                Self.line(id: otherDeviceID, numericID: 3)
+            ],
+            lastSuccessfulDialLineID: firstSIMID,
+            defaultCallLineID: firstSIMID,
+            defaultMessageLineID: secondSIMID,
             serverConnection: ServerConnectionManager(
                 network: network,
                 sessionStore: AppModelSessionStore(value: Self.activeSession),
@@ -235,27 +243,94 @@ final class AppModelTests: XCTestCase {
             )
         )
 
-        try await model.removeDevice(id: deviceID)
+        try await model.removeDevice(line: model.devices[0])
 
-        XCTAssertTrue(model.devices.isEmpty)
+        XCTAssertEqual(model.devices.map(\.id), [otherDeviceID])
         XCTAssertNil(model.defaultCallLineID)
         XCTAssertNil(model.defaultMessageLineID)
         XCTAssertNil(model.lastSuccessfulDialLineID)
         XCTAssertEqual(network.requestMethods, ["DELETE"])
     }
 
+    @MainActor
+    func testSavesSlotLineThroughSIMEndpoints() async throws {
+        let deviceID = UUID(uuidString: "01900000-0000-7000-8000-000000000021")!
+        let slotID = UUID(uuidString: "01900000-0000-7000-8000-000000000022")!
+        let simID = UUID(uuidString: "01900000-0000-7000-8000-000000000023")!
+        let identity = InstallationIdentity.generate()
+        let vaultKey = try VaultKey(data: Data(repeating: 4, count: VaultKey.length))
+        let network = AppModelDeviceManagementNetwork(
+            deviceID: deviceID,
+            slotID: slotID,
+            simID: simID
+        )
+        let defaults = UserDefaults(suiteName: "AppModelSIMSaveTests.\(UUID().uuidString)")!
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let line = Self.line(
+            id: simID,
+            deviceID: deviceID,
+            slotID: slotID,
+            simID: simID,
+            numericID: 2
+        )
+        let model = AppModel(
+            devices: [line],
+            serverConnection: ServerConnectionManager(
+                network: network,
+                sessionStore: AppModelSessionStore(value: Self.activeSession),
+                defaults: defaults
+            ),
+            installationBootstrapper: AppModelInstallationBootstrapper(
+                identity: identity,
+                vaultKey: vaultKey
+            )
+        )
+        model.bootstrapInstallation()
+
+        try await model.saveDevice(
+            line: line,
+            numericID: 9,
+            deviceName: "Desk Modem",
+            lineName: "Work",
+            phoneNumber: "13800000000"
+        )
+
+        XCTAssertEqual(
+            network.requestPaths,
+            [
+                "/v1/sims/\(simID.uuidString.lowercased())/profile",
+                "/v1/sims/\(simID.uuidString.lowercased())/numeric-id",
+                "/v1/devices"
+            ]
+        )
+        XCTAssertEqual(model.devices.first?.id, simID)
+        XCTAssertEqual(model.devices.first?.deviceID, deviceID)
+        XCTAssertEqual(model.devices.first?.slotID, slotID)
+        XCTAssertEqual(model.devices.first?.numericID, 9)
+    }
+
     private static let activeSession = Data("""
     {"access_token":"access","refresh_token":"refresh","access_expires_at":"2098-01-01T00:00:00Z","refresh_expires_at":"2099-01-01T00:00:00Z"}
     """.utf8)
 
-    private static func line(id: UUID, numericID: Int) -> DeviceLineIdentity {
+    private static func line(
+        id: UUID,
+        deviceID: UUID? = nil,
+        slotID: UUID? = nil,
+        simID: UUID? = nil,
+        numericID: Int
+    ) -> DeviceLineIdentity {
         DeviceLineIdentity(
             id: id,
+            deviceID: deviceID,
+            slotID: slotID,
+            simID: simID,
             numericID: numericID,
             deviceName: "",
             lineName: "",
             phoneNumber: "",
-            isOnline: true
+            isOnline: true,
+            commandPublicKey: nil
         )
     }
 }
@@ -324,20 +399,27 @@ private struct AppModelInstallationBootstrapper: InstallationBootstrapping {
 private final class AppModelDeviceManagementNetwork: ServerNetworking {
     let deviceID: UUID
     private(set) var requestMethods: [String] = []
+    private(set) var requestPaths: [String] = []
     private(set) var profileCiphertext: Data?
     private var numericID = 1
+    private let slotID: UUID?
+    private let simID: UUID?
 
-    init(deviceID: UUID) {
+    init(deviceID: UUID, slotID: UUID? = nil, simID: UUID? = nil) {
         self.deviceID = deviceID
+        self.slotID = slotID
+        self.simID = simID
     }
 
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         requestMethods.append(request.httpMethod ?? "")
-        let basePath = "/v1/devices/\(deviceID.uuidString.lowercased())"
+        requestPaths.append(request.url?.path ?? "")
+        let deviceBasePath = "/v1/devices/\(deviceID.uuidString.lowercased())"
+        let lineBasePath = simID.map { "/v1/sims/\($0.uuidString.lowercased())" } ?? deviceBasePath
         let body: Data
         let status: Int
         switch (request.httpMethod, request.url?.path) {
-        case ("PUT", "\(basePath)/profile"):
+        case ("PUT", "\(lineBasePath)/profile"):
             let object = try XCTUnwrap(
                 JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
             )
@@ -346,7 +428,7 @@ private final class AppModelDeviceManagementNetwork: ServerNetworking {
             )
             body = Data()
             status = 204
-        case ("PATCH", "\(basePath)/numeric-id"):
+        case ("PATCH", "\(lineBasePath)/numeric-id"):
             let object = try XCTUnwrap(
                 JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
             )
@@ -354,17 +436,31 @@ private final class AppModelDeviceManagementNetwork: ServerNetworking {
             body = Data()
             status = 204
         case ("GET", "/v1/devices"):
+            let slots = if let slotID, let simID {
+                """
+                ,"slots":[{
+                  "slot_id":"\(slotID.uuidString.lowercased())",
+                  "slot_key":"1",
+                  "slot_index":1,
+                  "sim_id":"\(simID.uuidString.lowercased())",
+                  "numeric_id":\(numericID),
+                  "profile_ciphertext":"\((profileCiphertext ?? Data()).base64EncodedString())"
+                }]
+                """
+            } else {
+                ""
+            }
             body = Data("""
-            {"devices":[{
-              "device_uuid":"\(deviceID.uuidString.lowercased())",
-              "numeric_id":\(numericID),
-              "profile_ciphertext":"\((profileCiphertext ?? Data()).base64EncodedString())",
-              "identity_public_key":"",
-              "paired_at":"2026-10-16T00:00:00Z"
-            }]}
-            """.utf8)
+                {"devices":[{
+                  "device_uuid":"\(deviceID.uuidString.lowercased())",
+                  "numeric_id":\(numericID),
+                  "profile_ciphertext":"\((profileCiphertext ?? Data()).base64EncodedString())",
+                  "identity_public_key":"",
+                  "paired_at":"2026-10-16T00:00:00Z"\(slots)
+                }]}
+                """.utf8)
             status = 200
-        case ("DELETE", basePath):
+        case ("DELETE", deviceBasePath):
             body = Data()
             status = 204
         default:

@@ -53,6 +53,12 @@ protocol CallTransport: AnyObject {
     func reset() async
 }
 
+@MainActor
+protocol CallLineRouting: AnyObject {
+    func updateLineRoutes(_ lines: [DeviceLineIdentity])
+    func deviceID(for lineID: UUID) -> UUID
+}
+
 enum CallTransportError: LocalizedError {
     case notConfigured
 

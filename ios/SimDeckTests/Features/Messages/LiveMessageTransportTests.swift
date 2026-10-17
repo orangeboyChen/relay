@@ -71,6 +71,36 @@ final class LiveMessageTransportTests: XCTestCase {
         }
     }
 
+    func testSendCarriesSelectedSlotAndSIMIdentity() async throws {
+        let api = try MessageCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let transport = makeTransport(api: api)
+        let slotID = UUID(uuidString: "01900000-0000-7000-8000-000000000303")!
+        let simID = UUID(uuidString: "01900000-0000-7000-8000-000000000304")!
+        let line = DeviceLineIdentity(
+            id: simID,
+            deviceID: deviceID,
+            slotID: slotID,
+            simID: simID,
+            numericID: 2,
+            deviceName: "EC20",
+            lineName: "Work",
+            phoneNumber: "13500000000",
+            isOnline: true,
+            commandPublicKey: api.recipientKey
+        )
+        transport.updateLineRoutes([line])
+
+        try await transport.send(
+            messageID: messageID,
+            lineID: simID,
+            remoteNumber: "13500000000",
+            body: "test"
+        )
+
+        XCTAssertEqual(api.payloads.first?.slotID, slotID)
+        XCTAssertEqual(api.payloads.first?.simID, simID)
+    }
+
     func testSendRejectsMissingIdentityInvalidDeviceKeyAndTimeout() async throws {
         let missingIdentityAPI = try MessageCommandAPIFake(deviceID: deviceID, outcome: .success)
         let missingIdentityTransport = LiveMessageTransport(
@@ -391,6 +421,8 @@ private final class MessageCommandAPIFake: EncryptedCallCommandAPI {
             version: 1,
             messageID: sourceID,
             deviceUUID: deviceID,
+            slotID: line.slotID,
+            simID: line.simID,
             numericID: line.numericID,
             remoteNumber: remoteNumber,
             body: body,

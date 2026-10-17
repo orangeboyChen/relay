@@ -69,6 +69,32 @@ final class IncomingCallNotificationTests: XCTestCase {
         XCTAssertEqual(opened.payload.callSecret, recipientPrivateKey)
     }
 
+    func testDecodesSlotAndSIMIdentityFromEncryptedPayloadShape() throws {
+        let slotID = UUID(uuidString: "01900000-0000-7000-8000-000000000002")!
+        let simID = UUID(uuidString: "01900000-0000-7000-8000-000000000003")!
+        let data = Data(
+            """
+            {
+              "version":1,
+              "call_id":"01020304-0506-4708-890a-0b0c0d0e0f10",
+              "device_uuid":"01900000-0000-7000-8000-000000000001",
+              "slot_id":"\(slotID.uuidString.lowercased())",
+              "sim_id":"\(simID.uuidString.lowercased())",
+              "numeric_id":2,
+              "remote_number":"+8613500000000",
+              "state":"ringing",
+              "call_secret":"ISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0A=",
+              "notification_id":"11121314-1516-4718-991a-1b1c1d1e1f20"
+            }
+            """.utf8
+        )
+
+        let payload = try JSONDecoder().decode(IncomingCallPayload.self, from: data)
+
+        XCTAssertEqual(payload.slotID, slotID)
+        XCTAssertEqual(payload.simID, simID)
+    }
+
     func testRejectsDeliveryForAnotherInstallation() {
         var otherIdentity = identity()
         otherIdentity = InstallationIdentity(

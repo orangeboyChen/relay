@@ -19,7 +19,11 @@ INTERFACE = 2
 IN_ENDPOINT = 0x84
 OUT_ENDPOINT = 0x03
 BULK_TIMEOUT_MS = 1000
-EXCHANGE_TIMEOUT_SECONDS = 8.0
+# The device agent's default AT command timeout is five seconds. Returning a
+# terminal error first keeps a USB exchange timeout from leaving the agent's
+# pending command attached to a response that belongs to the next command.
+EXCHANGE_TIMEOUT_SECONDS = 4.0
+STALE_RESPONSE_DRAIN_SECONDS = 0.25
 
 
 def load_libusb():
@@ -96,6 +100,26 @@ def exchange(usb, handle, payload):
     raise RuntimeError(f"USB response timeout after {EXCHANGE_TIMEOUT_SECONDS:.1f}s")
 
 
+def drain_stale_responses(usb, handle):
+    """Discard bytes left by a timed-out USB exchange before the next command."""
+    deadline = time.monotonic() + STALE_RESPONSE_DRAIN_SECONDS
+    while time.monotonic() < deadline:
+        buffer = (ctypes.c_ubyte * 4096)()
+        transferred = ctypes.c_int()
+        result = usb.libusb_bulk_transfer(
+            handle,
+            IN_ENDPOINT,
+            buffer,
+            len(buffer),
+            ctypes.byref(transferred),
+            20,
+        )
+        if result == -7:
+            return
+        if result != 0:
+            raise RuntimeError(f"USB stale-response drain: {error_name(usb, result)}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--listen", default="127.0.0.1")
@@ -114,6 +138,7 @@ def main():
     devices = handle = None
     stopped = threading.Event()
     listener = client = None
+    needs_drain = False
     try:
         devices, device = find_device(usb, context)
         handle = ctypes.c_void_p()
@@ -159,9 +184,13 @@ def main():
                     if not payload:
                         break
                     try:
+                        if needs_drain:
+                            drain_stale_responses(usb, handle)
+                            needs_drain = False
                         response = exchange(usb, handle, payload)
                     except RuntimeError as exc:
                         print(f"USB exchange failed: {exc}", file=sys.stderr, flush=True)
+                        needs_drain = True
                         response = b"\r\n+CME ERROR: 515\r\n"
                     client.sendall(response)
             finally:

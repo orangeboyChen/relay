@@ -121,7 +121,7 @@ func (publisher *Publisher) seal(message sms.ReceivedMessage, recipient incoming
 	if err != nil {
 		return callevent.Envelope{}, fmt.Errorf("derive recipient message key: %w", err)
 	}
-	eventID := deterministicEventID(message.ID, recipient.InstallationID)
+	eventID := deterministicEventID(publisher.identity.DeviceUUID, message.ID, recipient.InstallationID)
 	envelope := callevent.Envelope{
 		ID: eventID, Type: eventType, DeviceUUID: publisher.identity.DeviceUUID,
 		OccurredAt: message.Timestamp.UTC().Truncate(time.Millisecond), KeyEpoch: keyEpoch,
@@ -146,8 +146,8 @@ func (publisher *Publisher) seal(message sms.ReceivedMessage, recipient incoming
 	return envelope, nil
 }
 
-func deterministicEventID(messageID string, installationID string) string {
-	digest := sha256.Sum256([]byte(eventContext + "\x00" + messageID + "\x00" + installationID))
+func deterministicEventID(deviceID string, messageID string, installationID string) string {
+	digest := sha256.Sum256([]byte(eventContext + "\x00" + deviceID + "\x00" + messageID + "\x00" + installationID))
 	value := append([]byte(nil), digest[:16]...)
 	value[6] = (value[6] & 0x0f) | 0x50
 	value[8] = (value[8] & 0x3f) | 0x80

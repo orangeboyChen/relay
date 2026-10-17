@@ -136,6 +136,20 @@ var _ = Describe("Incoming message publisher", func() {
 		Expect(remote.envelopes[0]).To(Equal(firstAttempt))
 	})
 
+	It("keeps identical modem history events isolated by device identity", func() {
+		Expect(publisher.Publish(context.Background(), message)).To(Succeed())
+		firstDeviceEventID := remote.envelopes[0].ID
+
+		otherDeviceState := state
+		otherDeviceState.DeviceUUID = "01900000-0000-7000-8000-000000000002"
+		otherDevicePublisher, err := NewPublisher(remote, otherDeviceState)
+		Expect(err).NotTo(HaveOccurred())
+		remote.envelopes = nil
+		Expect(otherDevicePublisher.Publish(context.Background(), message)).To(Succeed())
+
+		Expect(remote.envelopes[0].ID).NotTo(Equal(firstDeviceEventID))
+	})
+
 	It("keeps messages pending when recipients or the server are unavailable", func() {
 		remote.recipients = nil
 		Expect(publisher.Publish(context.Background(), message)).To(MatchError(ErrNoRecipients))

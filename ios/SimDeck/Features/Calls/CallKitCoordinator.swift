@@ -371,6 +371,31 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
         finishCall(callID: callStartFailureID)
     }
 
+    func completeSystemEndCall(callID: UUID, isIncoming: Bool, fulfill: () -> Void) {
+        if activeCall?.id == callID {
+            finishCall(callID: callID)
+        }
+
+        // The local hangup is complete before the remote modem command finishes.
+        // Fulfilling CallKit first prevents a slow or offline device from showing
+        // a system-level "Call Control Failed" error after the user hung up.
+        fulfill()
+        Task {
+            do {
+                if isIncoming {
+                    try await transport.rejectIncomingCall(callID: callID)
+                } else {
+                    try await transport.endCall(callID: callID)
+                }
+            } catch {
+#if DEBUG
+                print("call end command failed after local hangup: \(String(reflecting: error))")
+#endif
+            }
+            pendingEndCallKinds.removeValue(forKey: callID)
+        }
+    }
+
     private func finishCall(callID: UUID) {
         guard activeCall?.id == callID else { return }
         activeCall = nil
@@ -419,27 +444,8 @@ extension CallKitCoordinator: @preconcurrency CXProviderDelegate {
             return
         }
         let isIncoming = pendingEndCallKinds[callID] ?? (incomingCalls[callID] != nil)
-        if activeCall?.id == callID {
-            finishCall(callID: callID)
-        }
-
-        // The local hangup is complete before the remote modem command finishes.
-        // Fulfilling CallKit first prevents a slow or offline device from showing
-        // a system-level "Call Control Failed" error after the user hung up.
-        action.fulfill()
-        Task {
-            do {
-                if isIncoming {
-                    try await transport.rejectIncomingCall(callID: callID)
-                } else {
-                    try await transport.endCall(callID: callID)
-                }
-            } catch {
-#if DEBUG
-                print("call end command failed after local hangup: \(String(reflecting: error))")
-#endif
-            }
-            pendingEndCallKinds.removeValue(forKey: callID)
+        completeSystemEndCall(callID: callID, isIncoming: isIncoming) {
+            action.fulfill()
         }
     }
 

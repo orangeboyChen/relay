@@ -95,6 +95,31 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertNil(coordinator.activeCall)
     }
 
+    func testSystemEndCallCompletesBeforeRemoteCleanupFinishes() {
+        let transport = RecordingCallTransport(endError: TestCallError.failed)
+        let callID = UUID()
+        let coordinator = CallKitCoordinator(
+            transport: transport,
+            integratesWithSystem: true,
+            initialCall: ActiveCallSession(
+                id: callID,
+                lineID: UUID(),
+                remoteNumber: "13500000000",
+                displayName: nil,
+                status: .connecting,
+                isMuted: false
+            )
+        )
+        var didFulfill = false
+
+        coordinator.completeSystemEndCall(callID: callID, isIncoming: false) {
+            didFulfill = true
+        }
+
+        XCTAssertTrue(didFulfill)
+        XCTAssertNil(coordinator.activeCall)
+    }
+
     func testInProcessStartFailureKeepsCallVisibleUntilFailureIsDismissed() async {
         let transport = RecordingCallTransport(startError: TestCallError.failed)
         let coordinator = CallKitCoordinator(

@@ -56,9 +56,9 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if err := runtime.publish(ctx); err != nil {
-				return err
-			}
+			// A modem can temporarily delay radio queries while a call owns the
+			// AT channel. Keep the ready device alive and retry on the next tick.
+			_ = runtime.publish(ctx)
 		}
 	}
 }

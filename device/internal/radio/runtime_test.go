@@ -18,6 +18,18 @@ type fakeCommander struct {
 	err       error
 }
 
+type sequencedCommander struct {
+	responses []map[string]at.Response
+	phase     int
+}
+
+func (commander *sequencedCommander) Send(_ context.Context, command string) (at.Response, error) {
+	if command == "AT+CEREG?" && commander.phase < len(commander.responses)-1 {
+		commander.phase++
+	}
+	return commander.responses[commander.phase][command], nil
+}
+
 func (commander *fakeCommander) Send(_ context.Context, command string) (at.Response, error) {
 	if commander.err != nil {
 		return at.Response{}, commander.err
@@ -181,6 +193,27 @@ var _ = Describe("Radio status runtime", func() {
 		runtime, err := NewRuntime(commander, remote, state, time.Second, time.Second)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(runtime.Run(context.Background())).To(MatchError("publish radio status: server unavailable"))
+	})
+
+	It("keeps running when a later radio poll temporarily fails", func() {
+		available := map[string]at.Response{
+			"AT+CEREG?":  {Lines: []string{"+CEREG: 0,1"}, Terminal: "OK"},
+			"AT+QNWINFO": {Lines: []string{`+QNWINFO: "LTE","46000"`}, Terminal: "OK"},
+			"AT+CSQ":     {Lines: []string{"+CSQ: 20,99"}, Terminal: "OK"},
+		}
+		failed := map[string]at.Response{
+			"AT+CEREG?": {Terminal: "ERROR"},
+			"AT+CREG?":  {Terminal: "+CME ERROR: busy"},
+		}
+		commander := &sequencedCommander{responses: []map[string]at.Response{available, failed, available}, phase: -1}
+		remote := &fakeRemote{}
+		runtime, err := NewRuntime(commander, remote, state, 5*time.Millisecond, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+		defer cancel()
+
+		Expect(runtime.Run(ctx)).To(MatchError(context.DeadlineExceeded))
+		Expect(len(remote.statuses())).To(BeNumerically(">=", 2))
 	})
 
 	DescribeTable("rejects failed radio detail queries", func(responses map[string]at.Response, expected string) {

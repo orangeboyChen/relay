@@ -51,7 +51,7 @@ type Repository interface {
 	CompleteCommand(context.Context, string, string, domain.EncryptedCommandResult, time.Time) error
 	CommandStatus(context.Context, string, string, time.Time) (domain.CommandStatus, error)
 	UpdateDeviceCommandPublicKey(context.Context, string, []byte) error
-	UpdateDeviceRadioStatus(context.Context, string, string, *int, time.Time) error
+	UpdateDeviceRadioStatus(context.Context, string, string, int, string, *int, time.Time) error
 	UpdateDeviceSIMIdentity(context.Context, string, string, int, []byte, time.Time) (string, int, error)
 	RegisterAppInstallation(context.Context, string, store.AppInstallationRegistration, time.Time) (store.AppInstallationRecord, bool, error)
 	UpsertPushToken(context.Context, string, string, string, string, []byte, time.Time) error
@@ -806,6 +806,8 @@ func (router *router) updateDeviceCommandKey(writer http.ResponseWriter, request
 func (router *router) updateDeviceRadioStatus(writer http.ResponseWriter, request *http.Request) {
 	var body struct {
 		DeviceUUID            string `json:"device_uuid"`
+		SlotKey               string `json:"slot_key"`
+		SlotIndex             int    `json:"slot_index"`
 		RadioAccessTechnology string `json:"radio_access_technology"`
 		SignalBars            *int   `json:"signal_bars"`
 	}
@@ -816,6 +818,16 @@ func (router *router) updateDeviceRadioStatus(writer http.ResponseWriter, reques
 	token, ok := bearerToken(request.Header.Get("Authorization"))
 	if !ok || !validUUID(body.DeviceUUID) {
 		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is required.")
+		return
+	}
+	if body.SlotKey == "" {
+		body.SlotKey = "1"
+	}
+	if body.SlotIndex == 0 {
+		body.SlotIndex = 1
+	}
+	if len(body.SlotKey) > 64 || body.SlotIndex < 1 || body.SlotIndex > 32 {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_slot_identity", "Device slot identity is invalid.")
 		return
 	}
 	if !validRadioAccessTechnology(body.RadioAccessTechnology) ||
@@ -830,6 +842,8 @@ func (router *router) updateDeviceRadioStatus(writer http.ResponseWriter, reques
 	if err := router.repository.UpdateDeviceRadioStatus(
 		request.Context(),
 		body.DeviceUUID,
+		body.SlotKey,
+		body.SlotIndex,
 		body.RadioAccessTechnology,
 		body.SignalBars,
 		router.now(),

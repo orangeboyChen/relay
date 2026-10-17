@@ -1235,13 +1235,29 @@ func (store *Postgres) listDeviceSlots(ctx context.Context, deviceID string) ([]
 }
 
 // UpdateDeviceRadioStatus stores the latest non-sensitive modem telemetry.
-func (store *Postgres) UpdateDeviceRadioStatus(ctx context.Context, deviceID string, technology string, signalBars *int, now time.Time) error {
+func (store *Postgres) UpdateDeviceRadioStatus(ctx context.Context, deviceID string, slotKey string, slotIndex int, technology string, signalBars *int, now time.Time) error {
 	command, err := store.pool.Exec(ctx, `
-		UPDATE devices
-		SET radio_access_technology = $2,
-		    signal_bars = $3,
-		    radio_status_updated_at = $4
-		WHERE id = $1 AND revoked_at IS NULL`, deviceID, technology, signalBars, now.UTC())
+		WITH updated_slot AS (
+			UPDATE device_slots AS slot
+			SET radio_access_technology = $4,
+			    signal_bars = $5,
+			    radio_status_updated_at = $6,
+			    last_seen_at = $6
+			FROM devices AS device
+			WHERE slot.device_id = $1
+			  AND slot.slot_key = $2
+			  AND slot.slot_index = $3
+			  AND slot.removed_at IS NULL
+			  AND device.id = slot.device_id
+			  AND device.revoked_at IS NULL
+			RETURNING slot.device_id
+		)
+		UPDATE devices AS device
+		SET radio_access_technology = $4,
+		    signal_bars = $5,
+		    radio_status_updated_at = $6
+		FROM updated_slot
+		WHERE device.id = updated_slot.device_id`, deviceID, slotKey, slotIndex, technology, signalBars, now.UTC())
 	if err != nil {
 		return fmt.Errorf("update device radio status: %w", err)
 	}

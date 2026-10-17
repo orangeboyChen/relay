@@ -121,7 +121,7 @@ func (repository *memoryRepository) CommandStatus(context.Context, string, strin
 func (repository *memoryRepository) UpdateDeviceCommandPublicKey(context.Context, string, []byte) error {
 	return nil
 }
-func (repository *memoryRepository) UpdateDeviceRadioStatus(context.Context, string, string, *int, time.Time) error {
+func (repository *memoryRepository) UpdateDeviceRadioStatus(context.Context, string, string, int, string, *int, time.Time) error {
 	return nil
 }
 func (repository *memoryRepository) UpdateDeviceSIMIdentity(context.Context, string, string, int, []byte, time.Time) (string, int, error) {

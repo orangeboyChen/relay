@@ -33,12 +33,14 @@ var _ = Describe("Device radio status", func() {
 
 	It("authenticates and stores current LTE signal bars", func() {
 		repository := &fakeRepository{}
-		response := requestStatus(repository, `{"device_uuid":"`+deviceID+`","radio_access_technology":"lte","signal_bars":3}`, "device-secret")
+		response := requestStatus(repository, `{"device_uuid":"`+deviceID+`","slot_key":"primary","slot_index":2,"radio_access_technology":"lte","signal_bars":3}`, "device-secret")
 
 		Expect(response.Code).To(Equal(http.StatusNoContent))
 		Expect(repository.authenticatedDeviceID).To(Equal(deviceID))
 		Expect(repository.authenticatedCredential).To(Equal("device-secret"))
 		Expect(repository.updatedRadioDevice).To(Equal(deviceID))
+		Expect(repository.updatedRadioSlotKey).To(Equal("primary"))
+		Expect(repository.updatedRadioSlotIndex).To(Equal(2))
 		Expect(repository.updatedRadioTechnology).To(Equal("lte"))
 		Expect(repository.updatedSignalBars).NotTo(BeNil())
 		Expect(*repository.updatedSignalBars).To(Equal(3))
@@ -51,6 +53,18 @@ var _ = Describe("Device radio status", func() {
 
 		Expect(response.Code).To(Equal(http.StatusNoContent))
 		Expect(repository.updatedSignalBars).To(BeNil())
+		Expect(repository.updatedRadioSlotKey).To(Equal("1"))
+		Expect(repository.updatedRadioSlotIndex).To(Equal(1))
+	})
+
+	It("rejects malformed slot identities before authentication or storage", func() {
+		repository := &fakeRepository{}
+		response := requestStatus(repository, `{"device_uuid":"`+deviceID+`","slot_key":"primary","slot_index":33,"radio_access_technology":"lte","signal_bars":3}`, "device-secret")
+
+		Expect(response.Code).To(Equal(http.StatusUnprocessableEntity))
+		Expect(response.Body.String()).To(ContainSubstring("invalid_slot_identity"))
+		Expect(repository.authenticatedDeviceID).To(BeEmpty())
+		Expect(repository.updatedRadioDevice).To(BeEmpty())
 	})
 
 	It("rejects invalid radio values before storage", func() {

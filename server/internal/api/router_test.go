@@ -105,6 +105,8 @@ type fakeRepository struct {
 	updatedCommandKey           []byte
 	updateCommandKeyError       error
 	updatedRadioDevice          string
+	updatedRadioSlotKey         string
+	updatedRadioSlotIndex       int
 	updatedRadioTechnology      string
 	updatedSignalBars           *int
 	updatedRadioAt              time.Time
@@ -149,8 +151,10 @@ type fakeRepository struct {
 	incomingClaimError          error
 }
 
-func (fake *fakeRepository) UpdateDeviceRadioStatus(_ context.Context, deviceID string, technology string, signalBars *int, now time.Time) error {
+func (fake *fakeRepository) UpdateDeviceRadioStatus(_ context.Context, deviceID string, slotKey string, slotIndex int, technology string, signalBars *int, now time.Time) error {
 	fake.updatedRadioDevice = deviceID
+	fake.updatedRadioSlotKey = slotKey
+	fake.updatedRadioSlotIndex = slotIndex
 	fake.updatedRadioTechnology = technology
 	fake.updatedSignalBars = signalBars
 	fake.updatedRadioAt = now

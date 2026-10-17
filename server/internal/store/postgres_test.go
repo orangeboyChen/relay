@@ -657,7 +657,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		commandKey := bytes.Repeat([]byte{21}, 32)
 		signalBars := 3
 		Expect(database.UpdateDeviceCommandPublicKey(context.Background(), device.ID, commandKey)).To(Succeed())
-		Expect(database.UpdateDeviceRadioStatus(context.Background(), device.ID, "5G", &signalBars, now)).To(Succeed())
+		Expect(database.UpdateDeviceRadioStatus(context.Background(), device.ID, "1", 1, "5G", &signalBars, now)).To(Succeed())
 
 		records, err := database.ListDevices(context.Background())
 		Expect(err).NotTo(HaveOccurred())
@@ -668,6 +668,12 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(*records[0].SignalBars).To(Equal(3))
 		Expect(records[0].RadioStatusUpdatedAt).NotTo(BeNil())
 		Expect(*records[0].RadioStatusUpdatedAt).To(Equal(now))
+		Expect(records[0].Slots).To(HaveLen(1))
+		Expect(records[0].Slots[0].RadioAccessTechnology).To(Equal("5G"))
+		Expect(records[0].Slots[0].SignalBars).NotTo(BeNil())
+		Expect(*records[0].Slots[0].SignalBars).To(Equal(3))
+		Expect(records[0].Slots[0].RadioStatusUpdatedAt).NotTo(BeNil())
+		Expect(*records[0].Slots[0].RadioStatusUpdatedAt).To(Equal(now))
 
 		encrypted := domain.EncryptedCommand{
 			ID:                   "01900000-0000-7000-8000-000000000050",
@@ -727,7 +733,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		_, err = database.ClaimCommand(context.Background(), device.ID, now.Add(3*time.Second), now.Add(time.Minute))
 		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
 		Expect(database.UpdateDeviceCommandPublicKey(context.Background(), secondDeviceID, commandKey)).To(MatchError(pgx.ErrNoRows))
-		Expect(database.UpdateDeviceRadioStatus(context.Background(), secondDeviceID, "LTE", nil, now)).To(MatchError(pgx.ErrNoRows))
+		Expect(database.UpdateDeviceRadioStatus(context.Background(), secondDeviceID, "1", 1, "LTE", nil, now)).To(MatchError(pgx.ErrNoRows))
 
 		unknownDeviceCommand := encrypted
 		unknownDeviceCommand.ID = "01900000-0000-7000-8000-000000000051"
@@ -1344,7 +1350,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		)
 		_, err = database.DeviceDiscoveryStatus(ctx, firstDeviceID, nil, now)
 		Expect(err).To(HaveOccurred())
-		Expect(database.UpdateDeviceRadioStatus(ctx, firstDeviceID, "LTE", nil, now)).To(
+		Expect(database.UpdateDeviceRadioStatus(ctx, firstDeviceID, "1", 1, "LTE", nil, now)).To(
 			MatchError(ContainSubstring("update device radio status")),
 		)
 		_, err = database.ListEvents(ctx, 0, 100, now)

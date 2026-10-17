@@ -1,6 +1,6 @@
-# sim-deck-device
+# relay-node
 
-`sim-deck-device` controls one Quectel modem and bridges cellular voice audio to
+`relay-node` controls one Quectel modem and bridges cellular voice audio to
 an end-to-end encrypted WebRTC session.
 
 Incoming SMS decoding, multipart assembly, history import, and durable

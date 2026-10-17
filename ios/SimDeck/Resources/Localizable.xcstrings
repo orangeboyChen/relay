@@ -226,6 +226,16 @@
         }
       }
     },
+    "Call Failed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通话失败"
+          }
+        }
+      }
+    },
     "Calls" : {
       "localizations" : {
         "zh-Hans" : {

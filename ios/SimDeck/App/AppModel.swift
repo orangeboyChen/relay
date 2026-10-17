@@ -96,6 +96,8 @@ final class AppModel {
                 resolvedCommandSigner.identity?.id
             }
         )
+        self.callCoordinator.updateLineRoutes(devices)
+        self.messageTransport.updateLineRoutes(devices)
     }
 
     func completeOnboarding() {

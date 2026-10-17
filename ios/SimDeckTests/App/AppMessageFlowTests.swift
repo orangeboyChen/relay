@@ -25,6 +25,8 @@ final class AppMessageFlowTests: XCTestCase {
         let transport = MessageTransportFake(sendMode: .suspended)
         let model = makeModel(transport: transport)
 
+        XCTAssertEqual(transport.routedLineIDs, [firstLine.id, secondLine.id])
+
         let sendTask = Task {
             try await model.sendMessage(
                 lineID: firstLine.id,
@@ -194,6 +196,7 @@ private final class MessageTransportFake: MessageTransport {
     var sendMode: SendMode
     var deliveries: [IncomingMessageDelivery]
     private(set) var sent: [SentMessage] = []
+    private(set) var routedLineIDs: [UUID] = []
     private(set) var synchronizedLineIDs: [[UUID]] = []
     private var sendStartedContinuations: [CheckedContinuation<Void, Never>] = []
     private var sendCompletion: CheckedContinuation<Void, Never>?
@@ -232,6 +235,10 @@ private final class MessageTransportFake: MessageTransport {
     func synchronize(lines: [DeviceLineIdentity]) async throws -> [IncomingMessageDelivery] {
         synchronizedLineIDs.append(lines.map(\.id))
         return deliveries
+    }
+
+    func updateLineRoutes(_ lines: [DeviceLineIdentity]) {
+        routedLineIDs = lines.map(\.id)
     }
 
     func waitUntilSendStarted() async {

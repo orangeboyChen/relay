@@ -79,7 +79,31 @@ def find_device(usb, context):
     raise RuntimeError(f"Quectel {VENDOR_ID:04x}:{PRODUCT_ID:04x} not found")
 
 
+def describe_exchange(payload):
+    text = payload.decode("ascii", errors="replace").strip()
+    if not text.startswith("AT"):
+        return f"binary payload ({len(payload)} bytes)"
+    first_line = text.splitlines()[0]
+    if first_line.startswith("ATD"):
+        return "ATD [redacted]"
+    if first_line.startswith("AT+"):
+        end = 3
+        while end < len(first_line) and (first_line[end].isalnum() or first_line[end] == "_"):
+            end += 1
+        return first_line[:end]
+    return first_line[:16]
+
+
+def describe_response(response):
+    for marker in (b"+CME ERROR:", b"+CMS ERROR:", b"NO CARRIER", b"ERROR", b"OK", b"> "):
+        if marker in response:
+            return marker.decode("ascii").strip()
+    return "partial"
+
+
 def exchange(usb, handle, payload):
+    command = describe_exchange(payload)
+    print(f"AT_TX {command}", flush=True)
     deadline = time.monotonic() + EXCHANGE_TIMEOUT_SECONDS
     request = (ctypes.c_ubyte * len(payload)).from_buffer_copy(payload)
     transferred = ctypes.c_int()
@@ -96,7 +120,10 @@ def exchange(usb, handle, payload):
             raise RuntimeError(f"USB read: {error_name(usb, result)}")
         response.extend(bytes(buffer[:transferred.value]))
         if b"\r\n> " in response or b"\r\nOK\r\n" in response or b"\r\nERROR\r\n" in response or b"NO CARRIER" in response or b"+CME ERROR:" in response or b"+CMS ERROR:" in response:
-            return bytes(response)
+            result = bytes(response)
+            print(f"AT_RX {describe_response(result)} ({len(result)} bytes)", flush=True)
+            return result
+    print(f"AT_RX_TIMEOUT {command}", flush=True)
     raise RuntimeError(f"USB response timeout after {EXCHANGE_TIMEOUT_SECONDS:.1f}s")
 
 
@@ -192,7 +219,10 @@ def main():
                         print(f"USB exchange failed: {exc}", file=sys.stderr, flush=True)
                         needs_drain = True
                         response = b"\r\n+CME ERROR: 515\r\n"
-                    client.sendall(response)
+                    try:
+                        client.sendall(response)
+                    except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
+                        break
             finally:
                 client.close()
                 client = None

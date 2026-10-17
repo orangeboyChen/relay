@@ -1,0 +1,71 @@
+default_platform(:ios)
+
+PROJECT = "SimDeck.xcodeproj"
+SCHEME = "SimDeck"
+TARGET = "SimDeck"
+
+def required_environment_value(name)
+  value = ENV[name]
+  UI.user_error!("Missing required environment variable: #{name}") if value.to_s.empty?
+  value
+end
+
+def app_store_connect_key
+  app_store_connect_api_key(
+    key_id: required_environment_value("ASC_KEY_ID"),
+    issuer_id: required_environment_value("ASC_ISSUER_ID"),
+    key_filepath: File.expand_path(required_environment_value("ASC_KEY_FILEPATH")),
+    duration: 1200
+  )
+end
+
+platform :ios do
+  desc "Build Sim Deck and upload the next build to TestFlight"
+  lane :beta do |options|
+    api_key = app_store_connect_key
+
+    increment_version_number(
+      version_number: options[:version],
+      xcodeproj: PROJECT
+    ) if options[:version]
+
+    version = get_version_number(
+      xcodeproj: PROJECT,
+      target: TARGET
+    )
+
+    local_build_number = get_build_number(xcodeproj: PROJECT).to_i
+    testflight_build_number = latest_testflight_build_number(
+      api_key: api_key,
+      version: version,
+      initial_build_number: 0
+    ).to_i
+    next_build_number = [local_build_number, testflight_build_number].max + 1
+
+    increment_build_number(
+      build_number: next_build_number,
+      xcodeproj: PROJECT,
+      skip_info_plist: true
+    )
+
+    UI.message("Uploading Sim Deck #{version} (#{next_build_number})")
+
+    build_app(
+      project: PROJECT,
+      scheme: SCHEME,
+      configuration: "Release",
+      clean: true,
+      export_method: "app-store",
+      output_directory: "build/fastlane",
+      output_name: "SimDeck.ipa"
+    )
+
+    upload_to_testflight(
+      api_key: api_key,
+      ipa: lane_context[SharedValues::IPA_OUTPUT_PATH],
+      changelog: options[:changelog],
+      distribute_external: false,
+      skip_waiting_for_build_processing: true
+    )
+  end
+end

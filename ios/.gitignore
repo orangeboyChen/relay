@@ -2,3 +2,11 @@
 DerivedData/
 *.xcuserstate
 xcuserdata/
+.env
+fastlane/.env
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/
+build/fastlane/
+.bundle/
+vendor/bundle/

@@ -196,7 +196,7 @@ func (session *Session) Run(ctx context.Context) error {
 			}
 		case <-callPoll.C:
 			if err := session.refreshCallState(ctx); err != nil {
-				return err
+				session.logger.Warn("call state refresh deferred", "error", err)
 			}
 		case <-messageRetry.C:
 			if err := session.RetryPendingSMS(ctx); err != nil {

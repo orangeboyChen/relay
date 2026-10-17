@@ -192,7 +192,12 @@ var _ = Describe("Incoming call client", func() {
 
 var _ = Describe("Radio status client", func() {
 	It("uploads authenticated modem telemetry", func() {
-		state := identity.State{DeviceUUID: "01900000-0000-7000-8000-000000000001", Credential: "device-secret"}
+		state := identity.State{
+			DeviceUUID: "01900000-0000-7000-8000-000000000001",
+			Credential: "device-secret",
+			SlotKey:    "primary",
+			SlotIndex:  1,
+		}
 		bars := 3
 		client := clientWithHandler(func(request *http.Request) (*http.Response, error) {
 			Expect(request.Method).To(Equal(http.MethodPut))
@@ -200,11 +205,15 @@ var _ = Describe("Radio status client", func() {
 			Expect(request.Header.Get("Authorization")).To(Equal("Bearer device-secret"))
 			var body struct {
 				DeviceUUID            string `json:"device_uuid"`
+				SlotKey               string `json:"slot_key"`
+				SlotIndex             int    `json:"slot_index"`
 				RadioAccessTechnology string `json:"radio_access_technology"`
 				SignalBars            *int   `json:"signal_bars"`
 			}
 			Expect(json.NewDecoder(request.Body).Decode(&body)).To(Succeed())
 			Expect(body.DeviceUUID).To(Equal(state.DeviceUUID))
+			Expect(body.SlotKey).To(Equal(state.SlotKey))
+			Expect(body.SlotIndex).To(Equal(state.SlotIndex))
 			Expect(body.RadioAccessTechnology).To(Equal("lte"))
 			Expect(body.SignalBars).NotTo(BeNil())
 			Expect(*body.SignalBars).To(Equal(3))
@@ -229,6 +238,86 @@ var _ = Describe("Radio status client", func() {
 			return response(http.StatusUnauthorized, `{"error":{"code":"invalid_device_credential"}}`), nil
 		})
 		Expect(serverFailure.UpdateRadioStatus(context.Background(), state, status)).To(MatchError(ContainSubstring("invalid_device_credential")))
+	})
+})
+
+var _ = Describe("SIM identity client", func() {
+	var state identity.State
+
+	BeforeEach(func() {
+		state = identity.State{
+			DeviceUUID:     "01900000-0000-7000-8000-000000000001",
+			Credential:     "device-secret",
+			SlotID:         "01900000-0000-7000-8000-000000000002",
+			SlotKey:        "primary",
+			SlotIndex:      1,
+			SIMFingerprint: strings.Repeat("a", 64),
+		}
+	})
+
+	It("synchronizes the current card with authenticated slot metadata", func() {
+		client := clientWithHandler(func(request *http.Request) (*http.Response, error) {
+			Expect(request.Method).To(Equal(http.MethodPut))
+			Expect(request.URL.Path).To(Equal("/v1/device-sim-identity"))
+			Expect(request.Header.Get("Authorization")).To(Equal("Bearer device-secret"))
+			Expect(request.Header.Get("Content-Type")).To(Equal("application/json"))
+			var body struct {
+				DeviceUUID     string `json:"device_uuid"`
+				SlotKey        string `json:"slot_key"`
+				SlotIndex      int    `json:"slot_index"`
+				SIMFingerprint string `json:"sim_fingerprint"`
+			}
+			Expect(json.NewDecoder(request.Body).Decode(&body)).To(Succeed())
+			Expect(body.DeviceUUID).To(Equal(state.DeviceUUID))
+			Expect(body.SlotKey).To(Equal(state.SlotKey))
+			Expect(body.SlotIndex).To(Equal(state.SlotIndex))
+			Expect(body.SIMFingerprint).To(Equal(state.SIMFingerprint))
+			return response(http.StatusOK, `{"sim_id":"01900000-0000-7000-8000-000000000003","numeric_id":7}`), nil
+		})
+
+		simID, numericID, err := client.UpdateSIMIdentity(context.Background(), state)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(simID).To(Equal("01900000-0000-7000-8000-000000000003"))
+		Expect(numericID).To(Equal(7))
+	})
+
+	It("rejects incomplete slot identity before sending a request", func() {
+		state.SIMFingerprint = ""
+
+		_, _, err := NewClient("http://unused.invalid", nil).UpdateSIMIdentity(context.Background(), state)
+
+		Expect(err).To(MatchError("bound slot and SIM fingerprint are required"))
+	})
+
+	It("maps request, transport, server, and response failures", func() {
+		_, _, err := NewClient("://invalid", nil).UpdateSIMIdentity(context.Background(), state)
+		Expect(err).To(MatchError(ContainSubstring("create SIM identity request")))
+
+		transportFailure := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("transport unavailable")
+		})
+		_, _, err = transportFailure.UpdateSIMIdentity(context.Background(), state)
+		Expect(err).To(MatchError(ContainSubstring("synchronize SIM identity")))
+
+		serverFailure := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusUnauthorized, `{"error":{"code":"invalid_device_credential","message":"sensitive detail"}}`), nil
+		})
+		_, _, err = serverFailure.UpdateSIMIdentity(context.Background(), state)
+		Expect(err).To(MatchError(ContainSubstring("invalid_device_credential")))
+		Expect(err.Error()).NotTo(ContainSubstring("sensitive detail"))
+
+		malformed := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusOK, "not-json"), nil
+		})
+		_, _, err = malformed.UpdateSIMIdentity(context.Background(), state)
+		Expect(err).To(MatchError(ContainSubstring("decode SIM identity response")))
+
+		invalidAssignment := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusOK, `{"sim_id":"invalid","numeric_id":100}`), nil
+		})
+		_, _, err = invalidAssignment.UpdateSIMIdentity(context.Background(), state)
+		Expect(err).To(MatchError("server returned an invalid SIM assignment"))
 	})
 })
 
@@ -268,6 +357,48 @@ var _ = Describe("Server discovery client", func() {
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(DiscoveryResult{DeviceUUID: state.DeviceUUID, Status: DiscoveryPending}))
+	})
+
+	It("binds slot metadata into the signed discovery proof", func() {
+		credential := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{4}, 32))
+		state.SlotKey = "primary"
+		state.SlotIndex = 1
+		state.SIMFingerprint = strings.Repeat("a", 64)
+		const slotID = "01900000-0000-7000-8000-000000000002"
+		const simID = "01900000-0000-7000-8000-000000000003"
+		client := clientWithHandler(func(request *http.Request) (*http.Response, error) {
+			var body struct {
+				DeviceUUID        string `json:"device_uuid"`
+				IdentityPublicKey []byte `json:"identity_public_key"`
+				CommandPublicKey  []byte `json:"command_public_key"`
+				PendingCredential string `json:"pending_credential"`
+				SlotKey           string `json:"slot_key"`
+				SlotIndex         int    `json:"slot_index"`
+				SIMFingerprint    string `json:"sim_fingerprint"`
+				Signature         []byte `json:"signature"`
+			}
+			Expect(json.NewDecoder(request.Body).Decode(&body)).To(Succeed())
+			Expect(body.SlotKey).To(Equal("primary"))
+			Expect(body.SlotIndex).To(Equal(1))
+			Expect(body.SIMFingerprint).To(Equal(state.SIMFingerprint))
+			proof := discoverySignedDataWithSlot(
+				body.DeviceUUID,
+				body.IdentityPublicKey,
+				body.CommandPublicKey,
+				body.PendingCredential,
+				body.SlotKey,
+				body.SlotIndex,
+				body.SIMFingerprint,
+			)
+			Expect(ed25519.Verify(body.IdentityPublicKey, proof, body.Signature)).To(BeTrue())
+			return response(http.StatusAccepted, `{"discovery":{"device_uuid":"`+state.DeviceUUID+`","status":"approved","numeric_id":2,"slot_id":"`+slotID+`","sim_id":"`+simID+`","slot_key":"primary","slot_index":1}}`), nil
+		})
+
+		result, err := client.SubmitDiscovery(context.Background(), credential, state)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.SlotID).To(Equal(slotID))
+		Expect(result.SIMID).To(Equal(simID))
 	})
 
 	It("polls an approved discovery with the pending credential", func() {
@@ -323,6 +454,20 @@ var _ = Describe("Server discovery client", func() {
 		Entry("pending numeric id", `{"discovery":{"device_uuid":"01900000-0000-7000-8000-000000000001","status":"pending","numeric_id":2}}`),
 		Entry("approved missing id", `{"discovery":{"device_uuid":"01900000-0000-7000-8000-000000000001","status":"approved"}}`),
 		Entry("approved high id", `{"discovery":{"device_uuid":"01900000-0000-7000-8000-000000000001","status":"approved","numeric_id":100}}`),
+	)
+
+	DescribeTable("rejects malformed approved slot identities",
+		func(slotID string, simID string) {
+			client := clientWithHandler(func(*http.Request) (*http.Response, error) {
+				return response(http.StatusOK, `{"discovery":{"device_uuid":"`+state.DeviceUUID+`","status":"approved","numeric_id":2,"slot_id":"`+slotID+`","sim_id":"`+simID+`"}}`), nil
+			})
+
+			_, err := client.GetDiscoveryStatus(context.Background(), state.DeviceUUID, "credential")
+
+			Expect(err).To(MatchError("server returned invalid slot or SIM identity"))
+		},
+		Entry("slot ID", "invalid", "01900000-0000-7000-8000-000000000003"),
+		Entry("SIM ID", "01900000-0000-7000-8000-000000000002", "invalid"),
 	)
 
 	It("rejects missing discovery inputs before making a request", func() {

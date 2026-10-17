@@ -111,6 +111,7 @@ func (transport *blockingTransport) Close() error {
 
 type fakeDeviceSession struct {
 	initializeError error
+	readSIMICCID    func(context.Context) (string, error)
 	retryError      error
 	retryMessage    *sms.ReceivedMessage
 	sink            modem.MessageSink
@@ -120,6 +121,13 @@ type fakeDeviceSession struct {
 }
 
 func (session *fakeDeviceSession) Calls() *call.Controller { return session.calls }
+
+func (session *fakeDeviceSession) ReadSIMICCID(ctx context.Context) (string, error) {
+	if session.readSIMICCID != nil {
+		return session.readSIMICCID(ctx)
+	}
+	return "", errors.New("no SIM fixture")
+}
 
 func (*fakeDeviceSession) SendSMS(context.Context, string, string, byte) error { return nil }
 
@@ -242,6 +250,9 @@ func testDependencies(transport io.ReadWriteCloser, session deviceSession) devic
 		},
 		configureAudio: func(context.Context, agent.Config, *at.Client) error { return nil },
 		syncCommandKey: func(context.Context, agent.Config, identity.State) error { return nil },
+		syncSIMIdentity: func(context.Context, agent.Config, identity.State) (string, int, error) {
+			return "01900000-0000-7000-8000-000000000003", 2, nil
+		},
 		newCallEvents: func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error) {
 			return eventRunner, nil
 		},
@@ -261,6 +272,31 @@ func testDependencies(transport io.ReadWriteCloser, session deviceSession) devic
 	}
 }
 
+func configuredSIMIdentity(directory string, iccid string) (identity.Store, identity.State) {
+	store := identity.NewStore(directory, "01900000-0000-7000-8000-000000000001")
+	state, err := store.LoadOrCreate()
+	Expect(err).NotTo(HaveOccurred())
+	state, err = store.ConfigureSlot(state, "primary", 1)
+	Expect(err).NotTo(HaveOccurred())
+	state, err = store.PrepareDiscovery(state)
+	Expect(err).NotTo(HaveOccurred())
+	state, err = store.BindAssignment(
+		state,
+		"https://deck.example",
+		2,
+		"01900000-0000-7000-8000-000000000002",
+		"01900000-0000-7000-8000-000000000003",
+		"primary",
+		1,
+	)
+	Expect(err).NotTo(HaveOccurred())
+	fingerprint, err := state.FingerprintSIM(iccid)
+	Expect(err).NotTo(HaveOccurred())
+	state, err = store.SetSIMIdentity(state, fingerprint, state.SIMID, state.NumericID)
+	Expect(err).NotTo(HaveOccurred())
+	return store, state
+}
+
 type testCallCommander struct{}
 
 func (*testCallCommander) Send(context.Context, string) (at.Response, error) {
@@ -272,6 +308,17 @@ var _ = Describe("Device command runtime", func() {
 
 	BeforeEach(func() {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	})
+
+	It("wires the production runtime and reports an unavailable AT device", func() {
+		config := testConfig(GinkgoT().TempDir())
+		config.HealthAddress = "127.0.0.1:0"
+		config.ATDevice = filepath.Join(GinkgoT().TempDir(), "missing-at")
+
+		err := run(context.Background(), config, logger)
+
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("device runtime"))
 	})
 
 	It("fails before starting the device when the health address cannot bind", func() {
@@ -562,6 +609,206 @@ var _ = Describe("Device command runtime", func() {
 		Expect(err).To(MatchError("register device command key: key registration unavailable"))
 	})
 
+	It("requires the SIM synchronization dependency before becoming ready", func() {
+		transport := newBlockingTransport()
+		dependencies := testDependencies(transport, &fakeDeviceSession{})
+		dependencies.syncSIMIdentity = nil
+
+		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError("SIM identity synchronization is not configured"))
+	})
+
+	It("synchronizes the detected SIM before constructing event publishers", func() {
+		transport := newBlockingTransport()
+		session := &fakeDeviceSession{readSIMICCID: func(context.Context) (string, error) {
+			return "8986000000000000000", nil
+		}}
+		dependencies := testDependencies(transport, session)
+		dependencies.bindIdentity = func(_ context.Context, config agent.Config, store identity.Store, state identity.State) (identity.State, error) {
+			prepared, err := store.PrepareDiscovery(state)
+			if err != nil {
+				return identity.State{}, err
+			}
+			return store.BindAssignment(
+				prepared,
+				config.ServerURL,
+				2,
+				"01900000-0000-7000-8000-000000000002",
+				"01900000-0000-7000-8000-000000000003",
+				config.SlotKey,
+				config.SlotIndex,
+			)
+		}
+		const synchronizedSIMID = "01900000-0000-7000-8000-000000000004"
+		dependencies.syncSIMIdentity = func(_ context.Context, _ agent.Config, state identity.State) (string, int, error) {
+			Expect(state.SIMFingerprint).To(HaveLen(64))
+			Expect(state.SlotID).To(Equal("01900000-0000-7000-8000-000000000002"))
+			return synchronizedSIMID, 4, nil
+		}
+		var publisherState identity.State
+		dependencies.newMessageEvents = func(_ agent.Config, state identity.State) (messageEventPublisher, error) {
+			publisherState = state
+			return &fakeMessageEventPublisher{}, nil
+		}
+		dependencies.newCommands = func(agent.Config, identity.State, command.Calls, command.Dependencies) (commandRuntime, error) {
+			return &fakeCommandRuntime{runError: errors.New("stop after SIM synchronization")}, nil
+		}
+		stateDirectory := GinkgoT().TempDir()
+
+		err := runDevice(context.Background(), testConfig(stateDirectory), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError("stop after SIM synchronization"))
+		Expect(publisherState.SIMID).To(Equal(synchronizedSIMID))
+		Expect(publisherState.NumericID).To(Equal(4))
+		reloaded, reloadErr := identity.NewStore(stateDirectory, testConfig(stateDirectory).DeviceUUID).LoadOrCreate()
+		Expect(reloadErr).NotTo(HaveOccurred())
+		Expect(reloaded.SIMID).To(Equal(synchronizedSIMID))
+		Expect(reloaded.SIMFingerprint).To(HaveLen(64))
+	})
+
+	It("stops before readiness when initial SIM synchronization fails", func() {
+		transport := newBlockingTransport()
+		session := &fakeDeviceSession{readSIMICCID: func(context.Context) (string, error) {
+			return "8986000000000000000", nil
+		}}
+		dependencies := testDependencies(transport, session)
+		dependencies.bindIdentity = func(_ context.Context, config agent.Config, store identity.Store, state identity.State) (identity.State, error) {
+			prepared, err := store.PrepareDiscovery(state)
+			if err != nil {
+				return identity.State{}, err
+			}
+			return store.BindAssignment(
+				prepared,
+				config.ServerURL,
+				2,
+				"01900000-0000-7000-8000-000000000002",
+				"01900000-0000-7000-8000-000000000003",
+				config.SlotKey,
+				config.SlotIndex,
+			)
+		}
+		dependencies.syncSIMIdentity = func(context.Context, agent.Config, identity.State) (string, int, error) {
+			return "", 0, errors.New("SIM endpoint unavailable")
+		}
+
+		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError("synchronize current SIM identity: SIM endpoint unavailable"))
+	})
+
+	It("rejects a malformed ICCID before contacting the server", func() {
+		transport := newBlockingTransport()
+		session := &fakeDeviceSession{readSIMICCID: func(context.Context) (string, error) {
+			return "invalid-iccid", nil
+		}}
+		dependencies := testDependencies(transport, session)
+		bound := false
+		dependencies.bindIdentity = func(context.Context, agent.Config, identity.Store, identity.State) (identity.State, error) {
+			bound = true
+			return identity.State{}, nil
+		}
+
+		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError(ContainSubstring("fingerprint SIM identity")))
+		Expect(bound).To(BeFalse())
+	})
+
+	It("keeps polling when the SIM card is unchanged and stops on cancellation", func() {
+		const iccid = "8986000000000000000"
+		store, state := configuredSIMIdentity(GinkgoT().TempDir(), iccid)
+		var polls atomic.Int32
+		session := &fakeDeviceSession{readSIMICCID: func(context.Context) (string, error) {
+			polls.Add(1)
+			return iccid, nil
+		}}
+		var synchronizations atomic.Int32
+		ctx, cancel := context.WithCancel(context.Background())
+		result := make(chan error, 1)
+		config := testConfig(GinkgoT().TempDir())
+
+		go func() {
+			result <- synchronizeSIMIdentity(ctx, session, config, store, state, func(context.Context, agent.Config, identity.State) (string, int, error) {
+				synchronizations.Add(1)
+				return "", 0, errors.New("unexpected synchronization")
+			}, logger)
+		}()
+
+		Eventually(polls.Load).Should(BeNumerically(">=", 2))
+		cancel()
+		Eventually(result).Should(Receive(MatchError(context.Canceled)))
+		Expect(synchronizations.Load()).To(BeZero())
+	})
+
+	It("retries SIM reads and server synchronization before atomically replacing the assignment", func() {
+		const oldICCID = "8986000000000000000"
+		const newICCID = "8986000000000000001"
+		const newSIMID = "01900000-0000-7000-8000-000000000004"
+		store, state := configuredSIMIdentity(GinkgoT().TempDir(), oldICCID)
+		var polls atomic.Int32
+		session := &fakeDeviceSession{readSIMICCID: func(context.Context) (string, error) {
+			switch polls.Add(1) {
+			case 1:
+				return "", errors.New("SIM temporarily unavailable")
+			case 2:
+				return "malformed", nil
+			default:
+				return newICCID, nil
+			}
+		}}
+		var synchronizations atomic.Int32
+		config := testConfig(GinkgoT().TempDir())
+
+		err := synchronizeSIMIdentity(context.Background(), session, config, store, state, func(_ context.Context, received agent.Config, request identity.State) (string, int, error) {
+			Expect(received.ServerURL).To(Equal(config.ServerURL))
+			Expect(request.SIMFingerprint).NotTo(Equal(state.SIMFingerprint))
+			if synchronizations.Add(1) == 1 {
+				return "", 0, errors.New("server temporarily unavailable")
+			}
+			return newSIMID, 4, nil
+		}, logger)
+
+		Expect(err).To(MatchError(errSIMIdentityChanged))
+		Expect(synchronizations.Load()).To(Equal(int32(2)))
+		reloaded, err := store.LoadOrCreate()
+		Expect(err).NotTo(HaveOccurred())
+		expectedFingerprint, err := state.FingerprintSIM(newICCID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(reloaded.SIMFingerprint).To(Equal(expectedFingerprint))
+		Expect(reloaded.SIMID).To(Equal(newSIMID))
+		Expect(reloaded.NumericID).To(Equal(4))
+	})
+
+	It("does not persist a new fingerprint when a synchronized assignment is invalid", func() {
+		const oldICCID = "8986000000000000000"
+		const newICCID = "8986000000000000001"
+		store, state := configuredSIMIdentity(GinkgoT().TempDir(), oldICCID)
+		session := &fakeDeviceSession{readSIMICCID: func(context.Context) (string, error) {
+			return newICCID, nil
+		}}
+		ctx, cancel := context.WithCancel(context.Background())
+		var synchronizations atomic.Int32
+		result := make(chan error, 1)
+		config := testConfig(GinkgoT().TempDir())
+
+		go func() {
+			result <- synchronizeSIMIdentity(ctx, session, config, store, state, func(context.Context, agent.Config, identity.State) (string, int, error) {
+				if synchronizations.Add(1) >= 2 {
+					cancel()
+				}
+				return "invalid-sim-id", 9, nil
+			}, logger)
+		}()
+
+		Eventually(result).Should(Receive(MatchError(context.Canceled)))
+		reloaded, err := store.LoadOrCreate()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(reloaded.SIMFingerprint).To(Equal(state.SIMFingerprint))
+		Expect(reloaded.SIMID).To(Equal(state.SIMID))
+		Expect(reloaded.NumericID).To(Equal(state.NumericID))
+	})
+
 	It("returns message event publisher construction failure before readiness", func() {
 		transport := newBlockingTransport()
 		dependencies := testDependencies(transport, &fakeDeviceSession{})
@@ -706,23 +953,37 @@ var _ = Describe("Device command runtime", func() {
 		var expectedState identity.State
 		httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 			Expect(request.Method).To(Equal(http.MethodPut))
-			Expect(request.URL.String()).To(Equal("https://deck.example/v1/device-command-key"))
 			Expect(request.Header.Get("Authorization")).To(HavePrefix("Bearer "))
 			Expect(request.Header.Get("Content-Type")).To(Equal("application/json"))
-			body, err := io.ReadAll(request.Body)
-			Expect(err).NotTo(HaveOccurred())
-			var payload struct {
-				DeviceUUID       string `json:"device_uuid"`
-				CommandPublicKey []byte `json:"command_public_key"`
+			switch request.URL.Path {
+			case "/v1/device-command-key":
+				Expect(request.Header.Get("Authorization")).To(HavePrefix("Bearer "))
+				body, err := io.ReadAll(request.Body)
+				Expect(err).NotTo(HaveOccurred())
+				var payload struct {
+					DeviceUUID       string `json:"device_uuid"`
+					CommandPublicKey []byte `json:"command_public_key"`
+				}
+				Expect(json.Unmarshal(body, &payload)).To(Succeed())
+				Expect(payload.DeviceUUID).To(Equal(expectedState.DeviceUUID))
+				Expect(payload.CommandPublicKey).To(Equal(expectedState.CommandPublicKey()))
+				return &http.Response{
+					StatusCode: http.StatusNoContent,
+					Body:       io.NopCloser(strings.NewReader("")),
+					Header:     make(http.Header),
+				}, nil
+			case "/v1/device-sim-identity":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body: io.NopCloser(strings.NewReader(
+						`{"sim_id":"01900000-0000-7000-8000-000000000003","numeric_id":2}`,
+					)),
+					Header: make(http.Header),
+				}, nil
+			default:
+				Fail("unexpected production dependency request: " + request.URL.String())
+				return nil, nil
 			}
-			Expect(json.Unmarshal(body, &payload)).To(Succeed())
-			Expect(payload.DeviceUUID).To(Equal(expectedState.DeviceUUID))
-			Expect(payload.CommandPublicKey).To(Equal(expectedState.CommandPublicKey()))
-			return &http.Response{
-				StatusCode: http.StatusNoContent,
-				Body:       io.NopCloser(strings.NewReader("")),
-				Header:     make(http.Header),
-			}, nil
 		})}
 		dependencies := productionDependencies(httpClient)
 		Expect(dependencies.openTransport).NotTo(BeNil())
@@ -731,6 +992,7 @@ var _ = Describe("Device command runtime", func() {
 		Expect(dependencies.newSession).NotTo(BeNil())
 		Expect(dependencies.configureAudio).NotTo(BeNil())
 		Expect(dependencies.syncCommandKey).NotTo(BeNil())
+		Expect(dependencies.syncSIMIdentity).NotTo(BeNil())
 		Expect(dependencies.newCallEvents).NotTo(BeNil())
 		Expect(dependencies.newIncomingCalls).NotTo(BeNil())
 		Expect(dependencies.newCallMedia).NotTo(BeNil())
@@ -751,15 +1013,33 @@ var _ = Describe("Device command runtime", func() {
 		stateStore := identity.NewStore(stateDirectory, config.DeviceUUID)
 		state, err := stateStore.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
+		state, err = stateStore.ConfigureSlot(state, "primary", 1)
+		Expect(err).NotTo(HaveOccurred())
+		fingerprint, err := state.FingerprintSIM("8986000000000000000")
+		Expect(err).NotTo(HaveOccurred())
+		state, err = stateStore.SetSIMFingerprint(state, fingerprint)
+		Expect(err).NotTo(HaveOccurred())
 		state, err = stateStore.PrepareDiscovery(state)
 		Expect(err).NotTo(HaveOccurred())
-		state, err = stateStore.Bind(state, "https://deck.example", 1)
+		state, err = stateStore.BindAssignment(
+			state,
+			"https://deck.example",
+			2,
+			"01900000-0000-7000-8000-000000000002",
+			"01900000-0000-7000-8000-000000000003",
+			"primary",
+			1,
+		)
 		Expect(err).NotTo(HaveOccurred())
 		expectedState = state
 		bound, err := dependencies.bindIdentity(context.Background(), config, stateStore, state)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(bound.DeviceUUID).To(Equal(state.DeviceUUID))
 		Expect(dependencies.syncCommandKey(context.Background(), config, state)).To(Succeed())
+		simID, numericID, err := dependencies.syncSIMIdentity(context.Background(), config, state)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(simID).To(Equal(state.SIMID))
+		Expect(numericID).To(Equal(state.NumericID))
 		transport := newBlockingTransport()
 		client := at.NewClient(transport)
 		DeferCleanup(func() { _ = client.Close() })
@@ -785,5 +1065,8 @@ var _ = Describe("Device command runtime", func() {
 		commands, err := dependencies.newCommands(config, state, session.Calls(), command.Dependencies{Events: events, Media: callMedia, Messages: session})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(commands).NotTo(BeNil())
+		radioStatus, err := dependencies.newRadioStatus(config, state, client)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(radioStatus).NotTo(BeNil())
 	})
 })

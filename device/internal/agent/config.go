@@ -34,6 +34,8 @@ const (
 // Config describes the host devices and local health endpoint used by one agent instance.
 type Config struct {
 	DeviceUUID            string
+	SlotKey               string
+	SlotIndex             int
 	ATDevice              string
 	ATTLSCAFile           string
 	ATTLSCertificateFile  string
@@ -64,6 +66,8 @@ type Config struct {
 func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 	config := Config{
 		DeviceUUID:            strings.ToLower(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_DEVICE_UUID", ""))),
+		SlotKey:               strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_SLOT_KEY", "1")),
+		SlotIndex:             1,
 		ATDevice:              valueOrDefault(lookup, "SIM_DECK_AT_DEVICE", defaultATDevice),
 		ATTLSCAFile:           strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_AT_TLS_CA_FILE", "")),
 		ATTLSCertificateFile:  strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_AT_TLS_CERT_FILE", "")),
@@ -88,6 +92,16 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 	}
 	if !identity.ValidDeviceUUID(config.DeviceUUID) {
 		return Config{}, fmt.Errorf("SIM_DECK_DEVICE_UUID must be a canonical UUID")
+	}
+	if config.SlotKey == "" || len(config.SlotKey) > 64 {
+		return Config{}, fmt.Errorf("SIM_DECK_SLOT_KEY must be between 1 and 64 characters")
+	}
+	if value, ok := lookup("SIM_DECK_SLOT_INDEX"); ok && strings.TrimSpace(value) != "" {
+		index, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || index < 1 || index > 32 {
+			return Config{}, fmt.Errorf("SIM_DECK_SLOT_INDEX must be between 1 and 32")
+		}
+		config.SlotIndex = index
 	}
 	if value, ok := lookup("SIM_DECK_ALLOW_INSECURE_HTTP"); ok && strings.TrimSpace(value) != "" {
 		allow, err := strconv.ParseBool(value)

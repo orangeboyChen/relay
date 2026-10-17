@@ -32,6 +32,55 @@ func newTestSession(sink MessageSink) (*Session, net.Conn, *at.Client) {
 }
 
 var _ = Describe("Modem session", func() {
+	It("reads an ICCID from Quectel and generic modem commands", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			command, _ := reader.ReadString('\r')
+			Expect(strings.TrimSuffix(command, "\r")).To(Equal("AT+QCCID"))
+			_, _ = modemTransport.Write([]byte("+QCCID: 8986000000000000000\r\nOK\r\n"))
+		}()
+		iccid, err := session.ReadSIMICCID(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(iccid).To(Equal("8986000000000000000"))
+	})
+
+	It("falls back to the generic ICCID command when the Quectel command is unavailable", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			command, _ := reader.ReadString('\r')
+			Expect(strings.TrimSuffix(command, "\r")).To(Equal("AT+QCCID"))
+			_, _ = modemTransport.Write([]byte("ERROR\r\n"))
+			command, _ = reader.ReadString('\r')
+			Expect(strings.TrimSuffix(command, "\r")).To(Equal("AT+CCID"))
+			_, _ = modemTransport.Write([]byte("+CCID: \"8986000000000000001\"\r\nOK\r\n"))
+		}()
+
+		iccid, err := session.ReadSIMICCID(context.Background())
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(iccid).To(Equal("8986000000000000001"))
+	})
+
+	It("rejects malformed ICCID responses from both supported commands", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			for range 2 {
+				_, _ = reader.ReadString('\r')
+				_, _ = modemTransport.Write([]byte("+CCID: 898600000000000000x\r\nOK\r\n"))
+			}
+		}()
+
+		_, err := session.ReadSIMICCID(context.Background())
+
+		Expect(err).To(MatchError("modem did not return a valid SIM ICCID"))
+	})
+
 	It("configures notifications and imports valid history around malformed entries", func() {
 		received := make(chan sms.ReceivedMessage, 1)
 		session, modemTransport, client := newTestSession(MessageSinkFunc(func(_ context.Context, message sms.ReceivedMessage) error {

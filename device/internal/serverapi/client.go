@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +34,8 @@ type Client struct {
 func (client *Client) UpdateRadioStatus(ctx context.Context, state identity.State, status radio.Status) error {
 	body, err := json.Marshal(map[string]any{
 		"device_uuid":             state.DeviceUUID,
+		"slot_key":                state.SlotKey,
+		"slot_index":              state.SlotIndex,
 		"radio_access_technology": status.RadioAccessTechnology,
 		"signal_bars":             status.SignalBars,
 	})
@@ -54,6 +57,46 @@ func (client *Client) UpdateRadioStatus(ctx context.Context, state identity.Stat
 		return responseError("update radio status", response.StatusCode, io.LimitReader(response.Body, maxResponseBytes))
 	}
 	return nil
+}
+
+// UpdateSIMIdentity synchronizes the current card in the bound physical slot.
+func (client *Client) UpdateSIMIdentity(ctx context.Context, state identity.State) (string, int, error) {
+	if state.Credential == "" || state.SIMFingerprint == "" || state.SlotID == "" || state.SlotKey == "" || state.SlotIndex < 1 {
+		return "", 0, errors.New("bound slot and SIM fingerprint are required")
+	}
+	body, err := json.Marshal(map[string]any{
+		"device_uuid": state.DeviceUUID, "slot_key": state.SlotKey,
+		"slot_index": state.SlotIndex, "sim_fingerprint": state.SIMFingerprint,
+	})
+	if err != nil {
+		return "", 0, fmt.Errorf("encode SIM identity: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, client.baseURL+"/v1/device-sim-identity", bytes.NewReader(body))
+	if err != nil {
+		return "", 0, fmt.Errorf("create SIM identity request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+state.Credential)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return "", 0, fmt.Errorf("synchronize SIM identity: %w", err)
+	}
+	defer response.Body.Close()
+	limitedBody := io.LimitReader(response.Body, maxResponseBytes)
+	if response.StatusCode != http.StatusOK {
+		return "", 0, responseError("synchronize SIM identity", response.StatusCode, limitedBody)
+	}
+	var result struct {
+		SIMID     string `json:"sim_id"`
+		NumericID int    `json:"numeric_id"`
+	}
+	if err := json.NewDecoder(limitedBody).Decode(&result); err != nil {
+		return "", 0, fmt.Errorf("decode SIM identity response: %w", err)
+	}
+	if !validUUID(result.SIMID) || result.NumericID < 1 || result.NumericID > 99 {
+		return "", 0, errors.New("server returned an invalid SIM assignment")
+	}
+	return result.SIMID, result.NumericID, nil
 }
 
 // InstallationRecipient identifies one approved iPhone encryption endpoint.
@@ -268,6 +311,10 @@ type DiscoveryResult struct {
 	DeviceUUID string `json:"device_uuid"`
 	Status     string `json:"status"`
 	NumericID  int    `json:"numeric_id,omitempty"`
+	SlotID     string `json:"slot_id,omitempty"`
+	SIMID      string `json:"sim_id,omitempty"`
+	SlotKey    string `json:"slot_key,omitempty"`
+	SlotIndex  int    `json:"slot_index,omitempty"`
 }
 
 const (
@@ -296,10 +343,15 @@ func (client *Client) SubmitDiscovery(ctx context.Context, pendingCredential str
 		return DiscoveryResult{}, errors.New("pending credential and valid device identity are required")
 	}
 	proof := discoverySignedData(state.DeviceUUID, publicKey, commandPublicKey, pendingCredential)
+	if state.SlotIndex > 0 || state.SIMFingerprint != "" {
+		proof = discoverySignedDataWithSlot(state.DeviceUUID, publicKey, commandPublicKey, pendingCredential, state.SlotKey, state.SlotIndex, state.SIMFingerprint)
+	}
 	body, err := json.Marshal(map[string]any{
 		"device_uuid": state.DeviceUUID, "identity_public_key": publicKey,
 		"command_public_key": commandPublicKey, "pending_credential": pendingCredential,
-		"signature": ed25519.Sign(state.IdentityPrivateKey, proof),
+		"slot_key": state.SlotKey, "slot_index": state.SlotIndex,
+		"sim_fingerprint": state.SIMFingerprint,
+		"signature":       ed25519.Sign(state.IdentityPrivateKey, proof),
 	})
 	if err != nil {
 		return DiscoveryResult{}, fmt.Errorf("encode device discovery: %w", err)
@@ -369,6 +421,9 @@ func decodeDiscoveryResult(body io.Reader, expectedDeviceID string) (DiscoveryRe
 		if result.NumericID < 1 || result.NumericID > 99 {
 			return DiscoveryResult{}, errors.New("server returned an invalid device discovery result")
 		}
+		if (result.SlotID != "" && !validUUID(result.SlotID)) || (result.SIMID != "" && !validUUID(result.SIMID)) {
+			return DiscoveryResult{}, errors.New("server returned invalid slot or SIM identity")
+		}
 	default:
 		return DiscoveryResult{}, errors.New("server returned an invalid device discovery result")
 	}
@@ -376,11 +431,20 @@ func decodeDiscoveryResult(body io.Reader, expectedDeviceID string) (DiscoveryRe
 }
 
 func discoverySignedData(deviceUUID string, identityPublicKey []byte, commandPublicKey []byte, credential string) []byte {
+	fields := [][]byte{[]byte("sim-deck-device-discovery-v1"), []byte(deviceUUID), identityPublicKey, commandPublicKey, []byte(credential)}
+	return encodeDiscoveryFields(fields)
+}
+
+func discoverySignedDataWithSlot(deviceUUID string, identityPublicKey []byte, commandPublicKey []byte, credential string, slotKey string, slotIndex int, simFingerprint string) []byte {
 	fields := [][]byte{
 		[]byte("sim-deck-device-discovery-v1"), []byte(deviceUUID),
-		identityPublicKey, commandPublicKey, []byte(credential),
+		identityPublicKey, commandPublicKey, []byte(credential), []byte(slotKey), []byte(strconv.Itoa(slotIndex)), []byte(simFingerprint),
 	}
-	data := make([]byte, 0, len(deviceUUID)+len(identityPublicKey)+len(commandPublicKey)+len(credential)+64)
+	return encodeDiscoveryFields(fields)
+}
+
+func encodeDiscoveryFields(fields [][]byte) []byte {
+	data := make([]byte, 0, 128)
 	for _, field := range fields {
 		var length [4]byte
 		binary.BigEndian.PutUint32(length[:], uint32(len(field)))

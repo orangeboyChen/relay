@@ -46,6 +46,8 @@ type Payload struct {
 	Version        int    `json:"version"`
 	MessageID      string `json:"message_id"`
 	DeviceUUID     string `json:"device_uuid"`
+	SlotID         string `json:"slot_id,omitempty"`
+	SIMID          string `json:"sim_id,omitempty"`
 	NumericID      int    `json:"numeric_id"`
 	RemoteNumber   string `json:"remote_number"`
 	Body           string `json:"body"`
@@ -128,6 +130,7 @@ func (publisher *Publisher) seal(message sms.ReceivedMessage, recipient incoming
 	}
 	payload, err := json.Marshal(Payload{
 		Version: protocolVersion, MessageID: message.ID, DeviceUUID: publisher.identity.DeviceUUID,
+		SlotID: publisher.identity.SlotID, SIMID: publisher.identity.SIMID,
 		NumericID: publisher.identity.NumericID, RemoteNumber: message.Sender, Body: message.Text,
 		ReceivedAt: message.Timestamp.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
 		Segments:   message.Segments, InstallationID: recipient.InstallationID,

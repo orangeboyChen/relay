@@ -79,7 +79,7 @@ var _ = Describe("Encrypted call event publisher", func() {
 		plaintext := openEvent(sharedSecret, envelope)
 		var payload Payload
 		Expect(json.Unmarshal(plaintext, &payload)).To(Succeed())
-		Expect(payload).To(Equal(Payload{Version: 1, CallID: "call-secret-id", State: call.StateActive, Active: true}))
+		Expect(payload).To(Equal(Payload{Version: 1, CallID: "call-secret-id", DeviceUUID: state.DeviceUUID, State: call.StateActive, Active: true}))
 	})
 
 	It("registers incoming calls with the same encrypted state channel", func() {

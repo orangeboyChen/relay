@@ -82,6 +82,41 @@ func (session *Session) Calls() *call.Controller {
 	return session.calls
 }
 
+// ReadSIMICCID reads the modem-provided card identifier without storing it in the session.
+func (session *Session) ReadSIMICCID(ctx context.Context) (string, error) {
+	for _, command := range []string{"AT+QCCID", "AT+CCID"} {
+		response, err := session.send(ctx, command)
+		if err != nil {
+			return "", err
+		}
+		if !response.OK() {
+			continue
+		}
+		for _, line := range response.Lines {
+			value := strings.TrimSpace(line)
+			if strings.HasPrefix(value, "+QCCID:") {
+				value = strings.TrimSpace(strings.TrimPrefix(value, "+QCCID:"))
+			} else if strings.HasPrefix(value, "+CCID:") {
+				value = strings.TrimSpace(strings.TrimPrefix(value, "+CCID:"))
+			}
+			value = strings.Trim(value, "\" ")
+			if len(value) >= 18 && len(value) <= 22 && allDigits(value) {
+				return value, nil
+			}
+		}
+	}
+	return "", errors.New("modem did not return a valid SIM ICCID")
+}
+
+func allDigits(value string) bool {
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // SendSMS encodes and submits every segment of one SMS through the modem.
 func (session *Session) SendSMS(ctx context.Context, destination string, text string, reference byte) error {
 	pdus, err := sms.EncodeSubmit(destination, text, reference)

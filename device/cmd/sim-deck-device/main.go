@@ -32,6 +32,8 @@ import (
 	"sim-deck-device/internal/sms"
 )
 
+var errSIMIdentityChanged = errors.New("SIM identity changed; restart the device agent to reload event identity")
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	config, err := agent.LoadConfig(os.LookupEnv)
@@ -123,6 +125,7 @@ func meaningfulRuntimeError(operation string, err error) error {
 
 type deviceSession interface {
 	Initialize(context.Context) error
+	ReadSIMICCID(context.Context) (string, error)
 	Run(context.Context) error
 	Calls() *call.Controller
 	command.Messages
@@ -156,6 +159,7 @@ type deviceDependencies struct {
 	newSession       func(*at.Client, *sms.Inbox, modem.MessageSink, *slog.Logger, time.Duration) (deviceSession, error)
 	configureAudio   func(context.Context, agent.Config, *at.Client) error
 	syncCommandKey   func(context.Context, agent.Config, identity.State) error
+	syncSIMIdentity  func(context.Context, agent.Config, identity.State) (string, int, error)
 	newCallEvents    func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error)
 	newIncomingCalls func(agent.Config, identity.State, <-chan call.Snapshot, incomingcall.EventRegistrar) (commandRuntime, error)
 	newCallMedia     func(agent.Config) (callMediaRuntime, error)
@@ -184,6 +188,9 @@ func productionDependencies(httpClient *http.Client) deviceDependencies {
 		},
 		syncCommandKey: func(ctx context.Context, config agent.Config, state identity.State) error {
 			return serverapi.NewClient(config.ServerURL, httpClient).UpdateCommandKey(ctx, state)
+		},
+		syncSIMIdentity: func(ctx context.Context, config agent.Config, state identity.State) (string, int, error) {
+			return serverapi.NewClient(config.ServerURL, httpClient).UpdateSIMIdentity(ctx, state)
 		},
 		newCallEvents: func(config agent.Config, state identity.State, snapshots <-chan call.Snapshot) (callEventRuntime, error) {
 			return callevent.NewPublisher(serverapi.NewClient(config.ServerURL, httpClient), state, snapshots)
@@ -224,10 +231,20 @@ func productionDependencies(httpClient *http.Client) deviceDependencies {
 }
 
 func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, ready *atomic.Bool, dependencies deviceDependencies) error {
+	if config.SlotKey == "" {
+		config.SlotKey = "1"
+	}
+	if config.SlotIndex < 1 {
+		config.SlotIndex = 1
+	}
 	identityStore := identity.NewStore(config.StateDirectory, config.DeviceUUID)
 	deviceIdentity, err := identityStore.LoadOrCreate()
 	if err != nil {
 		return fmt.Errorf("load device identity: %w", err)
+	}
+	deviceIdentity, err = identityStore.ConfigureSlot(deviceIdentity, config.SlotKey, config.SlotIndex)
+	if err != nil {
+		return fmt.Errorf("configure modem slot identity: %w", err)
 	}
 	logger.Info(
 		"device identity ready for owner verification",
@@ -267,6 +284,19 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	if err := session.Initialize(ctx); err != nil {
 		return err
 	}
+	if iccid, iccidError := session.ReadSIMICCID(ctx); iccidError == nil {
+		fingerprint, fingerprintError := deviceIdentity.FingerprintSIM(iccid)
+		if fingerprintError != nil {
+			return fmt.Errorf("fingerprint SIM identity: %w", fingerprintError)
+		}
+		deviceIdentity, err = identityStore.SetSIMFingerprint(deviceIdentity, fingerprint)
+		if err != nil {
+			return fmt.Errorf("persist SIM identity fingerprint: %w", err)
+		}
+		logger.Info("SIM card identity detected", "slot_key", deviceIdentity.SlotKey, "slot_index", deviceIdentity.SlotIndex)
+	} else {
+		logger.Warn("SIM card identity is unavailable; using slot-local identity", "slot_key", deviceIdentity.SlotKey, "error", iccidError)
+	}
 	if err := dependencies.configureAudio(ctx, config, client); err != nil {
 		return fmt.Errorf("configure modem audio: %w", err)
 	}
@@ -276,6 +306,19 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	}
 	if err := dependencies.syncCommandKey(ctx, config, deviceIdentity); err != nil {
 		return fmt.Errorf("register device command key: %w", err)
+	}
+	if dependencies.syncSIMIdentity == nil {
+		return errors.New("SIM identity synchronization is not configured")
+	}
+	if deviceIdentity.SIMFingerprint != "" {
+		simID, numericID, syncError := dependencies.syncSIMIdentity(ctx, config, deviceIdentity)
+		if syncError != nil {
+			return fmt.Errorf("synchronize current SIM identity: %w", syncError)
+		}
+		deviceIdentity, err = identityStore.SetSIMAssignment(deviceIdentity, simID, numericID)
+		if err != nil {
+			return fmt.Errorf("persist SIM assignment: %w", err)
+		}
 	}
 	messageEvents, err = dependencies.newMessageEvents(config, deviceIdentity)
 	if err != nil {
@@ -324,16 +367,19 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	runContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go logMediaErrors(runContext, callMedia.Errors(), logger)
-	results := make(chan error, 5)
+	results := make(chan error, 6)
 	go func() { results <- session.Run(runContext) }()
 	go func() { results <- commands.Run(runContext) }()
 	go func() { results <- events.Run(runContext) }()
 	go func() { results <- incomingCalls.Run(runContext) }()
 	go func() { results <- radioStatus.Run(runContext) }()
+	go func() {
+		results <- synchronizeSIMIdentity(runContext, session, config, identityStore, deviceIdentity, dependencies.syncSIMIdentity, logger)
+	}()
 	first := <-results
 	cancel()
 	resultsToCheck := []error{first}
-	for count := 1; count < 5; count++ {
+	for count := 1; count < 6; count++ {
 		resultsToCheck = append(resultsToCheck, <-results)
 	}
 	for _, result := range resultsToCheck {
@@ -342,6 +388,56 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 		}
 	}
 	return resultsToCheck[len(resultsToCheck)-1]
+}
+
+// synchronizeSIMIdentity detects hot-swapped cards without persisting the ICCID itself.
+func synchronizeSIMIdentity(
+	ctx context.Context,
+	session deviceSession,
+	config agent.Config,
+	store identity.Store,
+	state identity.State,
+	synchronize func(context.Context, agent.Config, identity.State) (string, int, error),
+	logger *slog.Logger,
+) error {
+	interval := config.RadioStatusPoll
+	if interval <= 0 {
+		interval = 15 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	current := state
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			iccid, err := session.ReadSIMICCID(ctx)
+			if err != nil {
+				logger.Warn("SIM identity poll failed", "slot_key", current.SlotKey, "error", err)
+				continue
+			}
+			fingerprint, err := current.FingerprintSIM(iccid)
+			if err != nil || fingerprint == current.SIMFingerprint {
+				continue
+			}
+			requestState := current
+			requestState.SIMFingerprint = fingerprint
+			simID, numericID, err := synchronize(ctx, config, requestState)
+			if err != nil {
+				logger.Warn("synchronize hot-swapped SIM failed", "error", err)
+				continue
+			}
+			updated, err := store.SetSIMIdentity(current, fingerprint, simID, numericID)
+			if err != nil {
+				logger.Warn("persist hot-swapped SIM assignment failed", "error", err)
+				continue
+			}
+			current = updated
+			logger.Info("SIM card replacement synchronized", "slot_key", current.SlotKey, "slot_index", current.SlotIndex)
+			return errSIMIdentityChanged
+		}
+	}
 }
 
 func logMediaErrors(ctx context.Context, failures <-chan error, logger *slog.Logger) {

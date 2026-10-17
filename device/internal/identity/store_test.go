@@ -52,7 +52,7 @@ var _ = Describe("Device identity store", func() {
 
 		created, err := store.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
-		Expect(created.Version).To(Equal(2))
+		Expect(created.Version).To(Equal(3))
 		Expect(created.DeviceUUID).To(Equal(testDeviceUUID))
 		Expect(created.IdentityPrivateKey).To(HaveLen(ed25519.PrivateKeySize))
 		Expect(created.PublicKey()).To(HaveLen(ed25519.PublicKeySize))
@@ -67,6 +67,147 @@ var _ = Describe("Device identity store", func() {
 		info, err := os.Stat(filepath.Join(directory, stateFile))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o600)))
+	})
+
+	It("derives a stable device-scoped SIM fingerprint without exposing the ICCID", func() {
+		store := NewStore(GinkgoT().TempDir(), testDeviceUUID)
+		state, err := store.LoadOrCreate()
+		Expect(err).NotTo(HaveOccurred())
+		first, err := state.FingerprintSIM("8986000000000000000")
+		Expect(err).NotTo(HaveOccurred())
+		second, err := state.FingerprintSIM("8986000000000000000")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(first).To(Equal(second))
+		Expect(first).To(HaveLen(64))
+		_, err = state.FingerprintSIM("not-an-iccid")
+		Expect(err).To(MatchError(ContainSubstring("invalid length")))
+		_, err = state.FingerprintSIM("898600000000000000x")
+		Expect(err).To(MatchError(ContainSubstring("only digits")))
+		_, err = (State{}).FingerprintSIM("8986000000000000000")
+		Expect(err).To(MatchError("SIM fingerprint key is invalid"))
+	})
+
+	It("atomically persists a SIM fingerprint and server assignment", func() {
+		directory := GinkgoT().TempDir()
+		store := NewStore(directory, testDeviceUUID)
+		state, err := store.LoadOrCreate()
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.ConfigureSlot(state, "primary", 1)
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.PrepareDiscovery(state)
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.BindAssignment(
+			state,
+			"https://deck.example",
+			2,
+			"01900000-0000-7000-8000-000000000002",
+			"01900000-0000-7000-8000-000000000003",
+			"primary",
+			1,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		fingerprint, err := state.FingerprintSIM("8986000000000000000")
+		Expect(err).NotTo(HaveOccurred())
+
+		updated, err := store.SetSIMIdentity(state, fingerprint, "01900000-0000-7000-8000-000000000004", 4)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(updated.SIMFingerprint).To(Equal(fingerprint))
+		Expect(updated.SIMID).To(Equal("01900000-0000-7000-8000-000000000004"))
+		Expect(updated.NumericID).To(Equal(4))
+		reloaded, err := store.LoadOrCreate()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(reloaded).To(Equal(updated))
+	})
+
+	It("supports the staged initial SIM fingerprint and assignment workflow", func() {
+		directory := GinkgoT().TempDir()
+		store := NewStore(directory, testDeviceUUID)
+		state, err := store.LoadOrCreate()
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.ConfigureSlot(state, "primary", 1)
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.PrepareDiscovery(state)
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.BindAssignment(
+			state,
+			"https://deck.example",
+			2,
+			"01900000-0000-7000-8000-000000000002",
+			"01900000-0000-7000-8000-000000000003",
+			"primary",
+			1,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		fingerprint, err := state.FingerprintSIM("8986000000000000000")
+		Expect(err).NotTo(HaveOccurred())
+
+		state, err = store.SetSIMFingerprint(state, fingerprint)
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.SetSIMAssignment(state, "01900000-0000-7000-8000-000000000004", 4)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(state.SIMFingerprint).To(Equal(fingerprint))
+		Expect(state.SIMID).To(Equal("01900000-0000-7000-8000-000000000004"))
+		Expect(state.NumericID).To(Equal(4))
+	})
+
+	It("rejects a partial SIM identity update without changing durable state", func() {
+		directory := GinkgoT().TempDir()
+		store := NewStore(directory, testDeviceUUID)
+		state, err := store.LoadOrCreate()
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.ConfigureSlot(state, "primary", 1)
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.PrepareDiscovery(state)
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.BindAssignment(
+			state,
+			"https://deck.example",
+			2,
+			"01900000-0000-7000-8000-000000000002",
+			"01900000-0000-7000-8000-000000000003",
+			"primary",
+			1,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		originalFingerprint, err := state.FingerprintSIM("8986000000000000000")
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.SetSIMIdentity(state, originalFingerprint, state.SIMID, state.NumericID)
+		Expect(err).NotTo(HaveOccurred())
+		newFingerprint, err := state.FingerprintSIM("8986000000000000001")
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = store.SetSIMIdentity(state, newFingerprint, "invalid-sim-id", 4)
+
+		Expect(errors.Is(err, ErrInvalidState)).To(BeTrue())
+		reloaded, reloadErr := store.LoadOrCreate()
+		Expect(reloadErr).NotTo(HaveOccurred())
+		Expect(reloaded).To(Equal(state))
+	})
+
+	It("prevents a bound container from silently changing its physical slot", func() {
+		store := NewStore(GinkgoT().TempDir(), testDeviceUUID)
+		state, err := store.LoadOrCreate()
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.ConfigureSlot(state, "primary", 1)
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.PrepareDiscovery(state)
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.BindAssignment(
+			state,
+			"https://deck.example",
+			2,
+			"01900000-0000-7000-8000-000000000002",
+			"01900000-0000-7000-8000-000000000003",
+			"primary",
+			1,
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = store.ConfigureSlot(state, "secondary", 2)
+
+		Expect(errors.Is(err, ErrSlotIdentityMismatch)).To(BeTrue())
 	})
 
 	It("formats the owner-verification fingerprint from the identity public key", func() {
@@ -145,7 +286,7 @@ var _ = Describe("Device identity store", func() {
 		migrated, err := store.LoadOrCreate()
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(migrated.Version).To(Equal(2))
+		Expect(migrated.Version).To(Equal(3))
 		Expect(migrated.DeviceUUID).To(Equal(created.DeviceUUID))
 		Expect(migrated.IdentityPrivateKey).To(Equal(created.IdentityPrivateKey))
 		Expect(migrated.CommandPublicKey()).To(HaveLen(32))
@@ -175,7 +316,7 @@ var _ = Describe("Device identity store", func() {
 			_, err = store.LoadOrCreate()
 			Expect(errors.Is(err, ErrInvalidState)).To(BeTrue())
 		},
-		Entry("unsupported version", func(state *State) { state.Version = 3 }),
+		Entry("unsupported version", func(state *State) { state.Version = 4 }),
 		Entry("malformed UUID", func(state *State) { state.DeviceUUID = "not-a-uuid" }),
 		Entry("malformed private key", func(state *State) { state.IdentityPrivateKey = []byte("short") }),
 		Entry("malformed command key", func(state *State) { state.CommandPrivateKey = []byte("short") }),
@@ -187,6 +328,10 @@ var _ = Describe("Device identity store", func() {
 			state.NumericID = 0
 		}),
 		Entry("numeric ID without credential", func(state *State) { state.NumericID = 1 }),
+		Entry("malformed slot during discovery", func(state *State) {
+			state.PendingCredential = base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{9}, tokenBytes))
+			state.SlotKey = " "
+		}),
 	)
 
 	It("reuses the pending credential across discovery retries", func() {

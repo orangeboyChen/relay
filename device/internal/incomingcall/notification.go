@@ -64,6 +64,8 @@ type Payload struct {
 	Version        int        `json:"version"`
 	CallID         string     `json:"call_id"`
 	DeviceUUID     string     `json:"device_uuid"`
+	SlotID         string     `json:"slot_id,omitempty"`
+	SIMID          string     `json:"sim_id,omitempty"`
 	NumericID      int        `json:"numeric_id"`
 	RemoteNumber   string     `json:"remote_number"`
 	State          call.State `json:"state"`
@@ -115,6 +117,7 @@ func (builder *Builder) Seal(recipients []Recipient, snapshot call.Snapshot) (No
 	}
 	payload, err := json.Marshal(Payload{
 		Version: protocolVersion, CallID: callID, DeviceUUID: builder.identity.DeviceUUID,
+		SlotID: builder.identity.SlotID, SIMID: builder.identity.SIMID,
 		NumericID: builder.identity.NumericID, RemoteNumber: snapshot.IncomingNumber,
 		State: snapshot.State, CallSecret: callSecret, NotificationID: notificationID,
 	})

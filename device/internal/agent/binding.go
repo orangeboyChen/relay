@@ -46,7 +46,9 @@ func EnsureBinding(ctx context.Context, config Config, store identity.Store, sta
 	for {
 		switch result.Status {
 		case serverapi.DiscoveryApproved:
-			bound, bindError := store.Bind(prepared, serverURL, result.NumericID)
+			bound, bindError := store.BindAssignment(
+				prepared, serverURL, result.NumericID, result.SlotID, result.SIMID, result.SlotKey, result.SlotIndex,
+			)
 			if bindError != nil {
 				return identity.State{}, fmt.Errorf("persist device binding: %w", bindError)
 			}

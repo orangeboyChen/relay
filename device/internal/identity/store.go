@@ -3,9 +3,11 @@ package identity
 import (
 	"crypto/ecdh"
 	"crypto/ed25519"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +18,7 @@ import (
 )
 
 const (
-	stateVersion = 2
+	stateVersion = 3
 	stateFile    = "identity.json"
 	tokenBytes   = 32
 )
@@ -24,6 +26,7 @@ const (
 var ErrInvalidState = errors.New("device identity state is invalid")
 
 var ErrDeviceUUIDMismatch = errors.New("configured device UUID does not match persisted identity")
+var ErrSlotIdentityMismatch = errors.New("configured modem slot does not match persisted identity")
 
 // State is the durable identity and server binding for one modem container.
 type State struct {
@@ -35,6 +38,30 @@ type State struct {
 	PendingCredential  string             `json:"pending_credential,omitempty"`
 	Credential         string             `json:"credential,omitempty"`
 	NumericID          int                `json:"numeric_id,omitempty"`
+	SlotID             string             `json:"slot_id,omitempty"`
+	SIMID              string             `json:"sim_id,omitempty"`
+	SlotKey            string             `json:"slot_key,omitempty"`
+	SlotIndex          int                `json:"slot_index,omitempty"`
+	SIMFingerprint     string             `json:"sim_fingerprint,omitempty"`
+}
+
+// FingerprintSIM returns a stable, device-scoped fingerprint without persisting the ICCID.
+func (state State) FingerprintSIM(iccid string) (string, error) {
+	if len(state.IdentityPrivateKey) != ed25519.PrivateKeySize {
+		return "", fmt.Errorf("SIM fingerprint key is invalid")
+	}
+	iccid = strings.TrimSpace(iccid)
+	if len(iccid) < 18 || len(iccid) > 22 {
+		return "", fmt.Errorf("SIM ICCID has an invalid length")
+	}
+	for _, digit := range iccid {
+		if digit < '0' || digit > '9' {
+			return "", fmt.Errorf("SIM ICCID must contain only digits")
+		}
+	}
+	mac := hmac.New(sha256.New, state.IdentityPrivateKey.Seed())
+	_, _ = mac.Write([]byte(iccid))
+	return hex.EncodeToString(mac.Sum(nil)), nil
 }
 
 // CommandPublicKey derives the X25519 key advertised for encrypted device commands.
@@ -103,10 +130,19 @@ func (store Store) LoadOrCreate() (State, error) {
 			if keyError != nil {
 				return State{}, fmt.Errorf("migrate device command key: %w", keyError)
 			}
-			state.Version = stateVersion
+			state.Version = 2
 			state.CommandPrivateKey = commandKey.Bytes()
 			if saveError := store.save(state); saveError != nil {
 				return State{}, fmt.Errorf("persist device identity migration: %w", saveError)
+			}
+		}
+		if state.Version == 2 {
+			state.Version = stateVersion
+			if state.SlotKey == "" {
+				state.SlotKey = "1"
+			}
+			if saveError := store.save(state); saveError != nil {
+				return State{}, fmt.Errorf("persist slot identity migration: %w", saveError)
 			}
 		}
 		return state, nil
@@ -128,6 +164,7 @@ func (store Store) LoadOrCreate() (State, error) {
 		DeviceUUID:         store.deviceUUID,
 		IdentityPrivateKey: privateKey,
 		CommandPrivateKey:  commandKey.Bytes(),
+		SlotKey:            "1",
 	}
 	if err := store.save(state); err != nil {
 		return State{}, err
@@ -153,12 +190,69 @@ func (store Store) PrepareDiscovery(state State) (State, error) {
 	return state, nil
 }
 
+// ConfigureSlot binds this agent to one stable physical slot on its modem.
+func (store Store) ConfigureSlot(state State, slotKey string, slotIndex int) (State, error) {
+	if strings.TrimSpace(slotKey) == "" || len(slotKey) > 64 || slotIndex < 1 || slotIndex > 32 {
+		return State{}, fmt.Errorf("%w: invalid slot key or index", ErrInvalidState)
+	}
+	if state.Credential != "" && state.SlotKey != "" && (state.SlotKey != slotKey || state.SlotIndex != 0 && state.SlotIndex != slotIndex) {
+		return State{}, fmt.Errorf("%w: configured %s/%d, persisted %s/%d", ErrSlotIdentityMismatch, slotKey, slotIndex, state.SlotKey, state.SlotIndex)
+	}
+	state.SlotKey = slotKey
+	state.SlotIndex = slotIndex
+	if err := store.save(state); err != nil {
+		return State{}, err
+	}
+	return state, nil
+}
+
+// SetSIMFingerprint persists the current card fingerprint in the device identity state.
+func (store Store) SetSIMFingerprint(state State, fingerprint string) (State, error) {
+	if fingerprint != "" && (len(fingerprint) != 64 || strings.Trim(fingerprint, "0123456789abcdef") != "") {
+		return State{}, fmt.Errorf("%w: invalid SIM fingerprint", ErrInvalidState)
+	}
+	state.SIMFingerprint = fingerprint
+	if err := store.save(state); err != nil {
+		return State{}, err
+	}
+	return state, nil
+}
+
+// SetSIMAssignment persists server-owned identifiers for the card currently in this slot.
+func (store Store) SetSIMAssignment(state State, simID string, numericID int) (State, error) {
+	return store.SetSIMIdentity(state, state.SIMFingerprint, simID, numericID)
+}
+
+// SetSIMIdentity atomically persists the current card fingerprint and its server assignment.
+func (store Store) SetSIMIdentity(state State, fingerprint string, simID string, numericID int) (State, error) {
+	if fingerprint == "" || len(fingerprint) != 64 || strings.Trim(fingerprint, "0123456789abcdef") != "" ||
+		!ValidDeviceUUID(simID) || numericID < 1 || numericID > 99 || !ValidDeviceUUID(state.SlotID) {
+		return State{}, fmt.Errorf("%w: invalid SIM assignment", ErrInvalidState)
+	}
+	state.SIMFingerprint = fingerprint
+	state.SIMID = simID
+	state.NumericID = numericID
+	if err := store.save(state); err != nil {
+		return State{}, err
+	}
+	return state, nil
+}
+
 // Bind promotes the pending credential and stores the visible SIM ID after app approval.
 func (store Store) Bind(state State, serverURL string, numericID int) (State, error) {
+	return store.BindAssignment(state, serverURL, numericID, "", "", "1", 1)
+}
+
+// BindAssignment persists the server-assigned physical slot and SIM identities.
+func (store Store) BindAssignment(state State, serverURL string, numericID int, slotID string, simID string, slotKey string, slotIndex int) (State, error) {
 	state.ServerURL = strings.TrimRight(strings.TrimSpace(serverURL), "/")
 	state.Credential = state.PendingCredential
 	state.PendingCredential = ""
 	state.NumericID = numericID
+	state.SlotID = slotID
+	state.SIMID = simID
+	state.SlotKey = slotKey
+	state.SlotIndex = slotIndex
 	if err := validate(state); err != nil {
 		return State{}, err
 	}
@@ -230,7 +324,7 @@ func (store Store) save(state State) error {
 }
 
 func validate(state State) error {
-	if state.Version != 1 && state.Version != stateVersion {
+	if state.Version != 1 && state.Version != 2 && state.Version != stateVersion {
 		return fmt.Errorf("%w: unsupported version", ErrInvalidState)
 	}
 	if !ValidDeviceUUID(state.DeviceUUID) {
@@ -250,9 +344,7 @@ func validate(state State) error {
 		if state.Credential != "" || state.ServerURL != "" || state.NumericID != 0 || !validCredential(state.PendingCredential) {
 			return fmt.Errorf("%w: pending credential state is inconsistent", ErrInvalidState)
 		}
-		return nil
-	}
-	if state.Credential != "" {
+	} else if state.Credential != "" {
 		if state.ServerURL == "" {
 			return fmt.Errorf("%w: server URL is required for a bound identity", ErrInvalidState)
 		}
@@ -264,6 +356,21 @@ func validate(state State) error {
 		}
 	} else if state.NumericID != 0 || state.ServerURL != "" {
 		return fmt.Errorf("%w: binding metadata requires a device credential", ErrInvalidState)
+	}
+	if state.SlotID != "" && !ValidDeviceUUID(state.SlotID) {
+		return fmt.Errorf("%w: malformed slot id", ErrInvalidState)
+	}
+	if state.SIMID != "" && !ValidDeviceUUID(state.SIMID) {
+		return fmt.Errorf("%w: malformed SIM id", ErrInvalidState)
+	}
+	if state.SlotKey != "" && (len(state.SlotKey) > 64 || strings.TrimSpace(state.SlotKey) == "") {
+		return fmt.Errorf("%w: malformed slot key", ErrInvalidState)
+	}
+	if state.SlotIndex < 0 || state.SlotIndex > 32 {
+		return fmt.Errorf("%w: malformed slot index", ErrInvalidState)
+	}
+	if state.SIMFingerprint != "" && (len(state.SIMFingerprint) != 64 || strings.Trim(state.SIMFingerprint, "0123456789abcdef") != "") {
+		return fmt.Errorf("%w: malformed SIM fingerprint", ErrInvalidState)
 	}
 	return nil
 }

@@ -45,12 +45,15 @@ type Envelope struct {
 
 // Payload is visible only to the device and the iPhone that started the call.
 type Payload struct {
-	Version int        `json:"version"`
-	CallID  string     `json:"call_id"`
-	State   call.State `json:"state"`
-	Active  bool       `json:"active"`
-	Held    bool       `json:"held"`
-	Waiting bool       `json:"waiting"`
+	Version    int        `json:"version"`
+	CallID     string     `json:"call_id"`
+	DeviceUUID string     `json:"device_uuid,omitempty"`
+	SlotID     string     `json:"slot_id,omitempty"`
+	SIMID      string     `json:"sim_id,omitempty"`
+	State      call.State `json:"state"`
+	Active     bool       `json:"active"`
+	Held       bool       `json:"held"`
+	Waiting    bool       `json:"waiting"`
 }
 
 // Remote uploads a signed opaque event with device authentication.
@@ -146,6 +149,7 @@ func (publisher *Publisher) publish(ctx context.Context, snapshot call.Snapshot)
 	}
 	payload, err := json.Marshal(Payload{
 		Version: protocolVersion, CallID: registered.id, State: snapshot.State,
+		DeviceUUID: publisher.identity.DeviceUUID, SlotID: publisher.identity.SlotID, SIMID: publisher.identity.SIMID,
 		Active: snapshot.Active, Held: snapshot.Held, Waiting: snapshot.Waiting,
 	})
 	if err != nil {

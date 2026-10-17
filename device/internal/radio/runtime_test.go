@@ -170,6 +170,35 @@ var _ = Describe("Radio status runtime", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(runtime.Run(context.Background())).To(MatchError("modem registration response is missing +CEREG and +CREG status"))
 	})
+
+	It("surfaces radio status upload failures", func() {
+		commander := &fakeCommander{responses: map[string]at.Response{
+			"AT+CEREG?":  {Lines: []string{"+CEREG: 0,1"}, Terminal: "OK"},
+			"AT+QNWINFO": {Lines: []string{`+QNWINFO: "LTE","46000"`}, Terminal: "OK"},
+			"AT+CSQ":     {Lines: []string{"+CSQ: 20,99"}, Terminal: "OK"},
+		}}
+		remote := &fakeRemote{err: errors.New("server unavailable")}
+		runtime, err := NewRuntime(commander, remote, state, time.Second, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(runtime.Run(context.Background())).To(MatchError("publish radio status: server unavailable"))
+	})
+
+	DescribeTable("rejects failed radio detail queries", func(responses map[string]at.Response, expected string) {
+		runtime, err := NewRuntime(&fakeCommander{responses: responses}, &fakeRemote{}, state, time.Second, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = runtime.read(context.Background())
+		Expect(err).To(MatchError(expected))
+	},
+		Entry("network information", map[string]at.Response{
+			"AT+CEREG?":  {Lines: []string{"+CEREG: 0,1"}, Terminal: "OK"},
+			"AT+QNWINFO": {Terminal: "ERROR"},
+		}, "modem rejected radio access query: ERROR"),
+		Entry("signal strength", map[string]at.Response{
+			"AT+CEREG?":  {Lines: []string{"+CEREG: 0,1"}, Terminal: "OK"},
+			"AT+QNWINFO": {Lines: []string{`+QNWINFO: "LTE","46000"`}, Terminal: "OK"},
+			"AT+CSQ":     {Terminal: "ERROR"},
+		}, "modem rejected signal query: ERROR"),
+	)
 })
 
 func intPointer(value int) *int { return &value }

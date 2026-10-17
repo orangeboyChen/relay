@@ -268,6 +268,25 @@ var _ = Describe("AT client", func() {
 		Expect(err).To(MatchError(ContainSubstring("Ctrl-Z")))
 	})
 
+	It("honors cancellation while waiting for an interactive prompt", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := NewClient(clientTransport)
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			_, _ = reader.ReadString('\r')
+		}()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		_, err := client.SendPrompt(ctx, "AT+CMGS=12", []byte("AABB"))
+
+		Expect(errors.Is(err, context.DeadlineExceeded)).To(BeTrue())
+	})
+
 	It("returns a contextual write failure and releases the pending command", func() {
 		transport := newWriteFailureTransport()
 		client := NewClient(transport)
@@ -275,6 +294,9 @@ var _ = Describe("AT client", func() {
 
 		_, err := client.Send(context.Background(), "AT")
 
+		Expect(err).To(MatchError("write AT command: write failed"))
+
+		_, err = client.SendPrompt(context.Background(), "AT+CMGS=12", []byte("AABB"))
 		Expect(err).To(MatchError("write AT command: write failed"))
 	})
 

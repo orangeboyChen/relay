@@ -127,6 +127,18 @@ var _ = Describe("Call media manager", func() {
 		)))
 		Expect(manager.Close()).To(Succeed())
 	})
+
+	It("closes fixed ICE resources when manager construction fails", func() {
+		udpPort := reserveUDPPort()
+		_, err := NewManagerWithICE(ICEConfig{UDPPort: udpPort}, nil)
+		Expect(err).To(MatchError("media manager requires endpoint and peer factories"))
+
+		manager, err := NewManagerWithICE(ICEConfig{}, func(context.Context) (DuplexPCM, error) {
+			return &fakeDuplexPCM{}, nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(manager.Close()).To(Succeed())
+	})
 })
 
 type fakeDuplexPCM struct {

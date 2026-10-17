@@ -3,8 +3,10 @@ package api
 import (
 	"crypto/ed25519"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 
@@ -78,6 +80,9 @@ func (router *router) listDeviceDiscoveries(writer http.ResponseWriter, request 
 func (router *router) submitDeviceDiscovery(writer http.ResponseWriter, request *http.Request) {
 	var body struct {
 		DeviceUUID        string `json:"device_uuid"`
+		SlotKey           string `json:"slot_key"`
+		SlotIndex         int    `json:"slot_index"`
+		SIMFingerprint    string `json:"sim_fingerprint"`
 		IdentityPublicKey []byte `json:"identity_public_key"`
 		CommandPublicKey  []byte `json:"command_public_key"`
 		PendingCredential string `json:"pending_credential"`
@@ -87,24 +92,41 @@ func (router *router) submitDeviceDiscovery(writer http.ResponseWriter, request 
 		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	if !validUUID(body.DeviceUUID) || len(body.IdentityPublicKey) != ed25519.PublicKeySize ||
+	if body.SlotKey == "" {
+		body.SlotKey = "1"
+	}
+	if body.SlotIndex == 0 {
+		body.SlotIndex = 1
+	}
+	if body.SlotIndex < 1 || body.SlotIndex > 32 || len(body.SlotKey) > 64 || !validUUID(body.DeviceUUID) || len(body.IdentityPublicKey) != ed25519.PublicKeySize ||
 		len(body.CommandPublicKey) != commandPublicKeyBytes || len(body.Signature) != ed25519.SignatureSize {
 		writeError(writer, http.StatusUnprocessableEntity, "invalid_device_discovery", "Device discovery identity is invalid.")
 		return
+	}
+	var simFingerprint []byte
+	if body.SIMFingerprint != "" {
+		decoded, decodeError := hex.DecodeString(body.SIMFingerprint)
+		if decodeError != nil || len(decoded) != 32 {
+			writeError(writer, http.StatusUnprocessableEntity, "invalid_device_discovery", "SIM fingerprint is invalid.")
+			return
+		}
+		simFingerprint = decoded
 	}
 	credentialHash, err := auth.TokenHash(body.PendingCredential)
 	if err != nil {
 		writeError(writer, http.StatusUnprocessableEntity, "invalid_device_discovery", "Pending device credential is invalid.")
 		return
 	}
-	proof := deviceDiscoverySignedData(body.DeviceUUID, body.IdentityPublicKey, body.CommandPublicKey, body.PendingCredential)
-	if !ed25519.Verify(ed25519.PublicKey(body.IdentityPublicKey), proof, body.Signature) {
+	legacyProof := deviceDiscoverySignedData(body.DeviceUUID, body.IdentityPublicKey, body.CommandPublicKey, body.PendingCredential)
+	proof := deviceDiscoverySignedDataWithSlot(body.DeviceUUID, body.IdentityPublicKey, body.CommandPublicKey, body.PendingCredential, body.SlotKey, body.SlotIndex, body.SIMFingerprint)
+	if !ed25519.Verify(ed25519.PublicKey(body.IdentityPublicKey), proof, body.Signature) && !ed25519.Verify(ed25519.PublicKey(body.IdentityPublicKey), legacyProof, body.Signature) {
 		writeError(writer, http.StatusUnauthorized, "invalid_device_proof", "Device identity proof is invalid.")
 		return
 	}
 	record, err := router.repository.SubmitDeviceDiscovery(request.Context(), router.now(), store.DeviceDiscoveryRequest{
 		DeviceUUID: body.DeviceUUID, IdentityPublicKey: body.IdentityPublicKey,
 		CommandPublicKey: body.CommandPublicKey, CredentialHash: credentialHash[:],
+		SlotKey: body.SlotKey, SlotIndex: body.SlotIndex, SIMFingerprint: simFingerprint,
 	})
 	if err != nil {
 		switch {
@@ -209,8 +231,19 @@ func (router *router) deviceDiscoveryStatus(writer http.ResponseWriter, request 
 
 func deviceDiscoverySignedData(deviceUUID string, identityPublicKey []byte, commandPublicKey []byte, credential string) []byte {
 	data := make([]byte, 0, len(deviceDiscoveryProofDomain)+len(deviceUUID)+len(identityPublicKey)+len(commandPublicKey)+len(credential)+20)
+	for _, field := range [][]byte{[]byte(deviceDiscoveryProofDomain), []byte(deviceUUID), identityPublicKey, commandPublicKey, []byte(credential)} {
+		var length [4]byte
+		binary.BigEndian.PutUint32(length[:], uint32(len(field)))
+		data = append(data, length[:]...)
+		data = append(data, field...)
+	}
+	return data
+}
+
+func deviceDiscoverySignedDataWithSlot(deviceUUID string, identityPublicKey []byte, commandPublicKey []byte, credential string, slotKey string, slotIndex int, simFingerprint string) []byte {
+	data := make([]byte, 0, len(deviceDiscoveryProofDomain)+len(deviceUUID)+len(identityPublicKey)+len(commandPublicKey)+len(credential)+20)
 	for _, field := range [][]byte{
-		[]byte(deviceDiscoveryProofDomain), []byte(deviceUUID), identityPublicKey, commandPublicKey, []byte(credential),
+		[]byte(deviceDiscoveryProofDomain), []byte(deviceUUID), identityPublicKey, commandPublicKey, []byte(credential), []byte(slotKey), []byte(strconv.Itoa(slotIndex)), []byte(simFingerprint),
 	} {
 		var length [4]byte
 		binary.BigEndian.PutUint32(length[:], uint32(len(field)))

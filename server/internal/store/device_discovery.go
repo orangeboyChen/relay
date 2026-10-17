@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -84,6 +85,12 @@ func (store *Postgres) GetDeviceDiscoverySession(ctx context.Context, ownerID st
 
 // SubmitDeviceDiscovery records a candidate only while the owner's discovery window is active.
 func (store *Postgres) SubmitDeviceDiscovery(ctx context.Context, now time.Time, request DeviceDiscoveryRequest) (DeviceDiscoveryRecord, error) {
+	if request.SlotKey == "" {
+		request.SlotKey = "1"
+	}
+	if request.SlotIndex < 1 {
+		request.SlotIndex = 1
+	}
 	tx, err := store.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
 	if err != nil {
 		return DeviceDiscoveryRecord{}, fmt.Errorf("begin device discovery submission: %w", err)
@@ -121,18 +128,21 @@ func (store *Postgres) SubmitDeviceDiscovery(ctx context.Context, now time.Time,
 	var existingCredentialHash []byte
 	err = tx.QueryRow(ctx, `
 		SELECT owner_id::text, device_id::text, identity_public_key, command_public_key,
-		       credential_hash, status, first_seen_at, last_seen_at, expires_at, decided_at
+		       credential_hash, status, first_seen_at, last_seen_at, expires_at, decided_at,
+		       slot_key, slot_index, sim_fingerprint
 		FROM device_discoveries
 		WHERE device_id = $1
 		FOR UPDATE`, request.DeviceUUID).Scan(
 		&existingOwnerID, &existing.DeviceUUID, &existing.IdentityPublicKey, &existing.CommandPublicKey,
 		&existingCredentialHash, &existing.Status, &existing.FirstSeenAt, &existing.LastSeenAt,
-		&existing.ExpiresAt, &existing.DecidedAt,
+		&existing.ExpiresAt, &existing.DecidedAt, &existing.SlotKey, &existing.SlotIndex, &existing.SIMFingerprint,
 	)
 	if err == nil {
 		matches := existingOwnerID == ownerID &&
+			existing.SlotKey == request.SlotKey && existing.SlotIndex == request.SlotIndex &&
 			bytes.Equal(existing.IdentityPublicKey, request.IdentityPublicKey) &&
 			bytes.Equal(existing.CommandPublicKey, request.CommandPublicKey) &&
+			bytes.Equal(existing.SIMFingerprint, request.SIMFingerprint) &&
 			bytes.Equal(existingCredentialHash, request.CredentialHash)
 		if existing.ExpiresAt.After(now) || existing.Status == DeviceDiscoveryApproved {
 			if !matches {
@@ -171,14 +181,15 @@ func (store *Postgres) SubmitDeviceDiscovery(ctx context.Context, now time.Time,
 		DeviceUUID: request.DeviceUUID, IdentityPublicKey: request.IdentityPublicKey,
 		CommandPublicKey: request.CommandPublicKey, Status: DeviceDiscoveryPending,
 		FirstSeenAt: now.UTC(), LastSeenAt: now.UTC(), ExpiresAt: expiresAt,
+		SlotKey: request.SlotKey, SlotIndex: request.SlotIndex, SIMFingerprint: request.SIMFingerprint,
 	}
 	_, err = tx.Exec(ctx, `
 		INSERT INTO device_discoveries (
 			device_id, owner_id, identity_public_key, command_public_key, credential_hash,
-			status, first_seen_at, last_seen_at, expires_at
-		) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $6, $7)`,
+			status, first_seen_at, last_seen_at, expires_at, slot_key, slot_index, sim_fingerprint
+		) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $6, $7, $8, $9, NULLIF($10, '')::text)`,
 		request.DeviceUUID, ownerID, request.IdentityPublicKey, request.CommandPublicKey,
-		request.CredentialHash, now.UTC(), expiresAt)
+		request.CredentialHash, now.UTC(), expiresAt, request.SlotKey, request.SlotIndex, hex.EncodeToString(request.SIMFingerprint))
 	if err != nil {
 		var postgresError *pgconn.PgError
 		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
@@ -196,7 +207,7 @@ func (store *Postgres) SubmitDeviceDiscovery(ctx context.Context, now time.Time,
 func (store *Postgres) ListPendingDeviceDiscoveries(ctx context.Context, ownerID string, now time.Time) ([]DeviceDiscoveryRecord, error) {
 	rows, err := store.pool.Query(ctx, `
 		SELECT device_id::text, identity_public_key, command_public_key, status,
-		       first_seen_at, last_seen_at, expires_at, decided_at
+		       first_seen_at, last_seen_at, expires_at, decided_at, slot_key, slot_index
 		FROM device_discoveries
 		WHERE owner_id = $1 AND status = 'pending' AND expires_at > $2
 		ORDER BY first_seen_at, device_id`, ownerID, now.UTC())
@@ -210,6 +221,7 @@ func (store *Postgres) ListPendingDeviceDiscoveries(ctx context.Context, ownerID
 		if err := rows.Scan(
 			&record.DeviceUUID, &record.IdentityPublicKey, &record.CommandPublicKey, &record.Status,
 			&record.FirstSeenAt, &record.LastSeenAt, &record.ExpiresAt, &record.DecidedAt,
+			&record.SlotKey, &record.SlotIndex,
 		); err != nil {
 			return nil, fmt.Errorf("scan pending device discovery: %w", err)
 		}
@@ -234,11 +246,15 @@ func (store *Postgres) ApproveDeviceDiscovery(ctx context.Context, ownerID strin
 	var credentialHash []byte
 	var status DeviceDiscoveryStatus
 	var expiresAt time.Time
+	var slotKey string
+	var slotIndex int
+	var simFingerprintHex string
 	err = tx.QueryRow(ctx, `
-		SELECT identity_public_key, command_public_key, credential_hash, status, expires_at
+		SELECT identity_public_key, command_public_key, credential_hash, status, expires_at,
+		       slot_key, slot_index, COALESCE(sim_fingerprint, '')
 		FROM device_discoveries
 		WHERE device_id = $1 AND owner_id = $2
-		FOR UPDATE`, deviceID, ownerID).Scan(&identityPublicKey, &commandPublicKey, &credentialHash, &status, &expiresAt)
+		FOR UPDATE`, deviceID, ownerID).Scan(&identityPublicKey, &commandPublicKey, &credentialHash, &status, &expiresAt, &slotKey, &slotIndex, &simFingerprintHex)
 	if err != nil {
 		return DeviceRecord{}, err
 	}
@@ -257,6 +273,10 @@ func (store *Postgres) ApproveDeviceDiscovery(ctx context.Context, ownerID strin
 		if err != nil {
 			return DeviceRecord{}, err
 		}
+		record.Slots, err = store.listDeviceSlots(ctx, record.ID)
+		if err != nil {
+			return DeviceRecord{}, err
+		}
 		return record, nil
 	}
 	if !expiresAt.After(now) {
@@ -269,8 +289,8 @@ func (store *Postgres) ApproveDeviceDiscovery(ctx context.Context, ownerID strin
 	err = tx.QueryRow(ctx, `
 		SELECT candidate
 		FROM generate_series(1, 99) AS candidate
-		LEFT JOIN devices ON devices.numeric_id = candidate AND devices.revoked_at IS NULL
-		WHERE devices.id IS NULL
+		LEFT JOIN sim_cards ON sim_cards.numeric_id = candidate AND sim_cards.retired_at IS NULL
+		WHERE sim_cards.id IS NULL
 		ORDER BY candidate
 		LIMIT 1`).Scan(&numericID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -297,6 +317,24 @@ func (store *Postgres) ApproveDeviceDiscovery(ctx context.Context, ownerID strin
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO device_credentials (device_id, credential_hash) VALUES ($1, $2)`, deviceID, credentialHash); err != nil {
 		return DeviceRecord{}, fmt.Errorf("insert discovered device credential: %w", err)
+	}
+	if slotKey == "" {
+		slotKey = "1"
+	}
+	if slotIndex < 1 {
+		slotIndex = 1
+	}
+	if err := createSIMSlot(ctx, tx, deviceID, slotKey, slotIndex, deviceID, numericID, nil, now, &record); err != nil {
+		return DeviceRecord{}, err
+	}
+	if simFingerprintHex != "" {
+		simFingerprint, decodeError := hex.DecodeString(simFingerprintHex)
+		if decodeError != nil || len(simFingerprint) != 32 {
+			return DeviceRecord{}, errors.New("stored SIM fingerprint is invalid")
+		}
+		if _, err := tx.Exec(ctx, `UPDATE sim_cards SET iccid_fingerprint = $2, fingerprint_scope = $3 WHERE id = $1`, deviceID, simFingerprint, deviceID); err != nil {
+			return DeviceRecord{}, fmt.Errorf("store SIM fingerprint: %w", err)
+		}
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE device_discoveries
@@ -346,14 +384,18 @@ func (store *Postgres) DeviceDiscoveryStatus(ctx context.Context, deviceID strin
 	err := store.pool.QueryRow(ctx, `
 		SELECT discovery.device_id::text, discovery.status, discovery.first_seen_at,
 		       discovery.last_seen_at, discovery.expires_at, discovery.decided_at,
-		       COALESCE(devices.numeric_id, 0)
+		       COALESCE(sim.numeric_id, 0),
+		       slot.id::text, sim.id::text, discovery.slot_key, discovery.slot_index
 		FROM device_discoveries AS discovery
 		LEFT JOIN devices ON devices.id = discovery.paired_device_id AND devices.revoked_at IS NULL
+		LEFT JOIN device_slots AS slot ON slot.device_id = devices.id AND slot.removed_at IS NULL
+		LEFT JOIN sim_cards AS sim ON sim.id = slot.current_sim_id AND sim.retired_at IS NULL
 		WHERE discovery.device_id = $1
 		  AND discovery.credential_hash = $2
 		  AND discovery.expires_at > $3`, deviceID, credentialHash, now.UTC()).Scan(
 		&record.DeviceUUID, &record.Status, &record.FirstSeenAt, &record.LastSeenAt,
-		&record.ExpiresAt, &record.DecidedAt, &record.NumericID,
+		&record.ExpiresAt, &record.DecidedAt, &record.NumericID, &record.SlotID, &record.SIMID,
+		&record.SlotKey, &record.SlotIndex,
 	)
 	if err != nil {
 		return DeviceDiscoveryRecord{}, err
@@ -369,6 +411,9 @@ func (session DeviceDiscoverySession) Active(now time.Time) bool {
 // DeviceDiscoveryRequest contains verified public identity material from one candidate modem.
 type DeviceDiscoveryRequest struct {
 	DeviceUUID        string
+	SlotKey           string
+	SlotIndex         int
+	SIMFingerprint    []byte
 	IdentityPublicKey []byte
 	CommandPublicKey  []byte
 	CredentialHash    []byte
@@ -385,4 +430,9 @@ type DeviceDiscoveryRecord struct {
 	ExpiresAt         time.Time             `json:"expires_at"`
 	DecidedAt         *time.Time            `json:"decided_at,omitempty"`
 	NumericID         int                   `json:"numeric_id,omitempty"`
+	SlotID            *string               `json:"slot_id,omitempty"`
+	SIMID             *string               `json:"sim_id,omitempty"`
+	SlotKey           string                `json:"slot_key,omitempty"`
+	SlotIndex         int                   `json:"slot_index,omitempty"`
+	SIMFingerprint    []byte                `json:"-"`
 }

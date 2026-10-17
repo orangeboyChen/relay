@@ -26,12 +26,14 @@ import (
 )
 
 type memoryRepository struct {
-	migrateError error
-	closed       bool
+	initializeSchemaError error
+	closed                bool
 }
 
-func (repository *memoryRepository) Migrate(context.Context) error { return repository.migrateError }
-func (repository *memoryRepository) Close()                        { repository.closed = true }
+func (repository *memoryRepository) InitializeSchema(context.Context) error {
+	return repository.initializeSchemaError
+}
+func (repository *memoryRepository) Close() { repository.closed = true }
 func (repository *memoryRepository) OwnerExists(context.Context) (bool, error) {
 	return false, nil
 }
@@ -121,6 +123,9 @@ func (repository *memoryRepository) UpdateDeviceCommandPublicKey(context.Context
 }
 func (repository *memoryRepository) UpdateDeviceRadioStatus(context.Context, string, string, *int, time.Time) error {
 	return nil
+}
+func (repository *memoryRepository) UpdateDeviceSIMIdentity(context.Context, string, string, int, []byte, time.Time) (string, int, error) {
+	return "01900000-0000-7000-8000-000000000099", 1, nil
 }
 func (repository *memoryRepository) RegisterAppInstallation(_ context.Context, _ string, registration store.AppInstallationRegistration, now time.Time) (store.AppInstallationRecord, bool, error) {
 	approvedAt := now.UTC()
@@ -339,13 +344,13 @@ var _ = Describe("Server command", func() {
 		Entry("query", "https://deck.example?tenant=owner"),
 	)
 
-	It("propagates repository open and migration failures", func() {
+	It("propagates repository open and schema initialization failures", func() {
 		openError = errors.New("open failed")
 		Expect(run(context.Background(), testDependencies)).To(MatchError("open failed"))
 
 		openError = nil
-		memoryStore.migrateError = errors.New("migration failed")
-		Expect(run(context.Background(), testDependencies)).To(MatchError("migration failed"))
+		memoryStore.initializeSchemaError = errors.New("schema initialization failed")
+		Expect(run(context.Background(), testDependencies)).To(MatchError("schema initialization failed"))
 		Expect(memoryStore.closed).To(BeTrue())
 	})
 

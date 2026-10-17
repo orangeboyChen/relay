@@ -52,6 +52,7 @@ type Repository interface {
 	CommandStatus(context.Context, string, string, time.Time) (domain.CommandStatus, error)
 	UpdateDeviceCommandPublicKey(context.Context, string, []byte) error
 	UpdateDeviceRadioStatus(context.Context, string, string, *int, time.Time) error
+	UpdateDeviceSIMIdentity(context.Context, string, string, int, []byte, time.Time) (string, int, error)
 	RegisterAppInstallation(context.Context, string, store.AppInstallationRegistration, time.Time) (store.AppInstallationRecord, bool, error)
 	UpsertPushToken(context.Context, string, string, string, string, []byte, time.Time) error
 	DeletePushToken(context.Context, string, string, string, string) error
@@ -103,6 +104,7 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("POST /v1/device-commands/{commandID}/complete", router.completeCommand)
 	mux.HandleFunc("PUT /v1/device-command-key", router.updateDeviceCommandKey)
 	mux.HandleFunc("PUT /v1/device-radio-status", router.updateDeviceRadioStatus)
+	mux.HandleFunc("PUT /v1/device-sim-identity", router.updateDeviceSIMIdentity)
 	mux.HandleFunc("POST /v1/auth/bootstrap", router.bootstrapLogin)
 	mux.HandleFunc("POST /v1/auth/refresh", router.refreshSession)
 	mux.HandleFunc("POST /v1/auth/logout", router.logout)
@@ -840,6 +842,51 @@ func (router *router) updateDeviceRadioStatus(writer http.ResponseWriter, reques
 		return
 	}
 	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (router *router) updateDeviceSIMIdentity(writer http.ResponseWriter, request *http.Request) {
+	var body struct {
+		DeviceUUID     string `json:"device_uuid"`
+		SlotKey        string `json:"slot_key"`
+		SlotIndex      int    `json:"slot_index"`
+		SIMFingerprint string `json:"sim_fingerprint"`
+	}
+	if err := decodeJSON(request, &body); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	token, ok := bearerToken(request.Header.Get("Authorization"))
+	if !ok || !validUUID(body.DeviceUUID) {
+		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is required.")
+		return
+	}
+	if body.SlotKey == "" || len(body.SlotKey) > 64 || body.SlotIndex < 1 || body.SlotIndex > 32 {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_slot_identity", "Device slot identity is invalid.")
+		return
+	}
+	fingerprint, err := hex.DecodeString(body.SIMFingerprint)
+	if err != nil || len(fingerprint) != 32 {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_sim_identity", "SIM fingerprint is invalid.")
+		return
+	}
+	if _, err := router.repository.AuthenticateDevice(request.Context(), body.DeviceUUID, token, router.now()); err != nil {
+		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is invalid or revoked.")
+		return
+	}
+	simID, numericID, err := router.repository.UpdateDeviceSIMIdentity(request.Context(), body.DeviceUUID, body.SlotKey, body.SlotIndex, fingerprint, router.now())
+	if err != nil {
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			writeError(writer, http.StatusNotFound, "device_slot_not_found", "Device slot not found.")
+			return
+		case errors.Is(err, domain.ErrNoNumericID):
+			writeError(writer, http.StatusConflict, "numeric_ids_exhausted", "No SIM numeric ID is available.")
+			return
+		}
+		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to synchronize the SIM identity.")
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"sim_id": simID, "numeric_id": numericID})
 }
 
 func validRadioAccessTechnology(value string) bool {

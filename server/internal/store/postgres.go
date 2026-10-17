@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
-	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -20,8 +18,8 @@ import (
 	"sim-deck-server/internal/domain"
 )
 
-//go:embed migrations/*.sql
-var migrations embed.FS
+//go:embed schema.sql
+var schemaFS embed.FS
 
 // Postgres stores only routing metadata and encrypted application payloads.
 type Postgres struct {
@@ -30,13 +28,29 @@ type Postgres struct {
 
 // DeviceRecord is the server-readable portion of a paired device.
 type DeviceRecord struct {
-	ID                    string     `json:"device_uuid"`
-	NumericID             int        `json:"numeric_id"`
-	ProfileCiphertext     []byte     `json:"profile_ciphertext"`
-	IdentityPublicKey     []byte     `json:"identity_public_key"`
-	CommandPublicKey      []byte     `json:"command_public_key,omitempty"`
-	WrappedVaultKey       []byte     `json:"wrapped_vault_key,omitempty"`
-	PairedAt              time.Time  `json:"paired_at"`
+	ID                    string       `json:"device_uuid"`
+	NumericID             int          `json:"numeric_id"`
+	ProfileCiphertext     []byte       `json:"profile_ciphertext"`
+	IdentityPublicKey     []byte       `json:"identity_public_key"`
+	CommandPublicKey      []byte       `json:"command_public_key,omitempty"`
+	WrappedVaultKey       []byte       `json:"wrapped_vault_key,omitempty"`
+	PairedAt              time.Time    `json:"paired_at"`
+	LastSeenAt            *time.Time   `json:"last_seen_at,omitempty"`
+	RadioAccessTechnology string       `json:"radio_access_technology,omitempty"`
+	SignalBars            *int         `json:"signal_bars,omitempty"`
+	RadioStatusUpdatedAt  *time.Time   `json:"radio_status_updated_at,omitempty"`
+	Slots                 []SlotRecord `json:"slots"`
+}
+
+// SlotRecord identifies a physical modem slot and the SIM currently inserted in it.
+// Slot IDs are stable for a device; SIM IDs remain stable when a card moves slots.
+type SlotRecord struct {
+	ID                    string     `json:"slot_id"`
+	SlotKey               string     `json:"slot_key"`
+	SlotIndex             int        `json:"slot_index"`
+	SIMID                 *string    `json:"sim_id,omitempty"`
+	SIMNumericID          *int       `json:"numeric_id,omitempty"`
+	ProfileCiphertext     []byte     `json:"profile_ciphertext,omitempty"`
 	LastSeenAt            *time.Time `json:"last_seen_at,omitempty"`
 	RadioAccessTechnology string     `json:"radio_access_technology,omitempty"`
 	SignalBars            *int       `json:"signal_bars,omitempty"`
@@ -128,21 +142,14 @@ func (store *Postgres) Close() {
 	store.pool.Close()
 }
 
-// Migrate applies the embedded idempotent schema.
-func (store *Postgres) Migrate(ctx context.Context) error {
-	paths, err := fs.Glob(migrations, "migrations/*.sql")
+// InitializeSchema creates the complete database schema for a new deployment.
+func (store *Postgres) InitializeSchema(ctx context.Context) error {
+	schema, err := Schema()
 	if err != nil {
-		return fmt.Errorf("list migrations: %w", err)
+		return err
 	}
-	sort.Strings(paths)
-	for _, path := range paths {
-		schema, err := migrations.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("read migration %s: %w", path, err)
-		}
-		if _, err := store.pool.Exec(ctx, string(schema)); err != nil {
-			return fmt.Errorf("apply migration %s: %w", path, err)
-		}
+	if _, err := store.pool.Exec(ctx, string(schema)); err != nil {
+		return fmt.Errorf("initialize database schema: %w", err)
 	}
 	return nil
 }
@@ -889,6 +896,10 @@ func (store *Postgres) ConsumePairingToken(ctx context.Context, tokenHash []byte
 		if err != nil {
 			return DeviceRecord{}, fmt.Errorf("read paired device retry: %w", err)
 		}
+		record.Slots, err = store.listDeviceSlots(ctx, record.ID)
+		if err != nil {
+			return DeviceRecord{}, err
+		}
 		return record, nil
 	}
 
@@ -900,8 +911,8 @@ func (store *Postgres) ConsumePairingToken(ctx context.Context, tokenHash []byte
 	err = tx.QueryRow(ctx, `
 		SELECT candidate
 		FROM generate_series(1, 99) AS candidate
-		LEFT JOIN devices ON devices.numeric_id = candidate AND devices.revoked_at IS NULL
-		WHERE devices.id IS NULL
+		LEFT JOIN sim_cards ON sim_cards.numeric_id = candidate AND sim_cards.retired_at IS NULL
+		WHERE sim_cards.id IS NULL
 		ORDER BY candidate
 		LIMIT 1`).Scan(&numericID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -934,6 +945,9 @@ func (store *Postgres) ConsumePairingToken(ctx context.Context, tokenHash []byte
 		INSERT INTO device_credentials (device_id, credential_hash)
 		VALUES ($1, $2)`, pairing.DeviceUUID, pairing.CredentialHash); err != nil {
 		return DeviceRecord{}, fmt.Errorf("insert device credential: %w", err)
+	}
+	if err := createInitialSIMSlot(ctx, tx, pairing.DeviceUUID, numericID, pairing.ProfileCiphertext, now, &record); err != nil {
+		return DeviceRecord{}, err
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE pairing_tokens
@@ -986,8 +1000,8 @@ func (store *Postgres) CreateDevice(ctx context.Context, id string, profileCiphe
 	err = tx.QueryRow(ctx, `
 		SELECT candidate
 		FROM generate_series(1, 99) AS candidate
-		LEFT JOIN devices ON devices.numeric_id = candidate AND devices.revoked_at IS NULL
-		WHERE devices.id IS NULL
+		LEFT JOIN sim_cards ON sim_cards.numeric_id = candidate AND sim_cards.retired_at IS NULL
+		WHERE sim_cards.id IS NULL
 		ORDER BY candidate
 		LIMIT 1`).Scan(&numericID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1011,6 +1025,9 @@ func (store *Postgres) CreateDevice(ctx context.Context, id string, profileCiphe
 	if err != nil {
 		return DeviceRecord{}, fmt.Errorf("insert device: %w", err)
 	}
+	if err := createInitialSIMSlot(ctx, tx, id, numericID, profileCiphertext, record.PairedAt, &record); err != nil {
+		return DeviceRecord{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return DeviceRecord{}, fmt.Errorf("commit device: %w", err)
 	}
@@ -1023,8 +1040,13 @@ func (store *Postgres) UpdateNumericID(ctx context.Context, deviceID string, num
 		return domain.ErrInvalidNumericID
 	}
 	command, err := store.pool.Exec(ctx, `
-		UPDATE devices SET numeric_id = $2
-		WHERE id = $1 AND revoked_at IS NULL`, deviceID, numericID)
+		UPDATE sim_cards
+		SET numeric_id = $2
+		WHERE id = (
+			SELECT current_sim_id FROM device_slots
+			WHERE device_id = $1 AND removed_at IS NULL AND current_sim_id IS NOT NULL
+			ORDER BY slot_index LIMIT 1
+		) AND retired_at IS NULL`, deviceID, numericID)
 	if err != nil {
 		var postgresError *pgconn.PgError
 		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
@@ -1035,19 +1057,35 @@ func (store *Postgres) UpdateNumericID(ctx context.Context, deviceID string, num
 	if command.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
+	if _, err := store.pool.Exec(ctx, `UPDATE devices SET numeric_id = $2 WHERE id = $1 AND revoked_at IS NULL`, deviceID, numericID); err != nil {
+		return fmt.Errorf("update legacy numeric id: %w", err)
+	}
 	return nil
 }
 
 // UpdateDeviceProfile replaces only the opaque end-to-end encrypted line profile.
 func (store *Postgres) UpdateDeviceProfile(ctx context.Context, deviceID string, profileCiphertext []byte) error {
 	command, err := store.pool.Exec(ctx, `
-		UPDATE devices SET profile_ciphertext = $2
-		WHERE id = $1 AND revoked_at IS NULL`, deviceID, profileCiphertext)
+		UPDATE sim_cards
+		SET profile_ciphertext = $2
+		WHERE id = (
+			SELECT slot.current_sim_id
+			FROM device_slots AS slot
+			JOIN devices ON devices.id = slot.device_id
+			WHERE slot.device_id = $1
+			  AND devices.revoked_at IS NULL
+			  AND slot.removed_at IS NULL
+			  AND slot.current_sim_id IS NOT NULL
+			ORDER BY slot.slot_index LIMIT 1
+		) AND retired_at IS NULL`, deviceID, profileCiphertext)
 	if err != nil {
 		return fmt.Errorf("update device profile: %w", err)
 	}
 	if command.RowsAffected() == 0 {
 		return pgx.ErrNoRows
+	}
+	if _, err := store.pool.Exec(ctx, `UPDATE devices SET profile_ciphertext = $2 WHERE id = $1 AND revoked_at IS NULL`, deviceID, profileCiphertext); err != nil {
+		return fmt.Errorf("update legacy device profile: %w", err)
 	}
 	return nil
 }
@@ -1112,12 +1150,88 @@ func (store *Postgres) ListDevices(ctx context.Context) ([]DeviceRecord, error) 
 		); err != nil {
 			return nil, fmt.Errorf("scan device: %w", err)
 		}
+		slots, err := store.listDeviceSlots(ctx, record.ID)
+		if err != nil {
+			return nil, err
+		}
+		record.Slots = slots
 		records = append(records, record)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate devices: %w", err)
 	}
 	return records, nil
+}
+
+func createInitialSIMSlot(ctx context.Context, tx pgx.Tx, deviceID string, numericID int, profileCiphertext []byte, now time.Time, record *DeviceRecord) error {
+	return createSIMSlot(ctx, tx, deviceID, "1", 1, deviceID, numericID, profileCiphertext, now, record)
+}
+
+func createSIMSlot(ctx context.Context, tx pgx.Tx, deviceID string, slotKey string, slotIndex int, simID string, numericID int, profileCiphertext []byte, now time.Time, record *DeviceRecord) error {
+	if profileCiphertext == nil {
+		profileCiphertext = []byte{}
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO sim_cards (id, numeric_id, profile_ciphertext, first_seen_at, last_seen_at)
+		VALUES ($1, $2, $3, $4, $4)`, simID, numericID, profileCiphertext, now.UTC())
+	if err != nil {
+		return fmt.Errorf("insert initial SIM identity: %w", err)
+	}
+	var slot SlotRecord
+	err = tx.QueryRow(ctx, `
+		INSERT INTO device_slots (device_id, slot_key, slot_index, current_sim_id, created_at, last_seen_at)
+		VALUES ($1, $2, $3, $4, $5, $5)
+		RETURNING id::text, slot_key, slot_index, current_sim_id::text`, deviceID, slotKey, slotIndex, simID, now.UTC()).Scan(
+		&slot.ID, &slot.SlotKey, &slot.SlotIndex, &slot.SIMID,
+	)
+	if err != nil {
+		return fmt.Errorf("insert initial device slot: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO slot_sim_assignments (slot_id, sim_id, inserted_at)
+		VALUES ($1, $2, $3)`, slot.ID, simID, now.UTC()); err != nil {
+		return fmt.Errorf("record initial SIM slot assignment: %w", err)
+	}
+	value := numericID
+	slot.SIMNumericID = &value
+	slot.ProfileCiphertext = append([]byte(nil), profileCiphertext...)
+	lastSeen := now.UTC()
+	slot.LastSeenAt = &lastSeen
+	record.Slots = []SlotRecord{slot}
+	return nil
+}
+
+func (store *Postgres) listDeviceSlots(ctx context.Context, deviceID string) ([]SlotRecord, error) {
+	rows, err := store.pool.Query(ctx, `
+		SELECT slot.id::text, slot.slot_key, slot.slot_index,
+		       slot.current_sim_id::text, sim.numeric_id, sim.profile_ciphertext,
+		       slot.last_seen_at, COALESCE(slot.radio_access_technology, ''),
+		       slot.signal_bars, slot.radio_status_updated_at
+		FROM device_slots AS slot
+		LEFT JOIN sim_cards AS sim ON sim.id = slot.current_sim_id AND sim.retired_at IS NULL
+		WHERE slot.device_id = $1 AND slot.removed_at IS NULL
+		ORDER BY slot.slot_index`, deviceID)
+	if err != nil {
+		return nil, fmt.Errorf("list device slots: %w", err)
+	}
+	defer rows.Close()
+
+	slots := make([]SlotRecord, 0)
+	for rows.Next() {
+		var slot SlotRecord
+		if err := rows.Scan(
+			&slot.ID, &slot.SlotKey, &slot.SlotIndex, &slot.SIMID, &slot.SIMNumericID,
+			&slot.ProfileCiphertext, &slot.LastSeenAt, &slot.RadioAccessTechnology,
+			&slot.SignalBars, &slot.RadioStatusUpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan device slot: %w", err)
+		}
+		slots = append(slots, slot)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate device slots: %w", err)
+	}
+	return slots, nil
 }
 
 // UpdateDeviceRadioStatus stores the latest non-sensitive modem telemetry.
@@ -1135,6 +1249,114 @@ func (store *Postgres) UpdateDeviceRadioStatus(ctx context.Context, deviceID str
 		return pgx.ErrNoRows
 	}
 	return nil
+}
+
+// UpdateDeviceSIMIdentity assigns the current card fingerprint to its physical modem slot.
+func (store *Postgres) UpdateDeviceSIMIdentity(ctx context.Context, deviceID string, slotKey string, slotIndex int, fingerprint []byte, now time.Time) (string, int, error) {
+	if len(fingerprint) != 32 || slotKey == "" || slotIndex < 1 || slotIndex > 32 {
+		return "", 0, errors.New("invalid slot or SIM fingerprint")
+	}
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return "", 0, fmt.Errorf("begin SIM identity synchronization: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var slotID string
+	var oldSIMID *string
+	if err := tx.QueryRow(ctx, `
+		SELECT id::text, current_sim_id::text FROM device_slots
+		WHERE device_id = $1 AND slot_key = $2 AND slot_index = $3 AND removed_at IS NULL
+		FOR UPDATE`, deviceID, slotKey, slotIndex).Scan(&slotID, &oldSIMID); err != nil {
+		return "", 0, err
+	}
+	var simID string
+	var numericID int
+	err = tx.QueryRow(ctx, `
+		SELECT id::text, numeric_id FROM sim_cards
+		WHERE fingerprint_scope = $1 AND iccid_fingerprint = $2
+		ORDER BY created_at LIMIT 1 FOR UPDATE`, deviceID, fingerprint).Scan(&simID, &numericID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if oldSIMID != nil {
+			err = tx.QueryRow(ctx, `
+				UPDATE sim_cards
+				SET iccid_fingerprint = $2, fingerprint_scope = $3, last_seen_at = $4
+				WHERE id = $1
+				  AND iccid_fingerprint IS NULL
+				  AND fingerprint_scope IS NULL
+				  AND retired_at IS NULL
+				RETURNING id::text, numeric_id`, *oldSIMID, fingerprint, deviceID, now.UTC()).Scan(&simID, &numericID)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return "", 0, fmt.Errorf("identify current SIM card: %w", err)
+			}
+		}
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, int64(0x53494d44)); err != nil {
+			return "", 0, fmt.Errorf("lock SIM numeric ID allocation: %w", err)
+		}
+		err = tx.QueryRow(ctx, `
+			SELECT candidate FROM generate_series(1, 99) AS candidate
+			LEFT JOIN sim_cards ON sim_cards.numeric_id = candidate AND sim_cards.retired_at IS NULL
+			WHERE sim_cards.id IS NULL ORDER BY candidate LIMIT 1`).Scan(&numericID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", 0, domain.ErrNoNumericID
+		}
+		if err != nil {
+			return "", 0, fmt.Errorf("allocate SIM numeric ID: %w", err)
+		}
+		err = tx.QueryRow(ctx, `
+			INSERT INTO sim_cards (id, numeric_id, iccid_fingerprint, fingerprint_scope, profile_ciphertext, first_seen_at, last_seen_at)
+			VALUES (gen_random_uuid(), $1, $2, $3, ''::bytea, $4, $4)
+			RETURNING id::text`, numericID, fingerprint, deviceID, now.UTC()).Scan(&simID)
+		if err != nil {
+			return "", 0, fmt.Errorf("create SIM card identity: %w", err)
+		}
+	} else if err != nil {
+		return "", 0, fmt.Errorf("find SIM card identity: %w", err)
+	} else if _, err := tx.Exec(ctx, `UPDATE sim_cards SET retired_at = NULL, last_seen_at = $2 WHERE id = $1`, simID, now.UTC()); err != nil {
+		return "", 0, fmt.Errorf("reactivate SIM card identity: %w", err)
+	}
+	if oldSIMID != nil && *oldSIMID != simID {
+		if _, err := tx.Exec(ctx, `
+			UPDATE slot_sim_assignments
+			SET removed_at = GREATEST($2, inserted_at)
+			WHERE slot_id = $1 AND removed_at IS NULL`, slotID, now.UTC()); err != nil {
+			return "", 0, err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE device_slots SET current_sim_id = NULL WHERE id = $1`, slotID); err != nil {
+			return "", 0, err
+		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE device_slots SET current_sim_id = NULL WHERE current_sim_id = $1 AND id <> $2`, simID, slotID); err != nil {
+		return "", 0, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE slot_sim_assignments
+		SET removed_at = GREATEST($3, inserted_at)
+		WHERE sim_id = $1 AND slot_id <> $2 AND removed_at IS NULL`, simID, slotID, now.UTC()); err != nil {
+		return "", 0, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE device_slots SET current_sim_id = $2, last_seen_at = $3 WHERE id = $1`, slotID, simID, now.UTC()); err != nil {
+		return "", 0, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE devices SET numeric_id = $2, last_seen_at = $3 WHERE id = $1 AND revoked_at IS NULL`, deviceID, numericID, now.UTC()); err != nil {
+		return "", 0, fmt.Errorf("update legacy device SIM identity: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO slot_sim_assignments (slot_id, sim_id, inserted_at)
+		SELECT $1, $2, $3
+		WHERE NOT EXISTS (SELECT 1 FROM slot_sim_assignments WHERE slot_id = $1 AND sim_id = $2 AND removed_at IS NULL)`, slotID, simID, now.UTC()); err != nil {
+		return "", 0, err
+	}
+	if oldSIMID != nil && *oldSIMID != simID {
+		if _, err := tx.Exec(ctx, `UPDATE sim_cards SET retired_at = $2 WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM device_slots WHERE current_sim_id = $1)`, *oldSIMID, now.UTC()); err != nil {
+			return "", 0, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", 0, fmt.Errorf("commit SIM identity synchronization: %w", err)
+	}
+	return simID, numericID, nil
 }
 
 // InsertEvent stores an encrypted event once and returns its server sequence.
@@ -1402,7 +1624,7 @@ func (store *Postgres) UpdateDeviceCommandPublicKey(ctx context.Context, deviceI
 	return nil
 }
 
-// InitialMigration returns the schema for validation and packaging tests.
-func InitialMigration() ([]byte, error) {
-	return migrations.ReadFile("migrations/001_initial.sql")
+// Schema returns the embedded schema for validation and packaging tests.
+func Schema() ([]byte, error) {
+	return schemaFS.ReadFile("schema.sql")
 }

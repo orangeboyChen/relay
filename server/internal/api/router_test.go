@@ -109,6 +109,14 @@ type fakeRepository struct {
 	updatedSignalBars           *int
 	updatedRadioAt              time.Time
 	updateRadioError            error
+	updatedSIMDevice            string
+	updatedSIMSlotKey           string
+	updatedSIMSlotIndex         int
+	updatedSIMFingerprint       []byte
+	updatedSIMAt                time.Time
+	updatedSIMID                string
+	updatedSIMNumericID         int
+	updateSIMError              error
 	installationOwnerID         string
 	installation                store.AppInstallationRegistration
 	installationRecord          store.AppInstallationRecord
@@ -147,6 +155,21 @@ func (fake *fakeRepository) UpdateDeviceRadioStatus(_ context.Context, deviceID 
 	fake.updatedSignalBars = signalBars
 	fake.updatedRadioAt = now
 	return fake.updateRadioError
+}
+
+func (fake *fakeRepository) UpdateDeviceSIMIdentity(_ context.Context, deviceID string, slotKey string, slotIndex int, fingerprint []byte, now time.Time) (string, int, error) {
+	fake.updatedSIMDevice = deviceID
+	fake.updatedSIMSlotKey = slotKey
+	fake.updatedSIMSlotIndex = slotIndex
+	fake.updatedSIMFingerprint = append([]byte(nil), fingerprint...)
+	fake.updatedSIMAt = now
+	if fake.updatedSIMID == "" {
+		fake.updatedSIMID = "01900000-0000-7000-8000-000000000099"
+	}
+	if fake.updatedSIMNumericID == 0 {
+		fake.updatedSIMNumericID = 1
+	}
+	return fake.updatedSIMID, fake.updatedSIMNumericID, fake.updateSIMError
 }
 
 func (fake *fakeRepository) UpsertPushToken(

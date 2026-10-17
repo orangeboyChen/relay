@@ -32,7 +32,7 @@ type repository interface {
 	api.Repository
 	bootstrap.OwnerStore
 	push.Repository
-	Migrate(context.Context) error
+	InitializeSchema(context.Context) error
 	Close()
 }
 
@@ -102,7 +102,7 @@ func run(ctx context.Context, dependencies dependencies) error {
 		return err
 	}
 	defer repository.Close()
-	if err := repository.Migrate(ctx); err != nil {
+	if err := repository.InitializeSchema(ctx); err != nil {
 		return err
 	}
 	bootstrapResult, err := dependencies.bootstrapOwner(ctx, repository, bootstrap.Config{

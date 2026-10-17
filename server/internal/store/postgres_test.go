@@ -22,41 +22,34 @@ const (
 	secondDeviceID = "01900000-0000-7000-8000-000000000002"
 )
 
-var _ = Describe("Embedded migrations", func() {
-	It("contains the encrypted application tables", func() {
-		schema, err := InitialMigration()
+var _ = Describe("Embedded schema", func() {
+	It("contains the complete application schema", func() {
+		schema, err := Schema()
 		Expect(err).NotTo(HaveOccurred())
 		for _, table := range [][]byte{
 			[]byte("owner_accounts"),
 			[]byte("app_installations"),
 			[]byte("devices"),
+			[]byte("device_credentials"),
+			[]byte("sim_cards"),
+			[]byte("device_slots"),
+			[]byte("slot_sim_assignments"),
 			[]byte("events"),
 			[]byte("messages"),
 			[]byte("attachments"),
 			[]byte("calls"),
 			[]byte("outbox_jobs"),
+			[]byte("encrypted_device_commands"),
+			[]byte("incoming_call_notifications"),
+			[]byte("device_discoveries"),
 		} {
 			Expect(schema).To(ContainSubstring(string(table)))
 		}
+		Expect(schema).To(ContainSubstring("fingerprint_scope"))
+		Expect(schema).To(ContainSubstring("sim_fingerprint"))
+		Expect(schema).NotTo(ContainSubstring("ALTER TABLE"))
+		Expect(schema).NotTo(ContainSubstring("UPDATE outbox_jobs"))
 	})
-
-	DescribeTable("contains each incremental schema contract",
-		func(path string, required string) {
-			schema, err := migrations.ReadFile(path)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(bytes.Contains(schema, []byte(required))).To(BeTrue())
-		},
-		Entry("single owner", "migrations/002_single_owner.sql", "owner_accounts_singleton_idx"),
-		Entry("sessions", "migrations/003_auth_sessions.sql", "auth_sessions"),
-		Entry("device credentials", "migrations/004_device_pairing.sql", "device_credentials"),
-		Entry("pairing retries", "migrations/005_pairing_retry.sql", "paired_device_id"),
-		Entry("installation agreement keys", "migrations/007_installation_key_agreement.sql", "key_agreement_public_key"),
-		Entry("incoming call notifications", "migrations/008_incoming_call_notifications.sql", "incoming_call_recipients"),
-		Entry("incoming call claims", "migrations/009_incoming_call_claims.sql", "incoming_call_claims"),
-		Entry("outbox expiry", "migrations/010_outbox_expiry.sql", "expires_at"),
-		Entry("device discovery", "migrations/012_device_discovery.sql", "device_discoveries"),
-		Entry("signed device commands", "migrations/013_signed_device_commands.sql", "sender_installation_id"),
-	)
 })
 
 var _ = Describe("PostgreSQL integration", Ordered, func() {
@@ -73,8 +66,8 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		var err error
 		database, err = Open(context.Background(), databaseURL)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(database.Migrate(context.Background())).To(Succeed())
-		Expect(database.Migrate(context.Background())).To(Succeed())
+		Expect(database.InitializeSchema(context.Background())).To(Succeed())
+		Expect(database.InitializeSchema(context.Background())).To(Succeed())
 	})
 
 	AfterAll(func() {
@@ -91,7 +84,8 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 			       messages, attachments, calls, outbox_jobs, audit_events,
 			       auth_sessions, device_credentials, encrypted_device_commands,
 			       incoming_call_notifications, incoming_call_recipients,
-			       incoming_call_claims, device_discovery_sessions, device_discoveries
+			       incoming_call_claims, device_discovery_sessions, device_discoveries,
+			       slot_sim_assignments, device_slots, sim_cards
 			RESTART IDENTITY CASCADE`)
 		Expect(err).NotTo(HaveOccurred())
 	})
@@ -353,6 +347,9 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		candidate.CommandPublicKey = bytes.Repeat([]byte{9}, 32)
 		_, err = database.SubmitDeviceDiscovery(context.Background(), now.Add(3*time.Minute), candidate)
 		Expect(errors.Is(err, domain.ErrDeviceDiscoveryConflict)).To(BeTrue())
+		candidate.DeviceUUID = secondDeviceID
+		_, err = database.SubmitDeviceDiscovery(context.Background(), now.Add(3*time.Minute), candidate)
+		Expect(errors.Is(err, domain.ErrDeviceDiscoveryConflict)).To(BeTrue())
 
 		pending, err := database.ListPendingDeviceDiscoveries(context.Background(), owner.ID, now.Add(3*time.Minute))
 		Expect(err).NotTo(HaveOccurred())
@@ -388,6 +385,111 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(status.NumericID).To(Equal(1))
 		_, err = database.DeviceDiscoveryStatus(context.Background(), firstDeviceID, bytes.Repeat([]byte{8}, 32), now.Add(4*time.Minute))
 		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
+	})
+
+	It("binds the discovered physical slot and SIM fingerprint during approval", func() {
+		owner := createOwner()
+		fingerprint := bytes.Repeat([]byte{7}, 32)
+		_, err := database.OpenDeviceDiscovery(context.Background(), owner.ID, now, now.Add(10*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = database.SubmitDeviceDiscovery(context.Background(), now, DeviceDiscoveryRequest{
+			DeviceUUID: firstDeviceID, SlotKey: "usb-primary", SlotIndex: 2, SIMFingerprint: fingerprint,
+			IdentityPublicKey: bytes.Repeat([]byte{1}, ed25519.PublicKeySize),
+			CommandPublicKey:  bytes.Repeat([]byte{2}, 32), CredentialHash: bytes.Repeat([]byte{3}, 32),
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		approved, err := database.ApproveDeviceDiscovery(context.Background(), owner.ID, firstDeviceID, now.Add(time.Minute))
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(approved.Slots).To(HaveLen(1))
+		Expect(approved.Slots[0].SlotKey).To(Equal("usb-primary"))
+		Expect(approved.Slots[0].SlotIndex).To(Equal(2))
+		Expect(approved.Slots[0].SIMID).To(HaveValue(Equal(firstDeviceID)))
+		var storedFingerprint []byte
+		var fingerprintScope string
+		Expect(database.pool.QueryRow(context.Background(), `
+			SELECT iccid_fingerprint, fingerprint_scope::text
+			FROM sim_cards WHERE id = $1`, firstDeviceID).Scan(&storedFingerprint, &fingerprintScope)).To(Succeed())
+		Expect(storedFingerprint).To(Equal(fingerprint))
+		Expect(fingerprintScope).To(Equal(firstDeviceID))
+	})
+
+	It("rejects approval after the candidate discovery expires", func() {
+		owner := createOwner()
+		_, err := database.OpenDeviceDiscovery(context.Background(), owner.ID, now, now.Add(time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = database.SubmitDeviceDiscovery(context.Background(), now, DeviceDiscoveryRequest{
+			DeviceUUID: firstDeviceID, IdentityPublicKey: bytes.Repeat([]byte{1}, ed25519.PublicKeySize),
+			CommandPublicKey: bytes.Repeat([]byte{2}, 32), CredentialHash: bytes.Repeat([]byte{3}, 32),
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = database.ApproveDeviceDiscovery(context.Background(), owner.ID, firstDeviceID, now.Add(2*time.Minute))
+
+		Expect(errors.Is(err, domain.ErrDeviceDiscoveryExpired)).To(BeTrue())
+	})
+
+	It("rejects approval when the candidate UUID was paired concurrently", func() {
+		owner := createOwner()
+		_, err := database.OpenDeviceDiscovery(context.Background(), owner.ID, now, now.Add(10*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = database.SubmitDeviceDiscovery(context.Background(), now, DeviceDiscoveryRequest{
+			DeviceUUID: firstDeviceID, IdentityPublicKey: bytes.Repeat([]byte{1}, ed25519.PublicKeySize),
+			CommandPublicKey: bytes.Repeat([]byte{2}, 32), CredentialHash: bytes.Repeat([]byte{3}, 32),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		createDevice(firstDeviceID)
+
+		_, err = database.ApproveDeviceDiscovery(context.Background(), owner.ID, firstDeviceID, now.Add(time.Minute))
+
+		Expect(errors.Is(err, domain.ErrDeviceExists)).To(BeTrue())
+	})
+
+	It("reports exhausted SIM identifiers during discovery approval", func() {
+		owner := createOwner()
+		_, err := database.OpenDeviceDiscovery(context.Background(), owner.ID, now, now.Add(10*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = database.SubmitDeviceDiscovery(context.Background(), now, DeviceDiscoveryRequest{
+			DeviceUUID: firstDeviceID, IdentityPublicKey: bytes.Repeat([]byte{1}, ed25519.PublicKeySize),
+			CommandPublicKey: bytes.Repeat([]byte{2}, 32), CredentialHash: bytes.Repeat([]byte{3}, 32),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		for numericID := domain.MinNumericID; numericID <= domain.MaxNumericID; numericID++ {
+			_, err = database.pool.Exec(context.Background(), `
+				INSERT INTO sim_cards (id, numeric_id, profile_ciphertext)
+				VALUES (gen_random_uuid(), $1, ''::bytea)`, numericID)
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		_, err = database.ApproveDeviceDiscovery(context.Background(), owner.ID, firstDeviceID, now.Add(time.Minute))
+
+		Expect(errors.Is(err, domain.ErrNoNumericID)).To(BeTrue())
+	})
+
+	It("replaces expired discovery evidence but rejects an already paired device", func() {
+		owner := createOwner()
+		firstCandidate := DeviceDiscoveryRequest{
+			DeviceUUID: firstDeviceID, IdentityPublicKey: bytes.Repeat([]byte{1}, ed25519.PublicKeySize),
+			CommandPublicKey: bytes.Repeat([]byte{2}, 32), CredentialHash: bytes.Repeat([]byte{3}, 32),
+		}
+		_, err := database.OpenDeviceDiscovery(context.Background(), owner.ID, now, now.Add(time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = database.SubmitDeviceDiscovery(context.Background(), now, firstCandidate)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = database.OpenDeviceDiscovery(context.Background(), owner.ID, now.Add(2*time.Minute), now.Add(12*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		replacement := firstCandidate
+		replacement.IdentityPublicKey = bytes.Repeat([]byte{4}, ed25519.PublicKeySize)
+		replaced, err := database.SubmitDeviceDiscovery(context.Background(), now.Add(2*time.Minute), replacement)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(replaced.IdentityPublicKey).To(Equal(replacement.IdentityPublicKey))
+		Expect(replaced.FirstSeenAt).To(Equal(now.Add(2 * time.Minute)))
+
+		createDevice(secondDeviceID)
+		replacement.DeviceUUID = secondDeviceID
+		_, err = database.SubmitDeviceDiscovery(context.Background(), now.Add(3*time.Minute), replacement)
+		Expect(errors.Is(err, domain.ErrDeviceExists)).To(BeTrue())
 	})
 
 	It("rejects a pending discovery without creating a device", func() {
@@ -648,11 +750,101 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
 	})
 
+	It("keeps physical slot identity separate from replaceable SIM identity", func() {
+		device := createDevice(firstDeviceID)
+		firstFingerprint := bytes.Repeat([]byte{61}, 32)
+		secondFingerprint := bytes.Repeat([]byte{62}, 32)
+		slots, err := database.ListDevices(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(slots[0].Slots).To(HaveLen(1))
+		slotKey := slots[0].Slots[0].SlotKey
+		slotIndex := slots[0].Slots[0].SlotIndex
+		firstSIM, firstNumeric, err := database.UpdateDeviceSIMIdentity(context.Background(), device.ID, slotKey, slotIndex, firstFingerprint, now)
+		Expect(err).NotTo(HaveOccurred())
+		secondSIM, secondNumeric, err := database.UpdateDeviceSIMIdentity(context.Background(), device.ID, slotKey, slotIndex, secondFingerprint, now.Add(time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(secondSIM).NotTo(Equal(firstSIM))
+		Expect(secondNumeric).NotTo(Equal(firstNumeric))
+		reusedSIM, reusedNumeric, err := database.UpdateDeviceSIMIdentity(context.Background(), device.ID, slotKey, slotIndex, firstFingerprint, now.Add(2*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(reusedSIM).To(Equal(firstSIM))
+		Expect(reusedNumeric).To(Equal(firstNumeric))
+		listed, err := database.ListDevices(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(listed[0].Slots[0].SIMID).To(HaveValue(Equal(firstSIM)))
+		var assignmentCount int
+		Expect(database.pool.QueryRow(context.Background(), `SELECT count(*) FROM slot_sim_assignments WHERE slot_id = $1`, listed[0].Slots[0].ID).Scan(&assignmentCount)).To(Succeed())
+		Expect(assignmentCount).To(Equal(3))
+	})
+
+	It("moves one identified SIM between physical slots without cloning it", func() {
+		device := createDevice(firstDeviceID)
+		fingerprint := bytes.Repeat([]byte{63}, 32)
+		firstSlot := device.Slots[0]
+		simID, numericID, err := database.UpdateDeviceSIMIdentity(
+			context.Background(), device.ID, firstSlot.SlotKey, firstSlot.SlotIndex, fingerprint, now,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = database.pool.Exec(context.Background(), `
+			INSERT INTO device_slots (device_id, slot_key, slot_index, created_at, last_seen_at)
+			VALUES ($1, 'secondary', 2, $2, $2)`, device.ID, now)
+		Expect(err).NotTo(HaveOccurred())
+
+		movedSIMID, movedNumericID, err := database.UpdateDeviceSIMIdentity(
+			context.Background(), device.ID, "secondary", 2, fingerprint, now.Add(time.Minute),
+		)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(movedSIMID).To(Equal(simID))
+		Expect(movedNumericID).To(Equal(numericID))
+		listed, err := database.ListDevices(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(listed).To(HaveLen(1))
+		Expect(listed[0].Slots).To(HaveLen(2))
+		Expect(listed[0].Slots[0].SIMID).To(BeNil())
+		Expect(listed[0].Slots[1].SIMID).To(HaveValue(Equal(simID)))
+		var currentAssignments int
+		Expect(database.pool.QueryRow(context.Background(), `
+			SELECT count(*) FROM slot_sim_assignments
+			WHERE sim_id = $1 AND removed_at IS NULL`, simID).Scan(&currentAssignments)).To(Succeed())
+		Expect(currentAssignments).To(Equal(1))
+	})
+
+	It("validates SIM synchronization and reports exhausted numeric IDs", func() {
+		device := createDevice(firstDeviceID)
+		fingerprint := bytes.Repeat([]byte{64}, 32)
+		_, _, err := database.UpdateDeviceSIMIdentity(context.Background(), device.ID, "", 1, fingerprint, now)
+		Expect(err).To(MatchError("invalid slot or SIM fingerprint"))
+		_, _, err = database.UpdateDeviceSIMIdentity(context.Background(), device.ID, "primary", 0, fingerprint, now)
+		Expect(err).To(MatchError("invalid slot or SIM fingerprint"))
+		_, _, err = database.UpdateDeviceSIMIdentity(context.Background(), device.ID, "primary", 1, []byte{1}, now)
+		Expect(err).To(MatchError("invalid slot or SIM fingerprint"))
+		_, _, err = database.UpdateDeviceSIMIdentity(context.Background(), device.ID, "missing", 2, fingerprint, now)
+		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
+
+		firstSlot := device.Slots[0]
+		_, _, err = database.UpdateDeviceSIMIdentity(
+			context.Background(), device.ID, firstSlot.SlotKey, firstSlot.SlotIndex, fingerprint, now,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		for numericID := domain.MinNumericID + 1; numericID <= domain.MaxNumericID; numericID++ {
+			_, err := database.pool.Exec(context.Background(), `
+				INSERT INTO sim_cards (id, numeric_id, profile_ciphertext)
+				VALUES (gen_random_uuid(), $1, ''::bytea)`, numericID)
+			Expect(err).NotTo(HaveOccurred())
+		}
+		_, _, err = database.UpdateDeviceSIMIdentity(
+			context.Background(), device.ID, firstSlot.SlotKey, firstSlot.SlotIndex,
+			bytes.Repeat([]byte{65}, 32), now.Add(time.Minute),
+		)
+		Expect(errors.Is(err, domain.ErrNoNumericID)).To(BeTrue())
+	})
+
 	It("returns no numeric ID after all visible identifiers are occupied", func() {
 		for numericID := domain.MinNumericID; numericID <= domain.MaxNumericID; numericID++ {
 			_, err := database.pool.Exec(context.Background(), `
-				INSERT INTO devices (id, numeric_id, profile_ciphertext, identity_public_key)
-				VALUES (gen_random_uuid(), $1, ''::bytea, ''::bytea)`, numericID)
+				INSERT INTO sim_cards (id, numeric_id, profile_ciphertext)
+				VALUES (gen_random_uuid(), $1, ''::bytea)`, numericID)
 			Expect(err).NotTo(HaveOccurred())
 		}
 
@@ -665,8 +857,8 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		owner := createOwner()
 		for numericID := domain.MinNumericID; numericID <= domain.MaxNumericID; numericID++ {
 			_, err := database.pool.Exec(context.Background(), `
-				INSERT INTO devices (id, numeric_id, profile_ciphertext, identity_public_key)
-				VALUES (gen_random_uuid(), $1, ''::bytea, ''::bytea)`, numericID)
+				INSERT INTO sim_cards (id, numeric_id, profile_ciphertext)
+				VALUES (gen_random_uuid(), $1, ''::bytea)`, numericID)
 			Expect(err).NotTo(HaveOccurred())
 		}
 		tokenHash, err := auth.TokenHash(newToken())
@@ -1171,13 +1363,13 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		)
 	})
 
-	It("reports ping and migration failures", func() {
+	It("reports ping and schema initialization failures", func() {
 		_, err := Open(context.Background(), "postgres://simdeck:simdeck-test-only@127.0.0.1:1/simdeck_test?sslmode=disable&connect_timeout=1")
 		Expect(err).To(MatchError(ContainSubstring("ping postgres")))
 
 		closed, err := Open(context.Background(), os.Getenv("TEST_DATABASE_URL"))
 		Expect(err).NotTo(HaveOccurred())
 		closed.Close()
-		Expect(closed.Migrate(context.Background())).To(MatchError(ContainSubstring("apply migration")))
+		Expect(closed.InitializeSchema(context.Background())).To(MatchError(ContainSubstring("initialize database schema")))
 	})
 })

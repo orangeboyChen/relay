@@ -11,12 +11,15 @@ import socket
 import ssl
 import sys
 import threading
+import time
 
 VENDOR_ID = 0x2C7C
 PRODUCT_ID = 0x0125
 INTERFACE = 2
 IN_ENDPOINT = 0x84
 OUT_ENDPOINT = 0x03
+BULK_TIMEOUT_MS = 1000
+EXCHANGE_TIMEOUT_SECONDS = 8.0
 
 
 def load_libusb():
@@ -73,22 +76,24 @@ def find_device(usb, context):
 
 
 def exchange(usb, handle, payload):
+    deadline = time.monotonic() + EXCHANGE_TIMEOUT_SECONDS
     request = (ctypes.c_ubyte * len(payload)).from_buffer_copy(payload)
     transferred = ctypes.c_int()
-    result = usb.libusb_bulk_transfer(handle, OUT_ENDPOINT, request, len(payload), ctypes.byref(transferred), 1000)
+    result = usb.libusb_bulk_transfer(handle, OUT_ENDPOINT, request, len(payload), ctypes.byref(transferred), BULK_TIMEOUT_MS)
     if result != 0:
         raise RuntimeError(f"USB write: {error_name(usb, result)}")
     response = bytearray()
-    while True:
+    while time.monotonic() < deadline:
         buffer = (ctypes.c_ubyte * 4096)()
-        result = usb.libusb_bulk_transfer(handle, IN_ENDPOINT, buffer, len(buffer), ctypes.byref(transferred), 1000)
+        result = usb.libusb_bulk_transfer(handle, IN_ENDPOINT, buffer, len(buffer), ctypes.byref(transferred), BULK_TIMEOUT_MS)
         if result == -7:
             continue
         if result != 0:
             raise RuntimeError(f"USB read: {error_name(usb, result)}")
         response.extend(bytes(buffer[:transferred.value]))
-        if b"\r\nOK\r\n" in response or b"\r\nERROR\r\n" in response or b"NO CARRIER" in response or b"+CME ERROR:" in response or b"+CMS ERROR:" in response:
+        if b"\r\n> " in response or b"\r\nOK\r\n" in response or b"\r\nERROR\r\n" in response or b"NO CARRIER" in response or b"+CME ERROR:" in response or b"+CMS ERROR:" in response:
             return bytes(response)
+    raise RuntimeError(f"USB response timeout after {EXCHANGE_TIMEOUT_SECONDS:.1f}s")
 
 
 def main():
@@ -128,21 +133,40 @@ def main():
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind((args.listen, args.port))
         listener.listen(1)
+        listener.settimeout(1)
         signal.signal(signal.SIGINT, lambda *_: stopped.set())
         signal.signal(signal.SIGTERM, lambda *_: stopped.set())
         print(f"EC20F AT TLS bridge listening on {args.listen}:{args.port}; USB interface {INTERFACE}, IN=0x{IN_ENDPOINT:02x}, OUT=0x{OUT_ENDPOINT:02x}", flush=True)
-        raw_client, address = listener.accept()
-        client = tls_context.wrap_socket(raw_client, server_side=True)
-        client.settimeout(1)
-        print(f"TLS AT client connected from {address[0]}:{address[1]}", flush=True)
         while not stopped.is_set():
             try:
-                payload = client.recv(4096)
+                raw_client, address = listener.accept()
             except socket.timeout:
                 continue
-            if not payload:
-                break
-            client.sendall(exchange(usb, handle, payload))
+            try:
+                client = tls_context.wrap_socket(raw_client, server_side=True)
+            except ssl.SSLError as exc:
+                print(f"TLS client rejected: {exc}", file=sys.stderr, flush=True)
+                raw_client.close()
+                continue
+            client.settimeout(1)
+            print(f"TLS AT client connected from {address[0]}:{address[1]}", flush=True)
+            try:
+                while not stopped.is_set():
+                    try:
+                        payload = client.recv(4096)
+                    except socket.timeout:
+                        continue
+                    if not payload:
+                        break
+                    try:
+                        response = exchange(usb, handle, payload)
+                    except RuntimeError as exc:
+                        print(f"USB exchange failed: {exc}", file=sys.stderr, flush=True)
+                        response = b"\r\n+CME ERROR: 515\r\n"
+                    client.sendall(response)
+            finally:
+                client.close()
+                client = None
         return 0
     finally:
         stopped.set()

@@ -454,6 +454,24 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(calls.operations).To(BeEmpty())
 	})
 
+	It("rejects a command addressed to another physical slot or SIM", func() {
+		state.SlotID = "01900000-0000-7000-8000-000000000002"
+		state.SIMID = "01900000-0000-7000-8000-000000000003"
+		var runtimeErr error
+		runtime, runtimeErr = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: events, Media: media, Messages: messages})
+		Expect(runtimeErr).NotTo(HaveOccurred())
+
+		for _, payload := range []Payload{
+			{Version: 1, Operation: "message.send", MessageID: "01900000-0000-7000-8000-000000000020", Number: "13500000000", Body: "wrong slot", SlotID: "01900000-0000-7000-8000-000000000004"},
+			{Version: 1, Operation: "message.send", MessageID: "01900000-0000-7000-8000-000000000020", Number: "13500000000", Body: "wrong SIM", SIMID: "01900000-0000-7000-8000-000000000005"},
+		} {
+			envelope, sharedSecret := sealCommand(state, senderKey, commandID, payload)
+			Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+			Expect(openResult(sharedSecret, envelope, remote.result).ErrorCode).To(Equal("wrong_sim_slot"))
+		}
+		Expect(messages.destination).To(BeEmpty())
+	})
+
 	It("rejects tampering before invoking the modem or acknowledging", func() {
 		envelope, _ := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.end", CallID: "call-1"})
 		envelope.Ciphertext[0] ^= 0xff

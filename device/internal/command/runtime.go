@@ -51,6 +51,8 @@ type EncryptedResult struct {
 type Payload struct {
 	Version    int    `json:"version"`
 	Operation  string `json:"operation"`
+	SlotID     string `json:"slot_id,omitempty"`
+	SIMID      string `json:"sim_id,omitempty"`
 	CallID     string `json:"call_id,omitempty"`
 	MessageID  string `json:"message_id,omitempty"`
 	Number     string `json:"number,omitempty"`
@@ -213,6 +215,9 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload) (string, e
 	if payload.Version != protocolVersion {
 		return "", errInvalidCommand
 	}
+	if !runtime.targetMatches(payload) {
+		return "", errWrongSlot
+	}
 	switch payload.Operation {
 	case "message.send":
 		if !identity.ValidDeviceUUID(payload.MessageID) || strings.TrimSpace(payload.Number) == "" || strings.TrimSpace(payload.Body) == "" {
@@ -293,14 +298,28 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload) (string, e
 	}
 }
 
+func (runtime *Runtime) targetMatches(payload Payload) bool {
+	if payload.SlotID != "" && payload.SlotID != runtime.identity.SlotID {
+		return false
+	}
+	if payload.SIMID != "" && payload.SIMID != runtime.identity.SIMID {
+		return false
+	}
+	return true
+}
+
 var (
 	errInvalidCommand   = errors.New("invalid command payload")
+	errWrongSlot        = errors.New("command targets another SIM slot")
 	errMediaUnavailable = errors.New("call media unavailable")
 )
 
 func commandErrorCode(err error) string {
 	if errors.Is(err, errInvalidCommand) {
 		return "invalid_command"
+	}
+	if errors.Is(err, errWrongSlot) {
+		return "wrong_sim_slot"
 	}
 	if errors.Is(err, errMediaUnavailable) {
 		return "media_unavailable"

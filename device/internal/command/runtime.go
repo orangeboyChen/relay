@@ -224,13 +224,16 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload) (string, e
 		if strings.TrimSpace(payload.CallID) == "" || strings.TrimSpace(payload.MediaOffer) == "" {
 			return "", errInvalidCommand
 		}
-		answer, err := runtime.media.Negotiate(ctx, payload.CallID, payload.MediaOffer)
-		if err != nil {
-			return "", fmt.Errorf("%w: %v", errMediaUnavailable, err)
-		}
 		if err := runtime.calls.Dial(ctx, payload.Number); err != nil {
 			_ = runtime.media.Stop(payload.CallID)
 			return "", err
+		}
+		answer, err := runtime.media.Negotiate(ctx, payload.CallID, payload.MediaOffer)
+		if err != nil {
+			// The modem is already dialing; release it if media negotiation cannot complete.
+			_ = runtime.calls.Hangup(context.WithoutCancel(ctx))
+			_ = runtime.media.Stop(payload.CallID)
+			return "", fmt.Errorf("%w: %v", errMediaUnavailable, err)
 		}
 		return answer, nil
 	case "call.answer":

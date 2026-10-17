@@ -73,10 +73,14 @@ type fakeCalls struct {
 	state      call.State
 	operations []string
 	error      error
+	sequence   *[]string
 }
 
 func (calls *fakeCalls) Dial(_ context.Context, value string) error {
 	calls.operations = append(calls.operations, "dial:"+value)
+	if calls.sequence != nil {
+		*calls.sequence = append(*calls.sequence, "dial")
+	}
 	if calls.error == nil {
 		calls.state = call.StateDialing
 	}
@@ -105,6 +109,9 @@ func (calls *fakeCalls) Reject(context.Context) error {
 }
 func (calls *fakeCalls) Hangup(context.Context) error {
 	calls.operations = append(calls.operations, "hangup")
+	if calls.sequence != nil {
+		*calls.sequence = append(*calls.sequence, "hangup")
+	}
 	return calls.error
 }
 func (calls *fakeCalls) Hold(context.Context) error {
@@ -148,6 +155,7 @@ type fakeCallMedia struct {
 	answer       string
 	negotiateErr error
 	stopped      []string
+	sequence     *[]string
 }
 
 type fakeMessages struct {
@@ -167,6 +175,9 @@ func (messages *fakeMessages) SendSMS(_ context.Context, destination string, bod
 func (media *fakeCallMedia) Negotiate(_ context.Context, callID string, offer string) (string, error) {
 	media.callID = callID
 	media.offer = offer
+	if media.sequence != nil {
+		*media.sequence = append(*media.sequence, "negotiate")
+	}
 	return media.answer, media.negotiateErr
 }
 
@@ -189,9 +200,11 @@ var _ = Describe("Encrypted command runtime", func() {
 		media     *fakeCallMedia
 		messages  *fakeMessages
 		runtime   *Runtime
+		sequence  []string
 	)
 
 	BeforeEach(func() {
+		sequence = nil
 		deviceKey, err := ecdh.X25519().GenerateKey(rand.Reader)
 		Expect(err).NotTo(HaveOccurred())
 		senderKey, err = ecdh.X25519().GenerateKey(rand.Reader)
@@ -205,9 +218,9 @@ var _ = Describe("Encrypted command runtime", func() {
 			IdentityPublicKey:     signingKey.Public().(ed25519.PublicKey),
 			KeyAgreementPublicKey: bytes.Repeat([]byte{7}, 32),
 		}}}
-		calls = &fakeCalls{state: call.StateIdle}
+		calls = &fakeCalls{state: call.StateIdle, sequence: &sequence}
 		events = &fakeEventRegistrar{}
-		media = &fakeCallMedia{answer: "answer-sdp"}
+		media = &fakeCallMedia{answer: "answer-sdp", sequence: &sequence}
 		messages = &fakeMessages{}
 		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: events, Media: media, Messages: messages})
 		Expect(err).NotTo(HaveOccurred())
@@ -325,9 +338,10 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(media.callID).To(Equal("call-1"))
 		Expect(media.offer).To(Equal("offer-sdp"))
 		Expect(calls.operations).To(Equal([]string{"dial:10086"}))
+		Expect(sequence).To(Equal([]string{"dial", "negotiate"}))
 	})
 
-	It("returns a generic encrypted media error without dialing", func() {
+	It("hangs up a dial when media negotiation fails", func() {
 		media.negotiateErr = errors.New("ALSA device exposed detail")
 		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{
 			Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086", MediaOffer: "offer-sdp",
@@ -338,7 +352,8 @@ var _ = Describe("Encrypted command runtime", func() {
 		result := openResult(sharedSecret, envelope, remote.result)
 		Expect(result.Success).To(BeFalse())
 		Expect(result.ErrorCode).To(Equal("media_unavailable"))
-		Expect(calls.operations).To(BeEmpty())
+		Expect(calls.operations).To(Equal([]string{"dial:10086", "hangup"}))
+		Expect(sequence).To(Equal([]string{"dial", "negotiate", "hangup"}))
 		Expect(events.unregistered).To(Equal("call-1"))
 		Expect(string(remote.result.Ciphertext)).NotTo(ContainSubstring("ALSA"))
 	})

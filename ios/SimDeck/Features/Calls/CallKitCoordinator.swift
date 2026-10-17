@@ -22,6 +22,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
     @ObservationIgnored private var incomingCalls: [UUID: IncomingCallPresentation] = [:]
     @ObservationIgnored private var startCompletions: [UUID: (Result<Void, Error>) -> Void] = [:]
     @ObservationIgnored private var pendingEndCallKinds: [UUID: Bool] = [:]
+    @ObservationIgnored private var pendingOutgoingEndReasons: [UUID: CallEndReason] = [:]
 
     init(
         transport: any CallTransport = UnavailableCallTransport(),
@@ -277,11 +278,20 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
             }
         case .ended(let callID, let reason):
             guard activeCall?.id == callID else { return }
-            if integratesWithSystem {
-                provider.reportCall(with: callID, endedAt: .now, reason: reason.callKitReason)
+            if pendingOutgoing[callID] != nil {
+                pendingOutgoingEndReasons[callID] = reason
+                return
             }
-            finishCall(callID: callID)
+            finishEndedCall(callID: callID, reason: reason)
         }
+    }
+
+    private func finishEndedCall(callID: UUID, reason: CallEndReason) {
+        guard activeCall?.id == callID else { return }
+        if integratesWithSystem {
+            provider.reportCall(with: callID, endedAt: .now, reason: reason.callKitReason)
+        }
+        finishCall(callID: callID)
     }
 
     private func configureAudioSession() throws {
@@ -338,10 +348,14 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
     }
 
     private func completeStart(callID: UUID, result: Result<Void, Error>) {
+        let pendingEndReason = pendingOutgoingEndReasons.removeValue(forKey: callID)
         let completion = startCompletions.removeValue(forKey: callID)
         pendingOutgoing.removeValue(forKey: callID)
         incomingCalls.removeValue(forKey: callID)
         completion?(result)
+        if case .success = result, let pendingEndReason {
+            finishEndedCall(callID: callID, reason: pendingEndReason)
+        }
     }
 
     private func failStart(callID: UUID, error: Error) {
@@ -364,6 +378,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
             callStartFailureID = nil
         }
         pendingOutgoing.removeValue(forKey: callID)
+        pendingOutgoingEndReasons.removeValue(forKey: callID)
         incomingCalls.removeValue(forKey: callID)
         if let completion = startCompletions.removeValue(forKey: callID) {
             completion(.failure(CallLifecycleError.endedBeforeStart))

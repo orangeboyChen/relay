@@ -118,6 +118,19 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertNil(coordinator.callStartFailureID)
     }
 
+    func testEndEventDuringOutgoingStartIsAppliedAfterStartCompletes() async throws {
+        let transport = RecordingCallTransport(endsBeforeStartCompletes: true)
+        let coordinator = CallKitCoordinator(
+            transport: transport,
+            integratesWithSystem: false
+        )
+
+        try await coordinator.startCall(to: "10086", using: UUID())
+
+        XCTAssertEqual(transport.startedCalls.count, 1)
+        XCTAssertNil(coordinator.activeCall)
+    }
+
     func testReportsIncomingCallWithRemoteNumberAndSIMIdentity() async throws {
         let provider = RecordingSystemCallProvider()
         let transport = RecordingCallTransport()
@@ -354,6 +367,7 @@ private final class RecordingCallTransport: CallTransport {
     let connectedAt = Date(timeIntervalSince1970: 3_000)
     private let startError: Error?
     private let endError: Error?
+    private let endsBeforeStartCompletes: Bool
     private var eventHandler: (@MainActor (CallTransportEvent) -> Void)?
 
     private(set) var startedCalls: [StartedCall] = []
@@ -365,9 +379,14 @@ private final class RecordingCallTransport: CallTransport {
     private(set) var discardedIncomingCallIDs: [UUID] = []
     private(set) var answeredIncomingCallIDs: [UUID] = []
 
-    init(startError: Error? = nil, endError: Error? = nil) {
+    init(
+        startError: Error? = nil,
+        endError: Error? = nil,
+        endsBeforeStartCompletes: Bool = false
+    ) {
         self.startError = startError
         self.endError = endError
+        self.endsBeforeStartCompletes = endsBeforeStartCompletes
     }
 
     func setEventHandler(_ handler: @escaping @MainActor (CallTransportEvent) -> Void) {
@@ -388,6 +407,9 @@ private final class RecordingCallTransport: CallTransport {
         }
         startedCalls.append(.init(callID: callID, number: number, lineID: lineID))
         eventHandler?(.ringing(callID: callID))
+        if endsBeforeStartCompletes {
+            eventHandler?(.ended(callID: callID, reason: .remoteEnded))
+        }
         eventHandler?(.connected(callID: callID, at: connectedAt))
     }
 

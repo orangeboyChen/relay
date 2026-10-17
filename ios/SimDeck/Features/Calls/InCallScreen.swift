@@ -67,8 +67,8 @@ struct InCallScreen: View {
                     Spacer(minLength: 30)
 
                     Button {
-                        perform {
-                            try await coordinator.endCall()
+                        Task {
+                            try? await coordinator.endCall()
                         }
                     } label: {
                         Image(systemName: "phone.down.fill")
@@ -79,7 +79,6 @@ struct InCallScreen: View {
                     }
                     .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
                     .accessibilityLabel("End call")
-                    .disabled(call.status == .ending)
 
                     if isKeypadVisible {
                         Button("Hide Keypad") {
@@ -102,9 +101,21 @@ struct InCallScreen: View {
         .interactiveDismissDisabled()
         .alert(item: $presentedError) { error in
             Alert(
-                title: Text("Call Control Failed"),
+                title: Text(error.title),
                 message: Text(error.message),
-                dismissButton: .default(Text("OK"))
+                dismissButton: .default(Text("OK")) {
+                    if error.endsFailedCall {
+                        coordinator.dismissCallStartFailure()
+                    }
+                }
+            )
+        }
+        .onChange(of: coordinator.callStartFailureID, initial: true) { _, callID in
+            guard callID != nil else { return }
+            presentedError = InCallPresentedError(
+                title: "Call Failed",
+                message: "Could not start the call.",
+                endsFailedCall: true
             )
         }
     }
@@ -128,7 +139,9 @@ struct InCallScreen: View {
             do {
                 try await operation()
             } catch {
-                presentedError = InCallPresentedError(message: "The call command could not be completed.")
+                presentedError = InCallPresentedError(
+                    message: "The call command could not be completed."
+                )
             }
         }
     }
@@ -194,6 +207,8 @@ private struct CallStatusText: View {
             Text("On Hold")
         case .ending:
             Text("Ending…")
+        case .failed:
+            Text("Call Failed")
         }
     }
 }
@@ -380,7 +395,9 @@ private struct InCallKeypad: View {
 
 private struct InCallPresentedError: Identifiable {
     let id = UUID()
+    var title: LocalizedStringResource = "Call Control Failed"
     let message: LocalizedStringResource
+    var endsFailedCall = false
 }
 
 private extension ActiveCallStatus {

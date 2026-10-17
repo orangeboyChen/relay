@@ -62,12 +62,13 @@ enum ActiveCallStatus: Equatable, Sendable {
     case active(connectedAt: Date)
     case held(connectedAt: Date)
     case ending
+    case failed
 
     var connectedAt: Date? {
         switch self {
         case .active(let connectedAt), .held(let connectedAt):
             connectedAt
-        case .requesting, .connecting, .ringing, .ending:
+        case .requesting, .connecting, .ringing, .ending, .failed:
             nil
         }
     }

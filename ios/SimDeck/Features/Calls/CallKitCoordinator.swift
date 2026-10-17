@@ -7,6 +7,7 @@ import Observation
 @Observable
 final class CallKitCoordinator: NSObject, CallStarting, CallControlling, IncomingCallReporting {
     private(set) var activeCall: ActiveCallSession?
+    private(set) var callStartFailureID: UUID?
 
     let capabilities: CallCapabilities
     let audioRoutes: CallAudioRouteController
@@ -20,6 +21,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
     @ObservationIgnored private var pendingOutgoing: [UUID: OutgoingCallRequest] = [:]
     @ObservationIgnored private var incomingCalls: [UUID: IncomingCallPresentation] = [:]
     @ObservationIgnored private var startCompletions: [UUID: (Result<Void, Error>) -> Void] = [:]
+    @ObservationIgnored private var pendingEndCallKinds: [UUID: Bool] = [:]
 
     init(
         transport: any CallTransport = UnavailableCallTransport(),
@@ -194,17 +196,26 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
 
     func endCall() async throws {
         guard let activeCall else { return }
-        if incomingCalls[activeCall.id] != nil {
-            try await transport.rejectIncomingCall(callID: activeCall.id)
-            finishCall(callID: activeCall.id)
+        let callID = activeCall.id
+        let isIncoming = incomingCalls[callID] != nil
+        finishCall(callID: callID)
+
+        if integratesWithSystem {
+            pendingEndCallKinds[callID] = isIncoming
+            do {
+                try await controller.request(CXTransaction(action: CXEndCallAction(call: callID)))
+            } catch {
+                pendingEndCallKinds.removeValue(forKey: callID)
+                throw error
+            }
             return
         }
-        guard integratesWithSystem else {
-            try await transport.endCall(callID: activeCall.id)
-            finishCall(callID: activeCall.id)
+
+        if isIncoming {
+            try await transport.rejectIncomingCall(callID: callID)
             return
         }
-        try await controller.request(CXTransaction(action: CXEndCallAction(call: activeCall.id)))
+        try await transport.endCall(callID: callID)
     }
 
     func setHeld(_ isHeld: Bool) async throws {
@@ -336,13 +347,22 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
     private func failStart(callID: UUID, error: Error) {
         completeStart(callID: callID, result: .failure(error))
         if activeCall?.id == callID {
-            activeCall = nil
+            activeCall?.status = .failed
+            callStartFailureID = callID
         }
+    }
+
+    func dismissCallStartFailure() {
+        guard let callStartFailureID else { return }
+        finishCall(callID: callStartFailureID)
     }
 
     private func finishCall(callID: UUID) {
         guard activeCall?.id == callID else { return }
         activeCall = nil
+        if callStartFailureID == callID {
+            callStartFailureID = nil
+        }
         pendingOutgoing.removeValue(forKey: callID)
         incomingCalls.removeValue(forKey: callID)
         if let completion = startCompletions.removeValue(forKey: callID) {
@@ -378,28 +398,28 @@ extension CallKitCoordinator: @preconcurrency CXProviderDelegate {
     }
 
     func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
-        guard activeCall?.id == action.callUUID else {
+        let callID = action.callUUID
+        guard activeCall?.id == callID || pendingEndCallKinds[callID] != nil else {
             action.fail()
             return
         }
-        let previousStatus = activeCall?.status
-        activeCall?.status = .ending
+        let isIncoming = pendingEndCallKinds[callID] ?? (incomingCalls[callID] != nil)
+        if activeCall?.id == callID {
+            finishCall(callID: callID)
+        }
 
         Task {
             do {
-                if incomingCalls[action.callUUID] != nil {
-                    try await transport.rejectIncomingCall(callID: action.callUUID)
+                if isIncoming {
+                    try await transport.rejectIncomingCall(callID: callID)
                 } else {
-                    try await transport.endCall(callID: action.callUUID)
+                    try await transport.endCall(callID: callID)
                 }
                 action.fulfill()
-                finishCall(callID: action.callUUID)
             } catch {
                 action.fail()
-                if let previousStatus {
-                    activeCall?.status = previousStatus
-                }
             }
+            pendingEndCallKinds.removeValue(forKey: callID)
         }
     }
 

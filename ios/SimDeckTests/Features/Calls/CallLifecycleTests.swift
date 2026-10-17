@@ -69,7 +69,33 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertNil(coordinator.activeCall)
     }
 
-    func testInProcessStartFailureClearsCallAndPropagatesError() async {
+    func testEndFailureDoesNotRestoreTheVisibleCall() async {
+        let transport = RecordingCallTransport(endError: TestCallError.failed)
+        let callID = UUID()
+        let coordinator = CallKitCoordinator(
+            transport: transport,
+            integratesWithSystem: false,
+            initialCall: ActiveCallSession(
+                id: callID,
+                lineID: UUID(),
+                remoteNumber: "10086",
+                displayName: nil,
+                status: .active(connectedAt: Date(timeIntervalSince1970: 1_000)),
+                isMuted: false
+            )
+        )
+
+        do {
+            try await coordinator.endCall()
+            XCTFail("Expected endCall to report the transport error")
+        } catch {
+            XCTAssertEqual(error as? TestCallError, .failed)
+        }
+
+        XCTAssertNil(coordinator.activeCall)
+    }
+
+    func testInProcessStartFailureKeepsCallVisibleUntilFailureIsDismissed() async {
         let transport = RecordingCallTransport(startError: TestCallError.failed)
         let coordinator = CallKitCoordinator(
             transport: transport,
@@ -83,7 +109,13 @@ final class CallLifecycleTests: XCTestCase {
             XCTAssertEqual(error as? TestCallError, .failed)
         }
 
+        XCTAssertEqual(coordinator.activeCall?.status, .failed)
+        XCTAssertEqual(coordinator.callStartFailureID, coordinator.activeCall?.id)
+
+        coordinator.dismissCallStartFailure()
+
         XCTAssertNil(coordinator.activeCall)
+        XCTAssertNil(coordinator.callStartFailureID)
     }
 
     func testReportsIncomingCallWithRemoteNumberAndSIMIdentity() async throws {
@@ -321,6 +353,7 @@ private final class RecordingCallTransport: CallTransport {
     let capabilities = CallCapabilities.cellular
     let connectedAt = Date(timeIntervalSince1970: 3_000)
     private let startError: Error?
+    private let endError: Error?
     private var eventHandler: (@MainActor (CallTransportEvent) -> Void)?
 
     private(set) var startedCalls: [StartedCall] = []
@@ -332,8 +365,9 @@ private final class RecordingCallTransport: CallTransport {
     private(set) var discardedIncomingCallIDs: [UUID] = []
     private(set) var answeredIncomingCallIDs: [UUID] = []
 
-    init(startError: Error? = nil) {
+    init(startError: Error? = nil, endError: Error? = nil) {
         self.startError = startError
+        self.endError = endError
     }
 
     func setEventHandler(_ handler: @escaping @MainActor (CallTransportEvent) -> Void) {
@@ -363,6 +397,9 @@ private final class RecordingCallTransport: CallTransport {
     func rejectIncomingCall(callID: UUID) async throws {}
 
     func endCall(callID: UUID) async throws {
+        if let endError {
+            throw endError
+        }
         endedCallIDs.append(callID)
         eventHandler?(.ended(callID: callID, reason: .remoteEnded))
     }

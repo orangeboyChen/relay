@@ -9,7 +9,6 @@ struct DialerScreen: View {
     @State private var selectedLineID: UUID?
     @State private var number = ""
     @State private var isCalling = false
-    @State private var errorMessage: LocalizedStringResource?
 
     init(
         lines: [DeviceLineIdentity],
@@ -40,10 +39,6 @@ struct DialerScreen: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
-                } else if let errorMessage {
-                    Text(errorMessage)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
                 }
 
                 CallButton(isCalling: isCalling, isEnabled: validationReason == nil) {
@@ -61,10 +56,8 @@ struct DialerScreen: View {
                     Button("Close") {
                         dismiss()
                     }
-                    .disabled(isCalling)
                 }
             }
-            .interactiveDismissDisabled(isCalling)
         }
     }
 
@@ -99,19 +92,19 @@ struct DialerScreen: View {
     }
 
     private func startCall() {
-        guard let selectedLine, validationReason == nil else { return }
+        guard !isCalling, let selectedLine, validationReason == nil else { return }
         let normalizedNumber = DialString.normalized(number)
         isCalling = true
-        errorMessage = nil
+        dismiss()
 
         Task {
             do {
                 try await callStarter.startCall(to: normalizedNumber, using: selectedLine.id)
                 onStarted(selectedLine.id)
-                dismiss()
             } catch {
-                errorMessage = "Could not start the call."
-                isCalling = false
+                #if DEBUG
+                print("dialer startCall failed: \(String(reflecting: error))")
+                #endif
             }
         }
     }

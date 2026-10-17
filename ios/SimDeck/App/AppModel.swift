@@ -180,6 +180,7 @@ final class AppModel {
                 try await callCoordinator.startCall(to: number, using: line.id)
                 lastSuccessfulDialLineID = line.id
             } catch {
+                callCoordinator.dismissCallStartFailure()
                 pendingExternalDialRequest = ExternalDialRequest(
                     number: number,
                     lineSelection: .preferred(line.id)

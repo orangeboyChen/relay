@@ -61,6 +61,10 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
         }
     }
 
+    func updateLineRoutes(_ lines: [DeviceLineIdentity]) {
+        (transport as? any CallLineRouting)?.updateLineRoutes(lines)
+    }
+
     func startCall(to number: String, using lineID: UUID) async throws {
         let callID = UUID()
         let request = OutgoingCallRequest(callID: callID, number: number, lineID: lineID)

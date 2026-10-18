@@ -25,6 +25,18 @@ def app_store_connect_key
   )
 end
 
+def app_store_connect_authentication
+  api_key_variables = %w[ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_FILEPATH]
+  configured_variables = api_key_variables.select { |name| !ENV[name].to_s.empty? }
+
+  return {} if configured_variables.empty?
+
+  missing_variables = api_key_variables - configured_variables
+  UI.user_error!("Missing required environment variables: #{missing_variables.join(", ")}") unless missing_variables.empty?
+
+  { api_key: app_store_connect_key }
+end
+
 def attach_webrtc_symbols(archive_path)
   cache_directory = File.expand_path("~/.cache/sim-deck")
   FileUtils.mkdir_p(cache_directory)
@@ -49,7 +61,7 @@ end
 platform :ios do
   desc "Build Sim Deck and upload the next build to TestFlight"
   lane :beta do |options|
-    api_key = app_store_connect_key
+    authentication = app_store_connect_authentication
 
     increment_version_number(
       version_number: options[:version],
@@ -63,9 +75,9 @@ platform :ios do
 
     local_build_number = get_build_number(xcodeproj: PROJECT).to_i
     testflight_build_number = latest_testflight_build_number(
-      api_key: api_key,
       version: version,
-      initial_build_number: 0
+      initial_build_number: 0,
+      **authentication
     ).to_i
     next_build_number = [local_build_number, testflight_build_number].max + 1
 
@@ -103,11 +115,11 @@ platform :ios do
     UI.user_error!("The exported IPA was not found") unless File.file?(ipa_path)
 
     upload_to_testflight(
-      api_key: api_key,
       ipa: ipa_path,
       changelog: options[:changelog],
       distribute_external: false,
-      skip_waiting_for_build_processing: true
+      skip_waiting_for_build_processing: true,
+      **authentication
     )
   end
 end

@@ -5,10 +5,11 @@ an end-to-end encrypted WebRTC session.
 
 Incoming SMS decoding, multipart assembly, history import, and durable
 deduplication are implemented. Complete messages remain in an encrypted local
-pending queue until a downstream encrypted synchronization sink acknowledges
-them. The server and iOS SMS synchronization path is not implemented yet, so
-the agent deliberately reports SMS delivery as unavailable instead of marking
-messages delivered or silently discarding their content.
+pending queue until the server has accepted each approved iPhone's own
+end-to-end encrypted event. Deterministic event IDs make retries idempotent.
+Outgoing SMS uses an end-to-end encrypted command from the iOS app.
+SMS APNs alert notifications are not implemented yet; message synchronization
+currently happens when the app refreshes its encrypted event stream.
 
 ## Development
 

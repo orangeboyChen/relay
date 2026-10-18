@@ -39,11 +39,16 @@ def app_store_connect_authentication
   return {} if ENV["FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD"].to_s.empty?
 
   username = ENV["FASTLANE_USER"]
-  app_apple_id = ENV["PILOT_APPLE_ID"]
   UI.user_error!("FASTLANE_USER is required with FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD") if username.to_s.empty?
-  UI.user_error!("PILOT_APPLE_ID is required with FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD") if app_apple_id.to_s.empty?
 
-  { username: username, apple_id: app_apple_id }
+  { username: username }
+end
+
+def app_store_connect_app_apple_id
+  app_identifier = ENV.fetch("APP_IDENTIFIER", "com.nowcent.simdeck")
+  app = Spaceship::ConnectAPI::App.find(app_identifier)
+  UI.user_error!("Could not find App Store Connect app with bundle identifier: #{app_identifier}") unless app
+  app.id
 end
 
 def attach_webrtc_symbols(archive_path)
@@ -88,6 +93,8 @@ platform :ios do
       initial_build_number: 0,
       **authentication.slice(:api_key, :username)
     ).to_i
+
+    authentication[:apple_id] = app_store_connect_app_apple_id if authentication.key?(:username)
     next_build_number = [local_build_number, testflight_build_number].max + 1
 
     increment_build_number(

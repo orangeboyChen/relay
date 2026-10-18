@@ -29,12 +29,19 @@ def app_store_connect_authentication
   api_key_variables = %w[ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_FILEPATH]
   configured_variables = api_key_variables.select { |name| !ENV[name].to_s.empty? }
 
-  return {} if configured_variables.empty?
+  unless configured_variables.empty?
+    missing_variables = api_key_variables - configured_variables
+    UI.user_error!("Missing required environment variables: #{missing_variables.join(", ")}") unless missing_variables.empty?
 
-  missing_variables = api_key_variables - configured_variables
-  UI.user_error!("Missing required environment variables: #{missing_variables.join(", ")}") unless missing_variables.empty?
+    return { api_key: app_store_connect_key }
+  end
 
-  { api_key: app_store_connect_key }
+  return {} if ENV["FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD"].to_s.empty?
+
+  apple_id = ENV["FASTLANE_USER"]
+  UI.user_error!("FASTLANE_USER is required with FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD") if apple_id.to_s.empty?
+
+  { username: apple_id, apple_id: apple_id }
 end
 
 def attach_webrtc_symbols(archive_path)
@@ -77,7 +84,7 @@ platform :ios do
     testflight_build_number = latest_testflight_build_number(
       version: version,
       initial_build_number: 0,
-      **authentication
+      **authentication.slice(:api_key, :username)
     ).to_i
     next_build_number = [local_build_number, testflight_build_number].max + 1
 

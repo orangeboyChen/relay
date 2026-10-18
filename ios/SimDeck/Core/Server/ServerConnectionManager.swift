@@ -239,7 +239,7 @@ struct CallTURNCredentials: Decodable, Equatable, Sendable {
 	let expiresAt: Date
 
 	enum CodingKeys: String, CodingKey {
-		case url
+		case urls
 		case username
 		case credential
 		case expiresAt = "expires_at"

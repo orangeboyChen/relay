@@ -190,6 +190,9 @@ final class LiveMessageTransport: MessageTransport {
         var deliveries: [IncomingMessageDelivery] = []
 
         for envelope in page.events where envelope.type == "message.received" {
+            guard envelope.recipientInstallationID == installationIdentity.id else {
+                continue
+            }
             guard let candidates = linesByDevice[envelope.deviceUUID],
                   let commandPublicKey = candidates.first?.commandPublicKey else {
                 continue

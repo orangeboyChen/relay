@@ -48,12 +48,50 @@ struct EncryptedEventEnvelope: Decodable, Equatable, Sendable {
     let sequence: Int64
     let type: String
     let deviceUUID: UUID
-    let recipientInstallationID: UUID? = nil
+    let recipientInstallationID: UUID?
     let occurredAt: Date
     let keyEpoch: Int
     let nonce: Data
     let ciphertext: Data
     let signature: Data
+
+    init(
+        id: UUID,
+        sequence: Int64,
+        type: String,
+        deviceUUID: UUID,
+        recipientInstallationID: UUID? = nil,
+        occurredAt: Date,
+        keyEpoch: Int,
+        nonce: Data,
+        ciphertext: Data,
+        signature: Data
+    ) {
+        self.id = id
+        self.sequence = sequence
+        self.type = type
+        self.deviceUUID = deviceUUID
+        self.recipientInstallationID = recipientInstallationID
+        self.occurredAt = occurredAt
+        self.keyEpoch = keyEpoch
+        self.nonce = nonce
+        self.ciphertext = ciphertext
+        self.signature = signature
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        sequence = try values.decode(Int64.self, forKey: .sequence)
+        type = try values.decode(String.self, forKey: .type)
+        deviceUUID = try values.decode(UUID.self, forKey: .deviceUUID)
+        recipientInstallationID = try values.decodeIfPresent(UUID.self, forKey: .recipientInstallationID)
+        occurredAt = try values.decode(Date.self, forKey: .occurredAt)
+        keyEpoch = try values.decode(Int.self, forKey: .keyEpoch)
+        nonce = try values.decode(Data.self, forKey: .nonce)
+        ciphertext = try values.decode(Data.self, forKey: .ciphertext)
+        signature = try values.decode(Data.self, forKey: .signature)
+    }
 
     enum CodingKeys: String, CodingKey {
         case id

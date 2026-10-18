@@ -12,7 +12,7 @@ import (
 	"sim-deck-server/internal/store"
 )
 
-var ErrMissingVoIPToken = errors.New("installation has no active VoIP push token")
+var ErrMissingVoIPToken = errors.New("installation has no active push token")
 
 // Repository persists leased outbox work and APNs token invalidation.
 type Repository interface {
@@ -26,6 +26,15 @@ type Repository interface {
 // Sender delivers one encrypted payload to APNs.
 type Sender interface {
 	SendVoIP(context.Context, string, []byte, []byte) error
+}
+
+type alertRepository interface {
+	ClaimPushJob(context.Context, time.Time, time.Duration) (store.OutboxPushJob, error)
+	DeletePushTokenForDelivery(context.Context, string, string, string, []byte) error
+}
+
+type alertSender interface {
+	SendAlert(context.Context, string, []byte, []byte) error
 }
 
 // Worker leases and delivers APNs outbox jobs.
@@ -99,7 +108,13 @@ func (worker *Worker) Run(ctx context.Context) error {
 // ProcessOne delivers at most one available job.
 func (worker *Worker) ProcessOne(ctx context.Context) (bool, error) {
 	now := worker.now().UTC()
-	job, err := worker.repository.ClaimVoIPPushJob(ctx, now, worker.leaseDuration)
+	var job store.OutboxPushJob
+	var err error
+	if repository, ok := worker.repository.(alertRepository); ok {
+		job, err = repository.ClaimPushJob(ctx, now, worker.leaseDuration)
+	} else {
+		job, err = worker.repository.ClaimVoIPPushJob(ctx, now, worker.leaseDuration)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -109,7 +124,15 @@ func (worker *Worker) ProcessOne(ctx context.Context) (bool, error) {
 	if len(job.DeviceToken) == 0 || job.Environment == "" {
 		return true, worker.retry(ctx, job, now, ErrMissingVoIPToken)
 	}
-	err = worker.sender.SendVoIP(ctx, job.Environment, job.DeviceToken, job.Payload)
+	if job.Kind == "alert.incoming_message" {
+		sender, ok := worker.sender.(alertSender)
+		if !ok {
+			return true, worker.retry(ctx, job, now, errors.New("alert sender is not configured"))
+		}
+		err = sender.SendAlert(ctx, job.Environment, job.DeviceToken, job.Payload)
+	} else {
+		err = worker.sender.SendVoIP(ctx, job.Environment, job.DeviceToken, job.Payload)
+	}
 	if err == nil {
 		return true, worker.repository.CompletePushJob(ctx, job.ID, job.Attempt, now)
 	}
@@ -117,9 +140,13 @@ func (worker *Worker) ProcessOne(ctx context.Context) (bool, error) {
 	var responseError *apns.ResponseError
 	if errors.As(err, &responseError) {
 		if responseError.InvalidatesToken() {
-			if deleteErr := worker.repository.DeleteVoIPPushToken(
-				ctx, job.RoutingKey, job.Environment, job.DeviceToken,
-			); deleteErr != nil {
+			var deleteErr error
+			if repository, ok := worker.repository.(alertRepository); ok {
+				deleteErr = repository.DeletePushTokenForDelivery(ctx, job.RoutingKey, job.Environment, pushTokenKind(job.Kind), job.DeviceToken)
+			} else if pushTokenKind(job.Kind) == "voip" {
+				deleteErr = worker.repository.DeleteVoIPPushToken(ctx, job.RoutingKey, job.Environment, job.DeviceToken)
+			}
+			if deleteErr != nil {
 				return true, deleteErr
 			}
 		}
@@ -131,6 +158,13 @@ func (worker *Worker) ProcessOne(ctx context.Context) (bool, error) {
 		return true, worker.repository.DiscardPushJob(ctx, job.ID, job.Attempt, now, boundedError(err))
 	}
 	return true, worker.retry(ctx, job, now, err)
+}
+
+func pushTokenKind(jobKind string) string {
+	if jobKind == "alert.incoming_message" {
+		return "alert"
+	}
+	return "voip"
 }
 
 func (worker *Worker) retry(ctx context.Context, job store.OutboxPushJob, now time.Time, deliveryError error) error {

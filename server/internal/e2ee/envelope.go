@@ -103,6 +103,9 @@ func associatedData(envelope domain.EventEnvelope) []byte {
 	buffer = appendString(buffer, envelope.ID)
 	buffer = appendString(buffer, envelope.Type)
 	buffer = appendString(buffer, envelope.DeviceUUID)
+	if envelope.RecipientInstallationID != "" {
+		buffer = appendString(buffer, envelope.RecipientInstallationID)
+	}
 	buffer = binary.BigEndian.AppendUint64(buffer, uint64(envelope.OccurredAt.UTC().UnixNano()))
 	buffer = binary.BigEndian.AppendUint64(buffer, uint64(envelope.KeyEpoch))
 	return buffer
@@ -139,6 +142,11 @@ func validateRoutingMetadata(envelope domain.EventEnvelope) error {
 	}
 	if err := validateBoundedValue("device UUID", envelope.DeviceUUID, MaxDeviceUUIDBytes); err != nil {
 		return err
+	}
+	if envelope.RecipientInstallationID != "" {
+		if err := validateBoundedValue("recipient installation ID", envelope.RecipientInstallationID, MaxDeviceUUIDBytes); err != nil {
+			return err
+		}
 	}
 	if envelope.OccurredAt.IsZero() {
 		return fmt.Errorf("%w: occurred_at is required", ErrInvalidEnvelope)

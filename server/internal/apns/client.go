@@ -125,6 +125,15 @@ func New(config Config) (*Client, error) {
 
 // SendVoIP sends one encrypted VoIP delivery to the selected APNs environment.
 func (client *Client) SendVoIP(ctx context.Context, environment string, deviceToken []byte, encryptedDelivery []byte) error {
+	return client.send(ctx, environment, deviceToken, encryptedDelivery, "voip", 10)
+}
+
+// SendAlert sends an encrypted background alert delivery to the notification service extension.
+func (client *Client) SendAlert(ctx context.Context, environment string, deviceToken []byte, encryptedDelivery []byte) error {
+	return client.send(ctx, environment, deviceToken, encryptedDelivery, "alert", 5)
+}
+
+func (client *Client) send(ctx context.Context, environment string, deviceToken []byte, encryptedDelivery []byte, pushType string, priority int) error {
 	baseURL := client.productionURL
 	if environment == "sandbox" {
 		baseURL = client.sandboxURL
@@ -134,7 +143,7 @@ func (client *Client) SendVoIP(ctx context.Context, environment string, deviceTo
 	if len(deviceToken) == 0 {
 		return ErrInvalidConfiguration
 	}
-	payload, err := voipPayload(encryptedDelivery)
+	payload, err := alertPayload(encryptedDelivery, pushType == "voip")
 	if err != nil {
 		return err
 	}
@@ -152,9 +161,13 @@ func (client *Client) SendVoIP(ctx context.Context, environment string, deviceTo
 		return fmt.Errorf("create APNs request: %w", err)
 	}
 	request.Header.Set("authorization", "bearer "+token)
-	request.Header.Set("apns-topic", client.topic)
-	request.Header.Set("apns-push-type", "voip")
-	request.Header.Set("apns-priority", "10")
+	topic := client.topic
+	if pushType == "alert" {
+		topic = strings.TrimSuffix(topic, ".voip")
+	}
+	request.Header.Set("apns-topic", topic)
+	request.Header.Set("apns-push-type", pushType)
+	request.Header.Set("apns-priority", fmt.Sprint(priority))
 	request.Header.Set("apns-expiration", "0")
 	request.Header.Set("content-type", "application/json")
 
@@ -190,7 +203,7 @@ func parsePrivateKey(encoded []byte) (*ecdsa.PrivateKey, error) {
 	return privateKey, nil
 }
 
-func voipPayload(encryptedDelivery []byte) ([]byte, error) {
+func alertPayload(encryptedDelivery []byte, voip bool) ([]byte, error) {
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(encryptedDelivery, &payload); err != nil || payload == nil {
 		return nil, ErrInvalidPayload
@@ -198,7 +211,11 @@ func voipPayload(encryptedDelivery []byte) ([]byte, error) {
 	if _, exists := payload["aps"]; exists {
 		return nil, ErrInvalidPayload
 	}
-	payload["aps"] = json.RawMessage(`{"content-available":1}`)
+	if voip {
+		payload["aps"] = json.RawMessage(`{"content-available":1}`)
+	} else {
+		payload["aps"] = json.RawMessage(`{"alert":{"title":"Sim Deck","body":"New message"},"content-available":1,"mutable-content":1}`)
+	}
 	encoded, err := json.Marshal(payload)
 	if err != nil || len(encoded) > maximumPayloadSize {
 		return nil, ErrInvalidPayload

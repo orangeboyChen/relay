@@ -160,6 +160,7 @@ CREATE TABLE IF NOT EXISTS events (
     id UUID NOT NULL UNIQUE,
     type TEXT NOT NULL,
     device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    recipient_installation_id UUID REFERENCES app_installations(id) ON DELETE CASCADE,
     occurred_at TIMESTAMPTZ NOT NULL,
     key_epoch INTEGER NOT NULL CHECK (key_epoch > 0),
     nonce BYTEA NOT NULL,
@@ -168,6 +169,7 @@ CREATE TABLE IF NOT EXISTS events (
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
 
 CREATE INDEX IF NOT EXISTS events_device_sequence_idx
     ON events(device_id, sequence);

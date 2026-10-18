@@ -566,10 +566,11 @@ func (store *Postgres) InsertIncomingCall(ctx context.Context, notification doma
 		if err != nil {
 			return false, fmt.Errorf("encode incoming call delivery: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `
+		_, err = tx.Exec(ctx, `
 			INSERT INTO outbox_jobs (kind, routing_key, payload, available_at, expires_at)
 			VALUES ('voip.incoming_call', $1, $2, now(), $3)`,
-			recipient.InstallationID, delivery, notification.OccurredAt.Add(2*time.Minute)); err != nil {
+			recipient.InstallationID, delivery, notification.OccurredAt.Add(2*time.Minute))
+		if err != nil {
 			return false, fmt.Errorf("enqueue incoming call delivery: %w", err)
 		}
 	}
@@ -701,7 +702,7 @@ func (store *Postgres) ClaimIncomingCall(ctx context.Context, ownerID string, no
 		if err != nil {
 			return domain.IncomingCallClaim{}, fmt.Errorf("encode incoming call claim delivery: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `
+		_, err = tx.Exec(ctx, `
 			INSERT INTO outbox_jobs (kind, routing_key, payload, available_at, expires_at)
 			SELECT 'voip.incoming_call_claimed', recipient.installation_id::text, $2,
 			       $3::timestamptz, $3::timestamptz + INTERVAL '30 seconds'
@@ -710,7 +711,8 @@ func (store *Postgres) ClaimIncomingCall(ctx context.Context, ownerID string, no
 			WHERE recipient.notification_id = $1
 			  AND recipient.installation_id <> $4
 			  AND installation.approved_at IS NOT NULL
-			  AND installation.revoked_at IS NULL`, notificationID, payload, now.UTC(), installationID); err != nil {
+			  AND installation.revoked_at IS NULL`, notificationID, payload, now.UTC(), installationID)
+		if err != nil {
 			return domain.IncomingCallClaim{}, fmt.Errorf("enqueue incoming call claim deliveries: %w", err)
 		}
 	}
@@ -750,7 +752,7 @@ func (store *Postgres) ClaimVoIPPushJob(ctx context.Context, now time.Time, leas
 			FROM push_tokens AS token
 			JOIN app_installations AS installation ON installation.id = token.installation_id
 			WHERE token.installation_id::text = job.routing_key
-			  AND token.kind = 'voip'
+			  AND token.kind = CASE WHEN job.kind LIKE 'voip.%' THEN 'voip' ELSE 'alert' END
 			  AND installation.approved_at IS NOT NULL
 			  AND installation.revoked_at IS NULL
 			ORDER BY token.updated_at DESC
@@ -759,7 +761,7 @@ func (store *Postgres) ClaimVoIPPushJob(ctx context.Context, now time.Time, leas
 		WHERE job.completed_at IS NULL
 		  AND job.available_at <= $1
 		  AND (job.expires_at IS NULL OR job.expires_at > $1)
-		  AND job.kind IN ('voip.incoming_call', 'voip.incoming_call_claimed')
+		  AND job.kind IN ('voip.incoming_call', 'voip.incoming_call_claimed', 'alert.incoming_message')
 		ORDER BY job.available_at, job.id
 		FOR UPDATE OF job SKIP LOCKED
 		LIMIT 1`, now.UTC()).Scan(
@@ -829,18 +831,28 @@ func (store *Postgres) RetryPushJob(ctx context.Context, id int64, attempt int, 
 	return nil
 }
 
-// DeleteVoIPPushToken removes only the failed route that APNs rejected.
-func (store *Postgres) DeleteVoIPPushToken(ctx context.Context, installationID string, environment string, token []byte) error {
+// DeletePushTokenForDelivery removes only the failed route that APNs rejected.
+func (store *Postgres) DeletePushTokenForDelivery(ctx context.Context, installationID string, environment string, kind string, token []byte) error {
 	_, err := store.pool.Exec(ctx, `
 		DELETE FROM push_tokens
 		WHERE installation_id = $1
 		  AND environment = $2
-		  AND kind = 'voip'
-		  AND token_ciphertext = $3`, installationID, environment, token)
+		  AND kind = $3
+		  AND token_ciphertext = $4`, installationID, environment, kind, token)
 	if err != nil {
-		return fmt.Errorf("delete VoIP push token: %w", err)
+		return fmt.Errorf("delete push token: %w", err)
 	}
 	return nil
+}
+
+// ClaimPushJob is the generalized push lease used for VoIP and alert deliveries.
+func (store *Postgres) ClaimPushJob(ctx context.Context, now time.Time, leaseDuration time.Duration) (OutboxPushJob, error) {
+	return store.ClaimVoIPPushJob(ctx, now, leaseDuration)
+}
+
+// DeleteVoIPPushToken preserves the legacy repository contract for VoIP callers.
+func (store *Postgres) DeleteVoIPPushToken(ctx context.Context, installationID string, environment string, token []byte) error {
+	return store.DeletePushTokenForDelivery(ctx, installationID, environment, "voip", token)
 }
 
 // ConsumePairingToken atomically consumes a pairing token, allocates a SIM ID, and stores a device credential hash.
@@ -1442,35 +1454,70 @@ func (store *Postgres) UpdateDeviceSIMIdentity(ctx context.Context, deviceID str
 
 // InsertEvent stores an encrypted event once and returns its server sequence.
 func (store *Postgres) InsertEvent(ctx context.Context, envelope domain.EventEnvelope, expiresAt time.Time) (int64, bool, error) {
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return 0, false, fmt.Errorf("begin event insert: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var recipient any
+	if envelope.RecipientInstallationID != "" {
+		recipient = envelope.RecipientInstallationID
+	}
 	var sequence int64
-	err := store.pool.QueryRow(ctx, `
-		INSERT INTO events (id, type, device_id, occurred_at, key_epoch, nonce, ciphertext, signature, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	err = tx.QueryRow(ctx, `
+		INSERT INTO events (id, type, device_id, recipient_installation_id, occurred_at, key_epoch, nonce, ciphertext, signature, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (id) DO NOTHING
-		RETURNING sequence`, envelope.ID, envelope.Type, envelope.DeviceUUID, envelope.OccurredAt, envelope.KeyEpoch, envelope.Nonce, envelope.Ciphertext, envelope.Signature, expiresAt).Scan(&sequence)
+		RETURNING sequence`, envelope.ID, envelope.Type, envelope.DeviceUUID, recipient, envelope.OccurredAt, envelope.KeyEpoch, envelope.Nonce, envelope.Ciphertext, envelope.Signature, expiresAt).Scan(&sequence)
 	if errors.Is(err, pgx.ErrNoRows) {
-		err = store.pool.QueryRow(ctx, `
+		err = tx.QueryRow(ctx, `
 			SELECT sequence
 			FROM events
 			WHERE id = $1
 			  AND type = $2
 			  AND device_id = $3
-			  AND occurred_at = $4
-			  AND key_epoch = $5
-			  AND nonce = $6
-			  AND ciphertext = $7
-			  AND signature = $8
-			  AND expires_at = $9`, envelope.ID, envelope.Type, envelope.DeviceUUID, envelope.OccurredAt, envelope.KeyEpoch, envelope.Nonce, envelope.Ciphertext, envelope.Signature, expiresAt).Scan(&sequence)
+			  AND recipient_installation_id IS NOT DISTINCT FROM $4::uuid
+			  AND occurred_at = $5
+			  AND key_epoch = $6
+			  AND nonce = $7
+			  AND ciphertext = $8
+			  AND signature = $9
+			  AND expires_at = $10`, envelope.ID, envelope.Type, envelope.DeviceUUID, recipient, envelope.OccurredAt, envelope.KeyEpoch, envelope.Nonce, envelope.Ciphertext, envelope.Signature, expiresAt).Scan(&sequence)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, false, domain.ErrIdempotencyConflict
 		}
 		if err != nil {
 			return 0, false, fmt.Errorf("read existing event: %w", err)
 		}
+		if err := tx.Commit(ctx); err != nil {
+			return 0, false, fmt.Errorf("commit event retry read: %w", err)
+		}
 		return sequence, false, nil
 	}
 	if err != nil {
 		return 0, false, fmt.Errorf("insert event: %w", err)
+	}
+	if envelope.Type == "message.received" && envelope.RecipientInstallationID != "" {
+		payload, err := json.Marshal(envelope)
+		if err != nil {
+			return 0, false, fmt.Errorf("encode SMS push envelope: %w", err)
+		}
+		command, err := tx.Exec(ctx, `
+			INSERT INTO outbox_jobs (kind, routing_key, payload, available_at, expires_at)
+			SELECT 'alert.incoming_message', $1, $2, $3, $4
+			WHERE EXISTS (
+				SELECT 1 FROM app_installations
+				WHERE id = $1 AND approved_at IS NOT NULL AND revoked_at IS NULL
+			)`, envelope.RecipientInstallationID, payload, time.Now().UTC(), expiresAt)
+		if err != nil {
+			return 0, false, fmt.Errorf("enqueue SMS alert push: %w", err)
+		}
+		if command.RowsAffected() == 0 {
+			return 0, false, errors.New("SMS event recipient installation is not approved")
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, false, fmt.Errorf("commit encrypted event: %w", err)
 	}
 	return sequence, true, nil
 }
@@ -1478,7 +1525,7 @@ func (store *Postgres) InsertEvent(ctx context.Context, envelope domain.EventEnv
 // ListEvents returns unexpired opaque events strictly after the supplied cursor.
 func (store *Postgres) ListEvents(ctx context.Context, afterSequence int64, limit int, now time.Time) ([]domain.EventEnvelope, error) {
 	rows, err := store.pool.Query(ctx, `
-		SELECT id, sequence, type, device_id, occurred_at, key_epoch, nonce, ciphertext, signature
+		SELECT id, sequence, type, device_id, recipient_installation_id, occurred_at, key_epoch, nonce, ciphertext, signature
 		FROM events
 		WHERE sequence > $1 AND expires_at > $2
 		ORDER BY sequence ASC
@@ -1496,6 +1543,7 @@ func (store *Postgres) ListEvents(ctx context.Context, afterSequence int64, limi
 			&envelope.Sequence,
 			&envelope.Type,
 			&envelope.DeviceUUID,
+			&envelope.RecipientInstallationID,
 			&envelope.OccurredAt,
 			&envelope.KeyEpoch,
 			&envelope.Nonce,

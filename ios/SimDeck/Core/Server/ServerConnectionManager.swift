@@ -337,6 +337,9 @@ final class ServerConnectionManager {
 
     var isSignedIn: Bool { session != nil }
 
+    var authenticatedBaseURL: URL? { try? validatedBaseURL() }
+    var accessToken: String? { session?.accessToken }
+
     func signIn(password: String) async throws {
         state = .connecting
         lastErrorDescription = nil

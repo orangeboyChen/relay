@@ -151,6 +151,19 @@ final class AppModel {
         try? await alertPushCoordinator?.uploadPendingToken()
     }
 
+    func registerPasskey() async throws {
+        guard let serverURL = serverConnection.authenticatedBaseURL,
+              let accessToken = serverConnection.accessToken else {
+            throw ServerConnectionError.authenticationRequired
+        }
+        let callback = try await PasskeyWebAuthenticationSession().authenticate(
+            serverURL: serverURL, mode: "register", accessToken: accessToken
+        )
+        guard callback.scheme == "simdeck", callback.fragment != nil else {
+            throw ServerConnectionError.invalidResponse
+        }
+    }
+
     func startVoIPPushes() {
         guard let installationIdentity else { return }
         if voipPushCoordinator == nil {

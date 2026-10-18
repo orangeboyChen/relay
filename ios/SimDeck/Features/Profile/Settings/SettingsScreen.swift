@@ -19,7 +19,7 @@ struct SettingsScreen: View {
                     ContactsSettingsScreen()
                 }
                 SettingsLink("Security", symbol: "lock.shield") {
-                    SecuritySettingsScreen(keyRecoveryState: model.keyRecoveryState)
+                    SecuritySettingsScreen(model: model)
                 }
                 SettingsLink("Messages & Storage", symbol: "externaldrive") {
                     StorageSettingsScreen()

@@ -1,12 +1,22 @@
 import SwiftUI
 
 struct SecuritySettingsScreen: View {
-    let keyRecoveryState: KeyRecoveryState
+    let model: AppModel
+    @State private var isRegisteringPasskey = false
+    @State private var errorMessage: String?
 
     var body: some View {
         List {
             Section("Authentication") {
-                LabeledContent("Passkey", value: "Registered")
+                Button("Register Passkey") {
+                    isRegisteringPasskey = true
+                    Task {
+                        defer { isRegisteringPasskey = false }
+                        do { try await model.registerPasskey() }
+                        catch { errorMessage = error.localizedDescription }
+                    }
+                }
+                .disabled(isRegisteringPasskey || !model.serverConnection.isSignedIn)
                 NavigationLink("Trusted iPhones") {
                     TrustedDevicesScreen()
                 }
@@ -14,7 +24,7 @@ struct SecuritySettingsScreen: View {
             Section("Encryption") {
                 LabeledContent("End-to-end encryption", value: "Active")
                 LabeledContent("Recovery") {
-                    KeyRecoveryStatusLabel(state: keyRecoveryState)
+                    KeyRecoveryStatusLabel(state: model.keyRecoveryState)
                 }
             }
             Section {
@@ -22,6 +32,13 @@ struct SecuritySettingsScreen: View {
             }
         }
         .navigationTitle("Security")
+        .alert("Passkey", isPresented: .init(
+            get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
+        }
     }
 }
 
@@ -114,7 +131,7 @@ struct DataDeletionScreen: View {
 
 #if DEBUG
 #Preview("Security Settings") {
-    NavigationStack { SecuritySettingsScreen(keyRecoveryState: .available) }
+    NavigationStack { SecuritySettingsScreen(model: .preview()) }
 }
 
 #Preview("Trusted iPhones") {

@@ -4,6 +4,7 @@ set -euo pipefail
 server_url="${SIM_DECK_SERVER_URL:-}"
 output_dir="${SIM_DECK_OUTPUT_DIR:-/etc/sim-deck}"
 image="${SIM_DECK_DEVICE_IMAGE:-}"
+allow_insecure_http="${SIM_DECK_ALLOW_INSECURE_HTTP:-false}"
 start=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -34,6 +35,10 @@ if [[ -z "$image" ]]; then
   exit 1
 fi
 case "$server_url" in https://*|http://*) ;; *) printf '%s\n' "Server URL must start with https:// or http://." >&2; exit 1 ;; esac
+case "$allow_insecure_http" in
+  true|false) ;;
+  *) printf '%s\n' "SIM_DECK_ALLOW_INSECURE_HTTP must be true or false." >&2; exit 1 ;;
+esac
 
 property() {
   local key="$1" data="$2"
@@ -134,7 +139,7 @@ udevadm trigger --subsystem-match=tty --subsystem-match=sound
   printf '%s\n' '  security_opt: [no-new-privileges:true]' '  cap_drop: [ALL]' '  read_only: true' '  tmpfs: [/tmp:rw,noexec,nosuid,size=16m]' '' 'services:'
   index=1
   for serial in "${serials[@]}"; do
-    printf '  modem-%s:\n    <<: *device-defaults\n    hostname: sim-deck-modem-%s\n    environment:\n      SIM_DECK_SERVER_URL: ${SIM_DECK_SERVER_URL}\n      SIM_DECK_AT_DEVICE: /dev/sim-deck/at\n      SIM_DECK_AUDIO_MODE: alsa\n      SIM_DECK_STATE_DIRECTORY: /var/lib/sim-deck\n    devices:\n      - /dev/sim-deck/modem-%s-at:/dev/sim-deck/at\n' "$index" "$index" "$index"
+    printf '  modem-%s:\n    <<: *device-defaults\n    hostname: sim-deck-modem-%s\n    environment:\n      SIM_DECK_SERVER_URL: ${SIM_DECK_SERVER_URL}\n      SIM_DECK_ALLOW_INSECURE_HTTP: ${SIM_DECK_ALLOW_INSECURE_HTTP:-false}\n      SIM_DECK_AT_DEVICE: /dev/sim-deck/at\n      SIM_DECK_AUDIO_MODE: alsa\n      SIM_DECK_STATE_DIRECTORY: /var/lib/sim-deck\n    devices:\n      - /dev/sim-deck/modem-%s-at:/dev/sim-deck/at\n' "$index" "$index" "$index"
     for kind in control capture playback; do
       [[ -n "$(audio_node "$kind" "$serial")" ]] || continue
       case "$kind" in
@@ -151,6 +156,7 @@ udevadm trigger --subsystem-match=tty --subsystem-match=sound
   for index in $(seq 1 "${#serials[@]}"); do printf '  modem-%s-state:\n' "$index"; done
 } > "$compose_file"
 printf 'SIM_DECK_SERVER_URL=%s\n' "$server_url" > "$env_file"
+printf 'SIM_DECK_ALLOW_INSECURE_HTTP=%s\n' "$allow_insecure_http" >> "$env_file"
 chmod 0640 "$env_file" "$compose_file"
 
 printf 'Discovered %s modem(s).\nGenerated %s and %s.\n' "${#serials[@]}" "$rules_file" "$compose_file"

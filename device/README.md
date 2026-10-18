@@ -3,6 +3,10 @@
 `relay-node` controls one Quectel modem and bridges cellular voice audio to
 an end-to-end encrypted WebRTC session.
 
+The Linux host installation and multi-modem runbook is in
+[`docs/deployment.md`](docs/deployment.md). This README documents the device
+runtime and its hardware requirements.
+
 Incoming SMS decoding, multipart assembly, history import, and durable
 deduplication are implemented. Complete messages remain in an encrypted local
 pending queue until the server has accepted each approved iPhone's own

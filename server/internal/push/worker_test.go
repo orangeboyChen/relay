@@ -57,6 +57,15 @@ var _ = Describe("Push worker", func() {
 		Expect(repository.completed).To(Equal(jobAction{id: 7, attempt: 1, at: now}))
 	})
 
+	It("uses the alert sender for encrypted SMS notifications", func() {
+		repository.job.Kind = "alert.incoming_message"
+		processed, err := worker.ProcessOne(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(processed).To(BeTrue())
+		Expect(sender.alertPayload).To(MatchJSON(`{"ciphertext":"opaque"}`))
+		Expect(sender.voipPayload).To(BeEmpty())
+	})
+
 	It("backs off missing tokens and transient failures", func() {
 		repository.job.DeviceToken = nil
 		processed, err := worker.ProcessOne(context.Background())
@@ -155,16 +164,24 @@ var _ = Describe("Push worker", func() {
 })
 
 type memorySender struct {
-	environment string
-	token       []byte
-	payload     []byte
-	err         error
+	environment  string
+	token        []byte
+	payload      []byte
+	alertPayload []byte
+	voipPayload  []byte
+	err          error
 }
 
 func (sender *memorySender) SendVoIP(_ context.Context, environment string, token []byte, payload []byte) error {
 	sender.environment = environment
 	sender.token = append([]byte(nil), token...)
 	sender.payload = append([]byte(nil), payload...)
+	sender.voipPayload = append([]byte(nil), payload...)
+	return sender.err
+}
+
+func (sender *memorySender) SendAlert(_ context.Context, _ string, _ []byte, payload []byte) error {
+	sender.alertPayload = append([]byte(nil), payload...)
 	return sender.err
 }
 

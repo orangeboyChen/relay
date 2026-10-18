@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"sim-deck-device/internal/call"
 	"sim-deck-device/internal/identity"
@@ -23,13 +25,23 @@ type EventRegistrar interface {
 
 // Runtime turns incoming modem transitions into recipient-encrypted notifications.
 type Runtime struct {
-	remote       Remote
-	identity     identity.State
-	snapshots    <-chan call.Snapshot
-	events       EventRegistrar
-	builder      *Builder
-	activeCallID string
+	remote        Remote
+	identity      identity.State
+	snapshots     <-chan call.Snapshot
+	events        EventRegistrar
+	builder       *Builder
+	activeCallID  string
+	pending       *pendingCall
+	retryInterval time.Duration
 }
+
+type pendingCall struct {
+	snapshot     call.Snapshot
+	notification Notification
+	callContext  CallContext
+}
+
+const deliveryRetryInterval = time.Second
 
 // NewRuntime creates an incoming call notification runtime for one modem.
 func NewRuntime(remote Remote, state identity.State, snapshots <-chan call.Snapshot, events EventRegistrar) (*Runtime, error) {
@@ -40,11 +52,16 @@ func NewRuntime(remote Remote, state identity.State, snapshots <-chan call.Snaps
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{remote: remote, identity: state, snapshots: snapshots, events: events, builder: builder}, nil
+	return &Runtime{
+		remote: remote, identity: state, snapshots: snapshots, events: events, builder: builder,
+		retryInterval: deliveryRetryInterval,
+	}, nil
 }
 
-// Run processes call-state transitions until cancellation or a delivery failure.
+// Run processes call-state transitions and retries pending call delivery until cancellation.
 func (runtime *Runtime) Run(ctx context.Context) error {
+	ticker := time.NewTicker(runtime.retryInterval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -53,11 +70,62 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 			if !ok {
 				return errors.New("incoming-call snapshot stream closed")
 			}
-			if err := runtime.process(ctx, snapshot); err != nil {
-				return err
+			runtime.acceptSnapshot(snapshot)
+			if err := runtime.deliverPending(ctx); err != nil {
+				slog.Warn("incoming call notification delivery deferred", "error", err)
+			}
+		case <-ticker.C:
+			if err := runtime.deliverPending(ctx); err != nil {
+				slog.Warn("incoming call notification retry deferred", "error", err)
 			}
 		}
 	}
+}
+
+func (runtime *Runtime) acceptSnapshot(snapshot call.Snapshot) {
+	if snapshot.State == call.StateEnded {
+		runtime.pending = nil
+		if runtime.activeCallID != "" {
+			runtime.events.Unregister(runtime.activeCallID)
+			runtime.activeCallID = ""
+		}
+		return
+	}
+	if runtime.activeCallID != "" || runtime.pending != nil ||
+		(snapshot.State != call.StateRinging && snapshot.State != call.StateWaiting) ||
+		snapshot.IncomingNumber == "" {
+		return
+	}
+	runtime.pending = &pendingCall{snapshot: snapshot}
+}
+
+func (runtime *Runtime) deliverPending(ctx context.Context) error {
+	pending := runtime.pending
+	if pending == nil {
+		return nil
+	}
+	if pending.notification.ID == "" {
+		recipients, err := runtime.remote.ListInstallationRecipients(ctx, runtime.identity.DeviceUUID, runtime.identity.Credential)
+		if err != nil {
+			return fmt.Errorf("list incoming call recipients: %w", err)
+		}
+		if len(recipients) == 0 {
+			return nil
+		}
+		pending.notification, pending.callContext, err = runtime.builder.Seal(recipients, pending.snapshot)
+		if err != nil {
+			return fmt.Errorf("encrypt incoming call: %w", err)
+		}
+	}
+	if err := runtime.remote.UploadIncomingCall(ctx, runtime.identity.DeviceUUID, runtime.identity.Credential, pending.notification); err != nil {
+		return fmt.Errorf("upload incoming call: %w", err)
+	}
+	if err := runtime.events.RegisterIncoming(pending.callContext.CallID, pending.callContext.SharedSecret); err != nil {
+		return fmt.Errorf("register incoming call events: %w", err)
+	}
+	runtime.activeCallID = pending.callContext.CallID
+	runtime.pending = nil
+	return nil
 }
 
 func (runtime *Runtime) process(ctx context.Context, snapshot call.Snapshot) error {

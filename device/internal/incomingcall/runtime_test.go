@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -19,6 +20,7 @@ type fakeRemote struct {
 	recipients       []Recipient
 	listError        error
 	uploadError      error
+	uploadFailures   int
 	listedDeviceID   string
 	listedCredential string
 	uploadedDeviceID string
@@ -36,6 +38,10 @@ func (remote *fakeRemote) UploadIncomingCall(_ context.Context, deviceID string,
 	remote.uploadedDeviceID = deviceID
 	remote.uploadCredential = credential
 	remote.notifications = append(remote.notifications, notification)
+	if remote.uploadFailures > 0 {
+		remote.uploadFailures--
+		return errors.New("temporary server failure")
+	}
 	return remote.uploadError
 }
 
@@ -159,9 +165,34 @@ var _ = Describe("Incoming call runtime", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(closedRuntime.Run(context.Background())).To(MatchError("incoming-call snapshot stream closed"))
 
-		remote.listError = errors.New("server unavailable")
-		snapshots <- call.Snapshot{State: call.StateRinging, IncomingNumber: "13500000000"}
-		Expect(runtime.Run(context.Background())).To(MatchError(ContainSubstring("server unavailable")))
+	})
+
+	It("retries one encrypted incoming call after a temporary server failure", func() {
+		remote.uploadFailures = 1
+		runtime.retryInterval = 5 * time.Millisecond
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		go func() {
+			snapshots <- call.Snapshot{State: call.StateRinging, IncomingNumber: "13500000000"}
+		}()
+
+		Expect(runtime.Run(ctx)).To(MatchError(context.DeadlineExceeded))
+		Expect(remote.notifications).To(HaveLen(2))
+		Expect(remote.notifications[1].ID).To(Equal(remote.notifications[0].ID))
+		Expect(events.callID).NotTo(BeEmpty())
+		Expect(runtime.activeCallID).NotTo(BeEmpty())
+	})
+
+	It("discards a pending call notification when the call ends", func() {
+		remote.uploadError = errors.New("server unavailable")
+		runtime.acceptSnapshot(call.Snapshot{State: call.StateRinging, IncomingNumber: "13500000000"})
+		Expect(runtime.deliverPending(context.Background())).To(HaveOccurred())
+
+		runtime.acceptSnapshot(call.Snapshot{State: call.StateEnded})
+
+		Expect(runtime.pending).To(BeNil())
+		Expect(runtime.deliverPending(context.Background())).To(Succeed())
+		Expect(remote.notifications).To(HaveLen(1))
 	})
 
 	It("validates construction dependencies", func() {

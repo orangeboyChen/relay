@@ -12,7 +12,7 @@ import (
 	"sim-deck-server/internal/store"
 )
 
-var ErrMissingVoIPToken = errors.New("installation has no active push token")
+var ErrMissingVoIPToken = errors.New("installation has no active VoIP push token")
 
 // Repository persists leased outbox work and APNs token invalidation.
 type Repository interface {

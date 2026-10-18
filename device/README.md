@@ -114,28 +114,26 @@ another uses raw PCM.
 ## Stable Linux device paths
 
 USB enumeration names such as `/dev/ttyUSB2` and ALSA card numbers can change
-after a reboot. Inspect each modem before installing rules:
+after a reboot. The Linux installer discovers each modem by vendor and stable
+USB serial identity and writes `/dev/sim-deck/modem-N-*` links automatically.
+It refuses devices without a stable USB serial or with missing UAC control,
+capture, or playback nodes. After installation, verify each generated link
+before starting containers:
 
 ```sh
 udevadm info --attribute-walk --name=/dev/ttyUSB2
 udevadm info --attribute-walk --name=/dev/snd/pcmC1D0c
 ```
 
-Copy `deploy/99-sim-deck.rules.example` to
-`/etc/udev/rules.d/99-sim-deck.rules`, then replace the example serial numbers
-and USB interface numbers with values from the host. Reload the rules and
-reconnect the modems:
+If discovery fails, inspect the target modem's udev properties and slot layout:
 
 ```sh
-sudo udevadm control --reload-rules
-sudo udevadm trigger
+udevadm info --attribute-walk --name=/dev/ttyUSB2
+udevadm info --attribute-walk --name=/dev/snd/pcmC1D0c
 ```
 
-Verify that every path under `/dev/sim-deck` resolves to the intended modem.
-Do not start Compose if an AT, PCM, or audio path is missing or points to another
-physical device. If a modem does not expose a unique serial number, replace the
-serial match with a stable physical USB-port match from the `udevadm` attribute
-walk; never distinguish identical modems by their transient `ttyUSB` number.
+The installer intentionally refuses modems without a unique serial instead of
+falling back to a transient TTY name or an unverified physical USB-port guess.
 
 For local Docker Desktop end-to-end testing on a host that cannot pass the USB
 interface into the Linux VM, `SIM_DECK_AT_DEVICE` may instead use an explicit

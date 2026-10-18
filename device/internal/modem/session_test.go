@@ -540,6 +540,60 @@ var _ = Describe("Modem session", func() {
 		Eventually(result).Should(Receive(MatchError(context.Canceled)))
 	})
 
+	It("reads stored SMS notifications and deletes them after encrypted delivery", func() {
+		received := make(chan sms.ReceivedMessage, 1)
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(_ context.Context, message sms.ReceivedMessage) error {
+			received <- message
+			return nil
+		}))
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			command, _ := reader.ReadString('\r')
+			Expect(strings.TrimSuffix(command, "\r")).To(Equal("AT+CMGR=7"))
+			_, _ = modemTransport.Write([]byte("+CMGR: 1,,23\r\n" + testDeliverPDU + "\r\nOK\r\n"))
+			command, _ = reader.ReadString('\r')
+			Expect(strings.TrimSuffix(command, "\r")).To(Equal("AT+CMGD=7"))
+			_, _ = modemTransport.Write([]byte("OK\r\n"))
+		}()
+		ctx, cancel := context.WithCancel(context.Background())
+		result := make(chan error, 1)
+		go func() { result <- session.Run(ctx) }()
+
+		_, _ = modemTransport.Write([]byte("+CMTI: \"ME\",7\r\n"))
+		Eventually(received).Should(Receive(WithTransform(func(message sms.ReceivedMessage) string { return message.Text }, Equal("你好"))))
+		Eventually(session.inbox.PendingMessages).Should(HaveLen(0))
+		cancel()
+		Eventually(result).Should(Receive(MatchError(context.Canceled)))
+	})
+
+	It("retains stored SMS when encrypted delivery is deferred", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error {
+			return ErrMessageDeliveryDeferred
+		}))
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		commands := make(chan string, 2)
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			command, _ := reader.ReadString('\r')
+			commands <- strings.TrimSuffix(command, "\r")
+			_, _ = modemTransport.Write([]byte("+CMGR: 1,,23\r\n" + testDeliverPDU + "\r\nOK\r\n"))
+			command, _ = reader.ReadString('\r')
+			commands <- strings.TrimSuffix(command, "\r")
+			_, _ = modemTransport.Write([]byte("OK\r\n"))
+		}()
+		ctx, cancel := context.WithCancel(context.Background())
+		result := make(chan error, 1)
+		go func() { result <- session.Run(ctx) }()
+
+		_, _ = modemTransport.Write([]byte("+CMTI: \"ME\",8\r\n"))
+		Eventually(commands).Should(Receive(Equal("AT+CMGR=8")))
+		Eventually(session.inbox.PendingMessages).Should(HaveLen(1))
+		Eventually(commands).Should(Receive(Equal("AT+CMGD=8")))
+		cancel()
+		Eventually(result).Should(Receive(MatchError(context.Canceled)))
+	})
+
 	It("continues after malformed and informational notifications", func() {
 		sinkCalls := make(chan struct{}, 1)
 		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error {
@@ -554,7 +608,7 @@ var _ = Describe("Modem session", func() {
 		result := make(chan error, 1)
 		go func() { result <- session.Run(ctx) }()
 
-		_, _ = modemTransport.Write([]byte("+CMT: ,1\r\ninvalid\r\n+CDS: 1\r\n00\r\n+CMTI: \"ME\",1\r\n"))
+		_, _ = modemTransport.Write([]byte("+CMT: ,1\r\ninvalid\r\n+CDS: 1\r\n00\r\n+CMTI: malformed\r\n"))
 		Consistently(sinkCalls, 50*time.Millisecond).ShouldNot(Receive())
 		cancel()
 		Eventually(result).Should(Receive(MatchError(context.Canceled)))

@@ -475,6 +475,61 @@ func (session *Session) handleURC(ctx context.Context, urc string) error {
 		if err := session.inbox.Acknowledge(received.ID); err != nil {
 			return fmt.Errorf("acknowledge direct SMS: %w", err)
 		}
+	case strings.HasPrefix(urc, "+CMTI:"):
+		// Some EC20 firmware stores the message and emits +CMTI even when
+		// direct delivery was requested. Read the stored PDU before deleting it
+		// so the same durable inbox path handles both notification modes.
+		index, ok := storedMessageIndex(urc)
+		if !ok {
+			session.logger.Warn("discarded malformed stored SMS notification", "urc", urc)
+			return nil
+		}
+		response, err := session.send(ctx, fmt.Sprintf("AT+CMGR=%d", index))
+		if err != nil {
+			return fmt.Errorf("read stored SMS %d: %w", index, err)
+		}
+		if !response.OK() {
+			return fmt.Errorf("modem rejected stored SMS %d: %s", index, response.Terminal)
+		}
+		encoded, ok := storedMessagePDU(response.Lines)
+		if !ok {
+			session.logger.Warn("discarded stored SMS without a PDU", "index", index)
+			return nil
+		}
+		message, err := sms.DecodeDeliver(encoded)
+		if err != nil {
+			session.logger.Warn("discarded malformed stored SMS PDU", "index", index, "error", err)
+			return nil
+		}
+		received, created, err := session.inbox.AddSegment(message)
+		if err != nil {
+			return fmt.Errorf("store stored SMS %d: %w", index, err)
+		}
+		// AddSegment durably persists a complete message before returning. It is
+		// therefore safe to remove the modem copy even when server delivery is
+		// deferred; RetryPendingSMS will publish the encrypted pending record.
+		shouldDelete := created
+		if created {
+			deliveryError := session.sink.ReceiveSMS(ctx, received)
+			if deliveryError != nil && !errors.Is(deliveryError, ErrMessageDeliveryDeferred) {
+				return fmt.Errorf("deliver stored SMS: %w", deliveryError)
+			}
+			if deliveryError == nil {
+				if err := session.inbox.Acknowledge(received.ID); err != nil && !errors.Is(err, sms.ErrUnknownMessage) {
+					return fmt.Errorf("acknowledge stored SMS: %w", err)
+				}
+			}
+		}
+		if !shouldDelete {
+			return nil
+		}
+		if response, err := session.send(ctx, fmt.Sprintf("AT+CMGD=%d", index)); err != nil || !response.OK() {
+			if err != nil {
+				session.logger.Warn("modem rejected stored SMS deletion", "index", index, "error", err)
+			} else {
+				session.logger.Warn("modem rejected stored SMS deletion", "index", index, "terminal", response.Terminal)
+			}
+		}
 	case strings.HasPrefix(urc, "+CDS:"):
 		_, encoded, ok := strings.Cut(urc, "\n")
 		if !ok {
@@ -520,6 +575,32 @@ func historyPDUs(lines []string) ([]string, error) {
 		index++
 	}
 	return result, errors.Join(failures...)
+}
+
+func storedMessageIndex(urc string) (int, bool) {
+	_, payload, ok := strings.Cut(strings.TrimSpace(urc), ":")
+	if !ok {
+		return 0, false
+	}
+	parts := strings.Split(payload, ",")
+	if len(parts) != 2 {
+		return 0, false
+	}
+	index, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	return index, err == nil && index >= 0
+}
+
+func storedMessagePDU(lines []string) (string, bool) {
+	for index, line := range lines {
+		if !strings.HasPrefix(line, "+CMGR:") || index+1 >= len(lines) {
+			continue
+		}
+		pdu := strings.TrimSpace(lines[index+1])
+		if pdu != "" && !strings.HasPrefix(pdu, "+") {
+			return pdu, true
+		}
+	}
+	return "", false
 }
 
 func isCallURC(urc string) bool {

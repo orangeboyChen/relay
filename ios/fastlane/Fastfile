@@ -38,10 +38,12 @@ def app_store_connect_authentication
 
   return {} if ENV["FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD"].to_s.empty?
 
-  apple_id = ENV["FASTLANE_USER"]
-  UI.user_error!("FASTLANE_USER is required with FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD") if apple_id.to_s.empty?
+  username = ENV["FASTLANE_USER"]
+  app_apple_id = ENV["PILOT_APPLE_ID"]
+  UI.user_error!("FASTLANE_USER is required with FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD") if username.to_s.empty?
+  UI.user_error!("PILOT_APPLE_ID is required with FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD") if app_apple_id.to_s.empty?
 
-  { username: apple_id, apple_id: apple_id }
+  { username: username, apple_id: app_apple_id }
 end
 
 def attach_webrtc_symbols(archive_path)

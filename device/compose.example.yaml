@@ -28,7 +28,6 @@ services:
     hostname: sim-deck-modem-1
     environment:
       <<: *device-environment
-      SIM_DECK_DEVICE_UUID: "${SIM_DECK_MODEM_1_DEVICE_UUID:?set SIM_DECK_MODEM_1_DEVICE_UUID}"
       SIM_DECK_AUDIO_MODE: "${SIM_DECK_MODEM_1_AUDIO_MODE:-alsa}"
       SIM_DECK_ALSA_CAPTURE_DEVICE: "${SIM_DECK_MODEM_1_ALSA_CAPTURE_DEVICE:-hw:0,0}"
       SIM_DECK_ALSA_PLAYBACK_DEVICE: "${SIM_DECK_MODEM_1_ALSA_PLAYBACK_DEVICE:-hw:0,0}"
@@ -56,7 +55,6 @@ services:
     hostname: sim-deck-modem-2
     environment:
       <<: *device-environment
-      SIM_DECK_DEVICE_UUID: "${SIM_DECK_MODEM_2_DEVICE_UUID:?set SIM_DECK_MODEM_2_DEVICE_UUID}"
       SIM_DECK_AUDIO_MODE: "${SIM_DECK_MODEM_2_AUDIO_MODE:-alsa}"
       SIM_DECK_ALSA_CAPTURE_DEVICE: "${SIM_DECK_MODEM_2_ALSA_CAPTURE_DEVICE:-hw:0,0}"
       SIM_DECK_ALSA_PLAYBACK_DEVICE: "${SIM_DECK_MODEM_2_ALSA_PLAYBACK_DEVICE:-hw:0,0}"

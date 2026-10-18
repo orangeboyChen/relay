@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,69 @@ var initializationCommands = []string{
 }
 
 const simReadinessCommand = "AT+CPIN?"
+
+// ReadEquipmentIdentity returns the modem IMEI used only for local hardware identity derivation.
+func ReadEquipmentIdentity(ctx context.Context, client *at.Client, timeout time.Duration) (string, error) {
+	if client == nil || timeout <= 0 {
+		return "", errors.New("AT client and positive timeout are required")
+	}
+	for _, command := range []string{"AT+CGSN", "AT+GSN"} {
+		commandContext, cancel := context.WithTimeout(ctx, timeout)
+		response, err := client.Send(commandContext, command)
+		cancel()
+		if err != nil {
+			return "", err
+		}
+		if !response.OK() {
+			continue
+		}
+		for _, line := range response.Lines {
+			value := strings.Trim(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "+CGSN:")), "\" ")
+			if len(value) >= 14 && len(value) <= 16 && allDigits(value) {
+				return value, nil
+			}
+		}
+	}
+	return "", errors.New("modem did not return a valid equipment identity")
+}
+
+// ReadSIMSlotIndexes returns every physical slot index exposed by the modem.
+func ReadSIMSlotIndexes(ctx context.Context, client *at.Client, timeout time.Duration) ([]int, error) {
+	if client == nil || timeout <= 0 {
+		return nil, errors.New("AT client and positive timeout are required")
+	}
+	commandContext, cancel := context.WithTimeout(ctx, timeout)
+	response, err := client.Send(commandContext, "AT+QSIMSTAT")
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+	if !response.OK() {
+		return nil, ErrSIMSlotUnsupported
+	}
+	indexes := make([]int, 0)
+	seen := make(map[int]struct{})
+	for _, line := range response.Lines {
+		parts := strings.Split(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "+QSIMSTAT:")), ",")
+		if len(parts) != 2 {
+			continue
+		}
+		index, indexErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+		state, stateErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if indexErr != nil || stateErr != nil || index < 1 || index > 32 || (state != 0 && state != 1) {
+			continue
+		}
+		if _, exists := seen[index]; !exists {
+			seen[index] = struct{}{}
+			indexes = append(indexes, index)
+		}
+	}
+	if len(indexes) == 0 {
+		return nil, ErrSIMSlotUnsupported
+	}
+	sort.Ints(indexes)
+	return indexes, nil
+}
 
 // ErrMessageDeliveryDeferred keeps a durable SMS pending without stopping unrelated modem services.
 var ErrMessageDeliveryDeferred = errors.New("SMS delivery deferred")

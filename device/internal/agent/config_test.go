@@ -18,6 +18,15 @@ func configLookup(values map[string]string) func(string) (string, bool) {
 }
 
 var _ = Describe("Agent configuration", func() {
+	It("does not require an operator-assigned device UUID", func() {
+		config, err := LoadConfig(configLookup(map[string]string{
+			"SIM_DECK_SERVER_URL": "https://deck.example",
+		}))
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(config.DeviceUUID).To(BeEmpty())
+	})
+
 	It("uses stable device and persistence defaults", func() {
 		config, err := LoadConfig(configLookup(map[string]string{
 			"SIM_DECK_DEVICE_UUID": configDeviceUUID,
@@ -138,7 +147,6 @@ var _ = Describe("Agent configuration", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring(expectedMessage))
 		},
-		Entry("missing device UUID", map[string]string{"SIM_DECK_DEVICE_UUID": ""}, "DEVICE_UUID"),
 		Entry("malformed device UUID", map[string]string{"SIM_DECK_DEVICE_UUID": "device-one"}, "DEVICE_UUID"),
 		Entry("invalid insecure HTTP flag", map[string]string{"SIM_DECK_ALLOW_INSECURE_HTTP": "perhaps"}, "ALLOW_INSECURE_HTTP"),
 		Entry("invalid baud", map[string]string{"SIM_DECK_BAUD": "fast"}, "BAUD"),

@@ -240,6 +240,9 @@ func testDependencies(transport io.ReadWriteCloser, session deviceSession) devic
 	}
 	return deviceDependencies{
 		openTransport: func(string, int, string, string, string) (io.ReadWriteCloser, error) { return transport, nil },
+		resolveHardware: func(_ context.Context, config agent.Config, _ *at.Client) (string, string, error) {
+			return config.DeviceUUID, config.SlotKey, nil
+		},
 		bindIdentity: func(_ context.Context, _ agent.Config, _ identity.Store, state identity.State) (identity.State, error) {
 			state.NumericID = 2
 			return state, nil
@@ -466,7 +469,7 @@ var _ = Describe("Device command runtime", func() {
 		err := runDevice(context.Background(), testConfig("/dev/null/sim-deck"), logger, &atomic.Bool{}, dependencies)
 
 		Expect(err).To(MatchError(ContainSubstring("load device identity")))
-		Expect(openedTransport).To(BeFalse())
+		Expect(openedTransport).To(BeTrue())
 	})
 
 	It("returns an inbox initialization failure", func() {

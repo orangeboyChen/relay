@@ -32,6 +32,37 @@ func newTestSession(sink MessageSink) (*Session, net.Conn, *at.Client) {
 }
 
 var _ = Describe("Modem session", func() {
+	It("reads the modem equipment identity for local hardware derivation", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := at.NewClient(clientTransport)
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		go func() {
+			command, _ := bufio.NewReader(modemTransport).ReadString('\r')
+			Expect(strings.TrimSuffix(command, "\r")).To(Equal("AT+CGSN"))
+			_, _ = modemTransport.Write([]byte("867530900000001\r\nOK\r\n"))
+		}()
+
+		value, err := ReadEquipmentIdentity(context.Background(), client, time.Second)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(value).To(Equal("867530900000001"))
+	})
+
+	It("reads every exposed physical slot index", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := at.NewClient(clientTransport)
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		go func() {
+			_, _ = bufio.NewReader(modemTransport).ReadString('\r')
+			_, _ = modemTransport.Write([]byte("+QSIMSTAT: 2,0\r\n+QSIMSTAT: 1,1\r\nOK\r\n"))
+		}()
+
+		indexes, err := ReadSIMSlotIndexes(context.Background(), client, time.Second)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(indexes).To(Equal([]int{1, 2}))
+	})
+
 	It("reads physical SIM slot presence when QSIMSTAT is supported", func() {
 		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
 		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })

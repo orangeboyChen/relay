@@ -69,7 +69,7 @@ var _ = Describe("Device identity store", func() {
 		Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o600)))
 	})
 
-	It("derives a stable device-scoped SIM fingerprint without exposing the ICCID", func() {
+	It("derives a stable cross-device SIM fingerprint without exposing the ICCID", func() {
 		store := NewStore(GinkgoT().TempDir(), testDeviceUUID)
 		state, err := store.LoadOrCreate()
 		Expect(err).NotTo(HaveOccurred())
@@ -79,12 +79,15 @@ var _ = Describe("Device identity store", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(first).To(Equal(second))
 		Expect(first).To(HaveLen(64))
+		otherState, err := NewStore(GinkgoT().TempDir(), "01900000-0000-7000-8000-000000000002").LoadOrCreate()
+		Expect(err).NotTo(HaveOccurred())
+		moved, err := otherState.FingerprintSIM("8986000000000000000")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(moved).To(Equal(first))
 		_, err = state.FingerprintSIM("not-an-iccid")
 		Expect(err).To(MatchError(ContainSubstring("invalid length")))
 		_, err = state.FingerprintSIM("898600000000000000x")
 		Expect(err).To(MatchError(ContainSubstring("only digits")))
-		_, err = (State{}).FingerprintSIM("8986000000000000000")
-		Expect(err).To(MatchError("SIM fingerprint key is invalid"))
 	})
 
 	It("atomically persists a SIM fingerprint and server assignment", func() {

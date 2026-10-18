@@ -31,11 +31,14 @@ following resources kept separate from every other instance:
 - either one separately verified raw PCM path or the exact ALSA control,
   capture, and playback device nodes for that modem;
 - one persistent `/var/lib/sim-deck` volume;
-- one operator-assigned `SIM_DECK_DEVICE_UUID`;
+- one modem with a readable IMEI and one stable physical slot index;
 
 Never share or copy a state volume between two running modem containers. The
-configured UUID is immutable for that state volume. Startup fails if
-`SIM_DECK_DEVICE_UUID` does not match the persisted identity. The volume also
+agent reads the modem IMEI, derives opaque physical-slot keys from the IMEI and
+every exposed slot index, and deterministically derives its device UUID from
+the sorted set of slot keys. Neither the IMEI nor a raw slot identifier is sent to the
+server. The optional `SIM_DECK_DEVICE_UUID` remains only as a compatibility
+override for existing deployments. The volume also
 contains the modem endpoint's Ed25519 signing identity, X25519
 command-decryption identity, server URL, device credential, and visible SIM numeric ID. Copying it would create two
 agents with the same identity. Moving the volume together with the same physical
@@ -188,16 +191,15 @@ pairing token into Docker. The intended first-start sequence is:
    accepts new candidates for ten minutes or until discovery is disabled.
 2. Start one modem container. It connects to the configured server and appears
    as a pending device in the app.
-3. Compare the immutable device UUID and public-key fingerprint shown in the
-   app with the deployment you started, then tap Allow or Don't Allow.
+3. Compare the automatically derived device UUID and public-key fingerprint
+   shown in the app with the deployment you started, then tap Allow or Don't Allow.
 4. After allowing the candidate, configure its editable device and line names.
    The server assigns the smallest free visible SIM numeric ID atomically.
 5. Disable device discovery when no more modems need to be admitted.
 
 On first startup, the agent:
 
-1. validates the operator-supplied `SIM_DECK_DEVICE_UUID` and binds it to the
-   private state volume;
+1. reads the modem IMEI and derives the device UUID from its physical slot;
 2. creates and durably stores an Ed25519 identity, X25519 command key, and random
    pending credential;
 3. signs its discovery request and sends only public keys plus the pending
@@ -234,21 +236,18 @@ own queue and must keep its state volume private.
 ## Running two modems
 
 `compose.example.yaml` defines two fully isolated modem services. Set the
-server URL, a different UUID for each modem, and the host device group IDs:
+server URL and host device group IDs:
 
 ```sh
 export SIM_DECK_SERVER_URL=https://sim-deck.example
-export SIM_DECK_MODEM_1_DEVICE_UUID=01900000-0000-7000-8000-000000000001
-export SIM_DECK_MODEM_2_DEVICE_UUID=01900000-0000-7000-8000-000000000002
 export SIM_DECK_DIALOUT_GID="$(getent group dialout | cut -d: -f3)"
 export SIM_DECK_AUDIO_GID="$(getent group audio | cut -d: -f3)"
 docker compose -f compose.example.yaml up --build
 ```
 
-Generate a different UUID for every modem container and keep it with that
-modem's deployment configuration. The server sees two independent device UUIDs and allocates the smallest free SIM
-numeric ID to each. To add another modem, copy one service block and change all
-host device paths, the configured UUID, the state volume, and the host health
+The server sees two independently derived device UUIDs and allocates the
+smallest free SIM numeric ID to each. To add another modem, copy one service
+block and change all host device paths, the state volume, and the host health
 port. Do not add multiple modem mappings to one container.
 
 The local readiness endpoints in the example are
@@ -271,7 +270,6 @@ example paths must be replaced with the paths for the first physical modem:
 
 ```sh
 export SIM_DECK_SERVER_URL=https://sim-deck.example.com
-export SIM_DECK_MODEM_1_DEVICE_UUID=01900000-0000-7000-8000-000000000001
 export SIM_DECK_MODEM_1_AT_DEVICE=/dev/sim-deck/modem-1-at
 export SIM_DECK_MODEM_1_AUDIO_CONTROL=/dev/sim-deck/modem-1-audio-control
 export SIM_DECK_MODEM_1_AUDIO_CAPTURE=/dev/sim-deck/modem-1-audio-capture
@@ -294,7 +292,7 @@ docker compose -f compose.example.yaml logs --tail=100 modem-1
 ```
 
 The container remains `starting` while it is awaiting approval. In the app,
-select the pending UUID, compare its fingerprint with the
+select the pending derived UUID, compare its fingerprint with the
 `identity_fingerprint` value in the container log, and tap Allow. Then verify
 readiness:
 
@@ -303,14 +301,13 @@ curl --fail-with-body http://127.0.0.1:18081/healthz
 docker compose -f compose.example.yaml logs --tail=100 modem-1
 ```
 
-A successful log entry contains `device agent ready`, the immutable device
-UUID, and the assigned numeric SIM ID. Disable discovery in the app when the
+A successful log entry contains `device agent ready`, the derived immutable
+device UUID, and the assigned numeric SIM ID. Disable discovery in the app when the
 last intended modem has joined. The server's authenticated
 `GET /v1/devices` endpoint and the iOS device-management screen then show the
 same device.
 
 The named `modem-1-state` volume must remain attached to this modem. Removing
 or replacing it creates new cryptographic keys. Revoke the old device first,
-then enable discovery and approve the replacement using the configured UUID.
-For a second modem, repeat the process with a distinct UUID, the `modem-2`
-paths, and the independent `modem-2-state` volume.
+then enable discovery and approve the replacement. For a second modem, repeat
+the process with the `modem-2` paths and the independent `modem-2-state` volume.

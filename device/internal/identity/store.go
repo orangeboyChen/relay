@@ -3,7 +3,6 @@ package identity
 import (
 	"crypto/ecdh"
 	"crypto/ed25519"
-	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -45,11 +44,8 @@ type State struct {
 	SIMFingerprint     string             `json:"sim_fingerprint,omitempty"`
 }
 
-// FingerprintSIM returns a stable, device-scoped fingerprint without persisting the ICCID.
+// FingerprintSIM returns a stable opaque fingerprint without persisting the ICCID.
 func (state State) FingerprintSIM(iccid string) (string, error) {
-	if len(state.IdentityPrivateKey) != ed25519.PrivateKeySize {
-		return "", fmt.Errorf("SIM fingerprint key is invalid")
-	}
 	iccid = strings.TrimSpace(iccid)
 	if len(iccid) < 18 || len(iccid) > 22 {
 		return "", fmt.Errorf("SIM ICCID has an invalid length")
@@ -59,9 +55,8 @@ func (state State) FingerprintSIM(iccid string) (string, error) {
 			return "", fmt.Errorf("SIM ICCID must contain only digits")
 		}
 	}
-	mac := hmac.New(sha256.New, state.IdentityPrivateKey.Seed())
-	_, _ = mac.Write([]byte(iccid))
-	return hex.EncodeToString(mac.Sum(nil)), nil
+	digest := sha256.Sum256([]byte("sim-deck-sim-iccid-v1\x00" + iccid))
+	return hex.EncodeToString(digest[:]), nil
 }
 
 // CommandPublicKey derives the X25519 key advertised for encrypted device commands.

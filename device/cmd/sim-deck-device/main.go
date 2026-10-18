@@ -155,6 +155,7 @@ type messageEventPublisher interface {
 
 type deviceDependencies struct {
 	openTransport    func(string, int, string, string, string) (io.ReadWriteCloser, error)
+	resolveHardware  func(context.Context, agent.Config, *at.Client) (string, string, error)
 	bindIdentity     func(context.Context, agent.Config, identity.Store, identity.State) (identity.State, error)
 	openInbox        func(string, time.Duration, []byte) (*sms.Inbox, error)
 	newSession       func(*at.Client, *sms.Inbox, modem.MessageSink, *slog.Logger, time.Duration) (deviceSession, error)
@@ -173,6 +174,33 @@ func productionDependencies(httpClient *http.Client) deviceDependencies {
 	return deviceDependencies{
 		openTransport: func(path string, baud int, tlsCAFile string, tlsCertificateFile string, tlsKeyFile string) (io.ReadWriteCloser, error) {
 			return serialport.Open(path, baud, tlsCAFile, tlsCertificateFile, tlsKeyFile)
+		},
+		resolveHardware: func(ctx context.Context, config agent.Config, client *at.Client) (string, string, error) {
+			if config.DeviceUUID != "" {
+				return config.DeviceUUID, config.SlotKey, nil
+			}
+			equipmentIdentity, err := modem.ReadEquipmentIdentity(ctx, client, config.CommandTimeout)
+			if err != nil {
+				return "", "", err
+			}
+			slotIndexes, slotError := modem.ReadSIMSlotIndexes(ctx, client, config.CommandTimeout)
+			if slotError != nil {
+				slotIndexes = []int{config.SlotIndex}
+			}
+			slotKeys := make([]string, 0, len(slotIndexes))
+			for _, slotIndex := range slotIndexes {
+				key, keyError := identity.HardwareSlotKey(equipmentIdentity, slotIndex)
+				if keyError != nil {
+					return "", "", keyError
+				}
+				slotKeys = append(slotKeys, key)
+			}
+			slotKey, err := identity.HardwareSlotKey(equipmentIdentity, config.SlotIndex)
+			if err != nil {
+				return "", "", err
+			}
+			deviceUUID, err := identity.DeriveDeviceUUID(slotKeys)
+			return deviceUUID, slotKey, err
 		},
 		bindIdentity: func(ctx context.Context, config agent.Config, store identity.Store, state identity.State) (identity.State, error) {
 			return agent.EnsureBinding(ctx, config, store, state, serverapi.NewClient(config.ServerURL, httpClient))
@@ -238,6 +266,18 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	if config.SlotIndex < 1 {
 		config.SlotIndex = 1
 	}
+	transport, err := dependencies.openTransport(config.ATDevice, config.Baud, config.ATTLSCAFile, config.ATTLSCertificateFile, config.ATTLSKeyFile)
+	if err != nil {
+		return err
+	}
+	client := at.NewClient(transport)
+	defer client.Close()
+	deviceUUID, slotKey, err := dependencies.resolveHardware(ctx, config, client)
+	if err != nil {
+		return fmt.Errorf("derive device hardware identity: %w", err)
+	}
+	config.DeviceUUID = deviceUUID
+	config.SlotKey = slotKey
 	identityStore := identity.NewStore(config.StateDirectory, config.DeviceUUID)
 	deviceIdentity, err := identityStore.LoadOrCreate()
 	if err != nil {
@@ -252,12 +292,6 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 		"device_uuid", deviceIdentity.DeviceUUID,
 		"identity_fingerprint", deviceIdentity.IdentityFingerprint(),
 	)
-	transport, err := dependencies.openTransport(config.ATDevice, config.Baud, config.ATTLSCAFile, config.ATTLSCertificateFile, config.ATTLSKeyFile)
-	if err != nil {
-		return err
-	}
-	client := at.NewClient(transport)
-	defer client.Close()
 
 	inbox, err := dependencies.openInbox(
 		filepath.Join(config.StateDirectory, "sms-inbox.json"),

@@ -90,8 +90,8 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 		ServerURL:             strings.TrimRight(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_SERVER_URL", "")), "/"),
 		StateDirectory:        valueOrDefault(lookup, "SIM_DECK_STATE_DIRECTORY", defaultStateDir),
 	}
-	if !identity.ValidDeviceUUID(config.DeviceUUID) {
-		return Config{}, fmt.Errorf("SIM_DECK_DEVICE_UUID must be a canonical UUID")
+	if config.DeviceUUID != "" && !identity.ValidDeviceUUID(config.DeviceUUID) {
+		return Config{}, fmt.Errorf("SIM_DECK_DEVICE_UUID must be empty or a canonical UUID")
 	}
 	if config.SlotKey == "" || len(config.SlotKey) > 64 {
 		return Config{}, fmt.Errorf("SIM_DECK_SLOT_KEY must be between 1 and 64 characters")

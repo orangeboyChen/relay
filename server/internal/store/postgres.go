@@ -1296,7 +1296,7 @@ func (store *Postgres) RetireSIMCard(ctx context.Context, simID string, retiredA
 			return fmt.Errorf("check SIM assignment: %w", err)
 		}
 		if assigned {
-			return errors.New("SIM card is still assigned to a device slot")
+			return domain.ErrSIMAssigned
 		}
 		return pgx.ErrNoRows
 	}

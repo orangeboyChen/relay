@@ -548,7 +548,7 @@ var _ = Describe("HTTP API", func() {
 			Expect(response.Body.String()).To(ContainSubstring(expectedCode))
 		},
 		Entry("success", nil, http.StatusNoContent, ""),
-		Entry("assigned", errors.New("SIM card is still assigned to a device slot"), http.StatusConflict, "sim_online"),
+		Entry("assigned", domain.ErrSIMAssigned, http.StatusConflict, "sim_online"),
 		Entry("missing", pgx.ErrNoRows, http.StatusNotFound, "sim_not_found"),
 		Entry("storage failure", errors.New("database unavailable"), http.StatusInternalServerError, "storage_error"),
 	)

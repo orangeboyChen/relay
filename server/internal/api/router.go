@@ -446,7 +446,7 @@ func (router *router) retireSIMCard(writer http.ResponseWriter, request *http.Re
 			writeError(writer, http.StatusNotFound, "sim_not_found", "SIM card not found or already removed.")
 			return
 		}
-		if strings.Contains(err.Error(), "still assigned") {
+		if errors.Is(err, domain.ErrSIMAssigned) {
 			writeError(writer, http.StatusConflict, "sim_online", "Remove the SIM card from its device before deleting it.")
 			return
 		}

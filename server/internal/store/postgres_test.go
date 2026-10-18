@@ -834,7 +834,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 			HaveField("ID", firstSIM),
 			HaveField("AssignedSlotID", BeNil()),
 		)))
-		Expect(database.RetireSIMCard(context.Background(), secondSIM, now.Add(90*time.Second))).To(MatchError(ContainSubstring("still assigned")))
+		Expect(database.RetireSIMCard(context.Background(), secondSIM, now.Add(90*time.Second))).To(MatchError(domain.ErrSIMAssigned))
 		missingSIM := "01900000-0000-7000-8000-000000000199"
 		Expect(database.UpdateSIMNumericID(context.Background(), missingSIM, 9)).To(MatchError(ContainSubstring(pgx.ErrNoRows.Error())))
 		Expect(database.UpdateSIMProfile(context.Background(), missingSIM, []byte("missing"))).To(MatchError(ContainSubstring(pgx.ErrNoRows.Error())))

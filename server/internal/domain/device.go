@@ -23,6 +23,7 @@ var (
 	ErrDeviceDiscoveryExpired  = errors.New("device discovery request is expired")
 	ErrDeviceDiscoveryRejected = errors.New("device discovery request was rejected")
 	ErrInstallationConflict    = errors.New("installation id is already registered with different identity data")
+	ErrSIMAssigned             = errors.New("SIM card is still assigned to a device slot")
 )
 
 // DeviceLineIdentity is the public identity of one modem and SIM line.

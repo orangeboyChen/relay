@@ -1,8 +1,19 @@
 import Foundation
 import SwiftUI
+import UIKit
+
+final class SimDeckAppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        NotificationCenter.default.post(name: .simDeckAPNsToken, object: deviceToken)
+    }
+}
 
 @main
 struct SimDeckApp: App {
+    @UIApplicationDelegateAdaptor(SimDeckAppDelegate.self) private var appDelegate
     @State private var model: AppModel
     private let shouldStartLiveServices: Bool
 

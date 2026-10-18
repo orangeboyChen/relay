@@ -48,6 +48,7 @@ struct EncryptedEventEnvelope: Decodable, Equatable, Sendable {
     let sequence: Int64
     let type: String
     let deviceUUID: UUID
+    let recipientInstallationID: UUID?
     let occurredAt: Date
     let keyEpoch: Int
     let nonce: Data
@@ -59,6 +60,7 @@ struct EncryptedEventEnvelope: Decodable, Equatable, Sendable {
         case sequence
         case type
         case deviceUUID = "device_uuid"
+        case recipientInstallationID = "recipient_installation_id"
         case occurredAt = "occurred_at"
         case keyEpoch = "key_epoch"
         case nonce

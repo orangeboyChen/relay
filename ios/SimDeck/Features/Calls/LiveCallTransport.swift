@@ -762,6 +762,9 @@ enum EncryptedCallEventCodec {
         data.appendLengthPrefixed(Data(envelope.id.uuidString.lowercased().utf8))
         data.appendLengthPrefixed(Data(envelope.type.utf8))
         data.appendLengthPrefixed(Data(envelope.deviceUUID.uuidString.lowercased().utf8))
+        if let recipientInstallationID = envelope.recipientInstallationID {
+            data.appendLengthPrefixed(Data(recipientInstallationID.uuidString.lowercased().utf8))
+        }
         let nanoseconds = Int64((envelope.occurredAt.timeIntervalSince1970 * 1_000_000_000).rounded())
         data.appendBigEndian(UInt64(bitPattern: nanoseconds))
         data.appendBigEndian(UInt64(envelope.keyEpoch))

@@ -36,6 +36,7 @@ final class AppModel {
     @ObservationIgnored private var installationIdentity: InstallationIdentity?
     @ObservationIgnored private var recoveredVaultKey: VaultKey?
     @ObservationIgnored private var voipPushCoordinator: VoIPPushCoordinator?
+    @ObservationIgnored private var alertPushCoordinator: AlertPushCoordinator?
     @ObservationIgnored private let commandSigner: InstallationCommandSigner
     @ObservationIgnored private let messageTransport: any MessageTransport
 
@@ -130,6 +131,7 @@ final class AppModel {
             callCoordinator.updateLineRoutes(devices)
             messageTransport.updateLineRoutes(devices)
             try? await voipPushCoordinator?.uploadPendingToken()
+            try? await alertPushCoordinator?.uploadPendingToken()
         } catch {
             devices = devices.map { device in
                 var offlineDevice = device
@@ -146,6 +148,7 @@ final class AppModel {
         callCoordinator.updateLineRoutes(devices)
         messageTransport.updateLineRoutes(devices)
         try? await voipPushCoordinator?.uploadPendingToken()
+        try? await alertPushCoordinator?.uploadPendingToken()
     }
 
     func startVoIPPushes() {
@@ -159,6 +162,18 @@ final class AppModel {
             }
         }
         voipPushCoordinator?.start(installationID: installationIdentity.id)
+        startAlertPushes()
+    }
+
+    func startAlertPushes() {
+        guard let installationIdentity else { return }
+        if alertPushCoordinator == nil {
+            alertPushCoordinator = AlertPushCoordinator(
+                tokenRegistrar: serverConnection,
+                environment: Self.pushEnvironment
+            )
+        }
+        alertPushCoordinator?.start(installationID: installationIdentity.id)
     }
 
     func handleExternalDial(number rawNumber: String, requiredLineID: UUID? = nil) async {

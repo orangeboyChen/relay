@@ -59,8 +59,9 @@ type runtimeConfig struct {
 	databaseURL   string
 	publicBaseURL string
 	httpAddress   string
-	mediaUDPPort  int
-	mediaTCPPort  int
+	turnURL       string
+	turnSecret    []byte
+	turnTTL       time.Duration
 	certificate   string
 	privateKey    string
 }
@@ -118,7 +119,7 @@ func run(ctx context.Context, dependencies dependencies) error {
 
 	server := dependencies.newHTTPServer(
 		config.httpAddress,
-		api.Handler(repository, api.Config{PublicBaseURL: config.publicBaseURL, MediaUDPPort: config.mediaUDPPort, MediaTCPPort: config.mediaTCPPort}),
+		api.Handler(repository, api.Config{PublicBaseURL: config.publicBaseURL, TURNURL: config.turnURL, TURNSecret: config.turnSecret, TURNTTL: config.turnTTL}),
 	)
 	worker, err := configuredPushWorker(repository, dependencies)
 	if err != nil {
@@ -179,25 +180,34 @@ func loadRuntimeConfig(getenv func(string) string) (runtimeConfig, error) {
 	if err != nil {
 		return runtimeConfig{}, err
 	}
-	udpPort, err := api.ParsePort(getenv("MEDIA_UDP_PORT"), 49152)
-	if err != nil {
-		return runtimeConfig{}, err
-	}
-	tcpPort, err := api.ParsePort(getenv("MEDIA_TCP_PORT"), 49153)
-	if err != nil {
-		return runtimeConfig{}, err
-	}
 	certificate := strings.TrimSpace(getenv("TLS_CERT_FILE"))
 	privateKey := strings.TrimSpace(getenv("TLS_KEY_FILE"))
 	if (certificate == "") != (privateKey == "") {
 		return runtimeConfig{}, errors.New("serve HTTP: TLS_CERT_FILE and TLS_KEY_FILE must be configured together")
 	}
+	turnURL := strings.TrimSpace(getenv("TURN_URL"))
+	turnSecretFile := strings.TrimSpace(getenv("TURN_SHARED_SECRET_FILE"))
+	var turnSecret []byte
+	if turnURL != "" || turnSecretFile != "" {
+		if turnURL == "" || turnSecretFile == "" {
+			return runtimeConfig{}, errors.New("TURN_URL and TURN_SHARED_SECRET_FILE must be configured together")
+		}
+		turnSecret, err = os.ReadFile(turnSecretFile)
+		if err != nil {
+			return runtimeConfig{}, fmt.Errorf("read TURN shared secret: %w", err)
+		}
+		turnSecret = []byte(strings.TrimSpace(string(turnSecret)))
+		if len(turnSecret) < 16 {
+			return runtimeConfig{}, errors.New("TURN shared secret must contain at least 16 bytes")
+		}
+	}
 	return runtimeConfig{
 		databaseURL:   databaseURL,
 		publicBaseURL: publicBaseURL,
 		httpAddress:   envOrDefault(getenv, "HTTP_ADDR", ":8080"),
-		mediaUDPPort:  udpPort,
-		mediaTCPPort:  tcpPort,
+		turnURL:       turnURL,
+		turnSecret:    turnSecret,
+		turnTTL:       10 * time.Minute,
 		certificate:   certificate,
 		privateKey:    privateKey,
 	}, nil

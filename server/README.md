@@ -29,7 +29,12 @@ Create `secrets/admin_password.txt` and `secrets/recovery_public_key.txt`, copy
 `.env.example` to `.env`, and replace every example secret before starting the
 stack. The recovery public key file contains an unpadded base64 Ed25519 public
 key. Keep its private key on the Linux host and never mount it into the server
-container.
+container. Also create the coturn shared secret with `openssl rand -hex 32` and
+point `TURN_SHARED_SECRET_FILE` at it. Set `TURN_URL` to the public TURN DNS
+name and `TURN_EXTERNAL_IP` to the relay host's public IP (use coturn's
+`public/private` form when the host is behind NAT). Open the TURN listening
+port and configured UDP relay range on the server firewall. Modem containers
+publish no media ports and never need a reachable address of their own.
 
 The base Compose stack does not require Apple credentials, so PostgreSQL,
 owner bootstrap, iOS login, and app-controlled modem discovery work before APNs is configured.
@@ -87,7 +92,8 @@ Set a URL-safe `POSTGRES_PASSWORD`, the externally reachable
 `PUBLIC_BASE_URL`, and `SERVER_PORT` in `.env`. For example, generate the
 database password with `openssl rand -hex 32`. `PUBLIC_BASE_URL` must be the URL
 that both the iPhone and device containers can reach; `localhost` is not valid
-for a modem container.
+for a modem container. `TURN_URL` must resolve to the same server deployment,
+and `TURN_EXTERNAL_IP` must be the address coturn advertises for relayed media.
 
 Start the base stack and check readiness:
 

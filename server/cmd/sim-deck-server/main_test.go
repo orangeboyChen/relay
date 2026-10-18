@@ -375,20 +375,6 @@ var _ = Describe("Server command", func() {
 		Expect(memoryStore.closed).To(BeTrue())
 	})
 
-	DescribeTable("rejects invalid media ports before constructing a server",
-		func(name string) {
-			environment[name] = "invalid"
-
-			err := run(context.Background(), testDependencies)
-
-			Expect(err).To(MatchError(ContainSubstring("invalid port")))
-			Expect(serverHandler).To(BeNil())
-			Expect(openedDatabaseURL).To(BeEmpty())
-		},
-		Entry("UDP", "MEDIA_UDP_PORT"),
-		Entry("TCP", "MEDIA_TCP_PORT"),
-	)
-
 	It("constructs the API and returns a plain HTTP serving failure", func() {
 		environment["HTTP_ADDR"] = "127.0.0.1:18080"
 		environment["PUBLIC_BASE_URL"] = "https://deck.example"

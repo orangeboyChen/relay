@@ -26,26 +26,45 @@ services:
       DATABASE_URL: postgres://simdeck:${POSTGRES_PASSWORD}@postgres:5432/simdeck?sslmode=disable
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL}
       HTTP_ADDR: :8080
-      MEDIA_UDP_PORT: ${MEDIA_UDP_PORT:-49152}
-      MEDIA_TCP_PORT: ${MEDIA_TCP_PORT:-49153}
+      TURN_URL: ${TURN_URL:?Set TURN_URL}
+      TURN_SHARED_SECRET_FILE: /run/secrets/turn_shared_secret
       ADMIN_PASSWORD_FILE: /run/secrets/admin_password
       RECOVERY_PUBLIC_KEY_FILE: /run/secrets/recovery_public_key
       ATTACHMENT_ROOT: /var/lib/sim-deck/attachments
     secrets:
       - admin_password
       - recovery_public_key
+      - turn_shared_secret
     ports:
       - "127.0.0.1:${SERVER_PORT:-8443}:8080"
-      - "${MEDIA_UDP_PORT:-49152}:${MEDIA_UDP_PORT:-49152}/udp"
-      - "${MEDIA_TCP_PORT:-49153}:${MEDIA_TCP_PORT:-49153}/tcp"
     volumes:
       - attachment-data:/var/lib/sim-deck/attachments
+
+  turn:
+    image: coturn/coturn:4.6
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-ec"]
+    command: >-
+      exec turnserver -n --log-file=stdout --use-auth-secret
+      --static-auth-secret="$$(cat /run/secrets/turn_shared_secret)"
+      --realm=${TURN_REALM:-sim-deck} --fingerprint --no-cli
+      --listening-port=3478 --min-port=${TURN_MIN_PORT:-49152}
+      --max-port=${TURN_MAX_PORT:-49252}
+      --external-ip=${TURN_EXTERNAL_IP:?Set TURN_EXTERNAL_IP}
+    secrets:
+      - turn_shared_secret
+    ports:
+      - "${TURN_PORT:-3478}:3478/tcp"
+      - "${TURN_PORT:-3478}:3478/udp"
+      - "${TURN_MIN_PORT:-49152}-${TURN_MAX_PORT:-49252}:${TURN_MIN_PORT:-49152}-${TURN_MAX_PORT:-49252}/udp"
 
 secrets:
   admin_password:
     file: ${ADMIN_PASSWORD_FILE:-./secrets/admin_password.txt}
   recovery_public_key:
     file: ${RECOVERY_PUBLIC_KEY_FILE:-./secrets/recovery_public_key.txt}
+  turn_shared_secret:
+    file: ${TURN_SHARED_SECRET_FILE:?Set TURN_SHARED_SECRET_FILE}
 volumes:
   postgres-data:
   attachment-data:

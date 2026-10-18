@@ -69,8 +69,9 @@ type Repository interface {
 // Config describes public endpoints advertised to clients.
 type Config struct {
 	PublicBaseURL string
-	MediaUDPPort  int
-	MediaTCPPort  int
+	TURNURL       string
+	TURNSecret    []byte
+	TURNTTL       time.Duration
 	Now           func() time.Time
 }
 
@@ -84,6 +85,8 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("GET /healthz", router.health)
 	mux.HandleFunc("GET /v1/auth/passkey", router.passkeyPage)
 	mux.HandleFunc("GET /.well-known/sim-deck", router.discovery)
+	mux.HandleFunc("GET /v1/media/turn-credentials", router.requireOwner(router.turnCredentialsForOwner))
+	mux.HandleFunc("GET /v1/devices/{deviceID}/media/turn-credentials", router.turnCredentialsForDevice)
 	mux.HandleFunc("GET /v1/devices", router.requireOwner(router.listDevices))
 	mux.HandleFunc("GET /v1/sims", router.requireOwner(router.listSIMCards))
 	mux.HandleFunc("DELETE /v1/sims/{simID}", router.requireOwner(router.retireSIMCard))
@@ -381,11 +384,39 @@ func (router *router) discovery(writer http.ResponseWriter, _ *http.Request) {
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"api_version":   "v1",
 		"websocket_url": websocketBaseURL(baseURL) + "/v1/events/ws",
-		"media": map[string]int{
-			"udp_port": router.config.MediaUDPPort,
-			"tcp_port": router.config.MediaTCPPort,
-		},
+		"media":         map[string]any{"transport": "webrtc", "relay": "turn"},
 	})
+}
+
+func (router *router) turnCredentialsForOwner(writer http.ResponseWriter, request *http.Request) {
+	router.writeTURNCredentials(writer, request.Context().Value(ownerContextKey{}) != nil)
+}
+
+func (router *router) turnCredentialsForDevice(writer http.ResponseWriter, request *http.Request) {
+	deviceID := request.PathValue("deviceID")
+	token, ok := bearerToken(request.Header.Get("Authorization"))
+	if !ok || !validUUID(deviceID) {
+		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is required.")
+		return
+	}
+	if _, err := router.repository.AuthenticateDevice(request.Context(), deviceID, token, router.now()); err != nil {
+		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is invalid or revoked.")
+		return
+	}
+	router.writeTURNCredentials(writer, true)
+}
+
+func (router *router) writeTURNCredentials(writer http.ResponseWriter, authenticated bool) {
+	if !authenticated || strings.TrimSpace(router.config.TURNURL) == "" || len(router.config.TURNSecret) == 0 {
+		writeError(writer, http.StatusServiceUnavailable, "turn_unavailable", "TURN media relay is not configured.")
+		return
+	}
+	ttl := router.config.TURNTTL
+	if ttl <= 0 {
+		ttl = 10 * time.Minute
+	}
+	credentials := NewTURNCredentials(router.config.TURNURL, router.config.TURNSecret, router.now(), ttl)
+	writeJSON(writer, http.StatusOK, credentials)
 }
 
 func websocketBaseURL(baseURL string) string {

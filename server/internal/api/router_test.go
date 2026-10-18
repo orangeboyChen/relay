@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"time"
 
@@ -459,8 +460,7 @@ var _ = Describe("HTTP API", func() {
 		repository = &fakeRepository{ownerID: "owner-1"}
 		handler = Handler(repository, Config{
 			PublicBaseURL: "https://deck.example/",
-			MediaUDPPort:  49152,
-			MediaTCPPort:  49153,
+			TURNURL:       "turn:turn.example.com:3478?transport=udp",
 		})
 	})
 
@@ -485,7 +485,40 @@ var _ = Describe("HTTP API", func() {
 		Expect(json.Unmarshal(discovery.Body.Bytes(), &body)).To(Succeed())
 		Expect(body["api_version"]).To(Equal("v1"))
 		Expect(body["websocket_url"]).To(Equal("wss://deck.example/v1/events/ws"))
-		Expect(body["media"]).To(Equal(map[string]any{"udp_port": float64(49152), "tcp_port": float64(49153)}))
+		Expect(body["media"]).To(Equal(map[string]any{"transport": "webrtc", "relay": "turn"}))
+	})
+
+	It("issues short-lived TURN credentials to authenticated app and device clients", func() {
+		now := time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC)
+		handler = Handler(repository, Config{
+			PublicBaseURL: "https://deck.example",
+			TURNURL:       "turn:turn.example.com:3478?transport=udp",
+			TURNSecret:    []byte("a sufficiently long shared secret"),
+			TURNTTL:       10 * time.Minute,
+			Now:           func() time.Time { return now },
+		})
+
+		appResponse := perform(http.MethodGet, "/v1/media/turn-credentials", "", "access-token")
+		Expect(appResponse.Code).To(Equal(http.StatusOK))
+		var appCredentials TURNCredentials
+		Expect(json.Unmarshal(appResponse.Body.Bytes(), &appCredentials)).To(Succeed())
+		Expect(appCredentials.URLs).To(Equal([]string{
+			"turn:turn.example.com:3478?transport=udp",
+			"turn:turn.example.com:3478?transport=tcp",
+		}))
+		Expect(appCredentials.ExpiresAt).To(Equal(now.Add(10 * time.Minute)))
+		Expect(appCredentials.Username).To(Equal(strconv.FormatInt(now.Add(10*time.Minute).Unix(), 10) + ":sim-deck"))
+
+		deviceID := "01900000-0000-7000-8000-000000000001"
+		deviceResponse := perform(http.MethodGet, "/v1/devices/"+deviceID+"/media/turn-credentials", "", "device-secret")
+		Expect(deviceResponse.Code).To(Equal(http.StatusOK))
+		Expect(repository.authenticatedDeviceID).To(Equal(deviceID))
+		Expect(repository.authenticatedCredential).To(Equal("device-secret"))
+	})
+
+	It("rejects unauthenticated TURN credential requests", func() {
+		response := perform(http.MethodGet, "/v1/devices/01900000-0000-7000-8000-000000000001/media/turn-credentials", "", "")
+		Expect(response.Code).To(Equal(http.StatusUnauthorized))
 	})
 
 	DescribeTable("maps public API schemes to WebSocket schemes",

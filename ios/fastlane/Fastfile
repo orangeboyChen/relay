@@ -26,6 +26,13 @@ def app_store_connect_key
 end
 
 def app_store_connect_authentication
+  if !ENV["FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD"].to_s.empty?
+    username = ENV["FASTLANE_USER"]
+    UI.user_error!("FASTLANE_USER is required with FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD") if username.to_s.empty?
+
+    return { username: username }
+  end
+
   api_key_variables = %w[ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_FILEPATH]
   configured_variables = api_key_variables.select { |name| !ENV[name].to_s.empty? }
 
@@ -36,12 +43,7 @@ def app_store_connect_authentication
     return { api_key: app_store_connect_key }
   end
 
-  return {} if ENV["FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD"].to_s.empty?
-
-  username = ENV["FASTLANE_USER"]
-  UI.user_error!("FASTLANE_USER is required with FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD") if username.to_s.empty?
-
-  { username: username }
+  {}
 end
 
 def app_store_connect_app_apple_id

@@ -1,8 +1,14 @@
 default_platform(:ios)
 
+require "fileutils"
+require "shellwords"
+require "tmpdir"
+
 PROJECT = "SimDeck.xcodeproj"
 SCHEME = "SimDeck"
 TARGET = "SimDeck"
+WEBRTC_VERSION = "154.0.0"
+WEBRTC_DSYM_URL = "https://github.com/stasel/WebRTC/releases/download/#{WEBRTC_VERSION}/WebRTC-M154-dSYM.zip"
 
 def required_environment_value(name)
   value = ENV[name]
@@ -17,6 +23,27 @@ def app_store_connect_key
     key_filepath: File.expand_path(required_environment_value("ASC_KEY_FILEPATH")),
     duration: 1200
   )
+end
+
+def attach_webrtc_symbols(archive_path)
+  cache_directory = File.expand_path("~/.cache/sim-deck")
+  FileUtils.mkdir_p(cache_directory)
+  archive_file = File.join(cache_directory, "WebRTC-M154-dSYM.zip")
+
+  unless File.file?(archive_file)
+    sh("curl --fail --location --retry 3 --silent --show-error #{WEBRTC_DSYM_URL.shellescape} --output #{archive_file.shellescape}")
+  end
+
+  destination_directory = File.join(archive_path, "dSYMs")
+  FileUtils.mkdir_p(destination_directory)
+
+  Dir.mktmpdir("sim-deck-webrtc-dsym") do |temporary_directory|
+    sh("unzip -q #{archive_file.shellescape} WebRTC-ios-arm64.dSYM/'*' -d #{temporary_directory.shellescape}")
+    source = File.join(temporary_directory, "WebRTC-ios-arm64.dSYM")
+    UI.user_error!("WebRTC arm64 dSYM was not found in the symbol archive") unless File.directory?(source)
+    FileUtils.rm_rf(File.join(destination_directory, "WebRTC-ios-arm64.dSYM"))
+    FileUtils.cp_r(source, destination_directory)
+  end
 end
 
 platform :ios do
@@ -56,13 +83,28 @@ platform :ios do
       configuration: "Release",
       clean: true,
       export_method: "app-store",
+      skip_package_ipa: true,
       output_directory: "build/fastlane",
       output_name: "SimDeck.ipa"
     )
 
+    archive_path = lane_context[SharedValues::XCODEBUILD_ARCHIVE]
+    UI.user_error!("The Xcode archive path was not produced") if archive_path.to_s.empty?
+    attach_webrtc_symbols(archive_path)
+
+    export_options_path = File.join(Dir.mktmpdir("sim-deck-export"), "ExportOptions.plist")
+    File.write(export_options_path, <<~PLIST)
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0"><dict><key>method</key><string>app-store-connect</string></dict></plist>
+    PLIST
+    sh("xcodebuild -exportArchive -archivePath #{archive_path.shellescape} -exportOptionsPlist #{export_options_path.shellescape} -exportPath build/fastlane")
+    ipa_path = File.expand_path("build/fastlane/SimDeck.ipa")
+    UI.user_error!("The exported IPA was not found") unless File.file?(ipa_path)
+
     upload_to_testflight(
       api_key: api_key,
-      ipa: lane_context[SharedValues::IPA_OUTPUT_PATH],
+      ipa: ipa_path,
       changelog: options[:changelog],
       distribute_external: false,
       skip_waiting_for_build_processing: true

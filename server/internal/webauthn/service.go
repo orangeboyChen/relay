@@ -134,7 +134,7 @@ func (service *Service) takeSession(id string) (webauthn.SessionData, error) {
 	service.mu.Lock()
 	defer service.mu.Unlock()
 	session, ok := service.sessions[id]
-	if !ok || time.Now().After(session.Expires) {
+	if !ok || (!session.Expires.IsZero() && time.Now().After(session.Expires)) {
 		delete(service.sessions, id)
 		return webauthn.SessionData{}, errors.New("webauthn ceremony is expired")
 	}

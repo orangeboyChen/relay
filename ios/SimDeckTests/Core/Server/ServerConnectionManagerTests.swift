@@ -336,6 +336,39 @@ final class ServerConnectionManagerTests: XCTestCase {
         )
     }
 
+    func testListsSIMCardsAndDeletesOnlyTheSelectedRecord() async throws {
+        let simID = UUID(uuidString: "01900000-0000-7000-8000-000000000101")!
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
+        )
+        let network = ScriptedServerNetwork { request in
+            switch (request.httpMethod, request.url?.path) {
+            case ("GET", "/v1/sims"):
+                return Self.response(status: 200, body: """
+                {"sims":[{
+                  "sim_id":"\(simID.uuidString.lowercased())",
+                  "numeric_id":3,
+                  "last_seen_at":"2026-10-16T00:00:00Z"
+                }]}
+                """)
+            case ("DELETE", "/v1/sims/\(simID.uuidString.lowercased())"):
+                return Self.response(status: 204, body: "")
+            default:
+                XCTFail("Unexpected request: \(request.httpMethod ?? "") \(request.url?.path ?? "")")
+                return Self.response(status: 500, body: "{}")
+            }
+        }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+
+        let cards = try await manager.loadSIMCards()
+        try await manager.retireSIMCard(simID: simID)
+
+        XCTAssertEqual(cards, [ManagedSIM(id: simID, numericID: 3, assignedDeviceID: nil, assignedSlotID: nil, lastSeenAt: Date(timeIntervalSince1970: 1_792_108_800), lineName: "", phoneNumber: "")])
+        XCTAssertTrue(cards[0].isOffline)
+    }
+
     func testMapsDeviceManagementFailureStatus() async throws {
         let store = MemoryServerSessionStore(
             value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)

@@ -298,6 +298,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(
             network.requestPaths,
             [
+                "/v1/devices/\(deviceID.uuidString.lowercased())/profile",
                 "/v1/sims/\(simID.uuidString.lowercased())/profile",
                 "/v1/sims/\(simID.uuidString.lowercased())/numeric-id",
                 "/v1/devices"
@@ -401,6 +402,7 @@ private final class AppModelDeviceManagementNetwork: ServerNetworking {
     private(set) var requestMethods: [String] = []
     private(set) var requestPaths: [String] = []
     private(set) var profileCiphertext: Data?
+    private var deviceProfileCiphertext: Data?
     private var numericID = 1
     private let slotID: UUID?
     private let simID: UUID?
@@ -419,6 +421,13 @@ private final class AppModelDeviceManagementNetwork: ServerNetworking {
         let body: Data
         let status: Int
         switch (request.httpMethod, request.url?.path) {
+        case ("PUT", "\(deviceBasePath)/profile") where simID != nil:
+            let object = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+            )
+            deviceProfileCiphertext = Data(base64Encoded: try XCTUnwrap(object["profile_ciphertext"] as? String))
+            body = Data()
+            status = 204
         case ("PUT", "\(lineBasePath)/profile"):
             let object = try XCTUnwrap(
                 JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
@@ -454,7 +463,7 @@ private final class AppModelDeviceManagementNetwork: ServerNetworking {
                 {"devices":[{
                   "device_uuid":"\(deviceID.uuidString.lowercased())",
                   "numeric_id":\(numericID),
-                  "profile_ciphertext":"\((profileCiphertext ?? Data()).base64EncodedString())",
+                  "profile_ciphertext":"\((deviceProfileCiphertext ?? profileCiphertext ?? Data()).base64EncodedString())",
                   "identity_public_key":"",
                   "paired_at":"2026-10-16T00:00:00Z"\(slots)
                 }]}

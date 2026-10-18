@@ -16,6 +16,11 @@ struct ProfileScreen: View {
                     Label("Device Management", systemImage: "simcard.2")
                 }
                 NavigationLink {
+                    SIMManagementScreen(model: model)
+                } label: {
+                    Label("SIM Cards", systemImage: "simcard")
+                }
+                NavigationLink {
                     SettingsScreen(model: model)
                 } label: {
                     Label("Settings", systemImage: "gearshape")

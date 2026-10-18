@@ -5,6 +5,7 @@ import Observation
 @Observable
 final class AppModel {
     var devices: [DeviceLineIdentity]
+    var managedSIMs: [ManagedSIM]
     var callHistory: CallHistoryState
     var messages: MessageListState
     var lastSuccessfulDialLineID: UUID?
@@ -44,6 +45,7 @@ final class AppModel {
 
     init(
         devices: [DeviceLineIdentity] = [],
+        managedSIMs: [ManagedSIM] = [],
         callHistory: CallHistoryState = .loaded([]),
         messages: MessageListState = .loaded([]),
         lastSuccessfulDialLineID: UUID? = nil,
@@ -63,6 +65,7 @@ final class AppModel {
         let resolvedDefaultLineStore = defaultLineStore ?? UserDefaultsDefaultLineStore()
         let resolvedRecentCallLineStore = recentCallLineStore ?? UserDefaultsRecentCallLineStore()
         self.devices = devices
+        self.managedSIMs = managedSIMs
         self.callHistory = callHistory
         self.messages = messages
         self.lastSuccessfulDialLineID = lastSuccessfulDialLineID
@@ -123,6 +126,7 @@ final class AppModel {
     func refreshDevices() async {
         guard serverConnection.isSignedIn else {
             devices = []
+            managedSIMs = []
             return
         }
         do {
@@ -351,17 +355,26 @@ final class AppModel {
             lineName: lineName.trimmingCharacters(in: .whitespacesAndNewlines),
             phoneNumber: phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines)
         )
-        let ciphertext = try DeviceProfileCodec.seal(profile, using: recoveredVaultKey)
         if let simID = line.simID {
+            try await serverConnection.updateDeviceProfile(
+                deviceID: line.deviceID,
+                profileCiphertext: try DeviceProfileCodec.seal(
+                    DeviceProfile(deviceName: profile.deviceName, lineName: "", phoneNumber: ""),
+                    using: recoveredVaultKey
+                )
+            )
             try await serverConnection.updateSIMProfile(
                 simID: simID,
-                profileCiphertext: ciphertext
+                profileCiphertext: try DeviceProfileCodec.seal(
+                    DeviceProfile(deviceName: "", lineName: profile.lineName, phoneNumber: profile.phoneNumber),
+                    using: recoveredVaultKey
+                )
             )
             try await serverConnection.updateSIMNumericID(simID: simID, numericID: numericID)
         } else {
             try await serverConnection.updateDeviceProfile(
                 deviceID: line.deviceID,
-                profileCiphertext: ciphertext
+                profileCiphertext: try DeviceProfileCodec.seal(profile, using: recoveredVaultKey)
             )
             try await serverConnection.updateDeviceNumericID(
                 deviceID: line.deviceID,
@@ -392,9 +405,21 @@ final class AppModel {
         messageTransport.updateLineRoutes(devices)
     }
 
+    func refreshSIMCards() async {
+        guard serverConnection.isSignedIn else { return }
+        managedSIMs = (try? await serverConnection.loadSIMCards(profileKey: recoveredVaultKey)) ?? managedSIMs
+    }
+
+    func removeSIM(_ sim: ManagedSIM) async throws {
+        guard sim.isOffline else { throw ServerConnectionError.deviceUnavailable }
+        try await serverConnection.retireSIMCard(simID: sim.id)
+        managedSIMs.removeAll { $0.id == sim.id }
+    }
+
     func signOutFromServer() throws {
         try serverConnection.signOut()
         devices = []
+        managedSIMs = []
         installationTrust = nil
     }
 

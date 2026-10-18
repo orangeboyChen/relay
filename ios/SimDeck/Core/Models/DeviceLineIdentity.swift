@@ -53,6 +53,8 @@ struct DeviceLineIdentity: Identifiable, Equatable, Sendable {
     let slotID: UUID?
     let simID: UUID?
     var numericID: Int
+    var slotKey: String?
+    var slotIndex: Int?
     var deviceName: String
     var lineName: String
     var phoneNumber: String
@@ -63,6 +65,8 @@ struct DeviceLineIdentity: Identifiable, Equatable, Sendable {
     init(
         id: UUID,
         numericID: Int,
+        slotKey: String? = nil,
+        slotIndex: Int? = nil,
         deviceName: String,
         lineName: String,
         phoneNumber: String,
@@ -75,6 +79,8 @@ struct DeviceLineIdentity: Identifiable, Equatable, Sendable {
             slotID: nil,
             simID: nil,
             numericID: numericID,
+            slotKey: slotKey,
+            slotIndex: slotIndex,
             deviceName: deviceName,
             lineName: lineName,
             phoneNumber: phoneNumber,
@@ -90,6 +96,8 @@ struct DeviceLineIdentity: Identifiable, Equatable, Sendable {
         slotID: UUID? = nil,
         simID: UUID? = nil,
         numericID: Int,
+        slotKey: String? = nil,
+        slotIndex: Int? = nil,
         deviceName: String,
         lineName: String,
         phoneNumber: String,
@@ -102,6 +110,8 @@ struct DeviceLineIdentity: Identifiable, Equatable, Sendable {
         self.slotID = slotID
         self.simID = simID
         self.numericID = numericID
+        self.slotKey = slotKey
+        self.slotIndex = slotIndex
         self.deviceName = deviceName
         self.lineName = lineName
         self.phoneNumber = phoneNumber

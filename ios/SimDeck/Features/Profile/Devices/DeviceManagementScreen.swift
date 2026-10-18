@@ -12,11 +12,19 @@ struct DeviceManagementScreen: View {
                     isAddingDevice = true
                 }
             } else {
-                List(model.devices) { line in
-                    NavigationLink {
-                        DeviceSettingsScreen(model: model, line: line)
-                    } label: {
-                        DeviceManagementRow(line: line)
+                List {
+                    ForEach(DeviceGroup.groups(from: model.devices)) { group in
+                        Section {
+                            ForEach(group.lines) { line in
+                                NavigationLink {
+                                    DeviceSettingsScreen(model: model, line: line)
+                                } label: {
+                                    DeviceSlotRow(line: line)
+                                }
+                            }
+                        } header: {
+                            DeviceGroupHeader(group: group)
+                        }
                     }
                 }
                 .refreshable {
@@ -44,14 +52,47 @@ struct DeviceManagementScreen: View {
     }
 }
 
-private struct DeviceManagementRow: View {
+private struct DeviceGroup: Identifiable {
+    let id: UUID
+    let lines: [DeviceLineIdentity]
+
+    var deviceName: String {
+        lines.first?.deviceName.isEmpty == false ? lines[0].deviceName : String(localized: "Unnamed Device")
+    }
+
+    static func groups(from lines: [DeviceLineIdentity]) -> [DeviceGroup] {
+        Dictionary(grouping: lines, by: \.deviceID)
+            .map { DeviceGroup(id: $0.key, lines: $0.value.sorted { ($0.slotIndex ?? 0) < ($1.slotIndex ?? 0) }) }
+            .sorted { $0.deviceName.localizedStandardCompare($1.deviceName) == .orderedAscending }
+    }
+}
+
+private struct DeviceGroupHeader: View {
+    let group: DeviceGroup
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "externaldrive.connected.to.line.below")
+            Text(group.deviceName)
+                .font(.headline)
+            Spacer()
+            Text(group.lines.contains(where: \.isOnline) ? String(localized: "Online") : String(localized: "Offline"))
+                .font(.caption)
+                .foregroundStyle(group.lines.contains(where: \.isOnline) ? .green : .secondary)
+        }
+        .textCase(nil)
+    }
+}
+
+private struct DeviceSlotRow: View {
     let line: DeviceLineIdentity
 
     var body: some View {
         HStack(spacing: 12) {
             SIMBadge(line: line)
             VStack(alignment: .leading, spacing: 3) {
-                Text(line.deviceName.isEmpty ? String(localized: "Unnamed Device") : line.deviceName)
+                Text(line.slotIndex.map { String(localized: "Slot \($0)") } ?? String(localized: "Slot"))
+                    .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
                 Text(line.displayName)
                     .font(.subheadline)
@@ -65,6 +106,7 @@ private struct DeviceManagementRow: View {
         }
         .frame(minHeight: 44)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("Slot \(line.slotIndex ?? 1), \(line.displayName), \(line.radioAccessibilityDescription)")
     }
 }
 

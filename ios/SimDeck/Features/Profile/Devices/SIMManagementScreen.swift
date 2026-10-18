@@ -1,0 +1,74 @@
+import SwiftUI
+
+struct SIMManagementScreen: View {
+    let model: AppModel
+
+    @State private var simToDelete: ManagedSIM?
+    @State private var errorDescription: String?
+
+    var body: some View {
+        List {
+            if model.managedSIMs.isEmpty {
+                ContentUnavailableView("No SIM Cards", systemImage: "simcard", description: Text("SIM cards appear after a modem reports its ICCID."))
+            } else {
+                ForEach(model.managedSIMs) { sim in
+                    ManagedSIMRow(sim: sim)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            if sim.isOffline {
+                                Button("Delete", role: .destructive) { simToDelete = sim }
+                            }
+                        }
+                }
+            }
+            if let errorDescription {
+                Section {
+                    Label(errorDescription, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
+                }
+            }
+        }
+        .navigationTitle("SIM Cards")
+        .refreshable { await model.refreshSIMCards() }
+        .task { await model.refreshSIMCards() }
+        .confirmationDialog("Delete this offline SIM?", isPresented: Binding(get: { simToDelete != nil }, set: { if !$0 { simToDelete = nil } }), titleVisibility: .visible, presenting: simToDelete) { sim in
+            Button("Delete SIM", role: .destructive) {
+                Task {
+                    do { try await model.removeSIM(sim) }
+                    catch { errorDescription = error.localizedDescription }
+                    simToDelete = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { simToDelete = nil }
+        } message: { _ in
+            Text("The SIM identity and its encrypted profile will be removed from this account. A future insertion creates a new managed record.")
+        }
+    }
+}
+
+private struct ManagedSIMRow: View {
+    let sim: ManagedSIM
+
+    var body: some View {
+        HStack(spacing: 12) {
+            SIMBadge(number: sim.numericID, size: 22)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(sim.phoneNumber.isEmpty ? (sim.lineName.isEmpty ? "SIM \(sim.numericID)" : sim.lineName) : sim.phoneNumber)
+                Text(sim.isOffline ? "Offline" : "Inserted in device")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Image(systemName: sim.isOffline ? "wifi.slash" : "checkmark.circle.fill")
+                .foregroundStyle(sim.isOffline ? AnyShapeStyle(.secondary) : AnyShapeStyle(.green))
+                .accessibilityHidden(true)
+        }
+        .frame(minHeight: 44)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+#if DEBUG
+#Preview("SIM Management") {
+    NavigationStack { SIMManagementScreen(model: .preview(selectedTab: .profile)) }
+}
+#endif

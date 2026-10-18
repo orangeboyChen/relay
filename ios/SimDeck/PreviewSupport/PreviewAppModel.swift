@@ -16,6 +16,7 @@ extension AppModel {
         serverConnection.address = "https://sim-deck.example.com"
         let model = AppModel(
             devices: devices,
+            managedSIMs: PreviewFixtures.managedSIMs,
             callHistory: .loaded(PreviewFixtures.calls),
             messages: .loaded(PreviewFixtures.conversations),
             lastSuccessfulDialLineID: PreviewFixtures.devices[0].id,

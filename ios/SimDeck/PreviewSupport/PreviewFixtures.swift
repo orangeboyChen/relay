@@ -33,6 +33,11 @@ enum PreviewFixtures {
         )
     ]
 
+    static let managedSIMs = [
+        ManagedSIM(id: UUID(uuidString: "30000000-0000-0000-0000-000000000001")!, numericID: 1, assignedDeviceID: devices[0].deviceID, assignedSlotID: devices[0].slotID, lastSeenAt: now, lineName: "Work", phoneNumber: "13500000000"),
+        ManagedSIM(id: UUID(uuidString: "30000000-0000-0000-0000-000000000002")!, numericID: 2, assignedDeviceID: nil, assignedSlotID: nil, lastSeenAt: now.addingTimeInterval(-3_600), lineName: "Backup", phoneNumber: "13800000000")
+    ]
+
     static let calls = [
         CallRecord(
             id: UUID(uuidString: "10000000-0000-0000-0000-000000000001")!,

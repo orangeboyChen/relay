@@ -1,20 +1,34 @@
 import SwiftUI
 
 struct SIMBadge: View {
-    let line: DeviceLineIdentity
+    let number: Int
+    let accessibilityLabel: Text
     private let baseSide: CGFloat
 
     @ScaledMetric(relativeTo: .caption) private var scale = 1.0
 
     init(line: DeviceLineIdentity, size: CGFloat = 18) {
-        self.line = line
+        number = line.numericID
+        if !line.phoneNumber.isEmpty {
+            accessibilityLabel = Text("SIM \(line.numericID), local number \(line.phoneNumber)")
+        } else if !line.lineName.isEmpty {
+            accessibilityLabel = Text("SIM \(line.numericID), line \(line.lineName)")
+        } else {
+            accessibilityLabel = Text("SIM \(line.numericID)")
+        }
+        baseSide = size
+    }
+
+    init(number: Int, size: CGFloat = 18) {
+        self.number = number
+        accessibilityLabel = Text("SIM \(number)")
         baseSide = size
     }
 
     var body: some View {
         let badgeSide = min(baseSide * scale, baseSide + 4)
 
-        Text(line.numericID, format: .number.grouping(.never))
+        Text(number, format: .number.grouping(.never))
             .font(.caption2.weight(.semibold).monospacedDigit())
             .foregroundStyle(.white)
             .lineLimit(1)
@@ -28,15 +42,6 @@ struct SIMBadge: View {
             .accessibilityLabel(accessibilityLabel)
     }
 
-    private var accessibilityLabel: Text {
-        if !line.phoneNumber.isEmpty {
-            Text("SIM \(line.numericID), local number \(line.phoneNumber)")
-        } else if !line.lineName.isEmpty {
-            Text("SIM \(line.numericID), line \(line.lineName)")
-        } else {
-            Text("SIM \(line.numericID)")
-        }
-    }
 }
 
 #if DEBUG

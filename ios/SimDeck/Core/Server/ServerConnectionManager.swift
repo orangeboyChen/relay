@@ -274,6 +274,18 @@ struct ServerSession: Codable, Equatable, Sendable {
     }
 }
 
+struct ManagedSIM: Identifiable, Equatable, Sendable {
+    let id: UUID
+    let numericID: Int
+    let assignedDeviceID: UUID?
+    let assignedSlotID: UUID?
+    let lastSeenAt: Date
+    let lineName: String
+    let phoneNumber: String
+
+    var isOffline: Bool { assignedDeviceID == nil }
+}
+
 @MainActor
 protocol ServerNetworking: Sendable {
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse)
@@ -424,7 +436,9 @@ final class ServerConnectionManager {
                         slotID: slot.slotID,
                         simID: slot.simID,
                         numericID: slot.numericID ?? device.numericID,
-                        deviceName: slotProfile.deviceName,
+                        slotKey: slot.slotKey,
+                        slotIndex: slot.slotIndex,
+                        deviceName: profile.deviceName,
                         lineName: slotProfile.lineName,
                         phoneNumber: slotProfile.phoneNumber,
                         isOnline: isOnline,
@@ -441,6 +455,33 @@ final class ServerConnectionManager {
             lastErrorDescription = error.localizedDescription
             throw error
         }
+    }
+
+    func loadSIMCards(profileKey: VaultKey? = nil) async throws -> [ManagedSIM] {
+        let (data, response) = try await authenticatedRequest(path: "v1/sims", method: "GET")
+        guard response.statusCode == 200 else { throw ServerConnectionError.requestFailed(response.statusCode) }
+        let body = try Self.decoder.decode(SIMListResponse.self, from: data)
+        return try body.sims.map {
+            let profile = if let profileKey, !$0.profileCiphertext.isEmpty {
+                try DeviceProfileCodec.open($0.profileCiphertext, using: profileKey)
+            } else {
+                DeviceProfile.empty
+            }
+            return ManagedSIM(
+                id: $0.id,
+                numericID: $0.numericID,
+                assignedDeviceID: $0.assignedDeviceID,
+                assignedSlotID: $0.assignedSlotID,
+                lastSeenAt: $0.lastSeenAt,
+                lineName: profile.lineName,
+                phoneNumber: profile.phoneNumber
+            )
+        }
+    }
+
+    func retireSIMCard(simID: UUID) async throws {
+        let (_, response) = try await authenticatedRequest(path: "v1/sims/\(simID.uuidString.lowercased())", method: "DELETE")
+        guard response.statusCode == 204 else { throw ServerConnectionError.requestFailed(response.statusCode) }
     }
 
     func openDeviceDiscovery() async throws -> DeviceDiscoverySessionState {
@@ -937,6 +978,38 @@ private struct DeviceListResponse: Decodable {
     let devices: [ServerDeviceRecord]
 }
 
+private struct SIMListResponse: Decodable {
+    let sims: [ServerSIMRecord]
+}
+
+private struct ServerSIMRecord: Decodable {
+    let id: UUID
+    let numericID: Int
+    let assignedDeviceID: UUID?
+    let assignedSlotID: UUID?
+    let lastSeenAt: Date
+    let profileCiphertext: Data
+
+    enum CodingKeys: String, CodingKey {
+        case id = "sim_id"
+        case numericID = "numeric_id"
+        case assignedDeviceID = "assigned_device_uuid"
+        case assignedSlotID = "assigned_slot_id"
+        case lastSeenAt = "last_seen_at"
+        case profileCiphertext = "profile_ciphertext"
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        numericID = try values.decode(Int.self, forKey: .numericID)
+        assignedDeviceID = try values.decodeIfPresent(UUID.self, forKey: .assignedDeviceID)
+        assignedSlotID = try values.decodeIfPresent(UUID.self, forKey: .assignedSlotID)
+        lastSeenAt = try values.decode(Date.self, forKey: .lastSeenAt)
+        profileCiphertext = try values.decodeIfPresent(Data.self, forKey: .profileCiphertext) ?? Data()
+    }
+}
+
 private struct DeviceDiscoveriesResponse: Decodable {
     let discoveries: [DiscoveredDevice]
 }
@@ -993,6 +1066,8 @@ private struct ServerDeviceSlot: Decodable {
     let radioAccessTechnology: CellularRadioAccessTechnology?
     let signalBars: Int?
     let radioStatusUpdatedAt: Date?
+    let slotKey: String
+    let slotIndex: Int
 
     enum CodingKeys: String, CodingKey {
         case slotID = "slot_id"
@@ -1002,9 +1077,11 @@ private struct ServerDeviceSlot: Decodable {
         case radioAccessTechnology = "radio_access_technology"
         case signalBars = "signal_bars"
         case radioStatusUpdatedAt = "radio_status_updated_at"
+        case slotKey = "slot_key"
+        case slotIndex = "slot_index"
     }
 
-    init(slotID: UUID?, simID: UUID?, numericID: Int?, profileCiphertext: Data?, radioAccessTechnology: CellularRadioAccessTechnology?, signalBars: Int?, radioStatusUpdatedAt: Date?) {
+    init(slotID: UUID?, simID: UUID?, numericID: Int?, profileCiphertext: Data?, radioAccessTechnology: CellularRadioAccessTechnology?, signalBars: Int?, radioStatusUpdatedAt: Date?, slotKey: String = "1", slotIndex: Int = 1) {
         self.slotID = slotID
         self.simID = simID
         self.numericID = numericID
@@ -1012,6 +1089,8 @@ private struct ServerDeviceSlot: Decodable {
         self.radioAccessTechnology = radioAccessTechnology
         self.signalBars = signalBars
         self.radioStatusUpdatedAt = radioStatusUpdatedAt
+        self.slotKey = slotKey
+        self.slotIndex = slotIndex
     }
 }
 

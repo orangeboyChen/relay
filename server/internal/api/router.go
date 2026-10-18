@@ -80,6 +80,7 @@ func Handler(repository Repository, config Config) http.Handler {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", router.health)
+	mux.HandleFunc("GET /v1/auth/passkey", router.passkeyPage)
 	mux.HandleFunc("GET /.well-known/sim-deck", router.discovery)
 	mux.HandleFunc("GET /v1/devices", router.requireOwner(router.listDevices))
 	mux.HandleFunc("PATCH /v1/devices/{deviceID}/numeric-id", router.requireOwner(router.updateNumericID))

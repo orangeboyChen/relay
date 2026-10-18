@@ -23,6 +23,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
     @ObservationIgnored private var startCompletions: [UUID: (Result<Void, Error>) -> Void] = [:]
     @ObservationIgnored private var pendingEndCallKinds: [UUID: Bool] = [:]
     @ObservationIgnored private var pendingOutgoingEndReasons: [UUID: CallEndReason] = [:]
+    @ObservationIgnored private var locallyEndedCallIDs: Set<UUID> = []
 
     init(
         transport: any CallTransport = UnavailableCallTransport(),
@@ -203,7 +204,16 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
         guard let activeCall else { return }
         let callID = activeCall.id
         let isIncoming = incomingCalls[callID] != nil
-        finishCall(callID: callID)
+        let isStarting = pendingOutgoing[callID] != nil
+
+        if isStarting {
+            // Keep the transport request alive long enough to release a modem call
+            // that may finish negotiating after the local UI has been dismissed.
+            locallyEndedCallIDs.insert(callID)
+            dismissCallPresentation(callID: callID)
+        } else {
+            finishCall(callID: callID)
+        }
 
         if integratesWithSystem {
             pendingEndCallKinds[callID] = isIncoming
@@ -211,8 +221,17 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
                 try await controller.request(CXTransaction(action: CXEndCallAction(call: callID)))
             } catch {
                 pendingEndCallKinds.removeValue(forKey: callID)
+                if isStarting {
+                    failStart(callID: callID, error: error)
+                } else {
+                    await endRemoteCall(callID: callID, isIncoming: isIncoming)
+                }
                 throw error
             }
+            return
+        }
+
+        if isStarting {
             return
         }
 
@@ -343,21 +362,30 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
             )
             completeStart(callID: request.callID, result: .success(()))
         } catch {
+            failStart(callID: request.callID, error: error)
             if reportToCallKit {
                 provider.reportCall(with: request.callID, endedAt: .now, reason: .failed)
             }
-            failStart(callID: request.callID, error: error)
             throw error
         }
     }
 
     private func completeStart(callID: UUID, result: Result<Void, Error>) {
         let pendingEndReason = pendingOutgoingEndReasons.removeValue(forKey: callID)
+        let wasLocallyEnded = locallyEndedCallIDs.remove(callID) != nil
         let completion = startCompletions.removeValue(forKey: callID)
         pendingOutgoing.removeValue(forKey: callID)
         incomingCalls.removeValue(forKey: callID)
-        completion?(result)
-        if case .success = result, let pendingEndReason {
+        if wasLocallyEnded {
+            completion?(.failure(CallLifecycleError.endedBeforeStart))
+        } else {
+            completion?(result)
+        }
+        if case .success = result, wasLocallyEnded {
+            Task {
+                await endRemoteCall(callID: callID, isIncoming: false)
+            }
+        } else if case .success = result, let pendingEndReason {
             finishEndedCall(callID: callID, reason: pendingEndReason)
         }
     }
@@ -376,7 +404,16 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
     }
 
     func completeSystemEndCall(callID: UUID, isIncoming: Bool, fulfill: () -> Void) {
-        if activeCall?.id == callID {
+        if pendingOutgoing[callID] != nil {
+            // CallKit can end an outgoing transaction while media negotiation is still pending.
+            // Keep the start continuation alive so it receives the real transport error.
+            pendingOutgoingEndReasons[callID] = .unanswered
+            locallyEndedCallIDs.insert(callID)
+            dismissCallPresentation(callID: callID)
+            fulfill()
+            return
+        }
+        if activeCall?.id == callID, callStartFailureID != callID {
             finishCall(callID: callID)
         }
 
@@ -384,20 +421,31 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
         // Fulfilling CallKit first prevents a slow or offline device from showing
         // a system-level "Call Control Failed" error after the user hung up.
         fulfill()
-        Task {
-            do {
-                if isIncoming {
-                    try await transport.rejectIncomingCall(callID: callID)
-                } else {
-                    try await transport.endCall(callID: callID)
-                }
-            } catch {
-#if DEBUG
-                print("call end command failed after local hangup: \(String(reflecting: error))")
-#endif
+        Task { await endRemoteCall(callID: callID, isIncoming: isIncoming) }
+    }
+
+    private func endRemoteCall(callID: UUID, isIncoming: Bool) async {
+        do {
+            if isIncoming {
+                try await transport.rejectIncomingCall(callID: callID)
+            } else {
+                try await transport.endCall(callID: callID)
             }
-            pendingEndCallKinds.removeValue(forKey: callID)
+        } catch {
+#if DEBUG
+            print("call end command failed after local hangup: \(String(reflecting: error))")
+#endif
         }
+        pendingEndCallKinds.removeValue(forKey: callID)
+    }
+
+    private func dismissCallPresentation(callID: UUID) {
+        guard activeCall?.id == callID else { return }
+        activeCall = nil
+        if callStartFailureID == callID {
+            callStartFailureID = nil
+        }
+        incomingCalls.removeValue(forKey: callID)
     }
 
     private func finishCall(callID: UUID) {
@@ -408,6 +456,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
         }
         pendingOutgoing.removeValue(forKey: callID)
         pendingOutgoingEndReasons.removeValue(forKey: callID)
+        locallyEndedCallIDs.remove(callID)
         incomingCalls.removeValue(forKey: callID)
         if let completion = startCompletions.removeValue(forKey: callID) {
             completion(.failure(CallLifecycleError.endedBeforeStart))

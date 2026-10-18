@@ -208,6 +208,36 @@ final class LiveCallTransportTests: XCTestCase {
         XCTAssertTrue(api.requests.isEmpty)
     }
 
+    func testIncomingRejectFailureStillDiscardsTheLocalCallContext() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .modemRejected)
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: api.commandSigner,
+            automaticallyPollEvents: false
+        )
+        try transport.registerIncomingCall(
+            IncomingCallRegistration(
+                callID: callID,
+                lineID: deviceID,
+                callSecret: Data((97...128).map(UInt8.init)),
+                verificationKey: api.verificationKey
+            )
+        )
+
+        do {
+            try await transport.rejectIncomingCall(callID: callID)
+            XCTFail("Expected rejectIncomingCall to fail")
+        } catch {
+            XCTAssertNotNil(error)
+        }
+        do {
+            try await transport.rejectIncomingCall(callID: callID)
+            XCTFail("Expected the local call context to be discarded")
+        } catch {
+            XCTAssertEqual(error as? LiveCallTransportError, .invalidResponse)
+        }
+    }
+
     func testCallControlsMapToEncryptedDeviceOperations() async throws {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
         let media = CallMediaSessionFake()
@@ -244,6 +274,35 @@ final class LiveCallTransportTests: XCTestCase {
             let encoded = try JSONEncoder().encode(request)
             XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("13500000000"))
             XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("call.start"))
+        }
+    }
+
+    func testEndFailureStillClosesLocalMediaAndEventState() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let media = CallMediaSessionFake()
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: api.commandSigner,
+            makeMediaSession: { media },
+            waitBeforePollingAgain: {},
+            automaticallyPollEvents: false
+        )
+
+        try await transport.startOutgoingCall(callID: callID, number: "13500000000", lineID: deviceID)
+        api.outcome = .modemRejected
+
+        do {
+            try await transport.endCall(callID: callID)
+            XCTFail("Expected endCall to fail")
+        } catch {
+            XCTAssertNotNil(error)
+        }
+        XCTAssertTrue(media.isClosed)
+        do {
+            try await transport.setHeld(true, callID: callID)
+            XCTFail("Expected the local call context to be discarded")
+        } catch {
+            XCTAssertEqual(error as? LiveCallTransportError, .invalidResponse)
         }
     }
 
@@ -609,7 +668,7 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
     private let devicePrivateKey: Curve25519.KeyAgreement.PrivateKey
     private let identityPrivateKey: Curve25519.Signing.PrivateKey
     private let installationIdentity: InstallationIdentity
-    private let outcome: Outcome
+    var outcome: Outcome
     private var results: [UUID: EncryptedCallCommandResult] = [:]
     private var callSharedSecret: SharedSecret?
 

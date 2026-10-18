@@ -200,17 +200,19 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
         guard let lineID = callLines[callID] else {
             throw LiveCallTransportError.invalidResponse
         }
+        defer { discardIncomingCall(callID: callID) }
         _ = try await send(operation: "call.reject", callID: callID, lineID: lineID)
-        discardIncomingCall(callID: callID)
     }
 
     func endCall(callID: UUID) async throws {
         guard let lineID = callLines[callID] else { throw LiveCallTransportError.invalidResponse }
+        defer {
+            mediaSessions.removeValue(forKey: callID)?.close()
+            callLines.removeValue(forKey: callID)
+            callEvents.removeValue(forKey: callID)
+            stopEventLoopIfIdle()
+        }
         _ = try await send(operation: "call.end", callID: callID, lineID: lineID)
-        mediaSessions.removeValue(forKey: callID)?.close()
-        callLines.removeValue(forKey: callID)
-        callEvents.removeValue(forKey: callID)
-        stopEventLoopIfIdle()
     }
 
     func setHeld(_ isHeld: Bool, callID: UUID) async throws {

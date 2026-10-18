@@ -2,6 +2,10 @@
 
 `relay-control` is the control plane for sim-deck. It stores encrypted event envelopes, manages device and app identities, delivers push notifications, and relays encrypted signaling without accessing message or call content.
 
+For the complete production procedure, including firewall rules, secret
+creation, TLS, TURN, modem admission, backups, and recovery, see
+[`docs/deployment.md`](docs/deployment.md).
+
 ## Development
 
 ```sh
@@ -115,12 +119,13 @@ need to be copied between the app and Docker:
 1. Sign in to the server from the app and open **My > Device Management > Add Device**.
 2. Turn on **Device Discovery**. The server accepts candidates for ten minutes,
    or until the switch is turned off.
-3. Start one modem container with a manually configured, unique
-   `SIM_DECK_DEVICE_UUID`.
-4. Compare the UUID and identity fingerprint in the app with the device
+3. Start one modem container. It derives its immutable device UUID from the
+   modem's hardware identity and physical SIM-slot set; no UUID, SIM ICCID, or
+   pairing token is entered by the operator.
+4. Compare the derived UUID and identity fingerprint in the app with the device
    container log, then tap **Allow** or **Don't Allow**.
-5. Repeat step 3 for additional modem containers, using a different UUID,
-   hardware mapping, and state volume for each one.
+5. Repeat step 3 for additional modem containers. The Linux installer creates
+   one stable device mapping and one private state volume per modem.
 6. Turn off **Device Discovery** when the intended devices have joined.
 
 The owner APIs are:
@@ -137,5 +142,6 @@ The modem submits a signed proof of possession and polls its result with a
 private pending credential. The server stores only the credential hash. An
 approved device persists its issued server credential in its private state
 volume, so restarting the same container does not require another approval.
-Changing `SIM_DECK_DEVICE_UUID` while reusing that volume fails startup instead
-of silently changing the device identity.
+The server never needs a modem IP address: the iPhone and modem both connect
+outbound to this control plane, and encrypted media is relayed through the
+configured TURN service.

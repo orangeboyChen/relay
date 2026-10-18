@@ -24,6 +24,14 @@ type ICEConfig struct {
 	UDPPort  int
 	TCPPort  int
 	PublicIP string
+	Servers  []ICEServer
+}
+
+// ICEServer describes a TURN server used for relay-only media.
+type ICEServer struct {
+	URLs       []string
+	Username   string
+	Credential string
 }
 
 type mediaPeer interface {
@@ -32,7 +40,9 @@ type mediaPeer interface {
 	Close() error
 }
 
-type mediaPeerFactory func(io.Reader, io.Writer) (mediaPeer, error)
+type mediaPeerFactory func(io.Reader, io.Writer, []ICEServer) (mediaPeer, error)
+type legacyMediaPeerFactory func(io.Reader, io.Writer) (mediaPeer, error)
+type iceServerProvider func(context.Context) ([]ICEServer, error)
 
 type activeSession struct {
 	peer      mediaPeer
@@ -56,10 +66,11 @@ type Manager struct {
 	newPeer      mediaPeerFactory
 	errors       chan error
 
-	mu       sync.Mutex
-	sessions map[string]*activeSession
-	closed   bool
-	closeICE func()
+	mu         sync.Mutex
+	sessions   map[string]*activeSession
+	closed     bool
+	closeICE   func()
+	iceServers iceServerProvider
 }
 
 // NewManager creates a call media manager using the production Pion peer.
@@ -69,23 +80,51 @@ func NewManager(openEndpoint EndpointFactory) (*Manager, error) {
 
 // NewManagerWithICE creates a manager with optional fixed ICE UDP/TCP listeners.
 func NewManagerWithICE(config ICEConfig, openEndpoint EndpointFactory) (*Manager, error) {
+	return NewManagerWithICEProvider(config, func(context.Context) ([]ICEServer, error) {
+		return config.Servers, nil
+	}, openEndpoint)
+}
+
+// NewManagerWithICEProvider refreshes relay credentials before each call.
+func NewManagerWithICEProvider(config ICEConfig, provider func(context.Context) ([]ICEServer, error), openEndpoint EndpointFactory) (*Manager, error) {
+	if provider == nil {
+		return nil, errors.New("media manager requires an ICE server provider")
+	}
 	settings, closeICE, err := NewICESettings(config)
 	if err != nil {
 		return nil, err
 	}
-	manager, err := newManager(openEndpoint, func(source io.Reader, sink io.Writer) (mediaPeer, error) {
-		return newPeerWithSettings(source, sink, settings)
+	manager, err := newManager(openEndpoint, func(source io.Reader, sink io.Writer, servers []ICEServer) (mediaPeer, error) {
+		return newPeerWithICEServers(source, sink, settings, servers)
 	})
 	if err != nil {
 		closeICE()
 		return nil, err
 	}
 	manager.closeICE = closeICE
+	manager.iceServers = provider
 	return manager, nil
 }
 
-func newManager(openEndpoint EndpointFactory, newPeer mediaPeerFactory) (*Manager, error) {
-	if openEndpoint == nil || newPeer == nil {
+func newManager(openEndpoint EndpointFactory, factory any) (*Manager, error) {
+	if openEndpoint == nil || factory == nil {
+		return nil, errors.New("media manager requires endpoint and peer factories")
+	}
+	var newPeer mediaPeerFactory
+	switch peerFactory := factory.(type) {
+	case mediaPeerFactory:
+		newPeer = peerFactory
+	case func(io.Reader, io.Writer, []ICEServer) (mediaPeer, error):
+		newPeer = peerFactory
+	case legacyMediaPeerFactory:
+		newPeer = func(source io.Reader, sink io.Writer, _ []ICEServer) (mediaPeer, error) {
+			return peerFactory(source, sink)
+		}
+	case func(io.Reader, io.Writer) (mediaPeer, error):
+		newPeer = func(source io.Reader, sink io.Writer, _ []ICEServer) (mediaPeer, error) {
+			return peerFactory(source, sink)
+		}
+	default:
 		return nil, errors.New("media manager requires endpoint and peer factories")
 	}
 	return &Manager{
@@ -93,6 +132,7 @@ func newManager(openEndpoint EndpointFactory, newPeer mediaPeerFactory) (*Manage
 		newPeer:      newPeer,
 		errors:       make(chan error, 8),
 		sessions:     make(map[string]*activeSession),
+		iceServers:   func(context.Context) ([]ICEServer, error) { return nil, nil },
 	}, nil
 }
 
@@ -117,7 +157,12 @@ func (manager *Manager) Negotiate(ctx context.Context, callID string, offer stri
 	if err != nil {
 		return "", fmt.Errorf("open modem audio: %w", err)
 	}
-	peer, err := manager.newPeer(endpoint, endpoint)
+	servers, err := manager.iceServers(ctx)
+	if err != nil {
+		_ = endpoint.Close()
+		return "", fmt.Errorf("load WebRTC ICE servers: %w", err)
+	}
+	peer, err := manager.newPeer(endpoint, endpoint, servers)
 	if err != nil {
 		_ = endpoint.Close()
 		return "", fmt.Errorf("create WebRTC media peer: %w", err)

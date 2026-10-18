@@ -174,13 +174,10 @@ If the script reports that an interface or endpoint is missing, first rerun
 numbers or use a synthetic PCM path. Real audio still requires `AT+QCFG` UAC
 enabled and `AT+QPCMV=1,2` confirmed on the current modem boot.
 
-For direct WebRTC media on a Linux deployment, set
-`SIM_DECK_MEDIA_UDP_PORT`, `SIM_DECK_MEDIA_TCP_PORT`, and
-`SIM_DECK_MEDIA_PUBLIC_IP`. The UDP and TCP ports must be published to the
-same host ports and allowed by the firewall. `SIM_DECK_MEDIA_PUBLIC_IP` is the
-address that the iPhone can reach; it prevents Docker's private container
-address from being advertised in the SDP. The device shares these listeners
-across calls and still protects media with DTLS-SRTP.
+The device never exposes a media port. WebRTC media is relay-only through the
+server's coturn service, using short-lived credentials fetched over HTTPS. The
+iPhone and device therefore need only reach the server; no modem host address,
+UDP port, TCP port, or Docker port-forward is shared with the app.
 
 ## App-controlled discovery
 
@@ -235,20 +232,22 @@ own queue and must keep its state volume private.
 
 ## Running two modems
 
-`compose.example.yaml` defines two fully isolated modem services. Set the
-server URL and host device group IDs:
+`scripts/install-linux-device.sh` discovers every connected Quectel modem and
+generates one fully isolated service per modem. It also installs stable udev
+links from the modem USB serial identity, so transient `ttyUSB` and ALSA card
+numbers never enter the container configuration:
 
 ```sh
-export SIM_DECK_SERVER_URL=https://sim-deck.example
-export SIM_DECK_DIALOUT_GID="$(getent group dialout | cut -d: -f3)"
-export SIM_DECK_AUDIO_GID="$(getent group audio | cut -d: -f3)"
-docker compose -f compose.example.yaml up --build
+sudo SIM_DECK_SERVER_URL=https://sim-deck.example \
+  ./scripts/install-linux-device.sh --output-dir /etc/sim-deck
+docker compose --env-file /etc/sim-deck/.env \
+  -f /etc/sim-deck/compose.yaml up -d
 ```
 
-The server sees two independently derived device UUIDs and allocates the
-smallest free SIM numeric ID to each. To add another modem, copy one service
-block and change all host device paths, the state volume, and the host health
-port. Do not add multiple modem mappings to one container.
+The server sees independently derived device UUIDs and allocates the smallest
+free SIM numeric ID to each. Re-run the installer after adding or removing
+modems; it backs up the previous udev rules before writing a new generated
+file. Do not add multiple modem mappings to one container.
 
 The local readiness endpoints in the example are
 `http://127.0.0.1:18081/healthz` and `http://127.0.0.1:18082/healthz`. Readiness
@@ -265,17 +264,12 @@ protection even though message and call content is end-to-end encrypted.
 
 ## Start and approve the first Linux modem
 
-Set the server URL and the stable host paths created by the udev rules. These
-example paths must be replaced with the paths for the first physical modem:
+The installer writes the server URL and stable host paths. The only deployment
+value normally supplied by the operator is the server URL:
 
 ```sh
-export SIM_DECK_SERVER_URL=https://sim-deck.example.com
-export SIM_DECK_MODEM_1_AT_DEVICE=/dev/sim-deck/modem-1-at
-export SIM_DECK_MODEM_1_AUDIO_CONTROL=/dev/sim-deck/modem-1-audio-control
-export SIM_DECK_MODEM_1_AUDIO_CAPTURE=/dev/sim-deck/modem-1-audio-capture
-export SIM_DECK_MODEM_1_AUDIO_PLAYBACK=/dev/sim-deck/modem-1-audio-playback
-export SIM_DECK_DIALOUT_GID="$(getent group dialout | cut -d: -f3)"
-export SIM_DECK_AUDIO_GID="$(getent group audio | cut -d: -f3)"
+sudo SIM_DECK_SERVER_URL=https://sim-deck.example.com \
+  ./scripts/install-linux-device.sh --output-dir /etc/sim-deck
 ```
 
 For a server reached over plain HTTP on a trusted LAN or encrypted VPN, also
@@ -286,9 +280,9 @@ Enable device discovery in the iOS app, then start only the first modem service
 and inspect its logs:
 
 ```sh
-docker compose -f compose.example.yaml up --build -d modem-1
-docker compose -f compose.example.yaml ps modem-1
-docker compose -f compose.example.yaml logs --tail=100 modem-1
+docker compose --env-file /etc/sim-deck/.env -f /etc/sim-deck/compose.yaml up -d modem-1
+docker compose --env-file /etc/sim-deck/.env -f /etc/sim-deck/compose.yaml ps modem-1
+docker compose --env-file /etc/sim-deck/.env -f /etc/sim-deck/compose.yaml logs --tail=100 modem-1
 ```
 
 The container remains `starting` while it is awaiting approval. In the app,
@@ -298,7 +292,7 @@ readiness:
 
 ```sh
 curl --fail-with-body http://127.0.0.1:18081/healthz
-docker compose -f compose.example.yaml logs --tail=100 modem-1
+docker compose --env-file /etc/sim-deck/.env -f /etc/sim-deck/compose.yaml logs --tail=100 modem-1
 ```
 
 A successful log entry contains `device agent ready`, the derived immutable

@@ -45,7 +45,15 @@ func newPeerWithSettings(source io.Reader, sink io.Writer, settings webrtc.Setti
 	return newPeer(source, sink, settings)
 }
 
+func newPeerWithICEServers(source io.Reader, sink io.Writer, settings webrtc.SettingEngine, servers []ICEServer) (*Peer, error) {
+	return newPeerWithServers(source, sink, settings, servers, true)
+}
+
 func newPeer(source io.Reader, sink io.Writer, settings webrtc.SettingEngine) (*Peer, error) {
+	return newPeerWithServers(source, sink, settings, nil, false)
+}
+
+func newPeerWithServers(source io.Reader, sink io.Writer, settings webrtc.SettingEngine, iceServers []ICEServer, relayOnly bool) (*Peer, error) {
 	if source == nil || sink == nil {
 		return nil, errors.New("WebRTC media peer requires PCM capture and playback endpoints")
 	}
@@ -61,7 +69,21 @@ func newPeer(source io.Reader, sink io.Writer, settings webrtc.SettingEngine) (*
 		return nil, fmt.Errorf("register PCMU codec: %w", err)
 	}
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(engine), webrtc.WithSettingEngine(settings))
-	connection, err := api.NewPeerConnection(webrtc.Configuration{})
+	configuration := webrtc.Configuration{}
+	for _, server := range iceServers {
+		if len(server.URLs) == 0 || server.Username == "" || server.Credential == "" {
+			return nil, errors.New("TURN ICE server credentials are incomplete")
+		}
+		configuration.ICEServers = append(configuration.ICEServers, webrtc.ICEServer{
+			URLs:       server.URLs,
+			Username:   server.Username,
+			Credential: server.Credential,
+		})
+	}
+	if relayOnly {
+		configuration.ICETransportPolicy = webrtc.ICETransportPolicyRelay
+	}
+	connection, err := api.NewPeerConnection(configuration)
 	if err != nil {
 		return nil, fmt.Errorf("create WebRTC peer: %w", err)
 	}

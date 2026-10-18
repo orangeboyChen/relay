@@ -40,6 +40,48 @@ func clientWithHandler(handler roundTripFunc) *Client {
 	return NewClient("https://deck.example", &http.Client{Transport: handler})
 }
 
+var _ = Describe("TURN credential client", func() {
+	It("requests relay-only UDP and TCP addresses with the bound device credential", func() {
+		state := identity.State{
+			DeviceUUID: "01900000-0000-7000-8000-000000000001",
+			Credential: "device-secret",
+		}
+		client := clientWithHandler(func(request *http.Request) (*http.Response, error) {
+			Expect(request.Method).To(Equal(http.MethodGet))
+			Expect(request.URL.Path).To(Equal("/v1/devices/" + state.DeviceUUID + "/media/turn-credentials"))
+			Expect(request.Header.Get("Authorization")).To(Equal("Bearer device-secret"))
+			return response(http.StatusOK, `{"urls":["turn:turn.example.com:3478?transport=udp","turn:turn.example.com:3478?transport=tcp"],"username":"user","credential":"password","expires_at":"2099-01-01T00:00:00Z"}`), nil
+		})
+
+		servers, err := client.FetchTURNCredentials(context.Background(), state)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(servers).To(HaveLen(1))
+		Expect(servers[0].URLs).To(Equal([]string{
+			"turn:turn.example.com:3478?transport=udp",
+			"turn:turn.example.com:3478?transport=tcp",
+		}))
+		Expect(servers[0].Username).To(Equal("user"))
+	})
+
+	It("rejects missing device identity and malformed credentials", func() {
+		_, err := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			Fail("request should not be sent without a bound identity")
+			return nil, nil
+		}).FetchTURNCredentials(context.Background(), identity.State{})
+		Expect(err).To(MatchError("bound device identity is required"))
+
+		client := clientWithHandler(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusOK, `{"urls":[],"username":"user","credential":"password","expires_at":"2099-01-01T00:00:00Z"}`), nil
+		})
+		_, err = client.FetchTURNCredentials(context.Background(), identity.State{
+			DeviceUUID: "01900000-0000-7000-8000-000000000001",
+			Credential: "device-secret",
+		})
+		Expect(err).To(MatchError("server returned invalid TURN credentials"))
+	})
+})
+
 var _ = Describe("Installation recipient client", func() {
 	const deviceID = "01900000-0000-7000-8000-000000000001"
 

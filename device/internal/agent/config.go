@@ -2,7 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"net"
 	"net/url"
 	"path/filepath"
 	"strconv"
@@ -48,9 +47,6 @@ type Config struct {
 	PCMTLSCAFile          string
 	PCMTLSCertificateFile string
 	PCMTLSKeyFile         string
-	MediaUDPPort          int
-	MediaTCPPort          int
-	MediaPublicIP         string
 	HealthAddress         string
 	Baud                  int
 	CommandTimeout        time.Duration
@@ -80,7 +76,6 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 		PCMTLSCAFile:          strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_PCM_TLS_CA_FILE", "")),
 		PCMTLSCertificateFile: strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_PCM_TLS_CERT_FILE", "")),
 		PCMTLSKeyFile:         strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_PCM_TLS_KEY_FILE", "")),
-		MediaPublicIP:         strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_MEDIA_PUBLIC_IP", "")),
 		HealthAddress:         valueOrDefault(lookup, "SIM_DECK_HEALTH_ADDRESS", defaultHealthAddr),
 		Baud:                  defaultBaud,
 		CommandTimeout:        5 * time.Second,
@@ -148,27 +143,6 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 	}
 	if strings.TrimSpace(config.ATDevice) == "" {
 		return Config{}, fmt.Errorf("SIM_DECK_AT_DEVICE must not be empty")
-	}
-	for key, target := range map[string]*int{
-		"SIM_DECK_MEDIA_UDP_PORT": &config.MediaUDPPort,
-		"SIM_DECK_MEDIA_TCP_PORT": &config.MediaTCPPort,
-	} {
-		if value, ok := lookup(key); ok && strings.TrimSpace(value) != "" {
-			port, err := strconv.Atoi(strings.TrimSpace(value))
-			if err != nil || port < 1 || port > 65535 {
-				return Config{}, fmt.Errorf("%s must be an integer between 1 and 65535", key)
-			}
-			*target = port
-		}
-	}
-	if config.MediaPublicIP != "" && net.ParseIP(config.MediaPublicIP) == nil {
-		return Config{}, fmt.Errorf("SIM_DECK_MEDIA_PUBLIC_IP must be a valid IP address")
-	}
-	if (config.MediaUDPPort == 0) != (config.MediaTCPPort == 0) {
-		return Config{}, fmt.Errorf("SIM_DECK_MEDIA_UDP_PORT and SIM_DECK_MEDIA_TCP_PORT must be configured together")
-	}
-	if (config.MediaUDPPort > 0 || config.MediaTCPPort > 0) && config.MediaPublicIP == "" {
-		return Config{}, fmt.Errorf("SIM_DECK_MEDIA_PUBLIC_IP is required when fixed media ports are configured")
 	}
 	if strings.HasPrefix(config.ATDevice, "tls://") {
 		endpoint, err := url.Parse(config.ATDevice)

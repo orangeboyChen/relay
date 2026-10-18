@@ -19,6 +19,7 @@ import (
 	"sim-deck-device/internal/command"
 	"sim-deck-device/internal/identity"
 	"sim-deck-device/internal/incomingcall"
+	"sim-deck-device/internal/media"
 	"sim-deck-device/internal/radio"
 )
 
@@ -28,6 +29,39 @@ const maxResponseBytes = 1 << 20
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
+}
+
+// FetchTURNCredentials obtains short-lived relay credentials for one bound device.
+func (client *Client) FetchTURNCredentials(ctx context.Context, state identity.State) ([]media.ICEServer, error) {
+	if !validUUID(state.DeviceUUID) || strings.TrimSpace(state.Credential) == "" {
+		return nil, errors.New("bound device identity is required")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+"/v1/devices/"+url.PathEscape(state.DeviceUUID)+"/media/turn-credentials", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create TURN credentials request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+state.Credential)
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("fetch TURN credentials: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, responseError("fetch TURN credentials", response.StatusCode, io.LimitReader(response.Body, maxResponseBytes))
+	}
+	var body struct {
+		URLs       []string  `json:"urls"`
+		Username   string    `json:"username"`
+		Credential string    `json:"credential"`
+		ExpiresAt  time.Time `json:"expires_at"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, maxResponseBytes)).Decode(&body); err != nil {
+		return nil, fmt.Errorf("decode TURN credentials: %w", err)
+	}
+	if len(body.URLs) == 0 || body.Username == "" || body.Credential == "" || body.ExpiresAt.Before(time.Now().UTC()) {
+		return nil, errors.New("server returned invalid TURN credentials")
+	}
+	return []media.ICEServer{{URLs: body.URLs, Username: body.Username, Credential: body.Credential}}, nil
 }
 
 // UpdateRadioStatus publishes the current modem registration and signal level.

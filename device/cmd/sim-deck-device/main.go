@@ -154,20 +154,23 @@ type messageEventPublisher interface {
 }
 
 type deviceDependencies struct {
-	openTransport    func(string, int, string, string, string) (io.ReadWriteCloser, error)
-	resolveHardware  func(context.Context, agent.Config, *at.Client) (string, string, error)
-	bindIdentity     func(context.Context, agent.Config, identity.Store, identity.State) (identity.State, error)
-	openInbox        func(string, time.Duration, []byte) (*sms.Inbox, error)
-	newSession       func(*at.Client, *sms.Inbox, modem.MessageSink, *slog.Logger, time.Duration) (deviceSession, error)
-	configureAudio   func(context.Context, agent.Config, *at.Client) error
-	syncCommandKey   func(context.Context, agent.Config, identity.State) error
-	syncSIMIdentity  func(context.Context, agent.Config, identity.State) (string, int, error)
-	newCallEvents    func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error)
-	newIncomingCalls func(agent.Config, identity.State, <-chan call.Snapshot, incomingcall.EventRegistrar) (commandRuntime, error)
-	newCallMedia     func(agent.Config) (callMediaRuntime, error)
-	newMessageEvents func(agent.Config, identity.State) (messageEventPublisher, error)
-	newCommands      func(agent.Config, identity.State, command.Calls, command.Dependencies) (commandRuntime, error)
-	newRadioStatus   func(agent.Config, identity.State, *at.Client) (commandRuntime, error)
+	openTransport               func(string, int, string, string, string) (io.ReadWriteCloser, error)
+	resolveHardware             func(context.Context, agent.Config, *at.Client) (string, string, error)
+	bindIdentity                func(context.Context, agent.Config, identity.Store, identity.State) (identity.State, error)
+	openInbox                   func(string, time.Duration, []byte) (*sms.Inbox, error)
+	newSession                  func(*at.Client, *sms.Inbox, modem.MessageSink, *slog.Logger, time.Duration) (deviceSession, error)
+	configureAudio              func(context.Context, agent.Config, *at.Client) error
+	syncCommandKey              func(context.Context, agent.Config, identity.State) error
+	syncSIMIdentity             func(context.Context, agent.Config, identity.State) (string, int, error)
+	newCallEvents               func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error)
+	newIncomingCalls            func(agent.Config, identity.State, <-chan call.Snapshot, incomingcall.EventRegistrar) (commandRuntime, error)
+	newCallMedia                func(agent.Config) (callMediaRuntime, error)
+	newCallMediaWithICE         func(agent.Config, []media.ICEServer) (callMediaRuntime, error)
+	newCallMediaWithICEProvider func(agent.Config, identity.State, func(context.Context, agent.Config, identity.State) ([]media.ICEServer, error)) (callMediaRuntime, error)
+	fetchTURNCredentials        func(context.Context, agent.Config, identity.State) ([]media.ICEServer, error)
+	newMessageEvents            func(agent.Config, identity.State) (messageEventPublisher, error)
+	newCommands                 func(agent.Config, identity.State, command.Calls, command.Dependencies) (commandRuntime, error)
+	newRadioStatus              func(agent.Config, identity.State, *at.Client) (commandRuntime, error)
 }
 
 func productionDependencies(httpClient *http.Client) deviceDependencies {
@@ -228,18 +231,16 @@ func productionDependencies(httpClient *http.Client) deviceDependencies {
 			return incomingcall.NewRuntime(serverapi.NewClient(config.ServerURL, httpClient), state, snapshots, events)
 		},
 		newCallMedia: func(config agent.Config) (callMediaRuntime, error) {
-			return media.NewManagerWithICE(media.ICEConfig{UDPPort: config.MediaUDPPort, TCPPort: config.MediaTCPPort, PublicIP: config.MediaPublicIP}, func(ctx context.Context) (media.DuplexPCM, error) {
-				switch config.AudioMode {
-				case agent.AudioModeALSA:
-					return media.OpenALSAEndpoint(ctx, config.ALSACaptureDevice, config.ALSAPlaybackDevice)
-				case agent.AudioModeRawPCM:
-					return media.OpenRawPCMEndpoint(config.PCMDevice)
-				case agent.AudioModeRemotePCM:
-					return media.OpenRemotePCMEndpoint(ctx, config.PCMEndpoint, config.PCMTLSCAFile, config.PCMTLSCertificateFile, config.PCMTLSKeyFile)
-				default:
-					return nil, fmt.Errorf("unsupported audio mode %q", config.AudioMode)
-				}
-			})
+			return newCallMedia(config, nil)
+		},
+		newCallMediaWithICE: func(config agent.Config, servers []media.ICEServer) (callMediaRuntime, error) {
+			return newCallMedia(config, servers)
+		},
+		newCallMediaWithICEProvider: func(config agent.Config, state identity.State, provider func(context.Context, agent.Config, identity.State) ([]media.ICEServer, error)) (callMediaRuntime, error) {
+			return newCallMediaWithProvider(config, state, provider)
+		},
+		fetchTURNCredentials: func(ctx context.Context, config agent.Config, state identity.State) ([]media.ICEServer, error) {
+			return serverapi.NewClient(config.ServerURL, httpClient).FetchTURNCredentials(ctx, state)
 		},
 		newMessageEvents: func(config agent.Config, state identity.State) (messageEventPublisher, error) {
 			return messageevent.NewPublisher(serverapi.NewClient(config.ServerURL, httpClient), state)
@@ -257,6 +258,29 @@ func productionDependencies(httpClient *http.Client) deviceDependencies {
 			)
 		},
 	}
+}
+
+func newCallMedia(config agent.Config, servers []media.ICEServer) (callMediaRuntime, error) {
+	return newCallMediaWithProvider(config, identity.State{}, func(context.Context, agent.Config, identity.State) ([]media.ICEServer, error) {
+		return servers, nil
+	})
+}
+
+func newCallMediaWithProvider(config agent.Config, state identity.State, provider func(context.Context, agent.Config, identity.State) ([]media.ICEServer, error)) (callMediaRuntime, error) {
+	return media.NewManagerWithICEProvider(media.ICEConfig{}, func(ctx context.Context) ([]media.ICEServer, error) {
+		return provider(ctx, config, state)
+	}, func(ctx context.Context) (media.DuplexPCM, error) {
+		switch config.AudioMode {
+		case agent.AudioModeALSA:
+			return media.OpenALSAEndpoint(ctx, config.ALSACaptureDevice, config.ALSAPlaybackDevice)
+		case agent.AudioModeRawPCM:
+			return media.OpenRawPCMEndpoint(config.PCMDevice)
+		case agent.AudioModeRemotePCM:
+			return media.OpenRemotePCMEndpoint(ctx, config.PCMEndpoint, config.PCMTLSCAFile, config.PCMTLSCertificateFile, config.PCMTLSKeyFile)
+		default:
+			return nil, fmt.Errorf("unsupported audio mode %q", config.AudioMode)
+		}
+	})
 }
 
 func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, ready *atomic.Bool, dependencies deviceDependencies) error {
@@ -375,7 +399,14 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	if err != nil {
 		return fmt.Errorf("create incoming call runtime: %w", err)
 	}
-	callMedia, err := dependencies.newCallMedia(config)
+	var callMedia callMediaRuntime
+	if dependencies.newCallMediaWithICEProvider != nil && dependencies.fetchTURNCredentials != nil {
+		callMedia, err = dependencies.newCallMediaWithICEProvider(config, deviceIdentity, dependencies.fetchTURNCredentials)
+	} else if dependencies.newCallMediaWithICE != nil {
+		callMedia, err = dependencies.newCallMediaWithICE(config, nil)
+	} else {
+		callMedia, err = dependencies.newCallMedia(config)
+	}
 	if err != nil {
 		return fmt.Errorf("create call media runtime: %w", err)
 	}
@@ -398,9 +429,6 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 		"alsa_capture_device", config.ALSACaptureDevice,
 		"alsa_playback_device", config.ALSAPlaybackDevice,
 		"pcm_device", config.PCMDevice,
-		"media_udp_port", config.MediaUDPPort,
-		"media_tcp_port", config.MediaTCPPort,
-		"media_public_ip", config.MediaPublicIP,
 		"device_uuid", deviceIdentity.DeviceUUID,
 		"numeric_id", deviceIdentity.NumericID,
 	)

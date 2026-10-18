@@ -332,7 +332,16 @@ func (store *Postgres) ApproveDeviceDiscovery(ctx context.Context, ownerID strin
 		if decodeError != nil || len(simFingerprint) != 32 {
 			return DeviceRecord{}, errors.New("stored SIM fingerprint is invalid")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE sim_cards SET iccid_fingerprint = $2, fingerprint_scope = $3 WHERE id = $1`, deviceID, simFingerprint, deviceID); err != nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE sim_cards
+			SET iccid_fingerprint = $2, fingerprint_scope = $3
+			WHERE id = $1
+			  AND NOT EXISTS (
+				  SELECT 1 FROM sim_cards AS existing
+				  WHERE existing.id <> $1
+				    AND existing.iccid_fingerprint = $2
+				    AND existing.retired_at IS NULL
+			  )`, deviceID, simFingerprint, deviceID); err != nil {
 			return DeviceRecord{}, fmt.Errorf("store SIM fingerprint: %w", err)
 		}
 	}

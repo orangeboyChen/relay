@@ -1354,8 +1354,8 @@ func (store *Postgres) UpdateDeviceSIMIdentity(ctx context.Context, deviceID str
 	var numericID int
 	err = tx.QueryRow(ctx, `
 		SELECT id::text, numeric_id FROM sim_cards
-		WHERE fingerprint_scope = $1 AND iccid_fingerprint = $2
-		ORDER BY created_at LIMIT 1 FOR UPDATE`, deviceID, fingerprint).Scan(&simID, &numericID)
+		WHERE iccid_fingerprint = $1
+		ORDER BY created_at LIMIT 1 FOR UPDATE`, fingerprint).Scan(&simID, &numericID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if oldSIMID != nil {
 			err = tx.QueryRow(ctx, `
@@ -1394,7 +1394,7 @@ func (store *Postgres) UpdateDeviceSIMIdentity(ctx context.Context, deviceID str
 		}
 	} else if err != nil {
 		return "", 0, fmt.Errorf("find SIM card identity: %w", err)
-	} else if _, err := tx.Exec(ctx, `UPDATE sim_cards SET retired_at = NULL, last_seen_at = $2 WHERE id = $1`, simID, now.UTC()); err != nil {
+	} else if _, err := tx.Exec(ctx, `UPDATE sim_cards SET fingerprint_scope = $2, retired_at = NULL, last_seen_at = $3 WHERE id = $1`, simID, deviceID, now.UTC()); err != nil {
 		return "", 0, fmt.Errorf("reactivate SIM card identity: %w", err)
 	}
 	if oldSIMID != nil && *oldSIMID != simID {

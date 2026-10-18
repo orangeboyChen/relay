@@ -415,6 +415,37 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(fingerprintScope).To(Equal(firstDeviceID))
 	})
 
+	It("approves a replacement device when its SIM is already known", func() {
+		firstDevice := createDevice(firstDeviceID)
+		fingerprint := bytes.Repeat([]byte{67}, 32)
+		firstSlot := firstDevice.Slots[0]
+		firstSIMID, firstNumericID, err := database.UpdateDeviceSIMIdentity(
+			context.Background(), firstDevice.ID, firstSlot.SlotKey, firstSlot.SlotIndex, fingerprint, now,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		owner := createOwner()
+		_, err = database.OpenDeviceDiscovery(context.Background(), owner.ID, now, now.Add(10*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = database.SubmitDeviceDiscovery(context.Background(), now, DeviceDiscoveryRequest{
+			DeviceUUID: secondDeviceID, SlotKey: "1", SlotIndex: 1, SIMFingerprint: fingerprint,
+			IdentityPublicKey: bytes.Repeat([]byte{2}, ed25519.PublicKeySize),
+			CommandPublicKey:  bytes.Repeat([]byte{3}, 32), CredentialHash: bytes.Repeat([]byte{4}, 32),
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		approved, err := database.ApproveDeviceDiscovery(context.Background(), owner.ID, secondDeviceID, now.Add(time.Minute))
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(approved.Slots).To(HaveLen(1))
+		movedSIMID, movedNumericID, err := database.UpdateDeviceSIMIdentity(
+			context.Background(), secondDeviceID, approved.Slots[0].SlotKey, approved.Slots[0].SlotIndex,
+			fingerprint, now.Add(2*time.Minute),
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(movedSIMID).To(Equal(firstSIMID))
+		Expect(movedNumericID).To(Equal(firstNumericID))
+	})
+
 	It("rejects approval after the candidate discovery expires", func() {
 		owner := createOwner()
 		_, err := database.OpenDeviceDiscovery(context.Background(), owner.ID, now, now.Add(time.Minute))
@@ -798,6 +829,35 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		var assignmentCount int
 		Expect(database.pool.QueryRow(context.Background(), `SELECT count(*) FROM slot_sim_assignments WHERE slot_id = $1`, listed[0].Slots[0].ID).Scan(&assignmentCount)).To(Succeed())
 		Expect(assignmentCount).To(Equal(3))
+	})
+
+	It("reuses one SIM identity when a card moves between devices", func() {
+		firstDevice := createDevice(firstDeviceID)
+		secondDevice := createDevice(secondDeviceID)
+		fingerprint := bytes.Repeat([]byte{66}, 32)
+		firstSlot := firstDevice.Slots[0]
+		secondSlot := secondDevice.Slots[0]
+
+		simID, numericID, err := database.UpdateDeviceSIMIdentity(
+			context.Background(), firstDevice.ID, firstSlot.SlotKey, firstSlot.SlotIndex, fingerprint, now,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		movedSIMID, movedNumericID, err := database.UpdateDeviceSIMIdentity(
+			context.Background(), secondDevice.ID, secondSlot.SlotKey, secondSlot.SlotIndex, fingerprint, now.Add(time.Minute),
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(movedSIMID).To(Equal(simID))
+		Expect(movedNumericID).To(Equal(numericID))
+
+		listed, err := database.ListDevices(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(listed).To(HaveLen(2))
+		byID := make(map[string]DeviceRecord, len(listed))
+		for _, record := range listed {
+			byID[record.ID] = record
+		}
+		Expect(byID[firstDevice.ID].Slots[0].SIMID).To(BeNil())
+		Expect(byID[secondDevice.ID].Slots[0].SIMID).To(HaveValue(Equal(simID)))
 	})
 
 	It("moves one identified SIM between physical slots without cloning it", func() {

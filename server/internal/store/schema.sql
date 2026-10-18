@@ -116,8 +116,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS sim_cards_active_numeric_id_idx
     ON sim_cards(numeric_id)
     WHERE retired_at IS NULL;
 
-CREATE UNIQUE INDEX IF NOT EXISTS sim_cards_scoped_fingerprint_idx
-    ON sim_cards(fingerprint_scope, encode(iccid_fingerprint, 'hex'))
+CREATE UNIQUE INDEX IF NOT EXISTS sim_cards_fingerprint_idx
+    ON sim_cards(encode(iccid_fingerprint, 'hex'))
     WHERE iccid_fingerprint IS NOT NULL AND retired_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS device_slots (

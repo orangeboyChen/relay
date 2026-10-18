@@ -42,8 +42,8 @@ extension AppModel {
 private final class PreviewMessageTransport: MessageTransport {
     func send(messageID: UUID, lineID: UUID, remoteNumber: String, body: String) async throws {}
 
-    func synchronize(lines: [DeviceLineIdentity]) async throws -> [IncomingMessageDelivery] {
-        []
+    func synchronize(lines: [DeviceLineIdentity]) async throws -> MessageSyncBatch {
+        MessageSyncBatch(deliveries: [], nextSequence: 0)
     }
 }
 

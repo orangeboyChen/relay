@@ -137,10 +137,10 @@ final class LiveMessageTransportTests: XCTestCase {
         let cursor = MessageCursorStoreFake(sequence: 0)
         let transport = makeTransport(api: api, cursorStore: cursor)
 
-        let deliveries = try await transport.synchronize(lines: [api.line])
+        let batch = try await transport.synchronize(lines: [api.line])
 
         XCTAssertEqual(
-            deliveries,
+            batch.deliveries,
             [
                 IncomingMessageDelivery(
                     id: try XCTUnwrap(api.events.first?.id),
@@ -152,11 +152,14 @@ final class LiveMessageTransportTests: XCTestCase {
                 ),
             ]
         )
+        XCTAssertEqual(batch.nextSequence, 1)
         XCTAssertEqual(api.requestedEventCursors, [0])
+        XCTAssertEqual(cursor.sequence, 0)
+        transport.acknowledge(sequence: batch.nextSequence)
         XCTAssertEqual(cursor.sequence, 1)
 
         let secondPage = try await transport.synchronize(lines: [api.line])
-        XCTAssertTrue(secondPage.isEmpty)
+        XCTAssertTrue(secondPage.deliveries.isEmpty)
         XCTAssertEqual(api.requestedEventCursors, [0, 1])
     }
 
@@ -179,10 +182,34 @@ final class LiveMessageTransportTests: XCTestCase {
             waitBeforePollingAgain: {}
         )
 
-        let deliveries = try await transport.synchronize(lines: [api.line])
+        let batch = try await transport.synchronize(lines: [api.line])
 
-        XCTAssertTrue(deliveries.isEmpty)
+        XCTAssertTrue(batch.deliveries.isEmpty)
+        XCTAssertEqual(cursor.sequence, 0)
+        transport.acknowledge(sequence: batch.nextSequence)
         XCTAssertEqual(cursor.sequence, 2)
+    }
+
+    func testSynchronizeDoesNotAdvanceCursorWhenTargetedMessageCannotBeAuthenticated() async throws {
+        let api = try MessageCommandAPIFake(deviceID: deviceID, outcome: .success)
+        try api.appendIncomingMessage(
+            sourceID: String(repeating: "c", count: 64),
+            remoteNumber: "13500000000",
+            body: "tampered message",
+            receivedAt: Date(timeIntervalSince1970: 1_792_138_152)
+        )
+        api.tamperLastEventSignature()
+        let cursor = MessageCursorStoreFake(sequence: 0)
+        let transport = makeTransport(api: api, cursorStore: cursor)
+
+        do {
+            _ = try await transport.synchronize(lines: [api.line])
+            XCTFail("Expected authentication failure")
+        } catch {
+            XCTAssertEqual(error as? LiveMessageTransportError, .invalidResponse)
+        }
+
+        XCTAssertEqual(cursor.sequence, 0)
     }
 
     func testSameRemoteNumberOnTwoDevicesRemainsTwoDeliveries() async throws {
@@ -219,11 +246,11 @@ final class LiveMessageTransportTests: XCTestCase {
             waitBeforePollingAgain: {}
         )
 
-        let deliveries = try await transport.synchronize(lines: [firstAPI.line, secondAPI.line])
+        let batch = try await transport.synchronize(lines: [firstAPI.line, secondAPI.line])
 
-        XCTAssertEqual(deliveries.map(\.lineID), [deviceID, secondDeviceID])
-        XCTAssertEqual(Set(deliveries.map(\.remoteNumber)), ["13500000000"])
-        XCTAssertEqual(Set(deliveries.map(\.body)), ["SIM 1", "SIM 2"])
+        XCTAssertEqual(batch.deliveries.map(\.lineID), [deviceID, secondDeviceID])
+        XCTAssertEqual(Set(batch.deliveries.map(\.remoteNumber)), ["13500000000"])
+        XCTAssertEqual(Set(batch.deliveries.map(\.body)), ["SIM 1", "SIM 2"])
     }
 
     private func makeTransport(
@@ -498,6 +525,7 @@ private final class MessageCommandAPIFake: EncryptedCallCommandAPI {
             sequence: last.sequence,
             type: last.type,
             deviceUUID: last.deviceUUID,
+            recipientInstallationID: last.recipientInstallationID,
             occurredAt: last.occurredAt,
             keyEpoch: last.keyEpoch,
             nonce: last.nonce,

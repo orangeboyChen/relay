@@ -5,7 +5,7 @@ struct ConversationID: Hashable, Sendable {
     let remoteNumber: String
 }
 
-struct MessageConversation: Identifiable, Equatable, Sendable {
+struct MessageConversation: Identifiable, Equatable, Sendable, Codable {
     let lineID: UUID
     let remoteNumber: String
     let contactName: String?
@@ -35,7 +35,7 @@ struct MessageConversation: Identifiable, Equatable, Sendable {
     }
 }
 
-struct MessageItem: Identifiable, Equatable, Sendable {
+struct MessageItem: Identifiable, Equatable, Sendable, Codable {
     let id: UUID
     let sourceID: String?
     let direction: MessageDirection
@@ -63,17 +63,17 @@ struct MessageItem: Identifiable, Equatable, Sendable {
     }
 }
 
-struct MessageImageAttachment: Identifiable, Equatable, Sendable {
+struct MessageImageAttachment: Identifiable, Equatable, Sendable, Codable {
     let id: UUID
     let systemImageName: String
 }
 
-enum MessageDirection: Equatable, Sendable {
+enum MessageDirection: Equatable, Sendable, Codable {
     case received
     case sent
 }
 
-enum MessageDeliveryStatus: Equatable, Sendable {
+enum MessageDeliveryStatus: Equatable, Sendable, Codable {
     case sending
     case sent
     case delivered

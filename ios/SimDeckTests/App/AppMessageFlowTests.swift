@@ -232,9 +232,9 @@ private final class MessageTransportFake: MessageTransport {
         }
     }
 
-    func synchronize(lines: [DeviceLineIdentity]) async throws -> [IncomingMessageDelivery] {
+    func synchronize(lines: [DeviceLineIdentity]) async throws -> MessageSyncBatch {
         synchronizedLineIDs.append(lines.map(\.id))
-        return deliveries
+        return MessageSyncBatch(deliveries: deliveries, nextSequence: 7)
     }
 
     func updateLineRoutes(_ lines: [DeviceLineIdentity]) {

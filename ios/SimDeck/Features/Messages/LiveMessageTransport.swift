@@ -33,15 +33,22 @@ struct IncomingMessageDelivery: Equatable, Sendable {
     let receivedAt: Date
 }
 
+struct MessageSyncBatch: Equatable, Sendable {
+    let deliveries: [IncomingMessageDelivery]
+    let nextSequence: Int64
+}
+
 @MainActor
 protocol MessageTransport: AnyObject {
     func send(messageID: UUID, lineID: UUID, remoteNumber: String, body: String) async throws
-    func synchronize(lines: [DeviceLineIdentity]) async throws -> [IncomingMessageDelivery]
+    func synchronize(lines: [DeviceLineIdentity]) async throws -> MessageSyncBatch
+    func acknowledge(sequence: Int64)
     func updateLineRoutes(_ lines: [DeviceLineIdentity])
 }
 
 extension MessageTransport {
     func updateLineRoutes(_ lines: [DeviceLineIdentity]) {}
+    func acknowledge(sequence: Int64) {}
 }
 
 @MainActor
@@ -180,7 +187,7 @@ final class LiveMessageTransport: MessageTransport {
         throw LiveMessageTransportError.commandTimedOut
     }
 
-    func synchronize(lines: [DeviceLineIdentity]) async throws -> [IncomingMessageDelivery] {
+    func synchronize(lines: [DeviceLineIdentity]) async throws -> MessageSyncBatch {
         guard let installationIdentity = commandSigner.identity else {
             throw LiveMessageTransportError.missingInstallationIdentity
         }
@@ -195,7 +202,7 @@ final class LiveMessageTransport: MessageTransport {
             }
             guard let candidates = linesByDevice[envelope.deviceUUID],
                   let commandPublicKey = candidates.first?.commandPublicKey else {
-                continue
+                throw LiveMessageTransportError.invalidResponse
             }
             let verificationKey: Data
             if let cached = verificationKeys[envelope.deviceUUID] {
@@ -206,14 +213,12 @@ final class LiveMessageTransport: MessageTransport {
                 )
                 verificationKeys[envelope.deviceUUID] = verificationKey
             }
-            guard let payload = try? EncryptedMessageEventCodec.open(
+            let payload = try EncryptedMessageEventCodec.open(
                 envelope,
                 installationIdentity: installationIdentity,
                 deviceCommandPublicKey: commandPublicKey,
                 deviceVerificationKey: verificationKey
-            ) else {
-                continue
-            }
+            )
             deliveries.append(
                 IncomingMessageDelivery(
                     id: envelope.id,
@@ -225,8 +230,11 @@ final class LiveMessageTransport: MessageTransport {
                 )
             )
         }
-        cursorStore.sequence = max(cursorStore.sequence, page.nextSequence)
-        return deliveries
+        return MessageSyncBatch(deliveries: deliveries, nextSequence: page.nextSequence)
+    }
+
+    func acknowledge(sequence: Int64) {
+        cursorStore.sequence = max(cursorStore.sequence, sequence)
     }
 }
 

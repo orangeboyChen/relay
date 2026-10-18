@@ -40,6 +40,7 @@ final class AppModel {
     @ObservationIgnored private var alertPushCoordinator: AlertPushCoordinator?
     @ObservationIgnored private let commandSigner: InstallationCommandSigner
     @ObservationIgnored private let messageTransport: any MessageTransport
+    @ObservationIgnored private let messageHistoryStore: EncryptedMessageHistoryStore
 
     var canEditDeviceProfiles: Bool { recoveredVaultKey != nil }
 
@@ -59,7 +60,8 @@ final class AppModel {
         messageTransport: (any MessageTransport)? = nil,
         defaultLineStore: (any DefaultLineStoring)? = nil,
         recentCallLineStore: (any RecentCallLineStoring)? = nil,
-        onboardingStore: (any OnboardingStoring)? = nil
+        onboardingStore: (any OnboardingStoring)? = nil,
+        messageHistoryStore: EncryptedMessageHistoryStore = EncryptedMessageHistoryStore()
     ) {
         let resolvedServerConnection = serverConnection ?? .live()
         let resolvedDefaultLineStore = defaultLineStore ?? UserDefaultsDefaultLineStore()
@@ -93,6 +95,7 @@ final class AppModel {
         self.recentCallLineStore = resolvedRecentCallLineStore
         self.onboardingStore = resolvedOnboardingStore
         self.commandSigner = resolvedCommandSigner
+        self.messageHistoryStore = messageHistoryStore
         self.messageTransport = messageTransport ?? LiveMessageTransport(
             api: resolvedServerConnection,
             commandSigner: resolvedCommandSigner,
@@ -118,6 +121,9 @@ final class AppModel {
             installationID = result.identity.id
             pendingInstallationRevocationIDs = result.pendingRevocationIDs
             keyRecoveryState = result.recoveredVaultKey == nil ? .approvalRequired : .available
+            if let recoveredVaultKey {
+                messages = .loaded(try messageHistoryStore.load(using: recoveredVaultKey))
+            }
         } catch {
             keyRecoveryState = .unavailable
         }
@@ -246,8 +252,12 @@ final class AppModel {
     func refreshMessages() async {
         guard serverConnection.isSignedIn else { return }
         do {
-            let incoming = try await messageTransport.synchronize(lines: devices)
-            mergeIncomingMessages(incoming)
+            let batch = try await messageTransport.synchronize(lines: devices)
+            mergeIncomingMessages(batch.deliveries)
+            if let recoveredVaultKey {
+                try messageHistoryStore.save(loadedConversations, using: recoveredVaultKey)
+            }
+            messageTransport.acknowledge(sequence: batch.nextSequence)
         } catch {
             if case .loaded(let conversations) = messages, !conversations.isEmpty {
                 return
@@ -275,6 +285,7 @@ final class AppModel {
             body: body,
             status: .sending
         )
+        persistMessageHistoryIfAvailable()
         do {
             try await messageTransport.send(
                 messageID: messageID,
@@ -283,9 +294,11 @@ final class AppModel {
                 body: body
             )
             updateMessageStatus(id: messageID, status: .sent)
+            persistMessageHistoryIfAvailable()
             return messageID
         } catch {
             updateMessageStatus(id: messageID, status: .failed)
+            persistMessageHistoryIfAvailable()
             throw error
         }
     }
@@ -308,8 +321,10 @@ final class AppModel {
                 body: message.body
             )
             updateMessageStatus(id: id, status: .sent)
+            persistMessageHistoryIfAvailable()
         } catch {
             updateMessageStatus(id: id, status: .failed)
+            persistMessageHistoryIfAvailable()
             throw error
         }
     }
@@ -536,6 +551,11 @@ final class AppModel {
             }
         }
         messages = .loaded(sortedConversations(conversations))
+    }
+
+    private func persistMessageHistoryIfAvailable() {
+        guard let recoveredVaultKey else { return }
+        try? messageHistoryStore.save(loadedConversations, using: recoveredVaultKey)
     }
 
     private func upsertOutgoingMessage(

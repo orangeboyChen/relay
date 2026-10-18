@@ -20,6 +20,7 @@ import (
 	"sim-deck-server/internal/domain"
 	"sim-deck-server/internal/e2ee"
 	"sim-deck-server/internal/store"
+	serverwebauthn "sim-deck-server/internal/webauthn"
 )
 
 // Repository defines the encrypted persistence operations exposed by the API.
@@ -74,6 +75,9 @@ type Config struct {
 // Handler builds the versioned HTTP API.
 func Handler(repository Repository, config Config) http.Handler {
 	router := &router{repository: repository, config: config}
+	if passkeyStore, ok := repository.(serverwebauthn.Store); ok && config.PublicBaseURL != "" {
+		router.webAuthn, _ = serverwebauthn.New(passkeyStore, config.PublicBaseURL)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", router.health)
 	mux.HandleFunc("GET /.well-known/sim-deck", router.discovery)
@@ -112,12 +116,17 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("POST /v1/auth/bootstrap", router.bootstrapLogin)
 	mux.HandleFunc("POST /v1/auth/refresh", router.refreshSession)
 	mux.HandleFunc("POST /v1/auth/logout", router.logout)
+	mux.HandleFunc("POST /v1/auth/passkey/registration/options", router.requireOwner(router.passkeyRegistrationOptions))
+	mux.HandleFunc("POST /v1/auth/passkey/registration/finish", router.requireOwner(router.passkeyRegistrationFinish))
+	mux.HandleFunc("POST /v1/auth/passkey/login/options", router.passkeyLoginOptions)
+	mux.HandleFunc("POST /v1/auth/passkey/login/finish", router.passkeyLoginFinish)
 	return withJSONContentType(mux)
 }
 
 type router struct {
 	repository Repository
 	config     Config
+	webAuthn   *serverwebauthn.Service
 }
 
 type ownerContextKey struct{}
@@ -993,6 +1002,70 @@ func (router *router) bootstrapLogin(writer http.ResponseWriter, request *http.R
 	}
 	if err := router.repository.CreateSession(request.Context(), credential.ID, pair); err != nil {
 		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to store the session.")
+		return
+	}
+	writeJSON(writer, http.StatusCreated, pair)
+}
+
+func (router *router) passkeyRegistrationOptions(writer http.ResponseWriter, request *http.Request) {
+	ownerID, ok := request.Context().Value(ownerContextKey{}).(string)
+	if !ok || router.webAuthn == nil {
+		writeError(writer, http.StatusNotImplemented, "passkey_unavailable", "Passkey authentication is unavailable.")
+		return
+	}
+	ceremonyID, options, err := router.webAuthn.BeginRegistration(request.Context(), ownerID)
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "passkey_error", "Unable to start passkey registration.")
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"ceremony_id": ceremonyID, "options": json.RawMessage(options)})
+}
+
+func (router *router) passkeyRegistrationFinish(writer http.ResponseWriter, request *http.Request) {
+	ownerID, ok := request.Context().Value(ownerContextKey{}).(string)
+	ceremonyID := strings.TrimSpace(request.URL.Query().Get("ceremony_id"))
+	if !ok || router.webAuthn == nil || ceremonyID == "" {
+		writeError(writer, http.StatusBadRequest, "invalid_passkey_ceremony", "A passkey ceremony is required.")
+		return
+	}
+	if err := router.webAuthn.FinishRegistration(request.Context(), ownerID, ceremonyID, request); err != nil {
+		writeError(writer, http.StatusUnauthorized, "passkey_failed", "Passkey registration failed.")
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (router *router) passkeyLoginOptions(writer http.ResponseWriter, request *http.Request) {
+	if router.webAuthn == nil {
+		writeError(writer, http.StatusNotImplemented, "passkey_unavailable", "Passkey authentication is unavailable.")
+		return
+	}
+	ceremonyID, options, err := router.webAuthn.BeginLogin()
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "passkey_error", "Unable to start passkey login.")
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"ceremony_id": ceremonyID, "options": json.RawMessage(options)})
+}
+
+func (router *router) passkeyLoginFinish(writer http.ResponseWriter, request *http.Request) {
+	if router.webAuthn == nil {
+		writeError(writer, http.StatusNotImplemented, "passkey_unavailable", "Passkey authentication is unavailable.")
+		return
+	}
+	ceremonyID := strings.TrimSpace(request.URL.Query().Get("ceremony_id"))
+	if ceremonyID == "" {
+		writeError(writer, http.StatusBadRequest, "invalid_passkey_ceremony", "A passkey ceremony is required.")
+		return
+	}
+	ownerID, err := router.webAuthn.FinishLogin(request.Context(), ceremonyID, request)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, "passkey_failed", "Passkey login failed.")
+		return
+	}
+	pair, err := auth.NewTokenPair(router.now())
+	if err != nil || router.repository.CreateSession(request.Context(), ownerID, pair) != nil {
+		writeError(writer, http.StatusInternalServerError, "session_error", "Unable to create a session.")
 		return
 	}
 	writeJSON(writer, http.StatusCreated, pair)

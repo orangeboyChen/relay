@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	webauthnlib "github.com/go-webauthn/webauthn/webauthn"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -205,6 +206,55 @@ func (store *Postgres) OwnerCredentialByUsername(ctx context.Context, username s
 	}
 	credential.PasswordHash = string(passwordHash)
 	return credential, nil
+}
+
+// OwnerID returns the singleton owner identifier used by passkey ceremonies.
+func (store *Postgres) OwnerID(ctx context.Context) (string, error) {
+	var ownerID string
+	err := store.pool.QueryRow(ctx, `SELECT id FROM owner_accounts WHERE username = 'admin'`).Scan(&ownerID)
+	return ownerID, err
+}
+
+// WebAuthnCredentials loads persisted passkey records.
+func (store *Postgres) WebAuthnCredentials(ctx context.Context, ownerID string) ([]webauthnlib.Credential, error) {
+	rows, err := store.pool.Query(ctx, `SELECT public_key FROM webauthn_credentials WHERE owner_id = $1 ORDER BY created_at`, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("list passkey credentials: %w", err)
+	}
+	defer rows.Close()
+	credentials := make([]webauthnlib.Credential, 0)
+	for rows.Next() {
+		var encoded []byte
+		if err := rows.Scan(&encoded); err != nil {
+			return nil, err
+		}
+		var credential webauthnlib.Credential
+		if err := json.Unmarshal(encoded, &credential); err != nil {
+			return nil, fmt.Errorf("decode passkey credential: %w", err)
+		}
+		credentials = append(credentials, credential)
+	}
+	return credentials, rows.Err()
+}
+
+// SaveWebAuthnCredential stores the complete credential while keeping the lookup ID indexed.
+func (store *Postgres) SaveWebAuthnCredential(ctx context.Context, ownerID string, credential webauthnlib.Credential) error {
+	encoded, err := json.Marshal(credential)
+	if err != nil {
+		return err
+	}
+	_, err = store.pool.Exec(ctx, `
+		INSERT INTO webauthn_credentials (id, owner_id, public_key, sign_count)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (id) DO UPDATE SET public_key = EXCLUDED.public_key, sign_count = EXCLUDED.sign_count, last_used_at = now()`,
+		credential.ID, ownerID, encoded, credential.Authenticator.SignCount)
+	return err
+}
+
+// DisableOwnerPassword permanently disables the bootstrap password after passkey enrollment.
+func (store *Postgres) DisableOwnerPassword(ctx context.Context, ownerID string, now time.Time) error {
+	_, err := store.pool.Exec(ctx, `UPDATE owner_accounts SET password_hash = NULL, password_disabled_at = $2 WHERE id = $1`, ownerID, now.UTC())
+	return err
 }
 
 // CreateSession stores only hashes of newly issued bearer credentials.

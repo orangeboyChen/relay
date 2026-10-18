@@ -184,6 +184,9 @@ func associatedData(envelope callevent.Envelope) []byte {
 	buffer = appendBytes(buffer, []byte(envelope.ID))
 	buffer = appendBytes(buffer, []byte(envelope.Type))
 	buffer = appendBytes(buffer, []byte(envelope.DeviceUUID))
+	if envelope.RecipientInstallationID != "" {
+		buffer = appendBytes(buffer, []byte(envelope.RecipientInstallationID))
+	}
 	buffer = binary.BigEndian.AppendUint64(buffer, uint64(envelope.OccurredAt.UTC().UnixNano()))
 	return binary.BigEndian.AppendUint64(buffer, uint64(envelope.KeyEpoch))
 }

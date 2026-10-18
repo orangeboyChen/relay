@@ -126,7 +126,8 @@ func (publisher *Publisher) seal(message sms.ReceivedMessage, recipient incoming
 	eventID := deterministicEventID(publisher.identity.DeviceUUID, message.ID, recipient.InstallationID)
 	envelope := callevent.Envelope{
 		ID: eventID, Type: eventType, DeviceUUID: publisher.identity.DeviceUUID,
-		OccurredAt: message.Timestamp.UTC().Truncate(time.Millisecond), KeyEpoch: keyEpoch,
+		RecipientInstallationID: recipient.InstallationID,
+		OccurredAt:              message.Timestamp.UTC().Truncate(time.Millisecond), KeyEpoch: keyEpoch,
 	}
 	payload, err := json.Marshal(Payload{
 		Version: protocolVersion, MessageID: message.ID, DeviceUUID: publisher.identity.DeviceUUID,

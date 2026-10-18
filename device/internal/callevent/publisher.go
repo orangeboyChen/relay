@@ -32,15 +32,16 @@ const (
 
 // Envelope is the opaque, device-signed event stored by the server.
 type Envelope struct {
-	ID         string    `json:"id"`
-	Sequence   int64     `json:"sequence"`
-	Type       string    `json:"type"`
-	DeviceUUID string    `json:"device_uuid"`
-	OccurredAt time.Time `json:"occurred_at"`
-	KeyEpoch   int       `json:"key_epoch"`
-	Nonce      []byte    `json:"nonce"`
-	Ciphertext []byte    `json:"ciphertext"`
-	Signature  []byte    `json:"signature"`
+	ID                      string    `json:"id"`
+	Sequence                int64     `json:"sequence"`
+	Type                    string    `json:"type"`
+	DeviceUUID              string    `json:"device_uuid"`
+	RecipientInstallationID string    `json:"recipient_installation_id,omitempty"`
+	OccurredAt              time.Time `json:"occurred_at"`
+	KeyEpoch                int       `json:"key_epoch"`
+	Nonce                   []byte    `json:"nonce"`
+	Ciphertext              []byte    `json:"ciphertext"`
+	Signature               []byte    `json:"signature"`
 }
 
 // Payload is visible only to the device and the iPhone that started the call.
@@ -209,6 +210,9 @@ func associatedData(envelope Envelope) []byte {
 	buffer = appendBytes(buffer, []byte(envelope.ID))
 	buffer = appendBytes(buffer, []byte(envelope.Type))
 	buffer = appendBytes(buffer, []byte(envelope.DeviceUUID))
+	if envelope.RecipientInstallationID != "" {
+		buffer = appendBytes(buffer, []byte(envelope.RecipientInstallationID))
+	}
 	buffer = binary.BigEndian.AppendUint64(buffer, uint64(envelope.OccurredAt.UTC().UnixNano()))
 	buffer = binary.BigEndian.AppendUint64(buffer, uint64(envelope.KeyEpoch))
 	return buffer

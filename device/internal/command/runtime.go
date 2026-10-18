@@ -229,7 +229,9 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload) (string, e
 		}
 		return "", runtime.messages.SendSMS(ctx, payload.Number, payload.Body, reference[0])
 	case "call.start":
-		if strings.TrimSpace(payload.CallID) == "" || strings.TrimSpace(payload.MediaOffer) == "" {
+		if strings.TrimSpace(payload.CallID) == "" ||
+			strings.TrimSpace(payload.Number) == "" ||
+			strings.TrimSpace(payload.MediaOffer) == "" {
 			return "", errInvalidCommand
 		}
 		if err := runtime.calls.Dial(ctx, payload.Number); err != nil {
@@ -250,6 +252,8 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload) (string, e
 		}
 		answer, err := runtime.media.Negotiate(ctx, payload.CallID, payload.MediaOffer)
 		if err != nil {
+			_ = runtime.media.Stop(payload.CallID)
+			_ = runtime.calls.Reject(context.WithoutCancel(ctx))
 			return "", fmt.Errorf("%w: %v", errMediaUnavailable, err)
 		}
 		if runtime.calls.State() == call.StateWaiting {
@@ -259,6 +263,7 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload) (string, e
 		}
 		if err != nil {
 			_ = runtime.media.Stop(payload.CallID)
+			_ = runtime.calls.Reject(context.WithoutCancel(ctx))
 			return "", err
 		}
 		return answer, nil
@@ -266,7 +271,11 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload) (string, e
 		if strings.TrimSpace(payload.CallID) == "" {
 			return "", errInvalidCommand
 		}
-		return "", runtime.calls.Reject(ctx)
+		if err := runtime.calls.Reject(ctx); err != nil {
+			return "", err
+		}
+		_ = runtime.media.Stop(payload.CallID)
+		return "", nil
 	case "call.end":
 		if strings.TrimSpace(payload.CallID) == "" {
 			return "", errInvalidCommand
@@ -292,10 +301,19 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload) (string, e
 		}
 		return "", runtime.calls.Swap(ctx)
 	case "call.dtmf":
-		if strings.TrimSpace(payload.CallID) == "" || strings.TrimSpace(payload.Digits) == "" {
+		digits := strings.TrimSpace(payload.Digits)
+		if strings.TrimSpace(payload.CallID) == "" || digits == "" || digits != payload.Digits {
 			return "", errInvalidCommand
 		}
-		return "", runtime.calls.SendDTMF(ctx, payload.Digits)
+		for _, digit := range digits {
+			if !strings.ContainsRune("0123456789*#", digit) {
+				return "", errInvalidCommand
+			}
+			if err := runtime.calls.SendDTMF(ctx, string(digit)); err != nil {
+				return "", err
+			}
+		}
+		return "", nil
 	default:
 		return "", errInvalidCommand
 	}

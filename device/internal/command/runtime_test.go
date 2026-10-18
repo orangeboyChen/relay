@@ -284,6 +284,17 @@ var _ = Describe("Encrypted command runtime", func() {
 		Entry("DTMF", Payload{Version: 1, Operation: "call.dtmf", CallID: "call-1", Digits: "#"}, "dtmf:#"),
 	)
 
+	It("sends a DTMF sequence as individual modem tones", func() {
+		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{
+			Version: 1, Operation: "call.dtmf", CallID: "call-1", Digits: "12#",
+		})
+
+		Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+
+		Expect(calls.operations).To(Equal([]string{"dtmf:1", "dtmf:2", "dtmf:#"}))
+		Expect(openResult(sharedSecret, envelope, remote.result).Success).To(BeTrue())
+	})
+
 	It("answers a waiting call through the modem call-waiting action", func() {
 		calls.state = call.StateWaiting
 		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{
@@ -309,6 +320,23 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(result.Success).To(BeFalse())
 		Expect(result.ErrorCode).To(Equal("modem_rejected"))
 		Expect(media.stopped).To(Equal([]string{"call-1"}))
+		Expect(calls.operations).To(Equal([]string{"answer", "reject"}))
+	})
+
+	It("stops incoming media when answer negotiation fails", func() {
+		calls.state = call.StateRinging
+		media.negotiateErr = errors.New("audio unavailable")
+		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{
+			Version: 1, Operation: "call.answer", CallID: "call-1", MediaOffer: "offer-sdp",
+		})
+
+		Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+
+		result := openResult(sharedSecret, envelope, remote.result)
+		Expect(result.Success).To(BeFalse())
+		Expect(result.ErrorCode).To(Equal("media_unavailable"))
+		Expect(media.stopped).To(Equal([]string{"call-1"}))
+		Expect(calls.operations).To(Equal([]string{"reject"}))
 	})
 
 	It("returns an encrypted generic modem error", func() {
@@ -434,6 +462,7 @@ var _ = Describe("Encrypted command runtime", func() {
 		for _, payload := range []Payload{
 			{Version: 2, Operation: "call.end", CallID: "call-1"},
 			{Version: 1, Operation: "call.end"},
+			{Version: 1, Operation: "call.start", CallID: "call-1"},
 			{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086"},
 			{Version: 1, Operation: "call.answer", MediaOffer: "offer-sdp"},
 			{Version: 1, Operation: "call.reject"},

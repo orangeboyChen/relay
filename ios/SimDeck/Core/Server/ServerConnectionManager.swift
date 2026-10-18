@@ -48,7 +48,7 @@ struct EncryptedEventEnvelope: Decodable, Equatable, Sendable {
     let sequence: Int64
     let type: String
     let deviceUUID: UUID
-    let recipientInstallationID: UUID?
+    let recipientInstallationID: UUID? = nil
     let occurredAt: Date
     let keyEpoch: Int
     let nonce: Data

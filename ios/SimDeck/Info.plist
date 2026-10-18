@@ -6,5 +6,12 @@
 	<array>
 		<string>voip</string>
 	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array><string>simdeck</string></array>
+		</dict>
+	</array>
 </dict>
 </plist>

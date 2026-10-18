@@ -11,6 +11,24 @@ import (
 
 var ErrUnsupportedPDU = errors.New("unsupported SMS PDU")
 
+type DeliveryStatus string
+
+const (
+	DeliveryPending   DeliveryStatus = "pending"
+	DeliveryDelivered DeliveryStatus = "delivered"
+	DeliveryFailed    DeliveryStatus = "failed"
+)
+
+// DeliveryReport is the modem's acknowledgement for one SMS-SUBMIT TP-MR.
+type DeliveryReport struct {
+	MessageID        string
+	MessageReference byte
+	Recipient        string
+	Status           DeliveryStatus
+	StatusCode       byte
+	Timestamp        time.Time
+}
+
 // Concatenation identifies one segment of a multipart SMS.
 type Concatenation struct {
 	Reference uint16
@@ -118,6 +136,58 @@ func DecodeDeliver(encoded string) (Message, error) {
 	}
 
 	return Message{Sender: sender, Timestamp: timestamp, Text: text, Concatenation: concatenation}, nil
+}
+
+// DecodeStatusReport decodes an SMS-STATUS-REPORT PDU emitted by +CDS.
+func DecodeStatusReport(encoded string) (DeliveryReport, error) {
+	data, err := hex.DecodeString(strings.TrimSpace(encoded))
+	if err != nil {
+		return DeliveryReport{}, fmt.Errorf("decode status report hex: %w", err)
+	}
+	if len(data) < 2 {
+		return DeliveryReport{}, ErrUnsupportedPDU
+	}
+	position := 1 + int(data[0])
+	if position+4 > len(data) {
+		return DeliveryReport{}, ErrUnsupportedPDU
+	}
+	firstOctet := data[position]
+	if firstOctet&0x03 != 0x02 {
+		return DeliveryReport{}, ErrUnsupportedPDU
+	}
+	reference := data[position+1]
+	position += 2
+	digits := int(data[position])
+	position++
+	typeOfAddress := data[position]
+	position++
+	addressBytes := (digits + 1) / 2
+	if position+addressBytes+14+1 > len(data) {
+		return DeliveryReport{}, ErrUnsupportedPDU
+	}
+	recipient := decodeSemiOctets(data[position:position+addressBytes], digits)
+	if typeOfAddress&0x90 == 0x90 {
+		recipient = "+" + recipient
+	}
+	position += addressBytes
+	timestamp, err := decodeTimestamp(data[position+7 : position+14])
+	if err != nil {
+		return DeliveryReport{}, err
+	}
+	statusCode := data[position+14]
+	status := DeliveryPending
+	if statusCode <= 0x1f {
+		status = DeliveryDelivered
+	} else if statusCode >= 0x40 {
+		status = DeliveryFailed
+	}
+	return DeliveryReport{
+		MessageReference: reference,
+		Recipient:        recipient,
+		Status:           status,
+		StatusCode:       statusCode,
+		Timestamp:        timestamp,
+	}, nil
 }
 
 // EncodeSubmit creates one or more SMS-SUBMIT PDUs using GSM-7 when possible and UCS-2 otherwise.

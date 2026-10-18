@@ -224,6 +224,9 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload) (string, e
 			return "", errInvalidCommand
 		}
 		reference := sha256.Sum256([]byte(payload.MessageID))
+		if registrar, ok := runtime.messages.(interface{ PrepareMessageStatus(string) }); ok {
+			registrar.PrepareMessageStatus(payload.MessageID)
+		}
 		return "", runtime.messages.SendSMS(ctx, payload.Number, payload.Body, reference[0])
 	case "call.start":
 		if strings.TrimSpace(payload.CallID) == "" || strings.TrimSpace(payload.MediaOffer) == "" {

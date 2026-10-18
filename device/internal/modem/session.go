@@ -114,6 +114,9 @@ func (function MessageSinkFunc) ReceiveSMS(ctx context.Context, message sms.Rece
 	return function(ctx, message)
 }
 
+// DeliveryReportSink receives authenticated modem delivery reports without SMS content.
+type DeliveryReportSink func(context.Context, sms.DeliveryReport) error
+
 // Session owns modem initialization and routes unsolicited SMS and call events.
 type Session struct {
 	client               *at.Client
@@ -124,6 +127,9 @@ type Session struct {
 	timeout              time.Duration
 	callPollInterval     time.Duration
 	messageRetryInterval time.Duration
+	references           map[byte]string
+	pendingMessageID     string
+	deliveryReportSink   DeliveryReportSink
 }
 
 // SIMSlotStatus describes one physical slot reported by a modem-specific command.
@@ -146,7 +152,18 @@ func NewSession(client *at.Client, inbox *sms.Inbox, sink MessageSink, logger *s
 		timeout:              timeout,
 		callPollInterval:     defaultCallPollInterval,
 		messageRetryInterval: defaultMessageRetryInterval,
+		references:           make(map[byte]string),
 	}, nil
+}
+
+// SetDeliveryReportSink installs the encrypted status publisher after device binding.
+func (session *Session) SetDeliveryReportSink(sink DeliveryReportSink) {
+	session.deliveryReportSink = sink
+}
+
+// PrepareMessageStatus associates the next SMS submission with its application message ID.
+func (session *Session) PrepareMessageStatus(messageID string) {
+	session.pendingMessageID = messageID
 }
 
 // Calls returns the call controller updated by the session's URC loop.
@@ -245,7 +262,13 @@ func (session *Session) SendSMS(ctx context.Context, destination string, text st
 			session.logger.Warn("SMS submission failed", "segment", pdu.Segment, "total", pdu.Total, "error", failure)
 			return failure
 		}
+		if session.pendingMessageID != "" {
+			if reference, ok := parseMessageReference(response.Lines); ok {
+				session.references[reference] = session.pendingMessageID
+			}
+		}
 	}
+	session.pendingMessageID = ""
 	return nil
 }
 
@@ -409,6 +432,19 @@ func hasMessageReference(lines []string) bool {
 	return false
 }
 
+func parseMessageReference(lines []string) (byte, bool) {
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "+CMGS:") {
+			continue
+		}
+		value, err := strconv.ParseUint(strings.TrimSpace(strings.TrimPrefix(line, "+CMGS:")), 10, 8)
+		if err == nil {
+			return byte(value), true
+		}
+	}
+	return 0, false
+}
+
 func (session *Session) handleURC(ctx context.Context, urc string) error {
 	switch {
 	case strings.HasPrefix(urc, "+CMT:"):
@@ -440,7 +476,25 @@ func (session *Session) handleURC(ctx context.Context, urc string) error {
 			return fmt.Errorf("acknowledge direct SMS: %w", err)
 		}
 	case strings.HasPrefix(urc, "+CDS:"):
-		session.logger.Info("SMS delivery status report received")
+		_, encoded, ok := strings.Cut(urc, "\n")
+		if !ok {
+			session.logger.Warn("discarded malformed SMS delivery status report")
+			return nil
+		}
+		report, err := sms.DecodeStatusReport(encoded)
+		if err != nil {
+			session.logger.Warn("discarded malformed SMS delivery status report", "error", err)
+			return nil
+		}
+		if messageID := session.references[report.MessageReference]; messageID != "" {
+			if session.deliveryReportSink != nil {
+				report.MessageID = messageID
+				if err := session.deliveryReportSink(ctx, report); err != nil {
+					return fmt.Errorf("publish SMS delivery report: %w", err)
+				}
+			}
+			delete(session.references, report.MessageReference)
+		}
 	case isCallURC(urc):
 		session.calls.ApplyURC(urc)
 		snapshot := session.calls.Snapshot()

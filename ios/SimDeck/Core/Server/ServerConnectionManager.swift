@@ -227,6 +227,25 @@ protocol EncryptedCallCommandAPI: AnyObject {
     func encryptedEvents(afterSequence: Int64) async throws -> EncryptedEventPage
 }
 
+@MainActor
+protocol CallTURNCredentialProviding: AnyObject {
+    func turnCredentials() async throws -> CallTURNCredentials
+}
+
+struct CallTURNCredentials: Decodable, Equatable, Sendable {
+	let urls: [String]
+	let username: String
+	let credential: String
+	let expiresAt: Date
+
+	enum CodingKeys: String, CodingKey {
+		case url
+		case username
+		case credential
+		case expiresAt = "expires_at"
+	}
+}
+
 enum ServerConnectionState: Equatable, Sendable {
     case disconnected
     case connecting
@@ -638,6 +657,28 @@ final class ServerConnectionManager {
         return publicKey
     }
 
+    func turnCredentials() async throws -> CallTURNCredentials {
+        let (data, response) = try await authenticatedRequest(
+            path: "v1/media/turn-credentials",
+            method: "GET"
+        )
+        guard response.statusCode == 200 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
+        }
+        let credentials = try Self.decoder.decode(CallTURNCredentials.self, from: data)
+        guard !credentials.urls.isEmpty,
+              credentials.urls.allSatisfy({ url in
+                  guard let scheme = URLComponents(string: url)?.scheme else { return false }
+                  return ["turn", "turns"].contains(scheme)
+              }),
+              !credentials.username.isEmpty,
+              !credentials.credential.isEmpty,
+              credentials.expiresAt > Date() else {
+            throw ServerConnectionError.invalidResponse
+        }
+        return credentials
+    }
+
     func eventVerificationKey(deviceID: UUID) async throws -> Data {
         if let publicKey = deviceIdentityKeys[deviceID], publicKey.count == 32 {
             return publicKey
@@ -904,7 +945,7 @@ final class ServerConnectionManager {
     }()
 }
 
-extension ServerConnectionManager: EncryptedCallCommandAPI {}
+extension ServerConnectionManager: EncryptedCallCommandAPI, CallTURNCredentialProviding {}
 extension ServerConnectionManager: EncryptedEventStreamOpening {}
 extension ServerConnectionManager: IncomingCallClaiming {}
 extension ServerConnectionManager: PushTokenRegistering {}

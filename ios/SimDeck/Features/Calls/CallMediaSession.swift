@@ -53,14 +53,23 @@ final class WebRTCCallMediaSession: NSObject, CallMediaSession {
 
     init(
         factory: RTCPeerConnectionFactory = WebRTCCallMediaSession.sharedFactory,
+        iceServers: [CallTURNCredentials] = [],
         offerTimeout: Duration = .seconds(10)
     ) throws {
         self.offerTimeout = offerTimeout
 
         let configuration = RTCConfiguration()
         configuration.sdpSemantics = .unifiedPlan
-        configuration.iceServers = []
-        configuration.iceTransportPolicy = .all
+        configuration.iceServers = iceServers.map { server in
+            RTCIceServer(
+                urlStrings: server.urls,
+                username: server.username,
+                credential: server.credential
+            )
+        }
+        if !iceServers.isEmpty {
+            configuration.iceTransportPolicy = .relay
+        }
         configuration.tcpCandidatePolicy = .enabled
         configuration.continualGatheringPolicy = .gatherOnce
 

@@ -43,6 +43,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
     private let makeCommandID: () -> UUID
     private let makeSenderKey: () -> Curve25519.KeyAgreement.PrivateKey
     private let makeMediaSession: @MainActor () throws -> any CallMediaSession
+    private let makeRelayMediaSession: @MainActor ([CallTURNCredentials]) throws -> any CallMediaSession
     private let waitBeforePollingAgain: () async throws -> Void
     private let automaticallyPollEvents: Bool
     private let eventStreamOpener: (any EncryptedEventStreamOpening)?
@@ -67,6 +68,9 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
         makeMediaSession: @escaping @MainActor () throws -> any CallMediaSession = {
             try WebRTCCallMediaSession()
         },
+        makeRelayMediaSession: @escaping @MainActor ([CallTURNCredentials]) throws -> any CallMediaSession = { servers in
+            try WebRTCCallMediaSession(iceServers: servers)
+        },
         waitBeforePollingAgain: @escaping () async throws -> Void = {
             try await Task.sleep(for: .milliseconds(500))
         },
@@ -78,6 +82,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
         self.makeCommandID = makeCommandID
         self.makeSenderKey = makeSenderKey
         self.makeMediaSession = makeMediaSession
+        self.makeRelayMediaSession = makeRelayMediaSession
         self.waitBeforePollingAgain = waitBeforePollingAgain
         self.automaticallyPollEvents = automaticallyPollEvents
         self.eventStreamOpener = eventStreamOpener ?? (api as? any EncryptedEventStreamOpening)
@@ -124,7 +129,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
         let deviceID = deviceID(for: lineID)
         let verificationKey = try await api.eventVerificationKey(deviceID: deviceID)
         guard verificationKey.count == 32 else { throw LiveCallTransportError.invalidDeviceKey }
-        let mediaSession = try makeMediaSession()
+        let mediaSession = try await createMediaSession()
         var remoteCallStarted = false
         do {
             let offer = try await mediaSession.makeOffer()
@@ -166,7 +171,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
         guard let lineID = callLines[callID], callEvents[callID] != nil else {
             throw LiveCallTransportError.invalidResponse
         }
-        let mediaSession = try makeMediaSession()
+        let mediaSession = try await createMediaSession()
         var remoteCallAnswered = false
         do {
             let offer = try await mediaSession.makeOffer()
@@ -322,6 +327,14 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
             }
         }
         throw LiveCallTransportError.commandTimedOut
+    }
+
+    private func createMediaSession() async throws -> any CallMediaSession {
+        guard let provider = api as? any CallTURNCredentialProviding else {
+            return try makeMediaSession()
+        }
+        let credentials = try await provider.turnCredentials()
+        return try makeRelayMediaSession([credentials])
     }
 
     func synchronizeEvents() async throws {

@@ -1,19 +1,13 @@
 import SwiftUI
 
 struct DeviceSettingsDraft: Equatable {
-    var numericID: Int
     var deviceName: String
-    var lineName: String
-    var phoneNumber: String
 
     init(line: DeviceLineIdentity) {
-        numericID = line.numericID
         deviceName = line.deviceName
-        lineName = line.lineName
-        phoneNumber = line.phoneNumber
     }
 
-    var isValid: Bool { (1...99).contains(numericID) }
+    var isValid: Bool { true }
 }
 
 struct DeviceSettingsScreen: View {
@@ -39,15 +33,8 @@ struct DeviceSettingsScreen: View {
     var body: some View {
         Form {
             Section {
-                Stepper(value: $draft.numericID, in: 1...99) {
-                    LabeledContent("SIM ID", value: draft.numericID, format: .number)
-                }
                 TextField("Device name", text: $draft.deviceName)
                     .textContentType(.name)
-                TextField("Line name", text: $draft.lineName)
-                TextField("Phone number", text: $draft.phoneNumber)
-                    .textContentType(.telephoneNumber)
-                    .keyboardType(.numbersAndPunctuation)
             } header: {
                 Text("Identity")
             } footer: {
@@ -61,12 +48,6 @@ struct DeviceSettingsScreen: View {
                         systemImage: "exclamationmark.triangle.fill"
                     )
                     .foregroundStyle(.orange)
-                }
-            }
-
-            Section("MMS") {
-                NavigationLink("MMS Configuration") {
-                    MMSSettingsScreen()
                 }
             }
 
@@ -120,12 +101,9 @@ struct DeviceSettingsScreen: View {
             isWorking = true
             errorDescription = nil
             do {
-                try await model.saveDevice(
+                try await model.saveDeviceName(
                     line: line,
-                    numericID: draft.numericID,
-                    deviceName: draft.deviceName,
-                    lineName: draft.lineName,
-                    phoneNumber: draft.phoneNumber
+                    deviceName: draft.deviceName
                 )
                 dismiss()
             } catch {
@@ -141,6 +119,67 @@ struct DeviceSettingsScreen: View {
             errorDescription = nil
             do {
                 try await model.removeDevice(line: line)
+                dismiss()
+            } catch {
+                errorDescription = error.localizedDescription
+                isWorking = false
+            }
+        }
+    }
+}
+
+struct SIMSettingsScreen: View {
+    let model: AppModel
+    let line: DeviceLineIdentity
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var numericID: Int
+    @State private var lineName: String
+    @State private var phoneNumber: String
+    @State private var errorDescription: String?
+    @State private var isWorking = false
+
+    init(model: AppModel, line: DeviceLineIdentity) {
+        self.model = model
+        self.line = line
+        _numericID = State(initialValue: line.numericID)
+        _lineName = State(initialValue: line.lineName)
+        _phoneNumber = State(initialValue: line.phoneNumber)
+    }
+
+    var body: some View {
+        Form {
+            Section("SIM Card") {
+                Stepper(value: $numericID, in: 1...99) {
+                    LabeledContent("SIM ID", value: numericID, format: .number)
+                }
+                TextField("Line name", text: $lineName)
+                TextField("Phone number", text: $phoneNumber)
+                    .textContentType(.telephoneNumber)
+                    .keyboardType(.numbersAndPunctuation)
+            }
+            Section("MMS") {
+                NavigationLink("MMS Configuration") { MMSSettingsScreen() }
+            }
+            if let errorDescription {
+                Section { Label(errorDescription, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
+            }
+        }
+        .navigationTitle("SIM Card")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") { save() }
+                    .disabled(isWorking || !model.canEditDeviceProfiles)
+            }
+        }
+    }
+
+    private func save() {
+        Task {
+            isWorking = true
+            do {
+                try await model.saveSIM(line: line, numericID: numericID, lineName: lineName, phoneNumber: phoneNumber)
                 dismiss()
             } catch {
                 errorDescription = error.localizedDescription
@@ -192,6 +231,15 @@ struct MMSSettingsScreen: View {
 #Preview("MMS Settings") {
     NavigationStack {
         MMSSettingsScreen()
+    }
+}
+
+#Preview("SIM Settings") {
+    NavigationStack {
+        SIMSettingsScreen(
+            model: .preview(selectedTab: .profile),
+            line: PreviewFixtures.devices[0]
+        )
     }
 }
 #endif

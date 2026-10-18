@@ -12,7 +12,7 @@ struct SIMManagementScreen: View {
                 ContentUnavailableView("No SIM Cards", systemImage: "simcard", description: Text("SIM cards appear after a modem reports its ICCID."))
             } else {
                 ForEach(model.managedSIMs) { sim in
-                    ManagedSIMRow(sim: sim)
+                    ManagedSIMRow(sim: sim, delete: sim.isOffline ? { simToDelete = sim } : nil)
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             if sim.isOffline {
                                 Button("Delete", role: .destructive) { simToDelete = sim }
@@ -47,6 +47,7 @@ struct SIMManagementScreen: View {
 
 private struct ManagedSIMRow: View {
     let sim: ManagedSIM
+    let delete: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -61,9 +62,17 @@ private struct ManagedSIMRow: View {
             Image(systemName: sim.isOffline ? "wifi.slash" : "checkmark.circle.fill")
                 .foregroundStyle(sim.isOffline ? AnyShapeStyle(.secondary) : AnyShapeStyle(.green))
                 .accessibilityHidden(true)
+            if let delete {
+                Button(role: .destructive, action: delete) {
+                    Image(systemName: "trash")
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Delete SIM")
+            }
         }
         .frame(minHeight: 44)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 }
 

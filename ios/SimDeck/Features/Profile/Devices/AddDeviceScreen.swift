@@ -262,7 +262,7 @@ private struct DiscoveredDeviceRow: View {
 private struct DeviceDiscoveryLinuxSection: View {
     var body: some View {
         Section("Linux Device") {
-            Label("Configure a unique SIM_DECK_DEVICE_UUID for each modem container.", systemImage: "number")
+            Label("Use unique device mappings and a unique state volume.", systemImage: "externaldrive.badge.checkmark")
             Label("Start the container after discovery is enabled.", systemImage: "play.circle")
             Label("Compare the UUID and fingerprint, then tap Allow.", systemImage: "checkmark.shield")
         }

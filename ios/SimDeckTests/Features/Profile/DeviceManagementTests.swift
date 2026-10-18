@@ -2,7 +2,7 @@ import XCTest
 @testable import SimDeck
 
 final class DeviceManagementTests: XCTestCase {
-    func testSettingsDraftPreservesEditableProfileAndValidatesSIMRange() {
+    func testDeviceSettingsDraftPreservesDeviceIdentity() {
         let line = DeviceLineIdentity(
             id: UUID(),
             numericID: 2,
@@ -15,12 +15,10 @@ final class DeviceManagementTests: XCTestCase {
         var draft = DeviceSettingsDraft(line: line)
 
         XCTAssertEqual(draft.deviceName, line.deviceName)
-        XCTAssertEqual(draft.lineName, line.lineName)
-        XCTAssertEqual(draft.phoneNumber, line.phoneNumber)
         XCTAssertTrue(draft.isValid)
 
-        draft.numericID = 100
-        XCTAssertFalse(draft.isValid)
+        draft.deviceName = "Office Modem"
+        XCTAssertTrue(draft.isValid)
+        XCTAssertEqual(draft.deviceName, "Office Modem")
     }
-
 }

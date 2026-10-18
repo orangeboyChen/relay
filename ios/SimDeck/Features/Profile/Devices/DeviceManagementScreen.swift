@@ -15,12 +15,13 @@ struct DeviceManagementScreen: View {
                 List {
                     ForEach(DeviceGroup.groups(from: model.devices)) { group in
                         Section {
+                            NavigationLink {
+                                DeviceSettingsScreen(model: model, line: group.lines[0])
+                            } label: {
+                                Label("Device Settings", systemImage: "externaldrive.badge.gearshape")
+                            }
                             ForEach(group.lines) { line in
-                                NavigationLink {
-                                    DeviceSettingsScreen(model: model, line: line)
-                                } label: {
-                                    DeviceSlotRow(line: line)
-                                }
+                                DeviceSlotListRow(model: model, line: line)
                             }
                         } header: {
                             DeviceGroupHeader(group: group)
@@ -71,16 +72,76 @@ private struct DeviceGroupHeader: View {
     let group: DeviceGroup
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "externaldrive.connected.to.line.below")
-            Text(group.deviceName)
-                .font(.headline)
-            Spacer()
-            Text(group.lines.contains(where: \.isOnline) ? String(localized: "Online") : String(localized: "Offline"))
-                .font(.caption)
-                .foregroundStyle(group.lines.contains(where: \.isOnline) ? .green : .secondary)
+        ViewThatFits(in: .horizontal) {
+            DeviceGroupHeaderHorizontal(group: group)
+            DeviceGroupHeaderVertical(group: group)
         }
         .textCase(nil)
+    }
+}
+
+private struct DeviceGroupHeaderHorizontal: View {
+    let group: DeviceGroup
+
+    var body: some View {
+        HStack(spacing: 8) {
+            DeviceGroupHeaderIcon(group: group)
+            Spacer(minLength: 8)
+            DeviceGroupHeaderStatus(group: group)
+        }
+    }
+}
+
+private struct DeviceGroupHeaderVertical: View {
+    let group: DeviceGroup
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            DeviceGroupHeaderIcon(group: group)
+            DeviceGroupHeaderStatus(group: group)
+        }
+    }
+}
+
+private struct DeviceGroupHeaderIcon: View {
+    let group: DeviceGroup
+
+    var body: some View {
+        Label {
+            Text(group.deviceName)
+                .font(.headline)
+        } icon: {
+            Image(systemName: "externaldrive.connected.to.line.below")
+        }
+    }
+}
+
+private struct DeviceGroupHeaderStatus: View {
+    let group: DeviceGroup
+
+    var body: some View {
+        Text(group.lines.contains(where: \.isOnline) ? String(localized: "Online") : String(localized: "Offline"))
+            .font(.caption)
+            .foregroundStyle(group.lines.contains(where: \.isOnline) ? .green : .secondary)
+    }
+}
+
+private struct DeviceSlotListRow: View {
+    let model: AppModel
+    let line: DeviceLineIdentity
+
+    var body: some View {
+        VStack {
+            if line.simID != nil {
+                NavigationLink {
+                    SIMSettingsScreen(model: model, line: line)
+                } label: {
+                    DeviceSlotRow(line: line)
+                }
+            } else {
+                DeviceSlotRow(line: line)
+            }
+        }
     }
 }
 
@@ -88,16 +149,22 @@ private struct DeviceSlotRow: View {
     let line: DeviceLineIdentity
 
     var body: some View {
-        HStack(spacing: 12) {
-            SIMBadge(line: line)
+        HStack(alignment: .top, spacing: 12) {
+            if line.simID != nil {
+                SIMBadge(line: line)
+            } else {
+                Image(systemName: "simcard")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, height: 22)
+            }
             VStack(alignment: .leading, spacing: 3) {
                 Text(line.slotIndex.map { String(localized: "Slot \($0)") } ?? String(localized: "Slot"))
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
-                Text(line.displayName)
+                Text(line.simID == nil ? String(localized: "No SIM inserted") : line.displayName)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
             Text(line.isOnline ? String(localized: "Online") : String(localized: "Offline"))
@@ -106,7 +173,7 @@ private struct DeviceSlotRow: View {
         }
         .frame(minHeight: 44)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Slot \(line.slotIndex ?? 1), \(line.displayName), \(line.radioAccessibilityDescription)")
+        .accessibilityLabel("Slot \(line.slotIndex ?? 1), \(line.simID == nil ? String(localized: "No SIM inserted") : line.displayName), \(line.radioAccessibilityDescription)")
     }
 }
 
@@ -117,7 +184,7 @@ private struct DeviceManagementEmptyState: View {
         ContentUnavailableView {
             Label("No Devices", systemImage: "simcard")
         } description: {
-            Text("Turn on Device Discovery, then start one Linux modem container for each SIM.")
+            Text("Turn on Device Discovery, then start one Linux modem container for each modem.")
         } actions: {
             Button("Add Device") {
                 addDevice()
@@ -130,7 +197,12 @@ private struct DeviceManagementEmptyState: View {
 #if DEBUG
 #Preview("Device Management") {
     NavigationStack {
-        DeviceManagementScreen(model: .preview(selectedTab: .profile))
+        DeviceManagementScreen(
+            model: .preview(
+                selectedTab: .profile,
+                devices: PreviewFixtures.deviceManagementDevices
+            )
+        )
     }
 }
 

@@ -33,6 +33,54 @@ enum PreviewFixtures {
         )
     ]
 
+    static let deviceManagementDevices = [
+        DeviceLineIdentity(
+            id: UUID(uuidString: "40000000-0000-0000-0000-000000000001")!,
+            deviceID: UUID(uuidString: "40000000-0000-0000-0000-000000000000")!,
+            slotID: UUID(uuidString: "40000000-0000-0000-0000-000000000011")!,
+            simID: UUID(uuidString: "40000000-0000-0000-0000-000000000021")!,
+            numericID: 2,
+            slotKey: "slot-a",
+            slotIndex: 1,
+            deviceName: "Living Room Modem",
+            lineName: "Home",
+            phoneNumber: "13500000000",
+            isOnline: true,
+            radioStatus: CellularRadioStatus(technology: .lte, signalBars: 3),
+            commandPublicKey: nil
+        ),
+        DeviceLineIdentity(
+            id: UUID(uuidString: "40000000-0000-0000-0000-000000000012")!,
+            deviceID: UUID(uuidString: "40000000-0000-0000-0000-000000000000")!,
+            slotID: UUID(uuidString: "40000000-0000-0000-0000-000000000012")!,
+            simID: nil,
+            numericID: 3,
+            slotKey: "slot-b",
+            slotIndex: 2,
+            deviceName: "Living Room Modem",
+            lineName: "",
+            phoneNumber: "",
+            isOnline: true,
+            radioStatus: CellularRadioStatus(technology: .lte, signalBars: 2),
+            commandPublicKey: nil
+        ),
+        DeviceLineIdentity(
+            id: UUID(uuidString: "40000000-0000-0000-0000-000000000002")!,
+            deviceID: UUID(uuidString: "40000000-0000-0000-0000-000000000100")!,
+            slotID: UUID(uuidString: "40000000-0000-0000-0000-000000000013")!,
+            simID: UUID(uuidString: "40000000-0000-0000-0000-000000000022")!,
+            numericID: 4,
+            slotKey: "slot-a",
+            slotIndex: 1,
+            deviceName: "Backup Modem",
+            lineName: "Travel",
+            phoneNumber: "13800000000",
+            isOnline: false,
+            radioStatus: nil,
+            commandPublicKey: nil
+        )
+    ]
+
     static let managedSIMs = [
         ManagedSIM(id: UUID(uuidString: "30000000-0000-0000-0000-000000000001")!, numericID: 1, assignedDeviceID: devices[0].deviceID, assignedSlotID: devices[0].slotID, lastSeenAt: now, lineName: "Work", phoneNumber: "13500000000"),
         ManagedSIM(id: UUID(uuidString: "30000000-0000-0000-0000-000000000002")!, numericID: 2, assignedDeviceID: nil, assignedSlotID: nil, lastSeenAt: now.addingTimeInterval(-3_600), lineName: "Backup", phoneNumber: "13800000000")

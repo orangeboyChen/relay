@@ -386,6 +386,39 @@ final class AppModel {
         messageTransport.updateLineRoutes(devices)
     }
 
+    func saveDeviceName(line: DeviceLineIdentity, deviceName: String) async throws {
+        guard let recoveredVaultKey else { throw KeyRecoveryError.invalidVaultKey }
+        let ciphertext = try DeviceProfileCodec.seal(
+            DeviceProfile(
+                deviceName: deviceName.trimmingCharacters(in: .whitespacesAndNewlines),
+                lineName: "",
+                phoneNumber: ""
+            ),
+            using: recoveredVaultKey
+        )
+        try await serverConnection.updateDeviceProfile(deviceID: line.deviceID, profileCiphertext: ciphertext)
+        devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
+        callCoordinator.updateLineRoutes(devices)
+        messageTransport.updateLineRoutes(devices)
+    }
+
+    func saveSIM(line: DeviceLineIdentity, numericID: Int, lineName: String, phoneNumber: String) async throws {
+        guard let recoveredVaultKey, let simID = line.simID else { throw KeyRecoveryError.invalidVaultKey }
+        let ciphertext = try DeviceProfileCodec.seal(
+            DeviceProfile(
+                deviceName: "",
+                lineName: lineName.trimmingCharacters(in: .whitespacesAndNewlines),
+                phoneNumber: phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+            ),
+            using: recoveredVaultKey
+        )
+        try await serverConnection.updateSIMProfile(simID: simID, profileCiphertext: ciphertext)
+        try await serverConnection.updateSIMNumericID(simID: simID, numericID: numericID)
+        devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
+        callCoordinator.updateLineRoutes(devices)
+        messageTransport.updateLineRoutes(devices)
+    }
+
     func removeDevice(line: DeviceLineIdentity) async throws {
         try await serverConnection.revokeDevice(deviceID: line.deviceID)
         let removedLineIDs = Set(

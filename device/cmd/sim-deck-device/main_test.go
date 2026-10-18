@@ -129,6 +129,10 @@ func (session *fakeDeviceSession) ReadSIMICCID(ctx context.Context) (string, err
 	return "", errors.New("no SIM fixture")
 }
 
+func (session *fakeDeviceSession) ReadSIMSlotStatus(context.Context) ([]modem.SIMSlotStatus, error) {
+	return nil, modem.ErrSIMSlotUnsupported
+}
+
 func (*fakeDeviceSession) SendSMS(context.Context, string, string, byte) error { return nil }
 
 func (session *fakeDeviceSession) RetryPendingSMS(ctx context.Context) error {

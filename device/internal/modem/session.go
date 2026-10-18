@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ const simReadinessCommand = "AT+CPIN?"
 
 // ErrMessageDeliveryDeferred keeps a durable SMS pending without stopping unrelated modem services.
 var ErrMessageDeliveryDeferred = errors.New("SMS delivery deferred")
+var ErrSIMSlotUnsupported = errors.New("modem does not expose SIM slot status")
 
 const defaultCallPollInterval = time.Second
 
@@ -58,6 +60,12 @@ type Session struct {
 	timeout              time.Duration
 	callPollInterval     time.Duration
 	messageRetryInterval time.Duration
+}
+
+// SIMSlotStatus describes one physical slot reported by a modem-specific command.
+type SIMSlotStatus struct {
+	Index   int
+	Present bool
 }
 
 // NewSession creates a modem session from endpoint-local dependencies.
@@ -106,6 +114,39 @@ func (session *Session) ReadSIMICCID(ctx context.Context) (string, error) {
 		}
 	}
 	return "", errors.New("modem did not return a valid SIM ICCID")
+}
+
+// ReadSIMSlotStatus reads physical slot presence when the modem exposes QSIMSTAT.
+// Unsupported modems return ErrSIMSlotUnsupported instead of guessing a slot.
+func (session *Session) ReadSIMSlotStatus(ctx context.Context) ([]SIMSlotStatus, error) {
+	response, err := session.send(ctx, "AT+QSIMSTAT")
+	if err != nil {
+		return nil, err
+	}
+	if !response.OK() {
+		return nil, ErrSIMSlotUnsupported
+	}
+	statuses := make([]SIMSlotStatus, 0)
+	for _, line := range response.Lines {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "+QSIMSTAT:") {
+			continue
+		}
+		parts := strings.Split(strings.TrimSpace(strings.TrimPrefix(line, "+QSIMSTAT:")), ",")
+		if len(parts) != 2 {
+			continue
+		}
+		index, indexErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+		state, stateErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if indexErr != nil || stateErr != nil || index < 1 || index > 32 || (state != 0 && state != 1) {
+			continue
+		}
+		statuses = append(statuses, SIMSlotStatus{Index: index, Present: state == 1})
+	}
+	if len(statuses) == 0 {
+		return nil, ErrSIMSlotUnsupported
+	}
+	return statuses, nil
 }
 
 func allDigits(value string) bool {

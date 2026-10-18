@@ -126,6 +126,7 @@ func meaningfulRuntimeError(operation string, err error) error {
 type deviceSession interface {
 	Initialize(context.Context) error
 	ReadSIMICCID(context.Context) (string, error)
+	ReadSIMSlotStatus(context.Context) ([]modem.SIMSlotStatus, error)
 	Run(context.Context) error
 	Calls() *call.Controller
 	command.Messages
@@ -283,6 +284,11 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	}
 	if err := session.Initialize(ctx); err != nil {
 		return err
+	}
+	if slots, slotError := session.ReadSIMSlotStatus(ctx); slotError == nil {
+		logger.Info("SIM slot status detected", "slots", slots)
+	} else if !errors.Is(slotError, modem.ErrSIMSlotUnsupported) {
+		logger.Warn("SIM slot status unavailable", "error", slotError)
 	}
 	if iccid, iccidError := session.ReadSIMICCID(ctx); iccidError == nil {
 		fingerprint, fingerprintError := deviceIdentity.FingerprintSIM(iccid)

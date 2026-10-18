@@ -32,6 +32,31 @@ func newTestSession(sink MessageSink) (*Session, net.Conn, *at.Client) {
 }
 
 var _ = Describe("Modem session", func() {
+	It("reads physical SIM slot presence when QSIMSTAT is supported", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			command, _ := reader.ReadString('\r')
+			Expect(strings.TrimSuffix(command, "\r")).To(Equal("AT+QSIMSTAT"))
+			_, _ = modemTransport.Write([]byte("+QSIMSTAT: 1,1\r\n+QSIMSTAT: 2,0\r\nOK\r\n"))
+		}()
+		statuses, err := session.ReadSIMSlotStatus(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(statuses).To(Equal([]SIMSlotStatus{{Index: 1, Present: true}, {Index: 2, Present: false}}))
+	})
+
+	It("fails safely when the modem does not expose slot status", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		go func() {
+			_, _ = bufio.NewReader(modemTransport).ReadString('\r')
+			_, _ = modemTransport.Write([]byte("ERROR\r\n"))
+		}()
+		_, err := session.ReadSIMSlotStatus(context.Background())
+		Expect(err).To(MatchError(ErrSIMSlotUnsupported))
+	})
+
 	It("reads an ICCID from Quectel and generic modem commands", func() {
 		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
 		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })

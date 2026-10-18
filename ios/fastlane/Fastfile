@@ -27,8 +27,8 @@ end
 
 def app_store_connect_authentication
   if !ENV["FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD"].to_s.empty?
-    username = ENV["FASTLANE_USER"]
-    UI.user_error!("FASTLANE_USER is required with FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD") if username.to_s.empty?
+    username = ENV["FASTLANE_USER"] || CredentialsManager::AppfileConfig.try_fetch_value(:apple_id)
+    UI.user_error!("An Apple ID username is required with FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD") if username.to_s.empty?
 
     return { username: username }
   end

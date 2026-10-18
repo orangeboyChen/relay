@@ -239,7 +239,9 @@ numbers never enter the container configuration:
 
 ```sh
 sudo SIM_DECK_SERVER_URL=https://sim-deck.example \
-  ./scripts/install-linux-device.sh --output-dir /etc/sim-deck
+  ./scripts/install-linux-device.sh \
+    --image ghcr.io/orangeboychen/sim-deck-device:x.y.z \
+    --output-dir /etc/sim-deck
 docker compose --env-file /etc/sim-deck/.env \
   -f /etc/sim-deck/compose.yaml up -d
 ```
@@ -269,7 +271,9 @@ value normally supplied by the operator is the server URL:
 
 ```sh
 sudo SIM_DECK_SERVER_URL=https://sim-deck.example.com \
-  ./scripts/install-linux-device.sh --output-dir /etc/sim-deck
+  ./scripts/install-linux-device.sh \
+    --image ghcr.io/orangeboychen/sim-deck-device:x.y.z \
+    --output-dir /etc/sim-deck
 ```
 
 For a server reached over plain HTTP on a trusted LAN or encrypted VPN, also

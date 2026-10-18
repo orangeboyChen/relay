@@ -3,7 +3,7 @@ set -euo pipefail
 
 server_url="${SIM_DECK_SERVER_URL:-}"
 output_dir="${SIM_DECK_OUTPUT_DIR:-/etc/sim-deck}"
-image="${SIM_DECK_DEVICE_IMAGE:-ghcr.io/orangeboychen/sim-deck-device:latest}"
+image="${SIM_DECK_DEVICE_IMAGE:-}"
 start=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -12,7 +12,7 @@ while [[ $# -gt 0 ]]; do
     --image) image="${2:?missing image}"; shift 2 ;;
     --start) start=true; shift ;;
     -h|--help)
-      printf '%s\n' 'Usage: install-linux-device.sh --server-url https://server.example [--output-dir DIR] [--image IMAGE] [--start]'
+      printf '%s\n' 'Usage: install-linux-device.sh --server-url https://server.example --image ghcr.io/orangeboychen/sim-deck-device:x.y.z [--output-dir DIR] [--start]'
       exit 0
       ;;
     *) printf 'Unknown argument: %s\n' "$1" >&2; exit 1 ;;
@@ -27,6 +27,10 @@ for command in udevadm getent install docker; do
 done
 if [[ -z "$server_url" ]]; then
   printf '%s\n' "Set SIM_DECK_SERVER_URL or pass --server-url." >&2
+  exit 1
+fi
+if [[ -z "$image" ]]; then
+  printf '%s\n' "Set SIM_DECK_DEVICE_IMAGE or pass --image with an explicit published version tag." >&2
   exit 1
 fi
 case "$server_url" in https://*|http://*) ;; *) printf '%s\n' "Server URL must start with https:// or http://." >&2; exit 1 ;; esac

@@ -35,7 +35,7 @@ services:
       - admin_password
       - recovery_public_key
     ports:
-      - "${SERVER_PORT:-8443}:8080"
+      - "127.0.0.1:${SERVER_PORT:-8443}:8080"
       - "${MEDIA_UDP_PORT:-49152}:${MEDIA_UDP_PORT:-49152}/udp"
       - "${MEDIA_TCP_PORT:-49153}:${MEDIA_TCP_PORT:-49153}/tcp"
     volumes:

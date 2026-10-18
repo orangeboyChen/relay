@@ -51,10 +51,11 @@ docker compose -f compose.yaml -f compose.apns.yaml up --build -d
 ```
 
 The server container supports `linux/amd64` and `linux/arm64`. TLS can terminate in the server with `TLS_CERT_FILE` and `TLS_KEY_FILE`, or in a trusted reverse proxy in front of port 8080.
-`SERVER_PORT` controls the published host port without implying which protocol
-terminates there. With the provided Compose file the server listens for HTTP on
-container port 8080, so use a trusted TLS reverse proxy unless you also mount a
-certificate and configure both TLS environment variables.
+The Compose file binds the plaintext host port to `127.0.0.1` so it cannot be
+reached directly from another machine. Put a trusted TLS reverse proxy on the
+host and forward to that loopback port, or configure TLS in the server. A proxy
+running in another container should use a private Docker network instead of
+publishing the server's plaintext port on a public interface.
 The image health check probes `/healthz` over HTTP by default and switches to
 HTTPS when `TLS_CERT_FILE` is set. Keep `HTTP_ADDR` on port 8080 when using the
 image default, or override the Compose health check together with the listener

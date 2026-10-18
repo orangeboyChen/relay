@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS device_credentials (
 CREATE TABLE IF NOT EXISTS sim_cards (
     id UUID PRIMARY KEY,
     numeric_id SMALLINT NOT NULL CHECK (numeric_id BETWEEN 1 AND 99),
-    fingerprint_scope UUID REFERENCES devices(id) ON DELETE CASCADE,
+    fingerprint_scope UUID REFERENCES devices(id) ON DELETE SET NULL,
     iccid_fingerprint BYTEA CHECK (
         iccid_fingerprint IS NULL OR octet_length(iccid_fingerprint) = 32
     ),

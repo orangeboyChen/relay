@@ -43,6 +43,12 @@ func (repository *memoryRepository) CreateOwner(context.Context, string, []byte)
 func (repository *memoryRepository) ListDevices(context.Context) ([]store.DeviceRecord, error) {
 	return nil, nil
 }
+func (repository *memoryRepository) ListSIMCards(context.Context) ([]store.SIMRecord, error) {
+	return nil, nil
+}
+func (repository *memoryRepository) RetireSIMCard(context.Context, string, time.Time) error {
+	return nil
+}
 func (repository *memoryRepository) UpdateNumericID(context.Context, string, int) error {
 	return nil
 }

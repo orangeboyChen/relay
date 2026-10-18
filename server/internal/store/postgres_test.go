@@ -668,6 +668,17 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		records, err = database.ListDevices(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(records).To(BeEmpty())
+		var slotCount int
+		Expect(database.pool.QueryRow(context.Background(), `SELECT count(*) FROM device_slots WHERE device_id = $1`, firstDeviceID).Scan(&slotCount)).To(Succeed())
+		Expect(slotCount).To(Equal(0))
+		cards, err := database.ListSIMCards(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cards).To(HaveLen(1))
+		Expect(cards[0].AssignedSlotID).To(BeNil())
+		Expect(database.RetireSIMCard(context.Background(), cards[0].ID, now.Add(2*time.Minute))).To(Succeed())
+		cards, err = database.ListSIMCards(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cards).To(BeEmpty())
 		_, err = database.AuthenticateDevice(context.Background(), firstDeviceID, deviceCredential, now.Add(2*time.Minute))
 		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
 		Expect(database.UpdateDeviceProfile(context.Background(), firstDeviceID, []byte("late update"))).To(MatchError(pgx.ErrNoRows))
@@ -814,8 +825,16 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(secondSIM).NotTo(Equal(firstSIM))
 		Expect(secondNumeric).NotTo(Equal(firstNumeric))
-		Expect(database.UpdateSIMNumericID(context.Background(), firstSIM, 9)).To(MatchError(ContainSubstring(pgx.ErrNoRows.Error())))
-		Expect(database.UpdateSIMProfile(context.Background(), firstSIM, []byte("retired"))).To(MatchError(ContainSubstring(pgx.ErrNoRows.Error())))
+		Expect(database.UpdateSIMNumericID(context.Background(), firstSIM, 9)).To(Succeed())
+		firstNumeric = 9
+		Expect(database.UpdateSIMProfile(context.Background(), firstSIM, []byte("offline"))).To(Succeed())
+		cards, err := database.ListSIMCards(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cards).To(ContainElement(And(
+			HaveField("ID", firstSIM),
+			HaveField("AssignedSlotID", BeNil()),
+		)))
+		Expect(database.RetireSIMCard(context.Background(), secondSIM, now.Add(90*time.Second))).To(MatchError(ContainSubstring("still assigned")))
 		missingSIM := "01900000-0000-7000-8000-000000000199"
 		Expect(database.UpdateSIMNumericID(context.Background(), missingSIM, 9)).To(MatchError(ContainSubstring(pgx.ErrNoRows.Error())))
 		Expect(database.UpdateSIMProfile(context.Background(), missingSIM, []byte("missing"))).To(MatchError(ContainSubstring(pgx.ErrNoRows.Error())))

@@ -26,6 +26,8 @@ import (
 // Repository defines the encrypted persistence operations exposed by the API.
 type Repository interface {
 	ListDevices(context.Context) ([]store.DeviceRecord, error)
+	ListSIMCards(context.Context) ([]store.SIMRecord, error)
+	RetireSIMCard(context.Context, string, time.Time) error
 	UpdateNumericID(context.Context, string, int) error
 	UpdateDeviceProfile(context.Context, string, []byte) error
 	UpdateSIMNumericID(context.Context, string, int) error
@@ -83,6 +85,8 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("GET /v1/auth/passkey", router.passkeyPage)
 	mux.HandleFunc("GET /.well-known/sim-deck", router.discovery)
 	mux.HandleFunc("GET /v1/devices", router.requireOwner(router.listDevices))
+	mux.HandleFunc("GET /v1/sims", router.requireOwner(router.listSIMCards))
+	mux.HandleFunc("DELETE /v1/sims/{simID}", router.requireOwner(router.retireSIMCard))
 	mux.HandleFunc("PATCH /v1/devices/{deviceID}/numeric-id", router.requireOwner(router.updateNumericID))
 	mux.HandleFunc("PUT /v1/devices/{deviceID}/profile", router.requireOwner(router.updateDeviceProfile))
 	mux.HandleFunc("PATCH /v1/sims/{simID}/numeric-id", router.requireOwner(router.updateSIMNumericID))
@@ -420,6 +424,36 @@ func (router *router) listDevices(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"devices": devices})
+}
+
+func (router *router) listSIMCards(writer http.ResponseWriter, request *http.Request) {
+	cards, err := router.repository.ListSIMCards(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to list SIM cards.")
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"sims": cards})
+}
+
+func (router *router) retireSIMCard(writer http.ResponseWriter, request *http.Request) {
+	simID := request.PathValue("simID")
+	if !validUUID(simID) {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_sim", "SIM identifier is invalid.")
+		return
+	}
+	if err := router.repository.RetireSIMCard(request.Context(), simID, router.now()); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(writer, http.StatusNotFound, "sim_not_found", "SIM card not found or already removed.")
+			return
+		}
+		if strings.Contains(err.Error(), "still assigned") {
+			writeError(writer, http.StatusConflict, "sim_online", "Remove the SIM card from its device before deleting it.")
+			return
+		}
+		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to remove the SIM card.")
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
 }
 
 func (router *router) updateNumericID(writer http.ResponseWriter, request *http.Request) {

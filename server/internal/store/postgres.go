@@ -58,6 +58,17 @@ type SlotRecord struct {
 	RadioStatusUpdatedAt  *time.Time `json:"radio_status_updated_at,omitempty"`
 }
 
+// SIMRecord identifies a physical SIM independently from any device slot.
+type SIMRecord struct {
+	ID                string    `json:"sim_id"`
+	NumericID         int       `json:"numeric_id"`
+	ProfileCiphertext []byte    `json:"profile_ciphertext,omitempty"`
+	FirstSeenAt       time.Time `json:"first_seen_at"`
+	LastSeenAt        time.Time `json:"last_seen_at"`
+	AssignedDeviceID  *string   `json:"assigned_device_uuid,omitempty"`
+	AssignedSlotID    *string   `json:"assigned_slot_id,omitempty"`
+}
+
 // OwnerCredential is the password-login state for the single owner.
 type OwnerCredential struct {
 	ID                 string
@@ -1152,7 +1163,7 @@ func (store *Postgres) UpdateDeviceProfile(ctx context.Context, deviceID string,
 	return nil
 }
 
-// UpdateSIMNumericID assigns a user-selected compact identifier to one active SIM card.
+// UpdateSIMNumericID assigns a user-selected compact identifier to one retained SIM card.
 func (store *Postgres) UpdateSIMNumericID(ctx context.Context, simID string, numericID int) error {
 	if numericID < domain.MinNumericID || numericID > domain.MaxNumericID {
 		return domain.ErrInvalidNumericID
@@ -1160,16 +1171,9 @@ func (store *Postgres) UpdateSIMNumericID(ctx context.Context, simID string, num
 	var updatedSIMID string
 	err := store.pool.QueryRow(ctx, `
 		WITH updated_sim AS (
-			UPDATE sim_cards AS sim
-			SET numeric_id = $2
-			FROM device_slots AS slot, devices AS device
-			WHERE sim.id = $1
-			  AND sim.retired_at IS NULL
-			  AND slot.current_sim_id = sim.id
-			  AND slot.removed_at IS NULL
-			  AND device.id = slot.device_id
-			  AND device.revoked_at IS NULL
-			RETURNING sim.id
+			UPDATE sim_cards SET numeric_id = $2
+			WHERE id = $1 AND retired_at IS NULL
+			RETURNING id
 		), updated_devices AS (
 			UPDATE devices AS device
 			SET numeric_id = $2
@@ -1188,21 +1192,14 @@ func (store *Postgres) UpdateSIMNumericID(ctx context.Context, simID string, num
 	return nil
 }
 
-// UpdateSIMProfile replaces the opaque end-to-end encrypted profile for one active SIM card.
+// UpdateSIMProfile replaces the opaque end-to-end encrypted profile for one retained SIM card.
 func (store *Postgres) UpdateSIMProfile(ctx context.Context, simID string, profileCiphertext []byte) error {
 	var updatedSIMID string
 	err := store.pool.QueryRow(ctx, `
 		WITH updated_sim AS (
-			UPDATE sim_cards AS sim
-			SET profile_ciphertext = $2
-			FROM device_slots AS slot, devices AS device
-			WHERE sim.id = $1
-			  AND sim.retired_at IS NULL
-			  AND slot.current_sim_id = sim.id
-			  AND slot.removed_at IS NULL
-			  AND device.id = slot.device_id
-			  AND device.revoked_at IS NULL
-			RETURNING sim.id
+			UPDATE sim_cards SET profile_ciphertext = $2
+			WHERE id = $1 AND retired_at IS NULL
+			RETURNING id
 		), updated_devices AS (
 			UPDATE devices AS device
 			SET profile_ciphertext = $2
@@ -1239,8 +1236,69 @@ func (store *Postgres) RevokeDevice(ctx context.Context, deviceID string, revoke
 		WHERE device_id = $1 AND revoked_at IS NULL`, deviceID, revokedAt.UTC()); err != nil {
 		return fmt.Errorf("revoke device credentials: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE slot_sim_assignments
+		SET removed_at = GREATEST($2, inserted_at)
+		WHERE slot_id IN (SELECT id FROM device_slots WHERE device_id = $1 AND removed_at IS NULL)
+		  AND removed_at IS NULL`, deviceID, revokedAt.UTC()); err != nil {
+		return fmt.Errorf("remove device SIM assignments: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM device_slots WHERE device_id = $1`, deviceID); err != nil {
+		return fmt.Errorf("remove device slots: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit device revocation: %w", err)
+	}
+	return nil
+}
+
+// ListSIMCards returns active physical SIMs, including cards currently offline.
+func (store *Postgres) ListSIMCards(ctx context.Context) ([]SIMRecord, error) {
+	rows, err := store.pool.Query(ctx, `
+		SELECT sim.id::text, sim.numeric_id, sim.profile_ciphertext,
+		       sim.first_seen_at, sim.last_seen_at,
+		       slot.device_id::text, slot.id::text
+		FROM sim_cards AS sim
+		LEFT JOIN device_slots AS slot
+		  ON slot.current_sim_id = sim.id AND slot.removed_at IS NULL
+		WHERE sim.retired_at IS NULL
+		ORDER BY sim.numeric_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list SIM cards: %w", err)
+	}
+	defer rows.Close()
+	result := make([]SIMRecord, 0)
+	for rows.Next() {
+		var record SIMRecord
+		if err := rows.Scan(&record.ID, &record.NumericID, &record.ProfileCiphertext, &record.FirstSeenAt, &record.LastSeenAt, &record.AssignedDeviceID, &record.AssignedSlotID); err != nil {
+			return nil, fmt.Errorf("scan SIM card: %w", err)
+		}
+		result = append(result, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate SIM cards: %w", err)
+	}
+	return result, nil
+}
+
+// RetireSIMCard permanently removes an offline SIM from the owner's inventory.
+func (store *Postgres) RetireSIMCard(ctx context.Context, simID string, retiredAt time.Time) error {
+	command, err := store.pool.Exec(ctx, `
+		DELETE FROM sim_cards
+		WHERE id = $1
+		  AND NOT EXISTS (SELECT 1 FROM device_slots WHERE current_sim_id = $1 AND removed_at IS NULL)`, simID)
+	if err != nil {
+		return fmt.Errorf("retire SIM card: %w", err)
+	}
+	if command.RowsAffected() == 0 {
+		var assigned bool
+		if err := store.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM device_slots WHERE current_sim_id = $1 AND removed_at IS NULL)`, simID).Scan(&assigned); err != nil {
+			return fmt.Errorf("check SIM assignment: %w", err)
+		}
+		if assigned {
+			return errors.New("SIM card is still assigned to a device slot")
+		}
+		return pgx.ErrNoRows
 	}
 	return nil
 }
@@ -1490,11 +1548,6 @@ func (store *Postgres) UpdateDeviceSIMIdentity(ctx context.Context, deviceID str
 		SELECT $1, $2, $3
 		WHERE NOT EXISTS (SELECT 1 FROM slot_sim_assignments WHERE slot_id = $1 AND sim_id = $2 AND removed_at IS NULL)`, slotID, simID, now.UTC()); err != nil {
 		return "", 0, err
-	}
-	if oldSIMID != nil && *oldSIMID != simID {
-		if _, err := tx.Exec(ctx, `UPDATE sim_cards SET retired_at = $2 WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM device_slots WHERE current_sim_id = $1)`, *oldSIMID, now.UTC()); err != nil {
-			return "", 0, err
-		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return "", 0, fmt.Errorf("commit SIM identity synchronization: %w", err)

@@ -21,7 +21,12 @@ import (
 
 type fakeRepository struct {
 	devices                     []store.DeviceRecord
+	sims                        []store.SIMRecord
 	listDevicesError            error
+	listSIMsError               error
+	retiredSIMID                string
+	retiredSIMAt                time.Time
+	retireSIMError              error
 	updatedDeviceID             string
 	updatedNumericID            int
 	updateNumericIDError        error
@@ -216,6 +221,16 @@ func (fake *fakeRepository) DeletePushToken(
 
 func (fake *fakeRepository) ListDevices(context.Context) ([]store.DeviceRecord, error) {
 	return fake.devices, fake.listDevicesError
+}
+
+func (fake *fakeRepository) ListSIMCards(context.Context) ([]store.SIMRecord, error) {
+	return fake.sims, fake.listSIMsError
+}
+
+func (fake *fakeRepository) RetireSIMCard(_ context.Context, simID string, retiredAt time.Time) error {
+	fake.retiredSIMID = simID
+	fake.retiredSIMAt = retiredAt
+	return fake.retireSIMError
 }
 
 func (fake *fakeRepository) UpdateNumericID(_ context.Context, deviceID string, numericID int) error {
@@ -515,6 +530,28 @@ var _ = Describe("HTTP API", func() {
 		Expect(response.Code).To(Equal(http.StatusOK))
 		Expect(response.Body.String()).To(ContainSubstring(`"device_uuid":"device-1"`))
 	})
+
+	It("lists SIM cards independently from their device slots", func() {
+		repository.sims = []store.SIMRecord{{ID: "01900000-0000-0000-0000-000000000101", NumericID: 2}}
+
+		response := perform(http.MethodGet, "/v1/sims", "", "access-token")
+
+		Expect(response.Code).To(Equal(http.StatusOK))
+		Expect(response.Body.String()).To(ContainSubstring(`"sim_id":"01900000-0000-0000-0000-000000000101"`))
+	})
+
+	DescribeTable("maps SIM deletion outcomes",
+		func(repositoryError error, expectedStatus int, expectedCode string) {
+			repository.retireSIMError = repositoryError
+			response := perform(http.MethodDelete, "/v1/sims/01900000-0000-0000-0000-000000000101", "", "access-token")
+			Expect(response.Code).To(Equal(expectedStatus))
+			Expect(response.Body.String()).To(ContainSubstring(expectedCode))
+		},
+		Entry("success", nil, http.StatusNoContent, ""),
+		Entry("assigned", errors.New("SIM card is still assigned to a device slot"), http.StatusConflict, "sim_online"),
+		Entry("missing", pgx.ErrNoRows, http.StatusNotFound, "sim_not_found"),
+		Entry("storage failure", errors.New("database unavailable"), http.StatusInternalServerError, "storage_error"),
+	)
 
 	It("rejects missing and invalid owner sessions", func() {
 		Expect(perform(http.MethodGet, "/v1/devices", "", "").Code).To(Equal(http.StatusUnauthorized))

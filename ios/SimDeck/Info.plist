@@ -4,6 +4,8 @@
 <dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Sim Deck's calling framework checks camera availability during call setup. Sim Deck does not capture or send video.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Sim Deck uses your contacts to display names for phone calls and messages.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

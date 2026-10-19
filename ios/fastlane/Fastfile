@@ -1,6 +1,8 @@
 default_platform(:ios)
 
 require "fileutils"
+require "cfpropertylist"
+require "open3"
 require "shellwords"
 require "tmpdir"
 
@@ -53,6 +55,38 @@ def app_store_connect_app_apple_id
   app.id
 end
 
+def next_testflight_build_number(local_build_number, testflight_build_number)
+  return local_build_number if local_build_number > testflight_build_number
+
+  testflight_build_number + 1
+end
+
+def read_binary_plist(path)
+  list = CFPropertyList::List.new(file: path)
+  CFPropertyList.native_types(list.value)
+end
+
+def validate_archive_metadata(archive_path, version, build_number)
+  app_path = File.join(archive_path, "Products", "Applications", "SimDeck.app")
+  app_info = read_binary_plist(File.join(app_path, "Info.plist"))
+  required_usage_descriptions = %w[NSCameraUsageDescription NSContactsUsageDescription]
+  missing_descriptions = required_usage_descriptions.select { |key| app_info[key].to_s.strip.empty? }
+  UI.user_error!("Archive is missing purpose strings: #{missing_descriptions.join(", ")}") unless missing_descriptions.empty?
+
+  bundles = [app_path] + Dir.glob(File.join(app_path, "PlugIns", "*.appex"))
+  bundles.each do |bundle|
+    info = read_binary_plist(File.join(bundle, "Info.plist"))
+    UI.user_error!("#{File.basename(bundle)} has version #{info["CFBundleShortVersionString"]}, expected #{version}") unless info["CFBundleShortVersionString"] == version
+    UI.user_error!("#{File.basename(bundle)} has build #{info["CFBundleVersion"]}, expected #{build_number}") unless info["CFBundleVersion"] == build_number.to_s
+  end
+
+  entitlements_data, _, status = Open3.capture3("codesign", "-d", "--entitlements", ":-", app_path)
+  UI.user_error!("Could not read archived app entitlements") unless status.success?
+  entitlements = CFPropertyList.native_types(CFPropertyList::List.new(data: entitlements_data).value)
+  autofill_key = "com.apple.developer.authentication-services.autofill-credential-provider"
+  UI.user_error!("Archived app is missing the AutoFill credential provider entitlement") unless entitlements[autofill_key] == true
+end
+
 def attach_webrtc_symbols(archive_path)
   cache_directory = File.expand_path("~/.cache/sim-deck")
   FileUtils.mkdir_p(cache_directory)
@@ -97,7 +131,7 @@ platform :ios do
     ).to_i
 
     authentication[:apple_id] = app_store_connect_app_apple_id if authentication.key?(:username)
-    next_build_number = [local_build_number, testflight_build_number].max + 1
+    next_build_number = next_testflight_build_number(local_build_number, testflight_build_number)
 
     increment_build_number(
       build_number: next_build_number,
@@ -112,6 +146,7 @@ platform :ios do
       scheme: SCHEME,
       configuration: "Release",
       clean: true,
+      xcargs: "-allowProvisioningUpdates",
       export_method: "app-store",
       skip_package_ipa: true,
       output_directory: "build/fastlane",
@@ -120,6 +155,7 @@ platform :ios do
 
     archive_path = lane_context[SharedValues::XCODEBUILD_ARCHIVE]
     UI.user_error!("The Xcode archive path was not produced") if archive_path.to_s.empty?
+    validate_archive_metadata(archive_path, version, next_build_number)
     attach_webrtc_symbols(archive_path)
 
     export_options_path = File.join(Dir.mktmpdir("sim-deck-export"), "ExportOptions.plist")
@@ -128,7 +164,7 @@ platform :ios do
       <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
       <plist version="1.0"><dict><key>method</key><string>app-store-connect</string></dict></plist>
     PLIST
-    sh("xcodebuild -exportArchive -archivePath #{archive_path.shellescape} -exportOptionsPlist #{export_options_path.shellescape} -exportPath build/fastlane")
+    sh("xcodebuild -exportArchive -allowProvisioningUpdates -archivePath #{archive_path.shellescape} -exportOptionsPlist #{export_options_path.shellescape} -exportPath build/fastlane")
     ipa_path = File.expand_path("build/fastlane/SimDeck.ipa")
     UI.user_error!("The exported IPA was not found") unless File.file?(ipa_path)
 

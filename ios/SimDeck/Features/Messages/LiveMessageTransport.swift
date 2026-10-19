@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import OSLog
 
 enum LiveMessageTransportError: LocalizedError, Equatable {
     case missingInstallationIdentity
@@ -99,6 +100,11 @@ final class UserDefaultsMessageCursorStore: MessageCursorStoring {
 
 @MainActor
 final class LiveMessageTransport: MessageTransport {
+    private static let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "SimDeck",
+        category: "EncryptedMessages"
+    )
+
     private let api: any EncryptedCallCommandAPI
     private let commandSigner: InstallationCommandSigner
     private let cursorStore: any MessageCursorStoring
@@ -241,12 +247,18 @@ final class LiveMessageTransport: MessageTransport {
                 )
                 verificationKeys[envelope.deviceUUID] = verificationKey
             }
-            let payload = try EncryptedMessageEventCodec.open(
-                envelope,
-                installationIdentity: installationIdentity,
-                deviceCommandPublicKey: commandPublicKey,
-                deviceVerificationKey: verificationKey
-            )
+            let payload: IncomingMessagePayload
+            do {
+                payload = try EncryptedMessageEventCodec.open(
+                    envelope,
+                    installationIdentity: installationIdentity,
+                    deviceCommandPublicKey: commandPublicKey,
+                    deviceVerificationKey: verificationKey
+                )
+            } catch {
+                Self.logEventFailure(envelope, stage: "authenticate-or-decrypt", error: error)
+                throw error
+            }
             let matchingLines: [DeviceLineIdentity]
             if let payloadSlotID = payload.slotID {
                 matchingLines = candidates.filter { $0.slotID == payloadSlotID }
@@ -286,12 +298,18 @@ final class LiveMessageTransport: MessageTransport {
                 )
                 verificationKeys[envelope.deviceUUID] = verificationKey
             }
-            let payload = try EncryptedSIMProfileEventCodec.open(
-                envelope,
-                installationIdentity: installationIdentity,
-                deviceCommandPublicKey: commandPublicKey,
-                deviceVerificationKey: verificationKey
-            )
+            let payload: IncomingSIMProfilePayload
+            do {
+                payload = try EncryptedSIMProfileEventCodec.open(
+                    envelope,
+                    installationIdentity: installationIdentity,
+                    deviceCommandPublicKey: commandPublicKey,
+                    deviceVerificationKey: verificationKey
+                )
+            } catch {
+                Self.logEventFailure(envelope, stage: "authenticate-or-decrypt", error: error)
+                throw error
+            }
             let matchingLines = candidates.filter { line in
                 if let slotID = payload.slotID, line.slotID != slotID {
                     return false
@@ -321,6 +339,16 @@ final class LiveMessageTransport: MessageTransport {
 
     func acknowledge(sequence: Int64) {
         cursorStore.sequence = max(cursorStore.sequence, sequence)
+    }
+
+    private static func logEventFailure(
+        _ envelope: EncryptedEventEnvelope,
+        stage: String,
+        error: any Error
+    ) {
+        logger.error(
+            "Encrypted event failed; sequence=\(envelope.sequence, privacy: .public), type=\(envelope.type, privacy: .public), stage=\(stage, privacy: .public), error=\(String(describing: error), privacy: .private(mask: .hash))"
+        )
     }
 }
 

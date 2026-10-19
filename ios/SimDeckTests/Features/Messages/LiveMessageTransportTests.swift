@@ -163,6 +163,26 @@ final class LiveMessageTransportTests: XCTestCase {
         XCTAssertEqual(api.requestedEventCursors, [0, 1])
     }
 
+    func testEventAssociatedDataUsesExactMillisecondWireTimestamp() {
+        let envelope = EncryptedEventEnvelope(
+            id: UUID(uuidString: "01900000-0000-7000-8000-000000000211")!,
+            sequence: 1,
+            type: "sim.profile",
+            deviceUUID: deviceID,
+            recipientInstallationID: UUID(uuidString: "01900000-0000-7000-8000-000000000212")!,
+            occurredAt: Date(timeIntervalSince1970: 1_792_138_160.239),
+            keyEpoch: 1,
+            nonce: Data(repeating: 1, count: 12),
+            ciphertext: Data(repeating: 2, count: 17),
+            signature: Data(repeating: 3, count: 64)
+        )
+
+        let timestampBytes = EncryptedCallEventCodec.associatedData(envelope).suffix(16).prefix(8)
+        let timestamp = timestampBytes.reduce(UInt64.zero) { ($0 << 8) | UInt64($1) }
+
+        XCTAssertEqual(timestamp, 1_792_138_160_239_000_000)
+    }
+
     func testSynchronizeIgnoresWrongInstallationTamperedAndUnrelatedEvents() async throws {
         let api = try MessageCommandAPIFake(deviceID: deviceID, outcome: .success)
         try api.appendIncomingMessage(

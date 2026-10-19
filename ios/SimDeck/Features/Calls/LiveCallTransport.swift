@@ -827,7 +827,11 @@ enum EncryptedCallEventCodec {
         if let recipientInstallationID = envelope.recipientInstallationID {
             data.appendLengthPrefixed(Data(recipientInstallationID.uuidString.lowercased().utf8))
         }
-        let nanoseconds = Int64((envelope.occurredAt.timeIntervalSince1970 * 1_000_000_000).rounded())
+        // Device events are signed after their timestamps are truncated to milliseconds.
+        // Round at that wire-protocol precision before converting to nanoseconds so Date's
+        // floating-point representation cannot change the authenticated bytes.
+        let milliseconds = Int64((envelope.occurredAt.timeIntervalSince1970 * 1_000).rounded())
+        let nanoseconds = milliseconds * 1_000_000
         data.appendBigEndian(UInt64(bitPattern: nanoseconds))
         data.appendBigEndian(UInt64(envelope.keyEpoch))
         return data

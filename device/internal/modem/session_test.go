@@ -259,15 +259,17 @@ var _ = Describe("Modem session", func() {
 			_ = client.Close()
 			_ = modemTransport.Close()
 		})
-		commands := make(chan string, len(initializationCommands)+2)
+		commands := make(chan string, len(initializationCommands)+3)
 		go func() {
 			reader := bufio.NewReader(modemTransport)
-			for index := 0; index < len(initializationCommands)+2; index++ {
+			for index := 0; index < len(initializationCommands)+3; index++ {
 				command, _ := reader.ReadString('\r')
 				commands <- strings.TrimSuffix(command, "\r")
 				switch command {
 				case simReadinessCommand + "\r":
 					_, _ = modemTransport.Write([]byte("+CPIN: READY\r\nOK\r\n"))
+				case operatorSelectionQuery + "\r":
+					_, _ = modemTransport.Write([]byte("+COPS: 0,0,\"CHINA MOBILE\",7\r\nOK\r\n"))
 				case "AT+CMGL=4\r":
 					_, _ = modemTransport.Write([]byte("+CMGL: 1,0,,23\r\n" + testDeliverPDU + "\r\n+CMGL: 2,0,,1\r\nnot-hex\r\nOK\r\n"))
 				default:
@@ -279,12 +281,58 @@ var _ = Describe("Modem session", func() {
 		Expect(session.Initialize(context.Background())).To(Succeed())
 
 		expectedCommands := append([]string{simReadinessCommand}, initializationCommands...)
+		expectedCommands = append(expectedCommands, operatorSelectionQuery)
 		expectedCommands = append(expectedCommands, "AT+CMGL=4")
 		for _, expected := range expectedCommands {
 			Eventually(commands).Should(Receive(Equal(expected)))
 		}
 		Eventually(received).Should(Receive(WithTransform(func(message sms.ReceivedMessage) string { return message.Text }, Equal("你好"))))
 	})
+
+	It("restores automatic operator selection when the modem is deregistered", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+		commands := make(chan string, len(initializationCommands)+4)
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			for index := 0; index < len(initializationCommands)+4; index++ {
+				command, _ := reader.ReadString('\r')
+				commands <- strings.TrimSuffix(command, "\r")
+				switch command {
+				case simReadinessCommand + "\r":
+					_, _ = modemTransport.Write([]byte("+CPIN: READY\r\nOK\r\n"))
+				case operatorSelectionQuery + "\r":
+					_, _ = modemTransport.Write([]byte("+COPS: 2\r\nOK\r\n"))
+				default:
+					_, _ = modemTransport.Write([]byte("OK\r\n"))
+				}
+			}
+		}()
+
+		Expect(session.Initialize(context.Background())).To(Succeed())
+
+		expectedCommands := append([]string{simReadinessCommand}, initializationCommands...)
+		expectedCommands = append(expectedCommands, operatorSelectionQuery, "AT+COPS=0", "AT+CMGL=4")
+		for _, expected := range expectedCommands {
+			Eventually(commands).Should(Receive(Equal(expected)))
+		}
+	})
+
+	DescribeTable("parses operator selection without exposing the operator name",
+		func(line string, expectedMode int, expectedAccessTechnology int, expectedFound bool) {
+			mode, accessTechnology, found := parseOperatorSelection([]string{line})
+			Expect(mode).To(Equal(expectedMode))
+			Expect(accessTechnology).To(Equal(expectedAccessTechnology))
+			Expect(found).To(Equal(expectedFound))
+		},
+		Entry("automatic LTE", `+COPS: 0,0,"CHINA MOBILE",7`, 0, 7, true),
+		Entry("deregistered", "+COPS: 2", 2, -1, true),
+		Entry("malformed", "+COPS: invalid", 0, -1, false),
+		Entry("missing", "+CREG: 0,2", 0, -1, false),
+	)
 
 	It("fails initialization when a required modem command is rejected", func() {
 		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
@@ -537,7 +585,7 @@ var _ = Describe("Modem session", func() {
 			if command == simReadinessCommand+"\r" {
 				_, _ = modemTransport.Write([]byte("+CPIN: READY\r\nOK\r\n"))
 			}
-			for index := 0; index < len(initializationCommands)+1; index++ {
+			for index := 0; index < len(initializationCommands)+2; index++ {
 				_, _ = reader.ReadString('\r')
 				_, _ = modemTransport.Write([]byte("OK\r\n"))
 			}
@@ -554,7 +602,7 @@ var _ = Describe("Modem session", func() {
 		})
 		go func() {
 			reader := bufio.NewReader(modemTransport)
-			for index := 0; index < len(initializationCommands)+2; index++ {
+			for index := 0; index < len(initializationCommands)+3; index++ {
 				command, _ := reader.ReadString('\r')
 				switch command {
 				case simReadinessCommand + "\r":
@@ -582,7 +630,7 @@ var _ = Describe("Modem session", func() {
 		})
 		go func() {
 			reader := bufio.NewReader(modemTransport)
-			for index := 0; index < len(initializationCommands)+2; index++ {
+			for index := 0; index < len(initializationCommands)+3; index++ {
 				command, _ := reader.ReadString('\r')
 				switch command {
 				case simReadinessCommand + "\r":
@@ -610,7 +658,7 @@ var _ = Describe("Modem session", func() {
 		})
 		go func() {
 			reader := bufio.NewReader(modemTransport)
-			for index := 0; index < len(initializationCommands)+2; index++ {
+			for index := 0; index < len(initializationCommands)+3; index++ {
 				command, _ := reader.ReadString('\r')
 				switch command {
 				case simReadinessCommand + "\r":

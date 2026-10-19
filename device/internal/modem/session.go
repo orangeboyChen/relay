@@ -28,6 +28,10 @@ var initializationCommands = []string{
 
 const simReadinessCommand = "AT+CPIN?"
 
+const operatorSelectionQuery = "AT+COPS?"
+
+const automaticOperatorSelectionTimeout = 3 * time.Minute
+
 // ReadEquipmentIdentity returns the modem IMEI used only for local hardware identity derivation.
 func ReadEquipmentIdentity(ctx context.Context, client *at.Client, timeout time.Duration) (string, error) {
 	if client == nil || timeout <= 0 {
@@ -384,6 +388,9 @@ func (session *Session) Initialize(ctx context.Context) error {
 			return fmt.Errorf("modem rejected initialization command %s: %s", command, response.Terminal)
 		}
 	}
+	if err := session.ensureAutomaticOperatorSelection(ctx); err != nil {
+		return err
+	}
 
 	response, err = session.send(ctx, "AT+CMGL=4")
 	if err != nil {
@@ -398,6 +405,61 @@ func (session *Session) Initialize(ctx context.Context) error {
 		session.logger.Warn("some modem SMS history entries were skipped", "error", errors.Join(extractionError, importError))
 	}
 	return session.RetryPendingSMS(ctx)
+}
+
+func (session *Session) ensureAutomaticOperatorSelection(ctx context.Context) error {
+	response, err := session.send(ctx, operatorSelectionQuery)
+	if err != nil {
+		return fmt.Errorf("query operator selection: %w", err)
+	}
+	if !response.OK() {
+		return fmt.Errorf("modem rejected operator selection query: %s", response.Terminal)
+	}
+	mode, accessTechnology, found := parseOperatorSelection(response.Lines)
+	if !found {
+		session.logger.Warn("operator selection response is missing +COPS details")
+		return nil
+	}
+	session.logger.Info(
+		"operator selection inspected",
+		"operator_selection_mode", mode,
+		"operator_access_technology", accessTechnology,
+	)
+	if mode == 0 || mode == 4 {
+		return nil
+	}
+
+	response, err = session.sendWithTimeout(ctx, "AT+COPS=0", automaticOperatorSelectionTimeout)
+	if err != nil {
+		return fmt.Errorf("request automatic operator selection: %w", err)
+	}
+	if !response.OK() {
+		return fmt.Errorf("modem rejected automatic operator selection: %s", response.Terminal)
+	}
+	session.logger.Info("automatic operator selection requested", "previous_operator_selection_mode", mode)
+	return nil
+}
+
+func parseOperatorSelection(lines []string) (int, int, bool) {
+	for _, line := range lines {
+		fields := parseATCSV(line, "+COPS:")
+		if len(fields) == 0 {
+			continue
+		}
+		mode, err := strconv.Atoi(strings.TrimSpace(fields[0]))
+		if err != nil || mode < 0 || mode > 4 {
+			return 0, -1, false
+		}
+		accessTechnology := -1
+		if len(fields) >= 4 {
+			value, parseError := strconv.Atoi(strings.TrimSpace(fields[3]))
+			if parseError == nil && value >= 0 {
+				accessTechnology = value
+			}
+		}
+		return mode, accessTechnology, true
+	}
+	return 0, -1, false
 }
 
 func (session *Session) querySIMStatus(ctx context.Context) (string, error) {
@@ -504,7 +566,11 @@ func (session *Session) refreshCallState(ctx context.Context) error {
 }
 
 func (session *Session) send(ctx context.Context, command string) (at.Response, error) {
-	commandContext, cancel := context.WithTimeout(ctx, session.timeout)
+	return session.sendWithTimeout(ctx, command, session.timeout)
+}
+
+func (session *Session) sendWithTimeout(ctx context.Context, command string, timeout time.Duration) (at.Response, error) {
+	commandContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	return session.client.Send(commandContext, command)
 }

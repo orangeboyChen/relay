@@ -63,6 +63,17 @@ final class AppModelTests: XCTestCase {
         XCTAssertNotEqual(first, second)
     }
 
+    func testPreviewFixturesKeepInsertedSIMAssignmentsConsistent() throws {
+        for line in PreviewFixtures.devices {
+            let simID = try XCTUnwrap(line.simID)
+            let sim = try XCTUnwrap(PreviewFixtures.managedSIMs.first { $0.id == simID })
+
+            XCTAssertEqual(sim.assignedDeviceID, line.deviceID)
+            XCTAssertEqual(sim.assignedSlotID, line.slotID)
+            XCTAssertNotNil(line.slotIndex)
+        }
+    }
+
     @MainActor
     func testDisabledRemoteRefreshPreservesInjectedDevices() async {
         let fixture = Self.line(id: UUID(), numericID: 1)

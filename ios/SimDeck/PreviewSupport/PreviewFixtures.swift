@@ -7,29 +7,47 @@ enum PreviewFixtures {
     static let devices = [
         DeviceLineIdentity(
             id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            deviceID: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            slotID: UUID(uuidString: "00000000-0000-0000-0000-000000000101")!,
+            simID: UUID(uuidString: "30000000-0000-0000-0000-000000000001")!,
             numericID: 1,
+            slotKey: "slot-1",
+            slotIndex: 1,
             deviceName: "Office EC20",
             lineName: "Work",
             phoneNumber: "13500000000",
             isOnline: true,
-            radioStatus: CellularRadioStatus(technology: .lte, signalBars: 3)
+            radioStatus: CellularRadioStatus(technology: .lte, signalBars: 3),
+            commandPublicKey: nil
         ),
         DeviceLineIdentity(
             id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+            deviceID: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+            slotID: UUID(uuidString: "00000000-0000-0000-0000-000000000102")!,
+            simID: UUID(uuidString: "30000000-0000-0000-0000-000000000002")!,
             numericID: 2,
+            slotKey: "slot-1",
+            slotIndex: 1,
             deviceName: "Bedroom EC20",
             lineName: "Backup",
             phoneNumber: "13800000000",
             isOnline: true,
-            radioStatus: CellularRadioStatus(technology: .nrNSA, signalBars: 4)
+            radioStatus: CellularRadioStatus(technology: .nrNSA, signalBars: 4),
+            commandPublicKey: nil
         ),
         DeviceLineIdentity(
             id: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!,
+            deviceID: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!,
+            slotID: UUID(uuidString: "00000000-0000-0000-0000-000000000103")!,
+            simID: UUID(uuidString: "30000000-0000-0000-0000-000000000003")!,
             numericID: 3,
+            slotKey: "slot-1",
+            slotIndex: 1,
             deviceName: "Backup modem with a deliberately long management name",
             lineName: "Travel",
             phoneNumber: "",
-            isOnline: false
+            isOnline: false,
+            commandPublicKey: nil
         )
     ]
 
@@ -83,7 +101,9 @@ enum PreviewFixtures {
 
     static let managedSIMs = [
         ManagedSIM(id: UUID(uuidString: "30000000-0000-0000-0000-000000000001")!, numericID: 1, assignedDeviceID: devices[0].deviceID, assignedSlotID: devices[0].slotID, lastSeenAt: now, lineName: "Work", phoneNumber: "13500000000"),
-        ManagedSIM(id: UUID(uuidString: "30000000-0000-0000-0000-000000000002")!, numericID: 2, assignedDeviceID: nil, assignedSlotID: nil, lastSeenAt: now.addingTimeInterval(-3_600), lineName: "Backup", phoneNumber: "13800000000")
+        ManagedSIM(id: UUID(uuidString: "30000000-0000-0000-0000-000000000002")!, numericID: 2, assignedDeviceID: devices[1].deviceID, assignedSlotID: devices[1].slotID, lastSeenAt: now, lineName: "Backup", phoneNumber: "13800000000"),
+        ManagedSIM(id: UUID(uuidString: "30000000-0000-0000-0000-000000000003")!, numericID: 3, assignedDeviceID: devices[2].deviceID, assignedSlotID: devices[2].slotID, lastSeenAt: now.addingTimeInterval(-3_600), lineName: "Travel", phoneNumber: ""),
+        ManagedSIM(id: UUID(uuidString: "30000000-0000-0000-0000-000000000004")!, numericID: 4, assignedDeviceID: nil, assignedSlotID: nil, lastSeenAt: now.addingTimeInterval(-86_400), lineName: "Spare", phoneNumber: "")
     ]
 
     static let calls = [

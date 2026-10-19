@@ -197,7 +197,7 @@ func (fake *fakeRepository) UpdateDeviceRadioStatus(_ context.Context, deviceID 
 	return fake.updateRadioError
 }
 
-func (fake *fakeRepository) UpdateDeviceSIMIdentity(_ context.Context, deviceID string, slotKey string, slotIndex int, fingerprint []byte, now time.Time) (string, int, error) {
+func (fake *fakeRepository) UpdateDeviceSIMIdentity(_ context.Context, deviceID string, slotKey string, slotIndex int, fingerprint []byte, now time.Time) (store.SIMSlotAssignment, error) {
 	fake.updatedSIMDevice = deviceID
 	fake.updatedSIMSlotKey = slotKey
 	fake.updatedSIMSlotIndex = slotIndex
@@ -209,7 +209,11 @@ func (fake *fakeRepository) UpdateDeviceSIMIdentity(_ context.Context, deviceID 
 	if fake.updatedSIMNumericID == 0 {
 		fake.updatedSIMNumericID = 1
 	}
-	return fake.updatedSIMID, fake.updatedSIMNumericID, fake.updateSIMError
+	return store.SIMSlotAssignment{
+		SlotID:    "01900000-0000-7000-8000-000000000098",
+		SIMID:     fake.updatedSIMID,
+		NumericID: fake.updatedSIMNumericID,
+	}, fake.updateSIMError
 }
 
 func (fake *fakeRepository) UpsertPushToken(

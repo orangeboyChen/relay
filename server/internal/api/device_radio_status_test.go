@@ -132,7 +132,7 @@ var _ = Describe("Device SIM identity", func() {
 		response := requestIdentity(repository, validBody(), "device-secret")
 
 		Expect(response.Code).To(Equal(http.StatusOK))
-		Expect(response.Body.String()).To(MatchJSON(`{"numeric_id":7,"sim_id":"01900000-0000-7000-8000-000000000099"}`))
+		Expect(response.Body.String()).To(MatchJSON(`{"slot_id":"01900000-0000-7000-8000-000000000098","numeric_id":7,"sim_id":"01900000-0000-7000-8000-000000000099"}`))
 		Expect(repository.authenticatedDeviceID).To(Equal(deviceID))
 		Expect(repository.authenticatedCredential).To(Equal("device-secret"))
 		Expect(repository.updatedSIMDevice).To(Equal(deviceID))

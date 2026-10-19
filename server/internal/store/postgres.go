@@ -58,6 +58,13 @@ type SlotRecord struct {
 	RadioStatusUpdatedAt  *time.Time `json:"radio_status_updated_at,omitempty"`
 }
 
+// SIMSlotAssignment is the current server-owned identity for a physical slot and inserted SIM.
+type SIMSlotAssignment struct {
+	SlotID    string `json:"slot_id"`
+	SIMID     string `json:"sim_id"`
+	NumericID int    `json:"numeric_id"`
+}
+
 // SIMRecord identifies a physical SIM independently from any device slot.
 type SIMRecord struct {
 	ID                string    `json:"sim_id"`
@@ -1453,13 +1460,13 @@ func (store *Postgres) UpdateDeviceRadioStatus(ctx context.Context, deviceID str
 }
 
 // UpdateDeviceSIMIdentity assigns the current card fingerprint to its physical modem slot.
-func (store *Postgres) UpdateDeviceSIMIdentity(ctx context.Context, deviceID string, slotKey string, slotIndex int, fingerprint []byte, now time.Time) (string, int, error) {
+func (store *Postgres) UpdateDeviceSIMIdentity(ctx context.Context, deviceID string, slotKey string, slotIndex int, fingerprint []byte, now time.Time) (SIMSlotAssignment, error) {
 	if len(fingerprint) != 32 || slotKey == "" || slotIndex < 1 || slotIndex > 32 {
-		return "", 0, errors.New("invalid slot or SIM fingerprint")
+		return SIMSlotAssignment{}, errors.New("invalid slot or SIM fingerprint")
 	}
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
-		return "", 0, fmt.Errorf("begin SIM identity synchronization: %w", err)
+		return SIMSlotAssignment{}, fmt.Errorf("begin SIM identity synchronization: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var slotID string
@@ -1468,7 +1475,7 @@ func (store *Postgres) UpdateDeviceSIMIdentity(ctx context.Context, deviceID str
 		SELECT id::text, current_sim_id::text FROM device_slots
 		WHERE device_id = $1 AND slot_key = $2 AND slot_index = $3 AND removed_at IS NULL
 		FOR UPDATE`, deviceID, slotKey, slotIndex).Scan(&slotID, &oldSIMID); err != nil {
-		return "", 0, err
+		return SIMSlotAssignment{}, err
 	}
 	var simID string
 	var numericID int
@@ -1487,72 +1494,72 @@ func (store *Postgres) UpdateDeviceSIMIdentity(ctx context.Context, deviceID str
 				  AND retired_at IS NULL
 				RETURNING id::text, numeric_id`, *oldSIMID, fingerprint, deviceID, now.UTC()).Scan(&simID, &numericID)
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-				return "", 0, fmt.Errorf("identify current SIM card: %w", err)
+				return SIMSlotAssignment{}, fmt.Errorf("identify current SIM card: %w", err)
 			}
 		}
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, int64(0x53494d44)); err != nil {
-			return "", 0, fmt.Errorf("lock SIM numeric ID allocation: %w", err)
+			return SIMSlotAssignment{}, fmt.Errorf("lock SIM numeric ID allocation: %w", err)
 		}
 		err = tx.QueryRow(ctx, `
 			SELECT candidate FROM generate_series(1, 99) AS candidate
 			LEFT JOIN sim_cards ON sim_cards.numeric_id = candidate AND sim_cards.retired_at IS NULL
 			WHERE sim_cards.id IS NULL ORDER BY candidate LIMIT 1`).Scan(&numericID)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", 0, domain.ErrNoNumericID
+			return SIMSlotAssignment{}, domain.ErrNoNumericID
 		}
 		if err != nil {
-			return "", 0, fmt.Errorf("allocate SIM numeric ID: %w", err)
+			return SIMSlotAssignment{}, fmt.Errorf("allocate SIM numeric ID: %w", err)
 		}
 		err = tx.QueryRow(ctx, `
 			INSERT INTO sim_cards (id, numeric_id, iccid_fingerprint, fingerprint_scope, profile_ciphertext, first_seen_at, last_seen_at)
 			VALUES (gen_random_uuid(), $1, $2, $3, ''::bytea, $4, $4)
 			RETURNING id::text`, numericID, fingerprint, deviceID, now.UTC()).Scan(&simID)
 		if err != nil {
-			return "", 0, fmt.Errorf("create SIM card identity: %w", err)
+			return SIMSlotAssignment{}, fmt.Errorf("create SIM card identity: %w", err)
 		}
 	} else if err != nil {
-		return "", 0, fmt.Errorf("find SIM card identity: %w", err)
+		return SIMSlotAssignment{}, fmt.Errorf("find SIM card identity: %w", err)
 	} else if _, err := tx.Exec(ctx, `UPDATE sim_cards SET fingerprint_scope = $2, retired_at = NULL, last_seen_at = $3 WHERE id = $1`, simID, deviceID, now.UTC()); err != nil {
-		return "", 0, fmt.Errorf("reactivate SIM card identity: %w", err)
+		return SIMSlotAssignment{}, fmt.Errorf("reactivate SIM card identity: %w", err)
 	}
 	if oldSIMID != nil && *oldSIMID != simID {
 		if _, err := tx.Exec(ctx, `
 			UPDATE slot_sim_assignments
 			SET removed_at = GREATEST($2, inserted_at)
 			WHERE slot_id = $1 AND removed_at IS NULL`, slotID, now.UTC()); err != nil {
-			return "", 0, err
+			return SIMSlotAssignment{}, err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE device_slots SET current_sim_id = NULL WHERE id = $1`, slotID); err != nil {
-			return "", 0, err
+			return SIMSlotAssignment{}, err
 		}
 	}
 	if _, err := tx.Exec(ctx, `UPDATE device_slots SET current_sim_id = NULL WHERE current_sim_id = $1 AND id <> $2`, simID, slotID); err != nil {
-		return "", 0, err
+		return SIMSlotAssignment{}, err
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE slot_sim_assignments
 		SET removed_at = GREATEST($3, inserted_at)
 		WHERE sim_id = $1 AND slot_id <> $2 AND removed_at IS NULL`, simID, slotID, now.UTC()); err != nil {
-		return "", 0, err
+		return SIMSlotAssignment{}, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE device_slots SET current_sim_id = $2, last_seen_at = $3 WHERE id = $1`, slotID, simID, now.UTC()); err != nil {
-		return "", 0, err
+		return SIMSlotAssignment{}, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE devices SET numeric_id = $2, last_seen_at = $3 WHERE id = $1 AND revoked_at IS NULL`, deviceID, numericID, now.UTC()); err != nil {
-		return "", 0, fmt.Errorf("update legacy device SIM identity: %w", err)
+		return SIMSlotAssignment{}, fmt.Errorf("update legacy device SIM identity: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO slot_sim_assignments (slot_id, sim_id, inserted_at)
 		SELECT $1, $2, $3
 		WHERE NOT EXISTS (SELECT 1 FROM slot_sim_assignments WHERE slot_id = $1 AND sim_id = $2 AND removed_at IS NULL)`, slotID, simID, now.UTC()); err != nil {
-		return "", 0, err
+		return SIMSlotAssignment{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return "", 0, fmt.Errorf("commit SIM identity synchronization: %w", err)
+		return SIMSlotAssignment{}, fmt.Errorf("commit SIM identity synchronization: %w", err)
 	}
-	return simID, numericID, nil
+	return SIMSlotAssignment{SlotID: slotID, SIMID: simID, NumericID: numericID}, nil
 }
 
 // InsertEvent stores an encrypted event once and returns its server sequence.

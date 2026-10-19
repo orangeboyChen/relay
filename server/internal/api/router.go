@@ -58,7 +58,7 @@ type Repository interface {
 	CommandStatus(context.Context, string, string, time.Time) (domain.CommandStatus, error)
 	UpdateDeviceCommandPublicKey(context.Context, string, []byte) error
 	UpdateDeviceRadioStatus(context.Context, string, string, int, string, *int, time.Time) error
-	UpdateDeviceSIMIdentity(context.Context, string, string, int, []byte, time.Time) (string, int, error)
+	UpdateDeviceSIMIdentity(context.Context, string, string, int, []byte, time.Time) (store.SIMSlotAssignment, error)
 	RegisterAppInstallation(context.Context, string, store.AppInstallationRegistration, time.Time) (store.AppInstallationRecord, bool, error)
 	UpsertPushToken(context.Context, string, string, string, string, []byte, time.Time) error
 	DeletePushToken(context.Context, string, string, string, string) error
@@ -1019,7 +1019,7 @@ func (router *router) updateDeviceSIMIdentity(writer http.ResponseWriter, reques
 		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is invalid or revoked.")
 		return
 	}
-	simID, numericID, err := router.repository.UpdateDeviceSIMIdentity(request.Context(), body.DeviceUUID, body.SlotKey, body.SlotIndex, fingerprint, router.now())
+	assignment, err := router.repository.UpdateDeviceSIMIdentity(request.Context(), body.DeviceUUID, body.SlotKey, body.SlotIndex, fingerprint, router.now())
 	if err != nil {
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):

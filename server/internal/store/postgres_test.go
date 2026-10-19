@@ -463,7 +463,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		firstDevice := createDevice(firstDeviceID)
 		fingerprint := bytes.Repeat([]byte{67}, 32)
 		firstSlot := firstDevice.Slots[0]
-		firstSIMID, firstNumericID, err := database.UpdateDeviceSIMIdentity(
+		firstAssignment, err := database.UpdateDeviceSIMIdentity(
 			context.Background(), firstDevice.ID, firstSlot.SlotKey, firstSlot.SlotIndex, fingerprint, now,
 		)
 		Expect(err).NotTo(HaveOccurred())
@@ -481,13 +481,13 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(approved.Slots).To(HaveLen(1))
-		movedSIMID, movedNumericID, err := database.UpdateDeviceSIMIdentity(
+		movedAssignment, err := database.UpdateDeviceSIMIdentity(
 			context.Background(), secondDeviceID, approved.Slots[0].SlotKey, approved.Slots[0].SlotIndex,
 			fingerprint, now.Add(2*time.Minute),
 		)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(movedSIMID).To(Equal(firstSIMID))
-		Expect(movedNumericID).To(Equal(firstNumericID))
+		Expect(movedAssignment.SIMID).To(Equal(firstAssignment.SIMID))
+		Expect(movedAssignment.NumericID).To(Equal(firstAssignment.NumericID))
 	})
 
 	It("rejects approval after the candidate discovery expires", func() {
@@ -851,8 +851,10 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(slots[0].Slots).To(HaveLen(1))
 		slotKey := slots[0].Slots[0].SlotKey
 		slotIndex := slots[0].Slots[0].SlotIndex
-		firstSIM, firstNumeric, err := database.UpdateDeviceSIMIdentity(context.Background(), device.ID, slotKey, slotIndex, firstFingerprint, now)
+		firstAssignment, err := database.UpdateDeviceSIMIdentity(context.Background(), device.ID, slotKey, slotIndex, firstFingerprint, now)
 		Expect(err).NotTo(HaveOccurred())
+		firstSIM, firstNumeric := firstAssignment.SIMID, firstAssignment.NumericID
+		Expect(firstAssignment.SlotID).To(Equal(slots[0].Slots[0].ID))
 		Expect(database.UpdateSIMNumericID(context.Background(), firstSIM, 7)).To(Succeed())
 		firstNumeric = 7
 		Expect(database.UpdateSIMProfile(context.Background(), firstSIM, []byte("encrypted line profile"))).To(Succeed())
@@ -865,8 +867,9 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 			VALUES (gen_random_uuid(), 8, ''::bytea)`)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(database.UpdateSIMNumericID(context.Background(), firstSIM, 8)).To(MatchError(domain.ErrDuplicateNumericID))
-		secondSIM, secondNumeric, err := database.UpdateDeviceSIMIdentity(context.Background(), device.ID, slotKey, slotIndex, secondFingerprint, now.Add(time.Minute))
+		secondAssignment, err := database.UpdateDeviceSIMIdentity(context.Background(), device.ID, slotKey, slotIndex, secondFingerprint, now.Add(time.Minute))
 		Expect(err).NotTo(HaveOccurred())
+		secondSIM, secondNumeric := secondAssignment.SIMID, secondAssignment.NumericID
 		Expect(secondSIM).NotTo(Equal(firstSIM))
 		Expect(secondNumeric).NotTo(Equal(firstNumeric))
 		Expect(database.UpdateSIMNumericID(context.Background(), firstSIM, 9)).To(Succeed())
@@ -882,10 +885,10 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		missingSIM := "01900000-0000-7000-8000-000000000199"
 		Expect(database.UpdateSIMNumericID(context.Background(), missingSIM, 9)).To(MatchError(ContainSubstring(pgx.ErrNoRows.Error())))
 		Expect(database.UpdateSIMProfile(context.Background(), missingSIM, []byte("missing"))).To(MatchError(ContainSubstring(pgx.ErrNoRows.Error())))
-		reusedSIM, reusedNumeric, err := database.UpdateDeviceSIMIdentity(context.Background(), device.ID, slotKey, slotIndex, firstFingerprint, now.Add(2*time.Minute))
+		reusedAssignment, err := database.UpdateDeviceSIMIdentity(context.Background(), device.ID, slotKey, slotIndex, firstFingerprint, now.Add(2*time.Minute))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(reusedSIM).To(Equal(firstSIM))
-		Expect(reusedNumeric).To(Equal(firstNumeric))
+		Expect(reusedAssignment.SIMID).To(Equal(firstSIM))
+		Expect(reusedAssignment.NumericID).To(Equal(firstNumeric))
 		listed, err = database.ListDevices(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(listed[0].Slots[0].SIMID).To(HaveValue(Equal(firstSIM)))
@@ -901,16 +904,16 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		firstSlot := firstDevice.Slots[0]
 		secondSlot := secondDevice.Slots[0]
 
-		simID, numericID, err := database.UpdateDeviceSIMIdentity(
+		assignment, err := database.UpdateDeviceSIMIdentity(
 			context.Background(), firstDevice.ID, firstSlot.SlotKey, firstSlot.SlotIndex, fingerprint, now,
 		)
 		Expect(err).NotTo(HaveOccurred())
-		movedSIMID, movedNumericID, err := database.UpdateDeviceSIMIdentity(
+		movedAssignment, err := database.UpdateDeviceSIMIdentity(
 			context.Background(), secondDevice.ID, secondSlot.SlotKey, secondSlot.SlotIndex, fingerprint, now.Add(time.Minute),
 		)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(movedSIMID).To(Equal(simID))
-		Expect(movedNumericID).To(Equal(numericID))
+		Expect(movedAssignment.SIMID).To(Equal(assignment.SIMID))
+		Expect(movedAssignment.NumericID).To(Equal(assignment.NumericID))
 
 		listed, err := database.ListDevices(context.Background())
 		Expect(err).NotTo(HaveOccurred())
@@ -920,14 +923,14 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 			byID[record.ID] = record
 		}
 		Expect(byID[firstDevice.ID].Slots[0].SIMID).To(BeNil())
-		Expect(byID[secondDevice.ID].Slots[0].SIMID).To(HaveValue(Equal(simID)))
+		Expect(byID[secondDevice.ID].Slots[0].SIMID).To(HaveValue(Equal(assignment.SIMID)))
 	})
 
 	It("moves one identified SIM between physical slots without cloning it", func() {
 		device := createDevice(firstDeviceID)
 		fingerprint := bytes.Repeat([]byte{63}, 32)
 		firstSlot := device.Slots[0]
-		simID, numericID, err := database.UpdateDeviceSIMIdentity(
+		assignment, err := database.UpdateDeviceSIMIdentity(
 			context.Background(), device.ID, firstSlot.SlotKey, firstSlot.SlotIndex, fingerprint, now,
 		)
 		Expect(err).NotTo(HaveOccurred())
@@ -936,40 +939,40 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 			VALUES ($1, 'secondary', 2, $2, $2)`, device.ID, now)
 		Expect(err).NotTo(HaveOccurred())
 
-		movedSIMID, movedNumericID, err := database.UpdateDeviceSIMIdentity(
+		movedAssignment, err := database.UpdateDeviceSIMIdentity(
 			context.Background(), device.ID, "secondary", 2, fingerprint, now.Add(time.Minute),
 		)
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(movedSIMID).To(Equal(simID))
-		Expect(movedNumericID).To(Equal(numericID))
+		Expect(movedAssignment.SIMID).To(Equal(assignment.SIMID))
+		Expect(movedAssignment.NumericID).To(Equal(assignment.NumericID))
 		listed, err := database.ListDevices(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(listed).To(HaveLen(1))
 		Expect(listed[0].Slots).To(HaveLen(2))
 		Expect(listed[0].Slots[0].SIMID).To(BeNil())
-		Expect(listed[0].Slots[1].SIMID).To(HaveValue(Equal(simID)))
+		Expect(listed[0].Slots[1].SIMID).To(HaveValue(Equal(assignment.SIMID)))
 		var currentAssignments int
 		Expect(database.pool.QueryRow(context.Background(), `
 			SELECT count(*) FROM slot_sim_assignments
-			WHERE sim_id = $1 AND removed_at IS NULL`, simID).Scan(&currentAssignments)).To(Succeed())
+			WHERE sim_id = $1 AND removed_at IS NULL`, assignment.SIMID).Scan(&currentAssignments)).To(Succeed())
 		Expect(currentAssignments).To(Equal(1))
 	})
 
 	It("validates SIM synchronization and reports exhausted numeric IDs", func() {
 		device := createDevice(firstDeviceID)
 		fingerprint := bytes.Repeat([]byte{64}, 32)
-		_, _, err := database.UpdateDeviceSIMIdentity(context.Background(), device.ID, "", 1, fingerprint, now)
+		_, err := database.UpdateDeviceSIMIdentity(context.Background(), device.ID, "", 1, fingerprint, now)
 		Expect(err).To(MatchError("invalid slot or SIM fingerprint"))
-		_, _, err = database.UpdateDeviceSIMIdentity(context.Background(), device.ID, "primary", 0, fingerprint, now)
+		_, err = database.UpdateDeviceSIMIdentity(context.Background(), device.ID, "primary", 0, fingerprint, now)
 		Expect(err).To(MatchError("invalid slot or SIM fingerprint"))
-		_, _, err = database.UpdateDeviceSIMIdentity(context.Background(), device.ID, "primary", 1, []byte{1}, now)
+		_, err = database.UpdateDeviceSIMIdentity(context.Background(), device.ID, "primary", 1, []byte{1}, now)
 		Expect(err).To(MatchError("invalid slot or SIM fingerprint"))
-		_, _, err = database.UpdateDeviceSIMIdentity(context.Background(), device.ID, "missing", 2, fingerprint, now)
+		_, err = database.UpdateDeviceSIMIdentity(context.Background(), device.ID, "missing", 2, fingerprint, now)
 		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
 
 		firstSlot := device.Slots[0]
-		_, _, err = database.UpdateDeviceSIMIdentity(
+		_, err = database.UpdateDeviceSIMIdentity(
 			context.Background(), device.ID, firstSlot.SlotKey, firstSlot.SlotIndex, fingerprint, now,
 		)
 		Expect(err).NotTo(HaveOccurred())
@@ -979,7 +982,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 				VALUES (gen_random_uuid(), $1, ''::bytea)`, numericID)
 			Expect(err).NotTo(HaveOccurred())
 		}
-		_, _, err = database.UpdateDeviceSIMIdentity(
+		_, err = database.UpdateDeviceSIMIdentity(
 			context.Background(), device.ID, firstSlot.SlotKey, firstSlot.SlotIndex,
 			bytes.Repeat([]byte{65}, 32), now.Add(time.Minute),
 		)

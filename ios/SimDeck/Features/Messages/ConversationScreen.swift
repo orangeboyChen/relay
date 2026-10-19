@@ -6,8 +6,10 @@ struct ConversationScreen: View {
     let lines: [DeviceLineIdentity]
     let sendAction: (UUID, String, String) async throws -> Void
     let retryAction: (UUID) async throws -> Void
+    let deleteAction: (UUID) throws -> Void
     let markReadAction: (ConversationID) -> Void
 
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -16,7 +18,6 @@ struct ConversationScreen: View {
     @State private var replyTarget: MessageItem?
     @State private var activeSheet: ConversationSheet?
     @State private var messagePendingDeletion: MessageItem?
-    @State private var deletedMessageIDs: Set<UUID> = []
     @State private var isSending = false
     @State private var errorMessage: String?
 
@@ -26,12 +27,14 @@ struct ConversationScreen: View {
         lines: [DeviceLineIdentity],
         sendAction: @escaping (UUID, String, String) async throws -> Void = { _, _, _ in },
         retryAction: @escaping (UUID) async throws -> Void = { _ in },
+        deleteAction: @escaping (UUID) throws -> Void = { _ in },
         markReadAction: @escaping (ConversationID) -> Void = { _ in }
     ) {
         self.conversations = conversations
         self.lines = lines
         self.sendAction = sendAction
         self.retryAction = retryAction
+        self.deleteAction = deleteAction
         self.markReadAction = markReadAction
         _selectedID = State(initialValue: initialID)
     }
@@ -40,7 +43,7 @@ struct ConversationScreen: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 12) {
-                    ForEach(visibleMessages) { message in
+                    ForEach(conversation.messages) { message in
                         MessageBubble(
                             message: message,
                             line: line,
@@ -160,11 +163,19 @@ struct ConversationScreen: View {
         ) {
             Button("Delete", role: .destructive) {
                 guard let messagePendingDeletion else { return }
-                withAnimation(motionAnimation) {
-                    deletedMessageIDs.insert(messagePendingDeletion.id)
-                    if replyTarget?.id == messagePendingDeletion.id {
-                        replyTarget = nil
+                let removesConversation = conversation.messages.count == 1
+                do {
+                    try deleteAction(messagePendingDeletion.id)
+                    withAnimation(motionAnimation) {
+                        if replyTarget?.id == messagePendingDeletion.id {
+                            replyTarget = nil
+                        }
                     }
+                    if removesConversation {
+                        dismiss()
+                    }
+                } catch {
+                    errorMessage = error.localizedDescription
                 }
                 self.messagePendingDeletion = nil
             }
@@ -182,10 +193,6 @@ struct ConversationScreen: View {
 
     private var line: DeviceLineIdentity {
         lines.first(where: { $0.id == conversation.lineID }) ?? lines[0]
-    }
-
-    private var visibleMessages: [MessageItem] {
-        conversation.messages.filter { !deletedMessageIDs.contains($0.id) }
     }
 
     private var deletionConfirmationIsPresented: Binding<Bool> {
@@ -257,7 +264,7 @@ struct ConversationScreen: View {
     }
 
     private func scrollToBottom(using proxy: ScrollViewProxy, animated: Bool = false) {
-        guard let lastID = visibleMessages.last?.id else { return }
+        guard let lastID = conversation.messages.last?.id else { return }
 
         Task { @MainActor in
             await Task.yield()

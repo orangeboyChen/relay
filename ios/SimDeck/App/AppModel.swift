@@ -372,6 +372,35 @@ final class AppModel {
         persistMessageHistoryIfAvailable()
     }
 
+    func deleteMessage(id: UUID) throws {
+        let previousConversations = loadedConversations
+        var conversations = previousConversations
+        guard let conversationIndex = conversations.firstIndex(where: { conversation in
+            conversation.messages.contains { $0.id == id }
+        }) else {
+            throw ServerConnectionError.invalidResponse
+        }
+
+        conversations[conversationIndex].messages.removeAll { $0.id == id }
+        if conversations[conversationIndex].messages.isEmpty {
+            conversations.remove(at: conversationIndex)
+        } else {
+            conversations[conversationIndex].unreadCount = min(
+                conversations[conversationIndex].unreadCount,
+                conversations[conversationIndex].messages.count
+            )
+        }
+        messages = .loaded(sortedConversations(conversations))
+
+        guard let recoveredVaultKey else { return }
+        do {
+            try messageHistoryStore.save(conversations, using: recoveredVaultKey)
+        } catch {
+            messages = .loaded(previousConversations)
+            throw error
+        }
+    }
+
     func openDeviceDiscovery() async throws -> DeviceDiscoverySessionState {
         try await serverConnection.openDeviceDiscovery()
     }

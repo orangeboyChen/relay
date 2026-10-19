@@ -7,6 +7,7 @@ struct MessagesScreen: View {
     let refreshAction: () async -> Void
     let sendAction: (UUID, String, String) async throws -> Void
     let retryAction: (UUID) async throws -> Void
+    let deleteAction: (UUID) throws -> Void
     let markReadAction: (ConversationID) -> Void
 
     @State private var searchText = ""
@@ -20,6 +21,7 @@ struct MessagesScreen: View {
         refreshAction: @escaping () async -> Void = {},
         sendAction: @escaping (UUID, String, String) async throws -> Void = { _, _, _ in },
         retryAction: @escaping (UUID) async throws -> Void = { _ in },
+        deleteAction: @escaping (UUID) throws -> Void = { _ in },
         markReadAction: @escaping (ConversationID) -> Void = { _ in }
     ) {
         self.state = state
@@ -28,6 +30,7 @@ struct MessagesScreen: View {
         self.refreshAction = refreshAction
         self.sendAction = sendAction
         self.retryAction = retryAction
+        self.deleteAction = deleteAction
         self.markReadAction = markReadAction
     }
 
@@ -104,6 +107,7 @@ struct MessagesScreen: View {
                                 lines: lines,
                                 sendAction: sendAction,
                                 retryAction: retryAction,
+                                deleteAction: deleteAction,
                                 markReadAction: markReadAction
                             )
                         } label: {

@@ -77,6 +77,66 @@ final class AppMessageFlowTests: XCTestCase {
         XCTAssertEqual(transport.sent.map(\.messageID), [failed.id, failed.id])
     }
 
+    func testDeletingMessagesPersistsEncryptedHistoryAndRemovesEmptyConversation() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let historyStore = EncryptedMessageHistoryStore(
+            fileURL: directory.appending(path: "messages.bin")
+        )
+        let vaultKey = try VaultKey(data: Data(repeating: 9, count: VaultKey.length))
+        let firstMessage = MessageItem(
+            id: UUID(),
+            direction: .received,
+            body: "first",
+            attachment: nil,
+            sentAt: Date(timeIntervalSince1970: 100),
+            status: .delivered
+        )
+        let secondMessage = MessageItem(
+            id: UUID(),
+            direction: .sent,
+            body: "second",
+            attachment: nil,
+            sentAt: Date(timeIntervalSince1970: 101),
+            status: .sent
+        )
+        let conversation = MessageConversation(
+            lineID: firstLine.id,
+            remoteNumber: "10086",
+            contactName: nil,
+            unreadCount: 1,
+            messages: [firstMessage, secondMessage]
+        )
+        try historyStore.save([conversation], using: vaultKey)
+        let defaults = UserDefaults(suiteName: "AppMessageDeleteTests.\(UUID().uuidString)")!
+        let connection = ServerConnectionManager(
+            network: MessageServerNetwork(),
+            sessionStore: MessageSessionStore(value: Self.activeSession),
+            defaults: defaults
+        )
+        let model = AppModel(
+            devices: [firstLine],
+            serverConnection: connection,
+            installationBootstrapper: MessageInstallationBootstrapper(vaultKey: vaultKey),
+            messageTransport: MessageTransportFake(),
+            messageHistoryStore: historyStore,
+            remoteDeviceRefreshEnabled: false
+        )
+        model.bootstrapInstallation()
+
+        try model.deleteMessage(id: firstMessage.id)
+
+        XCTAssertEqual(model.messageItems, [secondMessage])
+        XCTAssertEqual(model.conversations.first?.unreadCount, 1)
+        XCTAssertEqual(try historyStore.load(using: vaultKey).first?.messages, [secondMessage])
+
+        try model.deleteMessage(id: secondMessage.id)
+
+        XCTAssertTrue(model.conversations.isEmpty)
+        XCTAssertTrue(try historyStore.load(using: vaultKey).isEmpty)
+    }
+
     func testRefreshDeduplicatesIncomingMessagesAndSeparatesSIMConversations() async {
         let sourceID = String(repeating: "e", count: 64)
         let transport = MessageTransportFake(
@@ -172,6 +232,26 @@ private extension AppModel {
     var messageItems: [MessageItem] {
         conversations.flatMap(\.messages)
     }
+}
+
+private struct MessageInstallationBootstrapper: InstallationBootstrapping {
+    let vaultKey: VaultKey
+
+    func bootstrap() throws -> InstallationBootstrapResult {
+        InstallationBootstrapResult(
+            identity: InstallationIdentity(
+                id: UUID(uuidString: "01900000-0000-7000-8000-000000000901")!,
+                signingPrivateKey: Data(repeating: 1, count: 32),
+                keyAgreementPrivateKey: Data(repeating: 2, count: 32),
+                pendingRevocationIDs: []
+            ),
+            recoveredVaultKey: vaultKey,
+            pendingRevocationIDs: []
+        )
+    }
+
+    func saveVaultKey(_ key: VaultKey) throws {}
+    func markInstallationRevoked(_ id: UUID) throws {}
 }
 
 @MainActor

@@ -143,6 +143,41 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertNil(coordinator.callStartFailureID)
     }
 
+    func testSystemStartActionIsFulfilledBeforeRemoteSetupCompletes() async throws {
+        let transport = SuspendedStartCallTransport()
+        let controller = RecordingSystemCallController()
+        let coordinator = CallKitCoordinator(
+            transport: transport,
+            controller: controller,
+            integratesWithSystem: true
+        )
+        let startTask = Task {
+            try await coordinator.startCall(to: "13500000000", using: UUID())
+        }
+        for _ in 0..<10 where controller.transactions.isEmpty {
+            await Task.yield()
+        }
+        let transaction = try XCTUnwrap(controller.transactions.first)
+        let action = try XCTUnwrap(transaction.actions.first as? CXStartCallAction)
+        var didFulfill = false
+        var didFail = false
+
+        coordinator.beginSystemStartCall(callID: action.callUUID) {
+            didFulfill = true
+        } fail: {
+            didFail = true
+        }
+
+        XCTAssertTrue(didFulfill)
+        XCTAssertFalse(didFail)
+        for _ in 0..<10 where !transport.isStartPending {
+            await Task.yield()
+        }
+        XCTAssertTrue(transport.isStartPending)
+        transport.completeStart()
+        try await startTask.value
+    }
+
     func testEndEventDuringOutgoingStartIsAppliedAfterStartCompletes() async throws {
         let transport = RecordingCallTransport(endsBeforeStartCompletes: true)
         let coordinator = CallKitCoordinator(
@@ -349,6 +384,53 @@ private final class RecordingSystemCallProvider: SystemCallProviding {
     }
     func reportOutgoingCall(with UUID: UUID, startedConnectingAt dateStartedConnecting: Date?) {}
     func reportOutgoingCall(with UUID: UUID, connectedAt dateConnected: Date?) {}
+}
+
+@MainActor
+private final class RecordingSystemCallController: SystemCallControlling {
+    private(set) var transactions: [CXTransaction] = []
+
+    func request(_ transaction: CXTransaction) async throws {
+        transactions.append(transaction)
+    }
+}
+
+@MainActor
+private final class SuspendedStartCallTransport: CallTransport {
+    let capabilities = CallCapabilities.cellular
+    private var eventHandler: (@MainActor (CallTransportEvent) -> Void)?
+    private var startContinuation: CheckedContinuation<Void, Never>?
+
+    var isStartPending: Bool { startContinuation != nil }
+
+    func setEventHandler(_ handler: @escaping @MainActor (CallTransportEvent) -> Void) {
+        eventHandler = handler
+    }
+
+    func registerIncomingCall(_ call: IncomingCallRegistration) throws {}
+    func discardIncomingCall(callID: UUID) {}
+
+    func startOutgoingCall(callID: UUID, number: String, lineID: UUID) async throws {
+        await withCheckedContinuation { continuation in
+            startContinuation = continuation
+        }
+        eventHandler?(.ringing(callID: callID))
+    }
+
+    func completeStart() {
+        startContinuation?.resume()
+        startContinuation = nil
+    }
+
+    func answerIncomingCall(callID: UUID) async throws {}
+    func rejectIncomingCall(callID: UUID) async throws {}
+    func endCall(callID: UUID) async throws {}
+    func setHeld(_ isHeld: Bool, callID: UUID) async throws {}
+    func setMuted(_ isMuted: Bool, callID: UUID) async throws {}
+    func playDTMF(_ digits: String, callID: UUID) async throws {}
+    func audioSessionDidActivate(_ audioSession: AVAudioSession) async {}
+    func audioSessionDidDeactivate(_ audioSession: AVAudioSession) async {}
+    func reset() async {}
 }
 
 @MainActor

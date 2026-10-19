@@ -18,7 +18,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
     let audioRoutes: CallAudioRouteController
 
     @ObservationIgnored private let provider: any SystemCallProviding
-    @ObservationIgnored private let controller: CXCallController
+    @ObservationIgnored private let controller: any SystemCallControlling
     @ObservationIgnored private let transport: any CallTransport
     @ObservationIgnored private let incomingCallClaimer: (any IncomingCallClaiming)?
     @ObservationIgnored private let recentCallLineStore: any RecentCallLineStoring
@@ -34,7 +34,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
         transport: any CallTransport = UnavailableCallTransport(),
         incomingCallClaimer: (any IncomingCallClaiming)? = nil,
         provider: (any SystemCallProviding)? = nil,
-        controller: CXCallController = CXCallController(),
+        controller: any SystemCallControlling = CXCallController(),
         integratesWithSystem: Bool = true,
         initialCall: ActiveCallSession? = nil,
         recentCallLineStore: any RecentCallLineStoring = NullRecentCallLineStore(),
@@ -433,6 +433,28 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
         Task { await endRemoteCall(callID: callID, isIncoming: isIncoming) }
     }
 
+    func beginSystemStartCall(callID: UUID, fulfill: () -> Void, fail: () -> Void) {
+        guard let request = pendingOutgoing[callID] else {
+            fail()
+            return
+        }
+
+        // CallKit actions have a short system deadline. Accept the transaction
+        // before the encrypted command and WebRTC negotiation cross the network.
+        fulfill()
+        Task {
+            do {
+                try await startOutgoingCall(request, reportToCallKit: true)
+            } catch {
+                self.provider.reportCall(
+                    with: request.callID,
+                    endedAt: .now,
+                    reason: .failed
+                )
+            }
+        }
+    }
+
     private func endRemoteCall(callID: UUID, isIncoming: Bool) async {
         do {
             if isIncoming {
@@ -482,18 +504,10 @@ extension CallKitCoordinator: @preconcurrency CXProviderDelegate {
     }
 
     func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
-        guard let request = pendingOutgoing[action.callUUID] else {
+        beginSystemStartCall(callID: action.callUUID) {
+            action.fulfill()
+        } fail: {
             action.fail()
-            return
-        }
-
-        Task {
-            do {
-                try await startOutgoingCall(request, reportToCallKit: true)
-                action.fulfill()
-            } catch {
-                action.fail()
-            }
         }
     }
 

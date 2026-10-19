@@ -15,3 +15,10 @@ protocol SystemCallProviding: AnyObject {
 }
 
 extension CXProvider: SystemCallProviding {}
+
+@MainActor
+protocol SystemCallControlling: AnyObject {
+    func request(_ transaction: CXTransaction) async throws
+}
+
+extension CXCallController: SystemCallControlling {}

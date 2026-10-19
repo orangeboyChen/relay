@@ -12,8 +12,9 @@ deduplication are implemented. Complete messages remain in an encrypted local
 pending queue until the server has accepted each approved iPhone's own
 end-to-end encrypted event. Deterministic event IDs make retries idempotent.
 Outgoing SMS uses an end-to-end encrypted command from the iOS app.
-SMS APNs alert notifications are not implemented yet; message synchronization
-currently happens when the app refreshes its encrypted event stream.
+When APNs is configured, encrypted SMS alert notifications are delivered to the
+iOS notification service extension. Without APNs, message synchronization
+continues through the app's encrypted event stream when the app refreshes.
 
 ## Development
 
@@ -24,7 +25,10 @@ go vet ./...
 make coverage
 ```
 
-`make coverage` fails when repository-wide statement coverage is below 90%.
+`make coverage` enforces at least 90% statement coverage for the unit-test
+scope. The process entrypoint and modem/ALSA/WebRTC integration adapters are
+compiled and covered by integration tests instead of being counted in this
+in-memory metric.
 
 ## Container model
 

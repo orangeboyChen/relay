@@ -67,7 +67,9 @@ struct NewMessageScreen: View {
                         draft: $draft.body,
                         isTextEntryEnabled: canEditMessage && !isSending,
                         canSend: draft.canSend(using: lines) && !isSending,
-                        attachmentAction: {},
+                        attachmentAction: {
+                            errorMessage = String(localized: "Image attachments are not available yet.")
+                        },
                         sendAction: send
                     )
                 }

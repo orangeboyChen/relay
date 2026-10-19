@@ -105,7 +105,9 @@ struct DeviceLineIdentity: Identifiable, Equatable, Sendable {
         radioStatus: CellularRadioStatus? = nil,
         commandPublicKey: Data?
     ) {
-        self.id = simID ?? slotID ?? id
+        // A slot is the stable routing identity for a physical modem position.
+        // The SIM identity is independently managed and may be moved or replaced.
+        self.id = slotID ?? simID ?? id
         self.deviceID = deviceID ?? id
         self.slotID = slotID
         self.simID = simID

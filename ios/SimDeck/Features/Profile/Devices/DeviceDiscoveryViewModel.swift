@@ -86,7 +86,11 @@ final class DeviceDiscoveryViewModel {
     func poll() async {
         while !Task.isCancelled {
             do {
-                try await clock.sleepForPolling()
+                if case .failed = loadState {
+                    try await Task.sleep(for: .seconds(10))
+                } else {
+                    try await clock.sleepForPolling()
+                }
             } catch {
                 return
             }

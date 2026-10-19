@@ -4,6 +4,27 @@ import XCTest
 
 @MainActor
 final class ServerConnectionManagerTests: XCTestCase {
+    func testRevokeCurrentSessionCallsLogoutAndClearsLocalSession() async throws {
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
+        )
+        let network = ScriptedServerNetwork { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/v1/auth/logout")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
+            return Self.response(status: 204, body: "")
+        }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+
+        try await manager.revokeCurrentSession()
+
+        XCTAssertFalse(manager.isSignedIn)
+        XCTAssertEqual(manager.state, .disconnected)
+        XCTAssertNil(store.value)
+    }
+
     func testSignInPersistsSessionAndLoadsEncryptedCommandMetadata() async throws {
         let deviceID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!
         let futureDeviceID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-ffffffffffff")!
@@ -125,6 +146,41 @@ final class ServerConnectionManagerTests: XCTestCase {
         XCTAssertNil(devices[0].radioStatus)
         XCTAssertEqual(devices[1].radioStatus?.technology, .nrSA)
         XCTAssertNil(devices[1].radioStatus?.signalBars)
+    }
+
+    func testLoadsDistinctLineIDsForMultipleSlotsOnOneDevice() async throws {
+        let deviceID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-000000000011")!
+        let firstSlotID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-000000000012")!
+        let secondSlotID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-000000000013")!
+        let simID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-000000000014")!
+        let key = Data(repeating: 7, count: 32)
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
+        )
+        let network = ScriptedServerNetwork { _ in
+            Self.response(status: 200, body: """
+            {"devices":[{
+              "device_uuid":"\(deviceID.uuidString.lowercased())",
+              "numeric_id":1,
+              "identity_public_key":"\(key.base64EncodedString())",
+              "command_public_key":"\(key.base64EncodedString())",
+              "last_seen_at":"2026-10-16T00:00:50Z",
+              "slots":[
+                {"slot_id":"\(firstSlotID.uuidString.lowercased())","slot_index":1,"slot_key":"usb-a","numeric_id":1},
+                {"slot_id":"\(secondSlotID.uuidString.lowercased())","slot_index":2,"slot_key":"usb-b","sim_id":"\(simID.uuidString.lowercased())","numeric_id":2}
+              ]
+            }]}
+            """)
+        }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+
+        let lines = try await manager.loadDevices(now: Date(timeIntervalSince1970: 1_792_108_860))
+
+        XCTAssertEqual(lines.map(\.id), [firstSlotID, secondSlotID])
+        XCTAssertEqual(lines.map(\.deviceID), [deviceID, deviceID])
+        XCTAssertEqual(lines[1].simID, simID)
     }
 
     func testLoadsAndDecryptsDeviceProfileWithVaultKey() async throws {

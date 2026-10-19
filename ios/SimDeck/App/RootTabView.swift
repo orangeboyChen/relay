@@ -32,6 +32,9 @@ struct RootTabView: View {
                         },
                         retryAction: { messageID in
                             try await model.retryMessage(id: messageID)
+                        },
+                        markReadAction: { conversationID in
+                            model.markConversationRead(conversationID)
                         }
                     )
                 }

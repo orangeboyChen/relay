@@ -58,4 +58,9 @@ struct EncryptedMessageHistoryStore {
             ofItemAtPath: fileURL.path
         )
     }
+
+    func delete() throws {
+        guard fileManager.fileExists(atPath: fileURL.path) else { return }
+        try fileManager.removeItem(at: fileURL)
+    }
 }

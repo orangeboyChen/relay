@@ -6,6 +6,7 @@ struct ConversationScreen: View {
     let lines: [DeviceLineIdentity]
     let sendAction: (UUID, String, String) async throws -> Void
     let retryAction: (UUID) async throws -> Void
+    let markReadAction: (ConversationID) -> Void
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -24,12 +25,14 @@ struct ConversationScreen: View {
         conversations: [MessageConversation],
         lines: [DeviceLineIdentity],
         sendAction: @escaping (UUID, String, String) async throws -> Void = { _, _, _ in },
-        retryAction: @escaping (UUID) async throws -> Void = { _ in }
+        retryAction: @escaping (UUID) async throws -> Void = { _ in },
+        markReadAction: @escaping (ConversationID) -> Void = { _ in }
     ) {
         self.conversations = conversations
         self.lines = lines
         self.sendAction = sendAction
         self.retryAction = retryAction
+        self.markReadAction = markReadAction
         _selectedID = State(initialValue: initialID)
     }
 
@@ -52,6 +55,10 @@ struct ConversationScreen: View {
                             },
                             copyAction: {
                                 UIPasteboard.general.string = message.body
+                            },
+                            copyVerificationCodeAction: {
+                                guard let code = VerificationCodeDetector.code(in: message.body) else { return }
+                                UIPasteboard.general.string = code
                             },
                             forwardAction: {
                                 activeSheet = .forward(message)
@@ -80,6 +87,7 @@ struct ConversationScreen: View {
                 scrollToBottom(using: proxy)
             }
             .onChange(of: selectedID) {
+                markReadAction(selectedID)
                 replyTarget = nil
                 messagePendingDeletion = nil
                 scrollToBottom(using: proxy, animated: true)
@@ -103,6 +111,9 @@ struct ConversationScreen: View {
                         && !isSending
                         && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                     replyPreview: replyTarget.map(messagePreview),
+                    attachmentAction: {
+                        errorMessage = String(localized: "Image attachments are not available yet.")
+                    },
                     cancelReplyAction: {
                         withAnimation(motionAnimation) {
                             replyTarget = nil
@@ -124,6 +135,9 @@ struct ConversationScreen: View {
                     selectedID: animatedSelectedID
                 )
             }
+        }
+        .onAppear {
+            markReadAction(selectedID)
         }
         .sheet(item: $activeSheet) { sheet in
             switch sheet {

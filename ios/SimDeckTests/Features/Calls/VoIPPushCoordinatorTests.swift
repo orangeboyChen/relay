@@ -82,6 +82,27 @@ final class VoIPPushCoordinatorTests: XCTestCase {
         )
     }
 
+    func testDisablingVoIPPushesUnregistersTheCurrentInstallation() async throws {
+        let registrar = RecordingPushTokenRegistrar()
+        let installationID = UUID()
+        let coordinator = VoIPPushCoordinator(
+            tokenRegistrar: registrar,
+            environment: .sandbox,
+            incomingPushHandler: { _ in }
+        )
+        coordinator.configure(installationID: installationID)
+        try await coordinator.receiveToken(Data(repeating: 3, count: 32))
+
+        try await coordinator.setEnabled(false)
+
+        XCTAssertEqual(registrar.deletions.count, 1)
+        XCTAssertEqual(
+            registrar.deletions,
+            [.init(kind: .voip, environment: .sandbox, installationID: installationID)]
+        )
+        XCTAssertEqual(registrar.registrations.count, 1)
+    }
+
     func testRetriesDeletionBeforeRegisteringAReplacementToken() async throws {
         let registrar = RecordingPushTokenRegistrar(error: TestPushError.failed)
         let installationID = UUID()

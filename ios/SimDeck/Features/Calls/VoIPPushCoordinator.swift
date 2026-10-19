@@ -1,6 +1,10 @@
 import Foundation
 import PushKit
 
+extension Notification.Name {
+    static let simDeckIncomingCallPreferenceChanged = Notification.Name("sim-deck.incoming-call-preference-changed")
+}
+
 @MainActor
 final class VoIPPushCoordinator: NSObject {
     private let tokenRegistrar: any PushTokenRegistering
@@ -10,6 +14,8 @@ final class VoIPPushCoordinator: NSObject {
     private var pendingToken: Data?
     private var requiresTokenDeletion = false
     private var registry: PKPushRegistry?
+    private var preferenceObserver: NSObjectProtocol?
+    private var isEnabled = true
 
     init(
         tokenRegistrar: any PushTokenRegistering,
@@ -23,6 +29,32 @@ final class VoIPPushCoordinator: NSObject {
 
     func start(installationID: UUID) {
         configure(installationID: installationID)
+        if preferenceObserver == nil {
+            preferenceObserver = NotificationCenter.default.addObserver(
+                forName: .simDeckIncomingCallPreferenceChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                guard let enabled = notification.object as? Bool else { return }
+                Task { @MainActor [weak self] in
+                    try? await self?.setEnabled(enabled)
+                }
+            }
+        }
+        Task { try? await setEnabled(NotificationPreferences().incomingCallNotifications) }
+    }
+
+    func setEnabled(_ enabled: Bool) async throws {
+        guard isEnabled != enabled || (enabled && registry == nil) else { return }
+        isEnabled = enabled
+        guard enabled else {
+            registry?.desiredPushTypes = []
+            registry = nil
+            pendingToken = nil
+            requiresTokenDeletion = true
+            try await uploadPendingToken()
+            return
+        }
         guard registry == nil else { return }
         let registry = PKPushRegistry(queue: .main)
         registry.delegate = self
@@ -35,6 +67,7 @@ final class VoIPPushCoordinator: NSObject {
     }
 
     func receiveToken(_ token: Data) async throws {
+        guard isEnabled else { return }
         pendingToken = token
         try await uploadPendingToken()
     }

@@ -10,14 +10,22 @@ final class AlertPushCoordinator: NSObject {
     private var pendingToken: Data?
     private var requiresTokenDeletion = false
     private var observer: NSObjectProtocol?
-
-    init(tokenRegistrar: any PushTokenRegistering, environment: PushEnvironment) {
+    private let onNotificationActivity: @MainActor () async -> Void
+    private var hasStarted = false
+    init(
+        tokenRegistrar: any PushTokenRegistering,
+        environment: PushEnvironment,
+        onNotificationActivity: @escaping @MainActor () async -> Void = {}
+    ) {
         self.tokenRegistrar = tokenRegistrar
         self.environment = environment
+        self.onNotificationActivity = onNotificationActivity
     }
 
     func start(installationID: UUID) {
         self.installationID = installationID
+        guard !hasStarted else { return }
+        hasStarted = true
         observer = NotificationCenter.default.addObserver(
             forName: .simDeckAPNsToken, object: nil, queue: .main
         ) { [weak self] notification in
@@ -29,6 +37,19 @@ final class AlertPushCoordinator: NSObject {
         }
         let center = UNUserNotificationCenter.current()
         center.delegate = self
+        let copyCodeAction = UNNotificationAction(
+            identifier: Self.copyCodeActionIdentifier,
+            title: String(localized: "Copy Code"),
+            options: [.authenticationRequired]
+        )
+        center.setNotificationCategories([
+            UNNotificationCategory(
+                identifier: Self.otpCategoryIdentifier,
+                actions: [copyCodeAction],
+                intentIdentifiers: [],
+                options: []
+            )
+        ])
         center.requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
             guard granted else { return }
             DispatchQueue.main.async { UIApplication.shared.registerForRemoteNotifications() }
@@ -55,6 +76,7 @@ final class AlertPushCoordinator: NSObject {
         requiresTokenDeletion = true
         try await uploadPendingToken()
     }
+
 }
 
 extension AlertPushCoordinator: UNUserNotificationCenterDelegate {
@@ -63,8 +85,36 @@ extension AlertPushCoordinator: UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
+        Task { @MainActor in
+            await self.onNotificationActivity()
+        }
+        guard NotificationPreferences().messageNotifications else {
+            completionHandler([])
+            return
+        }
         completionHandler([.banner, .sound, .badge])
     }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        completionHandler()
+        if response.actionIdentifier == Self.copyCodeActionIdentifier,
+           let code = response.notification.request.content.userInfo[Self.otpUserInfoKey] as? String {
+            UIPasteboard.general.string = code
+        }
+        Task { @MainActor in
+            await self.onNotificationActivity()
+        }
+    }
+}
+
+private extension AlertPushCoordinator {
+    nonisolated static let otpCategoryIdentifier = "simdeck.sms.otp"
+    nonisolated static let copyCodeActionIdentifier = "simdeck.sms.copy-code"
+    nonisolated static let otpUserInfoKey = "simdeck.sms.otp"
 }
 
 extension Notification.Name {

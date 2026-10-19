@@ -16,6 +16,7 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>voip</string>
+		<string>remote-notification</string>
 	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>

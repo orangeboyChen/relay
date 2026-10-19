@@ -7,6 +7,7 @@ struct MessagesScreen: View {
     let refreshAction: () async -> Void
     let sendAction: (UUID, String, String) async throws -> Void
     let retryAction: (UUID) async throws -> Void
+    let markReadAction: (ConversationID) -> Void
 
     @State private var searchText = ""
     @State private var selectedLineID: UUID?
@@ -18,7 +19,8 @@ struct MessagesScreen: View {
         defaultLineID: UUID? = nil,
         refreshAction: @escaping () async -> Void = {},
         sendAction: @escaping (UUID, String, String) async throws -> Void = { _, _, _ in },
-        retryAction: @escaping (UUID) async throws -> Void = { _ in }
+        retryAction: @escaping (UUID) async throws -> Void = { _ in },
+        markReadAction: @escaping (ConversationID) -> Void = { _ in }
     ) {
         self.state = state
         self.lines = lines
@@ -26,6 +28,7 @@ struct MessagesScreen: View {
         self.refreshAction = refreshAction
         self.sendAction = sendAction
         self.retryAction = retryAction
+        self.markReadAction = markReadAction
     }
 
     var body: some View {
@@ -95,11 +98,13 @@ struct MessagesScreen: View {
                             ConversationScreen(
                                 initialID: conversation.id,
                                 conversations: conversations.filter {
-                                    $0.remoteNumber == conversation.remoteNumber
+                                    $0.lineID == conversation.lineID
+                                        && $0.remoteNumber == conversation.remoteNumber
                                 },
                                 lines: lines,
                                 sendAction: sendAction,
-                                retryAction: retryAction
+                                retryAction: retryAction,
+                                markReadAction: markReadAction
                             )
                         } label: {
                             ConversationRow(conversation: conversation, line: line)

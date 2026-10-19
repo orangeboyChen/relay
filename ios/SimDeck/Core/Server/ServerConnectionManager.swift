@@ -406,6 +406,11 @@ final class ServerConnectionManager {
 
     var isSignedIn: Bool { session != nil }
 
+    func markRequestFailed(_ error: Error) {
+        state = .failed
+        lastErrorDescription = error.localizedDescription
+    }
+
     var authenticatedBaseURL: URL? { try? validatedBaseURL() }
     var accessToken: String? { session?.accessToken }
 
@@ -440,6 +445,14 @@ final class ServerConnectionManager {
         lastErrorDescription = nil
     }
 
+    func revokeCurrentSession() async throws {
+        let (_, response) = try await authenticatedRequest(path: "v1/auth/logout", method: "POST")
+        guard response.statusCode == 204 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
+        }
+        try signOut()
+    }
+
     func loadDevices(profileKey: VaultKey? = nil, now: Date = .now) async throws -> [DeviceLineIdentity] {
         do {
             let (data, response) = try await authenticatedRequest(path: "v1/devices", method: "GET")
@@ -451,6 +464,17 @@ final class ServerConnectionManager {
                 uniqueKeysWithValues: body.devices.compactMap { device in
                     guard device.identityPublicKey.count == 32 else { return nil }
                     return (device.deviceUUID, device.identityPublicKey)
+                }
+            )
+            NotificationSharedState.cacheDeviceKeys(
+                body.devices.reduce(into: [UUID: CachedDeviceKeys]()) { result, device in
+                    guard device.identityPublicKey.count == 32,
+                          let commandKey = device.commandPublicKey,
+                          commandKey.count == 32 else { return }
+                    result[device.deviceUUID] = CachedDeviceKeys(
+                        verificationKey: device.identityPublicKey,
+                        commandKey: commandKey
+                    )
                 }
             )
             let devices = try body.devices.flatMap { device in
@@ -487,8 +511,8 @@ final class ServerConnectionManager {
                         CellularRadioStatus(technology: slot.radioAccessTechnology ?? .unknown, signalBars: slot.signalBars)
                     } else { radioStatus }
                     return DeviceLineIdentity(
-                        // Existing command transports address the modem by device UUID; slot IDs are carried separately.
-                        id: device.deviceUUID,
+                        // Commands still target the modem device; the line identity targets its slot.
+                        id: slot.slotID ?? slot.simID ?? device.deviceUUID,
                         deviceID: device.deviceUUID,
                         slotID: slot.slotID,
                         simID: slot.simID,
@@ -885,20 +909,10 @@ final class ServerConnectionManager {
         body: Data? = nil,
         queryItems: [URLQueryItem] = []
     ) async throws -> (Data, HTTPURLResponse) {
-        let baseURL = try validatedBaseURL()
-        var activeSession = try await validSession(baseURL: baseURL)
-        var urlRequest = request(
-            baseURL: baseURL,
-            path: path,
-            method: method,
-            body: body,
-            queryItems: queryItems,
-            accessToken: activeSession.accessToken
-        )
-        var result = try await network.data(for: urlRequest)
-        if result.1.statusCode == 401 {
-            activeSession = try await refresh(baseURL: baseURL, session: activeSession)
-            urlRequest = request(
+        do {
+            let baseURL = try validatedBaseURL()
+            var activeSession = try await validSession(baseURL: baseURL)
+            var urlRequest = request(
                 baseURL: baseURL,
                 path: path,
                 method: method,
@@ -906,9 +920,25 @@ final class ServerConnectionManager {
                 queryItems: queryItems,
                 accessToken: activeSession.accessToken
             )
-            result = try await network.data(for: urlRequest)
+            var result = try await network.data(for: urlRequest)
+            if result.1.statusCode == 401 {
+                activeSession = try await refresh(baseURL: baseURL, session: activeSession)
+                urlRequest = request(
+                    baseURL: baseURL,
+                    path: path,
+                    method: method,
+                    body: body,
+                    queryItems: queryItems,
+                    accessToken: activeSession.accessToken
+                )
+                result = try await network.data(for: urlRequest)
+            }
+            return result
+        } catch {
+            state = .failed
+            lastErrorDescription = error.localizedDescription
+            throw error
         }
-        return result
     }
 
     private func validSession(baseURL: URL) async throws -> ServerSession {

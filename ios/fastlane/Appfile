@@ -1,3 +1,4 @@
-app_identifier(ENV.fetch("APP_IDENTIFIER", "com.nowcent.simdeck"))
-team_id(ENV.fetch("APPLE_TEAM_ID", "97YACL9S6W"))
-itc_team_id(ENV["APP_STORE_CONNECT_TEAM_ID"]) if ENV["APP_STORE_CONNECT_TEAM_ID"]
+app_identifier("com.nowcent.simdeck")
+apple_id("chenenhan@live.com")
+team_id("97YACL9S6W")
+itc_team_id("122889700")

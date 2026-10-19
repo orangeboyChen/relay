@@ -49,4 +49,18 @@ final class EncryptedMessageHistoryStoreTests: XCTestCase {
             XCTAssertEqual($0 as? MessageHistoryStoreError, .invalidData)
         }
     }
+
+    func testDeleteRemovesEncryptedHistoryWithoutAffectingAnEmptyStore() throws {
+        let fileURL = FileManager.default.temporaryDirectory.appending(path: "messages-\(UUID()).bin")
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let store = EncryptedMessageHistoryStore(fileURL: fileURL)
+        let key = VaultKey.random()
+
+        try store.save([], using: key)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
+
+        try store.delete()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+        try store.delete()
+    }
 }

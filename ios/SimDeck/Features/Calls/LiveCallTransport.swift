@@ -94,7 +94,17 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
     }
 
     func updateLineRoutes(_ lines: [DeviceLineIdentity]) {
-        lineRoutes = Dictionary(uniqueKeysWithValues: lines.map { ($0.id, $0) })
+        var routes: [UUID: DeviceLineIdentity] = [:]
+        for line in lines {
+            routes[line.id] = line
+            if let slotID = line.slotID {
+                routes[slotID] = line
+            }
+            if let simID = line.simID {
+                routes[simID] = line
+            }
+        }
+        lineRoutes = routes
     }
 
     func deviceID(for lineID: UUID) -> UUID {

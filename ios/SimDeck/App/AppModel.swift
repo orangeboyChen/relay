@@ -193,7 +193,10 @@ final class AppModel {
         if alertPushCoordinator == nil {
             alertPushCoordinator = AlertPushCoordinator(
                 tokenRegistrar: serverConnection,
-                environment: Self.pushEnvironment
+                environment: Self.pushEnvironment,
+                onNotificationActivity: { [weak self] in
+                    await self?.refreshMessages()
+                }
             )
         }
         alertPushCoordinator?.start(installationID: installationIdentity.id)
@@ -259,6 +262,7 @@ final class AppModel {
             }
             messageTransport.acknowledge(sequence: batch.nextSequence)
         } catch {
+            serverConnection.markRequestFailed(error)
             if case .loaded(let conversations) = messages, !conversations.isEmpty {
                 return
             }
@@ -327,6 +331,15 @@ final class AppModel {
             persistMessageHistoryIfAvailable()
             throw error
         }
+    }
+
+    func markConversationRead(_ id: ConversationID) {
+        guard case .loaded(var conversations) = messages,
+              let index = conversations.firstIndex(where: { $0.id == id }),
+              conversations[index].unreadCount > 0 else { return }
+        conversations[index].unreadCount = 0
+        messages = .loaded(sortedConversations(conversations))
+        persistMessageHistoryIfAvailable()
     }
 
     func openDeviceDiscovery() async throws -> DeviceDiscoverySessionState {
@@ -471,6 +484,20 @@ final class AppModel {
         installationTrust = nil
     }
 
+    func revokeCurrentSession() async throws {
+        try await serverConnection.revokeCurrentSession()
+        devices = []
+        managedSIMs = []
+        messages = .loaded([])
+        callHistory = .loaded([])
+        installationTrust = nil
+    }
+
+    func clearLocalMessageCache() throws {
+        try messageHistoryStore.delete()
+        messages = .loaded([])
+    }
+
     private func registerInstallationIfNeeded() async throws {
         guard installationTrust == nil, let installationIdentity else { return }
         installationTrust = try await serverConnection.registerAppInstallation(
@@ -507,6 +534,16 @@ final class AppModel {
     private func mergeIncomingMessages(_ incoming: [IncomingMessageDelivery]) {
         var conversations = loadedConversations
         for delivery in incoming {
+            if let numericID = devices.first(where: { $0.id == delivery.lineID })?.numericID {
+                VerificationCodeDetector.explicitCode(in: delivery.body).map {
+                    NotificationOTPStore.append(
+                        code: $0,
+                        remoteNumber: delivery.remoteNumber,
+                        numericID: numericID,
+                        now: delivery.receivedAt
+                    )
+                }
+            }
             let conversationID = ConversationID(
                 deviceUUID: delivery.lineID,
                 remoteNumber: delivery.remoteNumber
@@ -637,13 +674,19 @@ final class AppModel {
             installationIdentity: installationIdentity,
             deviceVerificationKey: verificationKey
         )
+        var matchingLines = resolveMatchingLines(for: opened.payload)
+        if matchingLines.count != 1 {
+            await refreshDevices()
+            matchingLines = resolveMatchingLines(for: opened.payload)
+        }
+        guard matchingLines.count == 1 else {
+            throw VoIPPushError.invalidPayload
+        }
         try await callCoordinator.reportIncomingCall(
             IncomingCallPresentation(
                 notificationID: opened.delivery.notificationID,
                 callID: opened.payload.callID,
-                lineID: devices.first(where: {
-                    $0.deviceID == opened.payload.deviceUUID && $0.slotID == opened.payload.slotID
-                })?.id ?? opened.payload.deviceUUID,
+                lineID: matchingLines[0].id,
                 installationID: installationIdentity.id,
                 numericID: opened.payload.numericID,
                 remoteNumber: opened.payload.remoteNumber,
@@ -652,6 +695,16 @@ final class AppModel {
                 deviceVerificationKey: verificationKey
             )
         )
+    }
+
+    private func resolveMatchingLines(for payload: IncomingCallPayload) -> [DeviceLineIdentity] {
+        if let slotID = payload.slotID {
+            return devices.filter { $0.deviceID == payload.deviceUUID && $0.slotID == slotID }
+        }
+        if let simID = payload.simID {
+            return devices.filter { $0.deviceID == payload.deviceUUID && $0.simID == simID }
+        }
+        return devices.filter { $0.deviceID == payload.deviceUUID }
     }
 
     private static var pushEnvironment: PushEnvironment {

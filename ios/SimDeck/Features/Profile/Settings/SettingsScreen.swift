@@ -22,10 +22,10 @@ struct SettingsScreen: View {
                     SecuritySettingsScreen(model: model)
                 }
                 SettingsLink("Messages & Storage", symbol: "externaldrive") {
-                    StorageSettingsScreen()
+                    StorageSettingsScreen(model: model)
                 }
                 SettingsLink("Advanced", symbol: "gearshape.2") {
-                    AdvancedSettingsScreen()
+                    AdvancedSettingsScreen(connection: model.serverConnection)
                 }
                 SettingsLink("About", symbol: "info.circle") {
                     AboutScreen()

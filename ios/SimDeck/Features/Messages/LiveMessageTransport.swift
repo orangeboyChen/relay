@@ -114,7 +114,17 @@ final class LiveMessageTransport: MessageTransport {
     }
 
     func updateLineRoutes(_ lines: [DeviceLineIdentity]) {
-        lineRoutes = Dictionary(uniqueKeysWithValues: lines.map { ($0.id, $0) })
+        var routes: [UUID: DeviceLineIdentity] = [:]
+        for line in lines {
+            routes[line.id] = line
+            if let slotID = line.slotID {
+                routes[slotID] = line
+            }
+            if let simID = line.simID {
+                routes[simID] = line
+            }
+        }
+        lineRoutes = routes
     }
 
     func send(
@@ -219,11 +229,22 @@ final class LiveMessageTransport: MessageTransport {
                 deviceCommandPublicKey: commandPublicKey,
                 deviceVerificationKey: verificationKey
             )
+            let matchingLines: [DeviceLineIdentity]
+            if let payloadSlotID = payload.slotID {
+                matchingLines = candidates.filter { $0.slotID == payloadSlotID }
+            } else if let payloadSIMID = payload.simID {
+                matchingLines = candidates.filter { $0.simID == payloadSIMID }
+            } else {
+                matchingLines = candidates.count == 1 ? candidates : []
+            }
+            guard matchingLines.count == 1 else {
+                throw LiveMessageTransportError.invalidResponse
+            }
             deliveries.append(
                 IncomingMessageDelivery(
                     id: envelope.id,
                     sourceID: payload.messageID,
-                    lineID: candidates.first(where: { $0.slotID == payload.slotID })?.id ?? payload.deviceUUID,
+                    lineID: matchingLines[0].id,
                     remoteNumber: payload.remoteNumber,
                     body: payload.body,
                     receivedAt: payload.receivedAt

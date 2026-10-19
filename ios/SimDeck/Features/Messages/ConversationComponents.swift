@@ -61,6 +61,7 @@ struct MessageBubble: View {
     let openAttachment: () -> Void
     let replyAction: () -> Void
     let copyAction: () -> Void
+    let copyVerificationCodeAction: () -> Void
     let forwardAction: () -> Void
     let detailsAction: () -> Void
     let retryAction: () -> Void
@@ -72,6 +73,7 @@ struct MessageBubble: View {
         openAttachment: @escaping () -> Void = {},
         replyAction: @escaping () -> Void = {},
         copyAction: @escaping () -> Void = {},
+        copyVerificationCodeAction: @escaping () -> Void = {},
         forwardAction: @escaping () -> Void = {},
         detailsAction: @escaping () -> Void = {},
         retryAction: @escaping () -> Void = {},
@@ -82,6 +84,7 @@ struct MessageBubble: View {
         self.openAttachment = openAttachment
         self.replyAction = replyAction
         self.copyAction = copyAction
+        self.copyVerificationCodeAction = copyVerificationCodeAction
         self.forwardAction = forwardAction
         self.detailsAction = detailsAction
         self.retryAction = retryAction
@@ -126,10 +129,12 @@ struct MessageBubble: View {
         .contextMenu {
             MessageContextMenu(
                 canCopy: !message.body.isEmpty,
+                verificationCode: VerificationCodeDetector.code(in: message.body),
                 canForward: !message.body.isEmpty,
                 canRetry: message.direction == .sent && message.status == .failed,
                 replyAction: replyAction,
                 copyAction: copyAction,
+                copyVerificationCodeAction: copyVerificationCodeAction,
                 forwardAction: forwardAction,
                 detailsAction: detailsAction,
                 retryAction: retryAction,

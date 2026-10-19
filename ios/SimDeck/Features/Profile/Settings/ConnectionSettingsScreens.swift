@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import Contacts
 
 struct ServerSettingsScreen: View {
     let model: AppModel
@@ -240,14 +241,23 @@ private struct LinePickerRow: View {
 }
 
 struct NotificationSettingsScreen: View {
-    @State private var messageNotifications = true
-    @State private var incomingCallNotifications = true
-    @State private var showMessagePreview = false
+    @AppStorage(NotificationPreferences.messageNotificationsKey, store: NotificationPreferences.sharedDefaults) private var messageNotifications = true
+    @AppStorage(NotificationPreferences.incomingCallNotificationsKey, store: NotificationPreferences.sharedDefaults) private var incomingCallNotifications = true
+    @AppStorage(NotificationPreferences.showMessagePreviewKey, store: NotificationPreferences.sharedDefaults) private var showMessagePreview = false
 
     var body: some View {
         Form {
             Toggle("Message notifications", isOn: $messageNotifications)
-            Toggle("Incoming call notifications", isOn: $incomingCallNotifications)
+            Toggle("Incoming call notifications", isOn: Binding(
+                get: { incomingCallNotifications },
+                set: { value in
+                    incomingCallNotifications = value
+                    NotificationCenter.default.post(
+                        name: .simDeckIncomingCallPreferenceChanged,
+                        object: value
+                    )
+                }
+            ))
             Toggle("Show message preview", isOn: $showMessagePreview)
         }
         .navigationTitle("Notifications")
@@ -255,12 +265,42 @@ struct NotificationSettingsScreen: View {
 }
 
 struct ContactsSettingsScreen: View {
+    @State private var authorizationStatus = CNContactStore.authorizationStatus(for: .contacts)
+    @State private var isRequesting = false
+
     var body: some View {
         Form {
-            LabeledContent("Permission", value: "Not requested")
+            LabeledContent("Permission", value: statusLabel)
+            if authorizationStatus == .notDetermined {
+                Button {
+                    requestAccess()
+                } label: {
+                    if isRequesting { ProgressView() } else { Text("Allow Contacts Access") }
+                }
+                .disabled(isRequesting)
+            }
             Link("Open System Settings", destination: URL(string: UIApplication.openSettingsURLString)!)
         }
         .navigationTitle("Contacts")
+    }
+
+    private var statusLabel: String {
+        switch authorizationStatus {
+        case .authorized: "Allowed"
+        case .denied, .restricted: "Denied"
+        case .limited: "Limited"
+        case .notDetermined: "Not requested"
+        @unknown default: "Unknown"
+        }
+    }
+
+    private func requestAccess() {
+        isRequesting = true
+        Task {
+            let granted = (try? await CNContactStore().requestAccess(for: .contacts)) ?? false
+            authorizationStatus = granted ? .authorized : CNContactStore.authorizationStatus(for: .contacts)
+            isRequesting = false
+        }
     }
 }
 

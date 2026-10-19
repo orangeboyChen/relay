@@ -2,10 +2,12 @@ import SwiftUI
 
 struct MessageContextMenu: View {
     let canCopy: Bool
+    let verificationCode: String?
     let canForward: Bool
     let canRetry: Bool
     let replyAction: () -> Void
     let copyAction: () -> Void
+    let copyVerificationCodeAction: () -> Void
     let forwardAction: () -> Void
     let detailsAction: () -> Void
     let retryAction: () -> Void
@@ -19,6 +21,12 @@ struct MessageContextMenu: View {
         if canCopy {
             Button(action: copyAction) {
                 Label("Copy", systemImage: "document.on.document")
+            }
+        }
+
+        if verificationCode != nil {
+            Button(action: copyVerificationCodeAction) {
+                Label("Copy Verification Code", systemImage: "number")
             }
         }
 
@@ -104,10 +112,12 @@ struct MessageDetailsScreen: View {
 #Preview("Message context actions") {
     MessageContextMenu(
         canCopy: true,
+        verificationCode: "482913",
         canForward: true,
         canRetry: false,
         replyAction: {},
         copyAction: {},
+        copyVerificationCodeAction: {},
         forwardAction: {},
         detailsAction: {},
         retryAction: {},

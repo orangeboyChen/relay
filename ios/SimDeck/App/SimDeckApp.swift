@@ -3,11 +3,50 @@ import SwiftUI
 import UIKit
 
 final class SimDeckAppDelegate: NSObject, UIApplicationDelegate {
+    private var onRemoteNotificationActivity: (@MainActor () async -> Void)?
+    private var hasPendingRemoteNotification = false
+
+    @MainActor
+    func setRemoteNotificationHandler(_ handler: @escaping @MainActor () async -> Void) {
+        onRemoteNotificationActivity = handler
+        guard hasPendingRemoteNotification else { return }
+        hasPendingRemoteNotification = false
+        Task { await handler() }
+    }
+
     func application(
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
         NotificationCenter.default.post(name: .simDeckAPNsToken, object: deviceToken)
+    }
+
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        let completion = BackgroundFetchCompletion(completionHandler)
+        Task { @MainActor [weak self] in
+            if let handler = self?.onRemoteNotificationActivity {
+                await handler()
+            } else {
+                self?.hasPendingRemoteNotification = true
+            }
+            completion.finish(.newData)
+        }
+    }
+}
+
+private final class BackgroundFetchCompletion: @unchecked Sendable {
+    private let handler: (UIBackgroundFetchResult) -> Void
+
+    init(_ handler: @escaping (UIBackgroundFetchResult) -> Void) {
+        self.handler = handler
+    }
+
+    func finish(_ result: UIBackgroundFetchResult) {
+        handler(result)
     }
 }
 
@@ -48,6 +87,10 @@ struct SimDeckApp: App {
                 }
             }
                 .task {
+                    NotificationPreferences.migrateToSharedDefaults()
+                    appDelegate.setRemoteNotificationHandler {
+                        await model.refreshMessages()
+                    }
                     guard shouldStartLiveServices else { return }
                     model.bootstrapInstallation()
                     model.startVoIPPushes()

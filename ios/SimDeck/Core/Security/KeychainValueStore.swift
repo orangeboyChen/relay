@@ -6,6 +6,21 @@ struct KeychainValueStore: SecureValueStoring {
     let account: String
     let synchronizable: Bool
     let accessibility: String
+    let accessGroup: String?
+
+    init(
+        service: String,
+        account: String,
+        synchronizable: Bool,
+        accessibility: String,
+        accessGroup: String? = nil
+    ) {
+        self.service = service
+        self.account = account
+        self.synchronizable = synchronizable
+        self.accessibility = accessibility
+        self.accessGroup = accessGroup
+    }
 
     func read() throws -> Data? {
         var query = baseQuery
@@ -53,12 +68,16 @@ struct KeychainValueStore: SecureValueStoring {
     }
 
     private var baseQuery: [String: Any] {
-        [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: synchronizable,
         ]
+        if let accessGroup {
+            query[kSecAttrAccessGroup as String] = accessGroup
+        }
+        return query
     }
 }
 

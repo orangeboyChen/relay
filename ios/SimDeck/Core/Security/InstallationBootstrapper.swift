@@ -3,20 +3,24 @@ import Security
 
 struct InstallationBootstrapper: InstallationBootstrapping {
     private let identityStore: any SecureValueStoring
+    private let legacyIdentityStore: (any SecureValueStoring)?
     private let vaultStore: any SecureValueStoring
     private let markerStore: any InstallMarkerStoring
 
     init(
         identityStore: any SecureValueStoring,
         vaultStore: any SecureValueStoring,
-        markerStore: any InstallMarkerStoring
+        markerStore: any InstallMarkerStoring,
+        legacyIdentityStore: (any SecureValueStoring)? = nil
     ) {
         self.identityStore = identityStore
+        self.legacyIdentityStore = legacyIdentityStore
         self.vaultStore = vaultStore
         self.markerStore = markerStore
     }
 
     func bootstrap() throws -> InstallationBootstrapResult {
+        try migrateLegacyIdentityIfNeeded()
         let wasInstalled = markerStore.isInstalled()
         var previousIdentity = try loadIdentity()
         let hadPersistedIdentity = previousIdentity != nil
@@ -93,6 +97,14 @@ struct InstallationBootstrapper: InstallationBootstrapping {
     private func saveIdentity(_ identity: InstallationIdentity) throws {
         try identityStore.write(JSONEncoder().encode(identity))
     }
+
+    private func migrateLegacyIdentityIfNeeded() throws {
+        guard try identityStore.read() == nil,
+              let legacyIdentityStore,
+              let legacyData = try legacyIdentityStore.read() else { return }
+        try identityStore.write(legacyData)
+        try legacyIdentityStore.delete()
+    }
 }
 
 extension InstallationBootstrapper {
@@ -102,7 +114,8 @@ extension InstallationBootstrapper {
                 service: "com.orangeboychen.simdeck.installation",
                 account: "identity-v1",
                 synchronizable: false,
-                accessibility: kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String
+                accessibility: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String,
+                accessGroup: "97YACL9S6W.com.nowcent.simdeck.shared"
             ),
             vaultStore: KeychainValueStore(
                 service: "com.orangeboychen.simdeck.recovery",
@@ -110,7 +123,13 @@ extension InstallationBootstrapper {
                 synchronizable: true,
                 accessibility: kSecAttrAccessibleWhenUnlocked as String
             ),
-            markerStore: UserDefaultsInstallMarkerStore()
+            markerStore: UserDefaultsInstallMarkerStore(),
+            legacyIdentityStore: KeychainValueStore(
+                service: "com.orangeboychen.simdeck.installation",
+                account: "identity-v1",
+                synchronizable: false,
+                accessibility: kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String
+            )
         )
     }
 }

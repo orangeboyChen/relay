@@ -304,7 +304,7 @@ final class AppModelTests: XCTestCase {
                 "/v1/devices"
             ]
         )
-        XCTAssertEqual(model.devices.first?.id, simID)
+        XCTAssertEqual(model.devices.first?.id, slotID)
         XCTAssertEqual(model.devices.first?.deviceID, deviceID)
         XCTAssertEqual(model.devices.first?.slotID, slotID)
         XCTAssertEqual(model.devices.first?.numericID, 9)

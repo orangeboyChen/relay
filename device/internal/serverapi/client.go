@@ -93,44 +93,48 @@ func (client *Client) UpdateRadioStatus(ctx context.Context, state identity.Stat
 	return nil
 }
 
-// UpdateSIMIdentity synchronizes the current card in the bound physical slot.
-func (client *Client) UpdateSIMIdentity(ctx context.Context, state identity.State) (string, int, error) {
-	if state.Credential == "" || state.SIMFingerprint == "" || state.SlotID == "" || state.SlotKey == "" || state.SlotIndex < 1 {
-		return "", 0, errors.New("bound slot and SIM fingerprint are required")
+// SIMAssignment is the current server-owned identity for a physical slot and inserted SIM.
+type SIMAssignment struct {
+	SlotID    string `json:"slot_id"`
+	SIMID     string `json:"sim_id"`
+	NumericID int    `json:"numeric_id"`
+}
+
+// UpdateSIMIdentity synchronizes the current card and refreshes server-owned slot identifiers.
+func (client *Client) UpdateSIMIdentity(ctx context.Context, state identity.State) (SIMAssignment, error) {
+	if state.Credential == "" || state.SIMFingerprint == "" || state.SlotKey == "" || state.SlotIndex < 1 {
+		return SIMAssignment{}, errors.New("bound slot and SIM fingerprint are required")
 	}
 	body, err := json.Marshal(map[string]any{
 		"device_uuid": state.DeviceUUID, "slot_key": state.SlotKey,
 		"slot_index": state.SlotIndex, "sim_fingerprint": state.SIMFingerprint,
 	})
 	if err != nil {
-		return "", 0, fmt.Errorf("encode SIM identity: %w", err)
+		return SIMAssignment{}, fmt.Errorf("encode SIM identity: %w", err)
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPut, client.baseURL+"/v1/device-sim-identity", bytes.NewReader(body))
 	if err != nil {
-		return "", 0, fmt.Errorf("create SIM identity request: %w", err)
+		return SIMAssignment{}, fmt.Errorf("create SIM identity request: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+state.Credential)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		return "", 0, fmt.Errorf("synchronize SIM identity: %w", err)
+		return SIMAssignment{}, fmt.Errorf("synchronize SIM identity: %w", err)
 	}
 	defer response.Body.Close()
 	limitedBody := io.LimitReader(response.Body, maxResponseBytes)
 	if response.StatusCode != http.StatusOK {
-		return "", 0, responseError("synchronize SIM identity", response.StatusCode, limitedBody)
+		return SIMAssignment{}, responseError("synchronize SIM identity", response.StatusCode, limitedBody)
 	}
-	var result struct {
-		SIMID     string `json:"sim_id"`
-		NumericID int    `json:"numeric_id"`
-	}
+	var result SIMAssignment
 	if err := json.NewDecoder(limitedBody).Decode(&result); err != nil {
-		return "", 0, fmt.Errorf("decode SIM identity response: %w", err)
+		return SIMAssignment{}, fmt.Errorf("decode SIM identity response: %w", err)
 	}
-	if !validUUID(result.SIMID) || result.NumericID < 1 || result.NumericID > 99 {
-		return "", 0, errors.New("server returned an invalid SIM assignment")
+	if !validUUID(result.SlotID) || !validUUID(result.SIMID) || result.NumericID < 1 || result.NumericID > 99 {
+		return SIMAssignment{}, errors.New("server returned an invalid SIM assignment")
 	}
-	return result.SIMID, result.NumericID, nil
+	return result, nil
 }
 
 // InstallationRecipient identifies one approved iPhone encryption endpoint.

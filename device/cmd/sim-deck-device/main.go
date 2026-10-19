@@ -183,7 +183,7 @@ type deviceDependencies struct {
 	newSession                  func(*at.Client, *sms.Inbox, modem.MessageSink, *slog.Logger, time.Duration) (deviceSession, error)
 	configureAudio              func(context.Context, agent.Config, *at.Client) error
 	syncCommandKey              func(context.Context, agent.Config, identity.State) error
-	syncSIMIdentity             func(context.Context, agent.Config, identity.State) (string, int, error)
+	syncSIMIdentity             func(context.Context, agent.Config, identity.State) (serverapi.SIMAssignment, error)
 	newCallEvents               func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error)
 	newIncomingCalls            func(agent.Config, identity.State, <-chan call.Snapshot, incomingcall.EventRegistrar, incomingcall.CallRejecter, incomingcall.Policy) (commandRuntime, error)
 	newSlotPolicy               func(agent.Config, *at.Client) (slotPolicyRuntime, error)
@@ -244,7 +244,7 @@ func productionDependencies(httpClient *http.Client) deviceDependencies {
 		syncCommandKey: func(ctx context.Context, config agent.Config, state identity.State) error {
 			return serverapi.NewClient(config.ServerURL, httpClient).UpdateCommandKey(ctx, state)
 		},
-		syncSIMIdentity: func(ctx context.Context, config agent.Config, state identity.State) (string, int, error) {
+		syncSIMIdentity: func(ctx context.Context, config agent.Config, state identity.State) (serverapi.SIMAssignment, error) {
 			return serverapi.NewClient(config.ServerURL, httpClient).UpdateSIMIdentity(ctx, state)
 		},
 		newCallEvents: func(config agent.Config, state identity.State, snapshots <-chan call.Snapshot) (callEventRuntime, error) {
@@ -413,11 +413,13 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 		return errors.New("SIM identity synchronization is not configured")
 	}
 	if deviceIdentity.SIMFingerprint != "" {
-		simID, numericID, syncError := dependencies.syncSIMIdentity(ctx, config, deviceIdentity)
+		assignment, syncError := dependencies.syncSIMIdentity(ctx, config, deviceIdentity)
 		if syncError != nil {
 			return fmt.Errorf("synchronize current SIM identity: %w", syncError)
 		}
-		deviceIdentity, err = identityStore.SetSIMAssignment(deviceIdentity, simID, numericID)
+		deviceIdentity, err = identityStore.SetServerSIMAssignment(
+			deviceIdentity, assignment.SlotID, deviceIdentity.SIMFingerprint, assignment.SIMID, assignment.NumericID,
+		)
 		if err != nil {
 			return fmt.Errorf("persist SIM assignment: %w", err)
 		}
@@ -517,7 +519,7 @@ func synchronizeSIMIdentity(
 	config agent.Config,
 	store identity.Store,
 	state identity.State,
-	synchronize func(context.Context, agent.Config, identity.State) (string, int, error),
+	synchronize func(context.Context, agent.Config, identity.State) (serverapi.SIMAssignment, error),
 	logger *slog.Logger,
 ) error {
 	interval := config.RadioStatusPoll
@@ -543,12 +545,14 @@ func synchronizeSIMIdentity(
 			}
 			requestState := current
 			requestState.SIMFingerprint = fingerprint
-			simID, numericID, err := synchronize(ctx, config, requestState)
+			assignment, err := synchronize(ctx, config, requestState)
 			if err != nil {
 				logger.Warn("synchronize hot-swapped SIM failed", "error", err)
 				continue
 			}
-			updated, err := store.SetSIMIdentity(current, fingerprint, simID, numericID)
+			updated, err := store.SetServerSIMAssignment(
+				current, assignment.SlotID, fingerprint, assignment.SIMID, assignment.NumericID,
+			)
 			if err != nil {
 				logger.Warn("persist hot-swapped SIM assignment failed", "error", err)
 				continue

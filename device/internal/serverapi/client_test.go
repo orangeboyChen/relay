@@ -314,51 +314,52 @@ var _ = Describe("SIM identity client", func() {
 			Expect(body.SlotKey).To(Equal(state.SlotKey))
 			Expect(body.SlotIndex).To(Equal(state.SlotIndex))
 			Expect(body.SIMFingerprint).To(Equal(state.SIMFingerprint))
-			return response(http.StatusOK, `{"sim_id":"01900000-0000-7000-8000-000000000003","numeric_id":7}`), nil
+			return response(http.StatusOK, `{"slot_id":"01900000-0000-7000-8000-000000000004","sim_id":"01900000-0000-7000-8000-000000000003","numeric_id":7}`), nil
 		})
 
-		simID, numericID, err := client.UpdateSIMIdentity(context.Background(), state)
+		assignment, err := client.UpdateSIMIdentity(context.Background(), state)
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(simID).To(Equal("01900000-0000-7000-8000-000000000003"))
-		Expect(numericID).To(Equal(7))
+		Expect(assignment.SlotID).To(Equal("01900000-0000-7000-8000-000000000004"))
+		Expect(assignment.SIMID).To(Equal("01900000-0000-7000-8000-000000000003"))
+		Expect(assignment.NumericID).To(Equal(7))
 	})
 
 	It("rejects incomplete slot identity before sending a request", func() {
 		state.SIMFingerprint = ""
 
-		_, _, err := NewClient("http://unused.invalid", nil).UpdateSIMIdentity(context.Background(), state)
+		_, err := NewClient("http://unused.invalid", nil).UpdateSIMIdentity(context.Background(), state)
 
 		Expect(err).To(MatchError("bound slot and SIM fingerprint are required"))
 	})
 
 	It("maps request, transport, server, and response failures", func() {
-		_, _, err := NewClient("://invalid", nil).UpdateSIMIdentity(context.Background(), state)
+		_, err := NewClient("://invalid", nil).UpdateSIMIdentity(context.Background(), state)
 		Expect(err).To(MatchError(ContainSubstring("create SIM identity request")))
 
 		transportFailure := clientWithHandler(func(*http.Request) (*http.Response, error) {
 			return nil, errors.New("transport unavailable")
 		})
-		_, _, err = transportFailure.UpdateSIMIdentity(context.Background(), state)
+		_, err = transportFailure.UpdateSIMIdentity(context.Background(), state)
 		Expect(err).To(MatchError(ContainSubstring("synchronize SIM identity")))
 
 		serverFailure := clientWithHandler(func(*http.Request) (*http.Response, error) {
 			return response(http.StatusUnauthorized, `{"error":{"code":"invalid_device_credential","message":"sensitive detail"}}`), nil
 		})
-		_, _, err = serverFailure.UpdateSIMIdentity(context.Background(), state)
+		_, err = serverFailure.UpdateSIMIdentity(context.Background(), state)
 		Expect(err).To(MatchError(ContainSubstring("invalid_device_credential")))
 		Expect(err.Error()).NotTo(ContainSubstring("sensitive detail"))
 
 		malformed := clientWithHandler(func(*http.Request) (*http.Response, error) {
 			return response(http.StatusOK, "not-json"), nil
 		})
-		_, _, err = malformed.UpdateSIMIdentity(context.Background(), state)
+		_, err = malformed.UpdateSIMIdentity(context.Background(), state)
 		Expect(err).To(MatchError(ContainSubstring("decode SIM identity response")))
 
 		invalidAssignment := clientWithHandler(func(*http.Request) (*http.Response, error) {
 			return response(http.StatusOK, `{"sim_id":"invalid","numeric_id":100}`), nil
 		})
-		_, _, err = invalidAssignment.UpdateSIMIdentity(context.Background(), state)
+		_, err = invalidAssignment.UpdateSIMIdentity(context.Background(), state)
 		Expect(err).To(MatchError("server returned an invalid SIM assignment"))
 	})
 })

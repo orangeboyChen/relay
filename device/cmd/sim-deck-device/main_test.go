@@ -26,6 +26,7 @@ import (
 	"sim-deck-device/internal/identity"
 	"sim-deck-device/internal/incomingcall"
 	"sim-deck-device/internal/modem"
+	"sim-deck-device/internal/serverapi"
 	"sim-deck-device/internal/slotpolicy"
 	"sim-deck-device/internal/sms"
 )
@@ -281,8 +282,12 @@ func testDependencies(transport io.ReadWriteCloser, session deviceSession) devic
 		},
 		configureAudio: func(context.Context, agent.Config, *at.Client) error { return nil },
 		syncCommandKey: func(context.Context, agent.Config, identity.State) error { return nil },
-		syncSIMIdentity: func(context.Context, agent.Config, identity.State) (string, int, error) {
-			return "01900000-0000-7000-8000-000000000003", 2, nil
+		syncSIMIdentity: func(context.Context, agent.Config, identity.State) (serverapi.SIMAssignment, error) {
+			return serverapi.SIMAssignment{
+				SlotID:    "01900000-0000-7000-8000-000000000002",
+				SIMID:     "01900000-0000-7000-8000-000000000003",
+				NumericID: 2,
+			}, nil
 		},
 		newCallEvents: func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error) {
 			return eventRunner, nil
@@ -674,11 +679,12 @@ var _ = Describe("Device command runtime", func() {
 				config.SlotIndex,
 			)
 		}
+		const synchronizedSlotID = "01900000-0000-7000-8000-000000000005"
 		const synchronizedSIMID = "01900000-0000-7000-8000-000000000004"
-		dependencies.syncSIMIdentity = func(_ context.Context, _ agent.Config, state identity.State) (string, int, error) {
+		dependencies.syncSIMIdentity = func(_ context.Context, _ agent.Config, state identity.State) (serverapi.SIMAssignment, error) {
 			Expect(state.SIMFingerprint).To(HaveLen(64))
 			Expect(state.SlotID).To(Equal("01900000-0000-7000-8000-000000000002"))
-			return synchronizedSIMID, 4, nil
+			return serverapi.SIMAssignment{SlotID: synchronizedSlotID, SIMID: synchronizedSIMID, NumericID: 4}, nil
 		}
 		var publisherState identity.State
 		dependencies.newMessageEvents = func(_ agent.Config, state identity.State) (messageEventPublisher, error) {
@@ -693,10 +699,12 @@ var _ = Describe("Device command runtime", func() {
 		err := runDevice(context.Background(), testConfig(stateDirectory), logger, &atomic.Bool{}, dependencies)
 
 		Expect(err).To(MatchError("stop after SIM synchronization"))
+		Expect(publisherState.SlotID).To(Equal(synchronizedSlotID))
 		Expect(publisherState.SIMID).To(Equal(synchronizedSIMID))
 		Expect(publisherState.NumericID).To(Equal(4))
 		reloaded, reloadErr := identity.NewStore(stateDirectory, testConfig(stateDirectory).DeviceUUID).LoadOrCreate()
 		Expect(reloadErr).NotTo(HaveOccurred())
+		Expect(reloaded.SlotID).To(Equal(synchronizedSlotID))
 		Expect(reloaded.SIMID).To(Equal(synchronizedSIMID))
 		Expect(reloaded.SIMFingerprint).To(HaveLen(64))
 	})
@@ -722,8 +730,8 @@ var _ = Describe("Device command runtime", func() {
 				config.SlotIndex,
 			)
 		}
-		dependencies.syncSIMIdentity = func(context.Context, agent.Config, identity.State) (string, int, error) {
-			return "", 0, errors.New("SIM endpoint unavailable")
+		dependencies.syncSIMIdentity = func(context.Context, agent.Config, identity.State) (serverapi.SIMAssignment, error) {
+			return serverapi.SIMAssignment{}, errors.New("SIM endpoint unavailable")
 		}
 
 		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
@@ -763,9 +771,9 @@ var _ = Describe("Device command runtime", func() {
 		config := testConfig(GinkgoT().TempDir())
 
 		go func() {
-			result <- synchronizeSIMIdentity(ctx, session, config, store, state, func(context.Context, agent.Config, identity.State) (string, int, error) {
+			result <- synchronizeSIMIdentity(ctx, session, config, store, state, func(context.Context, agent.Config, identity.State) (serverapi.SIMAssignment, error) {
 				synchronizations.Add(1)
-				return "", 0, errors.New("unexpected synchronization")
+				return serverapi.SIMAssignment{}, errors.New("unexpected synchronization")
 			}, logger)
 		}()
 
@@ -778,6 +786,7 @@ var _ = Describe("Device command runtime", func() {
 	It("retries SIM reads and server synchronization before atomically replacing the assignment", func() {
 		const oldICCID = "8986000000000000000"
 		const newICCID = "8986000000000000001"
+		const newSlotID = "01900000-0000-7000-8000-000000000005"
 		const newSIMID = "01900000-0000-7000-8000-000000000004"
 		store, state := configuredSIMIdentity(GinkgoT().TempDir(), oldICCID)
 		var polls atomic.Int32
@@ -794,13 +803,13 @@ var _ = Describe("Device command runtime", func() {
 		var synchronizations atomic.Int32
 		config := testConfig(GinkgoT().TempDir())
 
-		err := synchronizeSIMIdentity(context.Background(), session, config, store, state, func(_ context.Context, received agent.Config, request identity.State) (string, int, error) {
+		err := synchronizeSIMIdentity(context.Background(), session, config, store, state, func(_ context.Context, received agent.Config, request identity.State) (serverapi.SIMAssignment, error) {
 			Expect(received.ServerURL).To(Equal(config.ServerURL))
 			Expect(request.SIMFingerprint).NotTo(Equal(state.SIMFingerprint))
 			if synchronizations.Add(1) == 1 {
-				return "", 0, errors.New("server temporarily unavailable")
+				return serverapi.SIMAssignment{}, errors.New("server temporarily unavailable")
 			}
-			return newSIMID, 4, nil
+			return serverapi.SIMAssignment{SlotID: newSlotID, SIMID: newSIMID, NumericID: 4}, nil
 		}, logger)
 
 		Expect(err).To(MatchError(errSIMIdentityChanged))
@@ -809,6 +818,7 @@ var _ = Describe("Device command runtime", func() {
 		Expect(err).NotTo(HaveOccurred())
 		expectedFingerprint, err := state.FingerprintSIM(newICCID)
 		Expect(err).NotTo(HaveOccurred())
+		Expect(reloaded.SlotID).To(Equal(newSlotID))
 		Expect(reloaded.SIMFingerprint).To(Equal(expectedFingerprint))
 		Expect(reloaded.SIMID).To(Equal(newSIMID))
 		Expect(reloaded.NumericID).To(Equal(4))
@@ -827,11 +837,11 @@ var _ = Describe("Device command runtime", func() {
 		config := testConfig(GinkgoT().TempDir())
 
 		go func() {
-			result <- synchronizeSIMIdentity(ctx, session, config, store, state, func(context.Context, agent.Config, identity.State) (string, int, error) {
+			result <- synchronizeSIMIdentity(ctx, session, config, store, state, func(context.Context, agent.Config, identity.State) (serverapi.SIMAssignment, error) {
 				if synchronizations.Add(1) >= 2 {
 					cancel()
 				}
-				return "invalid-sim-id", 9, nil
+				return serverapi.SIMAssignment{SlotID: state.SlotID, SIMID: "invalid-sim-id", NumericID: 9}, nil
 			}, logger)
 		}()
 
@@ -1032,7 +1042,7 @@ var _ = Describe("Device command runtime", func() {
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body: io.NopCloser(strings.NewReader(
-						`{"sim_id":"01900000-0000-7000-8000-000000000003","numeric_id":2}`,
+						`{"slot_id":"01900000-0000-7000-8000-000000000002","sim_id":"01900000-0000-7000-8000-000000000003","numeric_id":2}`,
 					)),
 					Header: make(http.Header),
 				}, nil
@@ -1092,10 +1102,11 @@ var _ = Describe("Device command runtime", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(bound.DeviceUUID).To(Equal(state.DeviceUUID))
 		Expect(dependencies.syncCommandKey(context.Background(), config, state)).To(Succeed())
-		simID, numericID, err := dependencies.syncSIMIdentity(context.Background(), config, state)
+		assignment, err := dependencies.syncSIMIdentity(context.Background(), config, state)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(simID).To(Equal(state.SIMID))
-		Expect(numericID).To(Equal(state.NumericID))
+		Expect(assignment.SlotID).To(Equal(state.SlotID))
+		Expect(assignment.SIMID).To(Equal(state.SIMID))
+		Expect(assignment.NumericID).To(Equal(state.NumericID))
 		transport := newBlockingTransport()
 		client := at.NewClient(transport)
 		DeferCleanup(func() { _ = client.Close() })

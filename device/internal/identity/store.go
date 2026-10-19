@@ -218,6 +218,15 @@ func (store Store) SetSIMAssignment(state State, simID string, numericID int) (S
 	return store.SetSIMIdentity(state, state.SIMFingerprint, simID, numericID)
 }
 
+// SetServerSIMAssignment refreshes the server-owned slot and SIM identifiers without changing hardware identity.
+func (store Store) SetServerSIMAssignment(state State, slotID string, fingerprint string, simID string, numericID int) (State, error) {
+	if !ValidDeviceUUID(slotID) {
+		return State{}, fmt.Errorf("%w: invalid slot assignment", ErrInvalidState)
+	}
+	state.SlotID = slotID
+	return store.SetSIMIdentity(state, fingerprint, simID, numericID)
+}
+
 // SetSIMIdentity atomically persists the current card fingerprint and its server assignment.
 func (store Store) SetSIMIdentity(state State, fingerprint string, simID string, numericID int) (State, error) {
 	if fingerprint == "" || len(fingerprint) != 64 || strings.Trim(fingerprint, "0123456789abcdef") != "" ||

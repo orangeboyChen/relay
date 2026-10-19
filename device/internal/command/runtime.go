@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -113,6 +114,7 @@ type Dependencies struct {
 	Events   CallEventRegistrar
 	Media    CallMedia
 	Messages Messages
+	Logger   *slog.Logger
 }
 
 // Runtime polls, decrypts, executes, and acknowledges commands for one modem.
@@ -126,6 +128,7 @@ type Runtime struct {
 	media        CallMedia
 	messages     Messages
 	now          func() time.Time
+	logger       *slog.Logger
 }
 
 // NewRuntime creates a command runtime with a bounded idle polling interval.
@@ -136,9 +139,14 @@ func NewRuntime(remote Remote, state identity.State, calls Calls, pollInterval t
 	if dependencies.Events == nil || dependencies.Media == nil || dependencies.Messages == nil {
 		return nil, errors.New("command runtime requires call event, media, and message dependencies")
 	}
+	logger := dependencies.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 	return &Runtime{
 		remote: remote, identity: state, calls: calls, pollInterval: pollInterval,
 		random: rand.Reader, events: dependencies.Events, media: dependencies.Media, messages: dependencies.Messages, now: time.Now,
+		logger: logger,
 	}, nil
 }
 
@@ -147,7 +155,7 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 	for {
 		envelope, err := runtime.remote.Claim(ctx, runtime.identity.DeviceUUID, runtime.identity.Credential)
 		if err != nil {
-			return err
+			return fmt.Errorf("claim encrypted device command: %w", err)
 		}
 		if envelope == nil {
 			select {
@@ -157,7 +165,9 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 				continue
 			}
 		}
+		runtime.logger.Info("encrypted device command claimed", "command_id", envelope.ID, "sender_installation_id", envelope.SenderInstallationID)
 		if err := runtime.process(ctx, *envelope); err != nil {
+			runtime.logger.Error("encrypted device command processing failed", "command_id", envelope.ID, "sender_installation_id", envelope.SenderInstallationID, "error", err)
 			return err
 		}
 	}
@@ -196,6 +206,15 @@ func (runtime *Runtime) process(ctx context.Context, envelope Envelope) error {
 		}
 		result.ErrorCode = commandErrorCode(executionError)
 		result.CallState = runtime.calls.State()
+		runtime.logger.Error(
+			"device command execution failed",
+			"command_id", envelope.ID,
+			"operation", payload.Operation,
+			"call_id", payload.CallID,
+			"message_id", payload.MessageID,
+			"error_code", result.ErrorCode,
+			"error", executionError,
+		)
 	} else {
 		result.Success = true
 		result.CallState = runtime.calls.State()
@@ -208,6 +227,16 @@ func (runtime *Runtime) process(ctx context.Context, envelope Envelope) error {
 	if err := runtime.remote.Complete(ctx, runtime.identity.DeviceUUID, runtime.identity.Credential, envelope.ID, encrypted); err != nil {
 		return fmt.Errorf("complete command %s: %w", envelope.ID, err)
 	}
+	runtime.logger.Info(
+		"device command completed",
+		"command_id", envelope.ID,
+		"operation", payload.Operation,
+		"call_id", payload.CallID,
+		"message_id", payload.MessageID,
+		"success", result.Success,
+		"error_code", result.ErrorCode,
+		"call_state", result.CallState,
+	)
 	return nil
 }
 

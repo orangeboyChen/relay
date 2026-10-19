@@ -2,6 +2,7 @@ package modem
 
 import (
 	"context"
+	"encoding/csv"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -138,6 +139,12 @@ type SIMSlotStatus struct {
 	Present bool
 }
 
+// SIMProfile contains subscriber data that a modem can read from the inserted card and network.
+type SIMProfile struct {
+	PhoneNumber string
+	Operator    string
+}
+
 // NewSession creates a modem session from endpoint-local dependencies.
 func NewSession(client *at.Client, inbox *sms.Inbox, sink MessageSink, logger *slog.Logger, timeout time.Duration) (*Session, error) {
 	if client == nil || inbox == nil || sink == nil || logger == nil || timeout <= 0 {
@@ -195,6 +202,90 @@ func (session *Session) ReadSIMICCID(ctx context.Context) (string, error) {
 		}
 	}
 	return "", errors.New("modem did not return a valid SIM ICCID")
+}
+
+// ReadSIMProfile reads the provisioned subscriber number and current operator when available.
+// Many SIM cards do not provision their own phone number, so either field may be empty.
+func (session *Session) ReadSIMProfile(ctx context.Context) (SIMProfile, error) {
+	var profile SIMProfile
+	var failures []error
+
+	numberResponse, err := session.send(ctx, "AT+CNUM")
+	if err != nil {
+		failures = append(failures, fmt.Errorf("query subscriber number: %w", err))
+	} else if numberResponse.OK() {
+		profile.PhoneNumber = parseSubscriberNumber(numberResponse.Lines)
+	} else {
+		failures = append(failures, fmt.Errorf("modem rejected subscriber number query: %s", numberResponse.Terminal))
+	}
+
+	operatorResponse, err := session.send(ctx, "AT+COPS?")
+	if err != nil {
+		failures = append(failures, fmt.Errorf("query network operator: %w", err))
+	} else if operatorResponse.OK() {
+		profile.Operator = parseNetworkOperator(operatorResponse.Lines)
+	} else {
+		failures = append(failures, fmt.Errorf("modem rejected network operator query: %s", operatorResponse.Terminal))
+	}
+
+	if profile.PhoneNumber == "" && profile.Operator == "" && len(failures) > 0 {
+		return SIMProfile{}, errors.Join(failures...)
+	}
+	return profile, nil
+}
+
+func parseSubscriberNumber(lines []string) string {
+	for _, line := range lines {
+		fields := parseATCSV(line, "+CNUM:")
+		if len(fields) < 2 {
+			continue
+		}
+		number := strings.TrimSpace(fields[1])
+		if len(number) >= 3 && len(number) <= 20 && validDialNumber(number) {
+			return number
+		}
+	}
+	return ""
+}
+
+func parseNetworkOperator(lines []string) string {
+	for _, line := range lines {
+		fields := parseATCSV(line, "+COPS:")
+		if len(fields) < 3 {
+			continue
+		}
+		operator := strings.TrimSpace(fields[2])
+		if operator != "" && len(operator) <= 64 {
+			return operator
+		}
+	}
+	return ""
+}
+
+func parseATCSV(line string, prefix string) []string {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, prefix) {
+		return nil
+	}
+	reader := csv.NewReader(strings.NewReader(strings.TrimSpace(strings.TrimPrefix(line, prefix))))
+	reader.TrimLeadingSpace = true
+	fields, err := reader.Read()
+	if err != nil {
+		return nil
+	}
+	return fields
+}
+
+func validDialNumber(value string) bool {
+	for index, character := range value {
+		if character == '+' && index == 0 {
+			continue
+		}
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // ReadSIMSlotStatus reads physical slot presence when the modem exposes QSIMSTAT.

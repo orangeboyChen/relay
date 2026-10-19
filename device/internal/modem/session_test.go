@@ -194,6 +194,61 @@ var _ = Describe("Modem session", func() {
 		Expect(err).To(MatchError("modem did not return a valid SIM ICCID"))
 	})
 
+	It("reads a provisioned subscriber number and network operator", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			command, _ := reader.ReadString('\r')
+			Expect(strings.TrimSuffix(command, "\r")).To(Equal("AT+CNUM"))
+			_, _ = modemTransport.Write([]byte("+CNUM: \"\",\"+8613500000000\",145\r\nOK\r\n"))
+			command, _ = reader.ReadString('\r')
+			Expect(strings.TrimSuffix(command, "\r")).To(Equal("AT+COPS?"))
+			_, _ = modemTransport.Write([]byte("+COPS: 0,0,\"CHINA MOBILE\",7\r\nOK\r\n"))
+		}()
+
+		profile, err := session.ReadSIMProfile(context.Background())
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(profile.PhoneNumber).To(Equal("+8613500000000"))
+		Expect(profile.Operator).To(Equal("CHINA MOBILE"))
+	})
+
+	It("keeps available SIM profile fields when the other query is unsupported", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			_, _ = reader.ReadString('\r')
+			_, _ = modemTransport.Write([]byte("ERROR\r\n"))
+			_, _ = reader.ReadString('\r')
+			_, _ = modemTransport.Write([]byte("+COPS: 0,0,\"China Unicom\",7\r\nOK\r\n"))
+		}()
+
+		profile, err := session.ReadSIMProfile(context.Background())
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(profile.PhoneNumber).To(BeEmpty())
+		Expect(profile.Operator).To(Equal("China Unicom"))
+	})
+
+	It("reports SIM profile query failures without leaking malformed values", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			_, _ = reader.ReadString('\r')
+			_, _ = modemTransport.Write([]byte("+CNUM: \"\",\"not-a-number\",129\r\nOK\r\n"))
+			_, _ = reader.ReadString('\r')
+			_, _ = modemTransport.Write([]byte("+COPS: 0\r\nOK\r\n"))
+		}()
+
+		profile, err := session.ReadSIMProfile(context.Background())
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(profile).To(Equal(SIMProfile{}))
+	})
+
 	It("configures notifications and imports valid history around malformed entries", func() {
 		received := make(chan sms.ReceivedMessage, 1)
 		session, modemTransport, client := newTestSession(MessageSinkFunc(func(_ context.Context, message sms.ReceivedMessage) error {

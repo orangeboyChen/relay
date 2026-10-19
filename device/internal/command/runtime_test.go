@@ -538,7 +538,7 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(runtime.Run(ctx)).To(MatchError(context.Canceled))
 
 		remote.claimError = errors.New("server unavailable")
-		Expect(runtime.Run(context.Background())).To(MatchError("server unavailable"))
+		Expect(runtime.Run(context.Background())).To(MatchError(ContainSubstring("claim encrypted device command: server unavailable")))
 	})
 
 	It("claims, executes, and completes a command before continuing to poll", func() {

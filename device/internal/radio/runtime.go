@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -34,14 +35,23 @@ type Runtime struct {
 	identity  identity.State
 	interval  time.Duration
 	timeout   time.Duration
+	logger    *slog.Logger
 }
 
 // NewRuntime creates a radio poller for one bound modem identity.
 func NewRuntime(commander commander, remote Remote, state identity.State, interval time.Duration, timeout time.Duration) (*Runtime, error) {
+	return NewRuntimeWithLogger(commander, remote, state, interval, timeout, slog.Default())
+}
+
+// NewRuntimeWithLogger creates a radio poller that writes diagnostic status to the supplied logger.
+func NewRuntimeWithLogger(commander commander, remote Remote, state identity.State, interval time.Duration, timeout time.Duration, logger *slog.Logger) (*Runtime, error) {
 	if commander == nil || remote == nil || state.DeviceUUID == "" || state.Credential == "" || interval <= 0 || timeout <= 0 {
 		return nil, errors.New("radio runtime requires modem, remote, bound identity, and positive intervals")
 	}
-	return &Runtime{commander: commander, remote: remote, identity: state, interval: interval, timeout: timeout}, nil
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Runtime{commander: commander, remote: remote, identity: state, interval: interval, timeout: timeout, logger: logger}, nil
 }
 
 // Run publishes immediately and then at the configured interval until cancellation.
@@ -58,7 +68,9 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 		case <-ticker.C:
 			// A modem can temporarily delay radio queries while a call owns the
 			// AT channel. Keep the ready device alive and retry on the next tick.
-			_ = runtime.publish(ctx)
+			if err := runtime.publish(ctx); err != nil {
+				runtime.logger.Warn("radio status refresh failed", "device_uuid", runtime.identity.DeviceUUID, "error", err)
+			}
 		}
 	}
 }
@@ -71,6 +83,12 @@ func (runtime *Runtime) publish(ctx context.Context) error {
 	if err := runtime.remote.UpdateRadioStatus(ctx, runtime.identity, status); err != nil {
 		return fmt.Errorf("publish radio status: %w", err)
 	}
+	runtime.logger.Info(
+		"radio status published",
+		"device_uuid", runtime.identity.DeviceUUID,
+		"radio_access_technology", status.RadioAccessTechnology,
+		"signal_bars", status.SignalBars,
+	)
 	return nil
 }
 
@@ -108,9 +126,13 @@ func (runtime *Runtime) readRegistration(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("query EPS registration: %w", err)
 	}
+	epsStatus := -1
 	if eps.OK() {
-		if registered, found := parseRegistration(eps.Lines, "+CEREG:"); found && registered {
-			return true, nil
+		if registered, found, status := parseRegistrationStatus(eps.Lines, "+CEREG:"); found {
+			epsStatus = status
+			if registered {
+				return true, nil
+			}
 		}
 	}
 
@@ -121,9 +143,17 @@ func (runtime *Runtime) readRegistration(ctx context.Context) (bool, error) {
 	if !circuit.OK() {
 		return false, fmt.Errorf("modem rejected registration queries: EPS %s, circuit %s", eps.Terminal, circuit.Terminal)
 	}
-	registered, found := parseRegistration(circuit.Lines, "+CREG:")
+	registered, found, circuitStatus := parseRegistrationStatus(circuit.Lines, "+CREG:")
 	if !found {
 		return false, errors.New("modem registration response is missing +CEREG and +CREG status")
+	}
+	if !registered {
+		runtime.logger.Warn(
+			"modem is not registered with a cellular network",
+			"device_uuid", runtime.identity.DeviceUUID,
+			"eps_registration_status", epsStatus,
+			"circuit_registration_status", circuitStatus,
+		)
 	}
 	return registered, nil
 }
@@ -164,6 +194,11 @@ func parseTechnology(lines []string) string {
 }
 
 func parseRegistration(lines []string, prefix string) (bool, bool) {
+	registered, found, _ := parseRegistrationStatus(lines, prefix)
+	return registered, found
+}
+
+func parseRegistrationStatus(lines []string, prefix string) (bool, bool, int) {
 	for _, line := range lines {
 		if !strings.HasPrefix(line, prefix) {
 			continue
@@ -175,11 +210,11 @@ func parseRegistration(lines []string, prefix string) (bool, bool) {
 		}
 		status, err := strconv.Atoi(strings.Trim(strings.TrimSpace(fields[statusIndex]), "\""))
 		if err != nil {
-			return false, false
+			return false, false, -1
 		}
-		return status == 1 || status == 5, true
+		return status == 1 || status == 5, true, status
 	}
-	return false, false
+	return false, false, -1
 }
 
 func parseSignalBars(lines []string) *int {

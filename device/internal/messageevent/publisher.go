@@ -7,12 +7,14 @@ import (
 	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/hkdf"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"sort"
 	"strings"
@@ -25,12 +27,14 @@ import (
 )
 
 const (
-	eventType       = "message.received"
-	protocolVersion = 1
-	keyEpoch        = 1
-	keyBytes        = 32
-	nonceBytes      = 12
-	eventContext    = "sim-deck-message-event-v1"
+	eventType         = "message.received"
+	protocolVersion   = 1
+	keyEpoch          = 1
+	keyBytes          = 32
+	nonceBytes        = 12
+	eventContext      = "sim-deck-message-event-v1"
+	simProfileType    = "sim.profile"
+	simProfileContext = "sim-deck-sim-profile-event-v1"
 )
 
 var (
@@ -53,6 +57,24 @@ type Payload struct {
 	Body           string `json:"body"`
 	ReceivedAt     string `json:"received_at"`
 	Segments       int    `json:"segments"`
+	InstallationID string `json:"installation_id"`
+}
+
+// SIMProfile contains modem-detected line metadata encrypted for one iPhone.
+type SIMProfile struct {
+	PhoneNumber string
+	LineName    string
+}
+
+// SIMProfilePayload is visible only to the intended approved iPhone installation.
+type SIMProfilePayload struct {
+	Version        int    `json:"version"`
+	DeviceUUID     string `json:"device_uuid"`
+	SlotID         string `json:"slot_id"`
+	SIMID          string `json:"sim_id"`
+	NumericID      int    `json:"numeric_id"`
+	PhoneNumber    string `json:"phone_number"`
+	LineName       string `json:"line_name"`
 	InstallationID string `json:"installation_id"`
 }
 
@@ -105,6 +127,81 @@ func (publisher *Publisher) Publish(ctx context.Context, message sms.ReceivedMes
 		}
 	}
 	return nil
+}
+
+// PublishSIMProfile encrypts detected line metadata independently for every approved iPhone.
+func (publisher *Publisher) PublishSIMProfile(ctx context.Context, profile SIMProfile) error {
+	profile.PhoneNumber = strings.TrimSpace(profile.PhoneNumber)
+	profile.LineName = strings.TrimSpace(profile.LineName)
+	if (profile.PhoneNumber == "" && profile.LineName == "") ||
+		(profile.PhoneNumber != "" && !phoneNumberPattern.MatchString(profile.PhoneNumber)) ||
+		len(profile.LineName) > 64 {
+		return errors.New("detected SIM profile is invalid")
+	}
+	recipients, err := publisher.remote.ListInstallationRecipients(ctx, publisher.identity.DeviceUUID, publisher.identity.Credential)
+	if err != nil {
+		return fmt.Errorf("list SIM profile recipients: %w", err)
+	}
+	if len(recipients) == 0 {
+		return ErrNoRecipients
+	}
+	for _, recipient := range recipients {
+		envelope, err := publisher.sealSIMProfile(profile, recipient)
+		if err != nil {
+			return err
+		}
+		if err := publisher.remote.UploadEvent(ctx, publisher.identity.DeviceUUID, publisher.identity.Credential, envelope); err != nil {
+			return fmt.Errorf("upload SIM profile event for installation %s: %w", recipient.InstallationID, err)
+		}
+	}
+	return nil
+}
+
+func (publisher *Publisher) sealSIMProfile(profile SIMProfile, recipient incomingcall.Recipient) (callevent.Envelope, error) {
+	if !identity.ValidDeviceUUID(recipient.InstallationID) || len(recipient.IdentityPublicKey) != ed25519.PublicKeySize || len(recipient.KeyAgreementPublicKey) != keyBytes {
+		return callevent.Envelope{}, errors.New("SIM profile recipient identity is invalid")
+	}
+	privateKey, err := ecdh.X25519().NewPrivateKey(publisher.identity.CommandPrivateKey)
+	if err != nil {
+		return callevent.Envelope{}, fmt.Errorf("parse device SIM profile key: %w", err)
+	}
+	publicKey, err := ecdh.X25519().NewPublicKey(recipient.KeyAgreementPublicKey)
+	if err != nil {
+		return callevent.Envelope{}, fmt.Errorf("parse recipient SIM profile key: %w", err)
+	}
+	sharedSecret, err := privateKey.ECDH(publicKey)
+	if err != nil {
+		return callevent.Envelope{}, fmt.Errorf("derive recipient SIM profile key: %w", err)
+	}
+	eventID, err := randomEventID(rand.Reader)
+	if err != nil {
+		return callevent.Envelope{}, fmt.Errorf("generate SIM profile event id: %w", err)
+	}
+	envelope := callevent.Envelope{
+		ID: eventID, Type: simProfileType, DeviceUUID: publisher.identity.DeviceUUID,
+		RecipientInstallationID: recipient.InstallationID,
+		OccurredAt:              time.Now().UTC().Truncate(time.Millisecond), KeyEpoch: keyEpoch,
+	}
+	payload, err := json.Marshal(SIMProfilePayload{
+		Version: protocolVersion, DeviceUUID: publisher.identity.DeviceUUID,
+		SlotID: publisher.identity.SlotID, SIMID: publisher.identity.SIMID,
+		NumericID: publisher.identity.NumericID, PhoneNumber: profile.PhoneNumber,
+		LineName: profile.LineName, InstallationID: recipient.InstallationID,
+	})
+	if err != nil {
+		return callevent.Envelope{}, fmt.Errorf("encode SIM profile event: %w", err)
+	}
+	aead, err := eventAEADWithContext(sharedSecret, envelope.ID, envelope.DeviceUUID, simProfileContext)
+	if err != nil {
+		return callevent.Envelope{}, fmt.Errorf("create SIM profile event cipher: %w", err)
+	}
+	envelope.Nonce = make([]byte, nonceBytes)
+	if _, err := io.ReadFull(rand.Reader, envelope.Nonce); err != nil {
+		return callevent.Envelope{}, fmt.Errorf("generate SIM profile event nonce: %w", err)
+	}
+	envelope.Ciphertext = aead.Seal(nil, envelope.Nonce, payload, associatedData(envelope))
+	envelope.Signature = ed25519.Sign(publisher.identity.IdentityPrivateKey, signedData(envelope))
+	return envelope, nil
 }
 
 func (publisher *Publisher) seal(message sms.ReceivedMessage, recipient incomingcall.Recipient) (callevent.Envelope, error) {
@@ -168,7 +265,11 @@ func validateMessage(message sms.ReceivedMessage) error {
 }
 
 func eventAEAD(sharedSecret []byte, eventID string, deviceID string) (cipher.AEAD, error) {
-	key, err := hkdf.Key(sha256.New, sharedSecret, []byte(eventID+"\x00"+deviceID), eventContext, keyBytes)
+	return eventAEADWithContext(sharedSecret, eventID, deviceID, eventContext)
+}
+
+func eventAEADWithContext(sharedSecret []byte, eventID string, deviceID string, context string) (cipher.AEAD, error) {
+	key, err := hkdf.Key(sha256.New, sharedSecret, []byte(eventID+"\x00"+deviceID), context, keyBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -177,6 +278,17 @@ func eventAEAD(sharedSecret []byte, eventID string, deviceID string) (cipher.AEA
 		return nil, err
 	}
 	return cipher.NewGCM(block)
+}
+
+func randomEventID(source io.Reader) (string, error) {
+	value := make([]byte, 16)
+	if _, err := io.ReadFull(source, value); err != nil {
+		return "", err
+	}
+	value[6] = (value[6] & 0x0f) | 0x40
+	value[8] = (value[8] & 0x3f) | 0x80
+	encoded := hex.EncodeToString(value)
+	return encoded[0:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:32], nil
 }
 
 func associatedData(envelope callevent.Envelope) []byte {

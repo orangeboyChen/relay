@@ -36,6 +36,7 @@ var errSIMIdentityChanged = errors.New("SIM identity changed; restart the device
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
 	config, err := agent.LoadConfig(os.LookupEnv)
 	if err != nil {
 		logger.Error("invalid configuration", "error", err)
@@ -51,6 +52,13 @@ func main() {
 }
 
 func run(ctx context.Context, config agent.Config, logger *slog.Logger) error {
+	logger.Info(
+		"device agent starting",
+		"server_url", config.ServerURL,
+		"at_device", config.ATDevice,
+		"audio_mode", config.AudioMode,
+		"health_address", config.HealthAddress,
+	)
 	return runWithDependencies(ctx, config, logger, runtimeDependencies{
 		listen: func(ctx context.Context, network, address string) (net.Listener, error) {
 			var listener net.ListenConfig
@@ -153,6 +161,14 @@ type messageEventPublisher interface {
 	Publish(context.Context, sms.ReceivedMessage) error
 }
 
+type simProfileReader interface {
+	ReadSIMProfile(context.Context) (modem.SIMProfile, error)
+}
+
+type simProfilePublisher interface {
+	PublishSIMProfile(context.Context, messageevent.SIMProfile) error
+}
+
 type deviceDependencies struct {
 	openTransport               func(string, int, string, string, string) (io.ReadWriteCloser, error)
 	resolveHardware             func(context.Context, agent.Config, *at.Client) (string, string, error)
@@ -249,12 +265,13 @@ func productionDependencies(httpClient *http.Client) deviceDependencies {
 			return command.NewRuntime(serverapi.NewClient(config.ServerURL, httpClient), state, calls, config.CommandPoll, dependencies)
 		},
 		newRadioStatus: func(config agent.Config, state identity.State, client *at.Client) (commandRuntime, error) {
-			return radio.NewRuntime(
+			return radio.NewRuntimeWithLogger(
 				client,
 				serverapi.NewClient(config.ServerURL, httpClient),
 				state,
 				config.RadioStatusPoll,
 				config.CommandTimeout,
+				slog.Default(),
 			)
 		},
 	}
@@ -388,6 +405,20 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	if err != nil {
 		return fmt.Errorf("create encrypted message event publisher: %w", err)
 	}
+	if reader, readable := session.(simProfileReader); readable {
+		if publisher, publishable := messageEvents.(simProfilePublisher); publishable {
+			profile, readError := reader.ReadSIMProfile(ctx)
+			if readError != nil {
+				logger.Warn("SIM profile is unavailable", "slot_key", deviceIdentity.SlotKey, "slot_index", deviceIdentity.SlotIndex, "error", readError)
+			} else if profile.PhoneNumber == "" && profile.Operator == "" {
+				logger.Warn("SIM profile is empty", "slot_key", deviceIdentity.SlotKey, "slot_index", deviceIdentity.SlotIndex, "subscriber_number_provisioned", false, "operator_available", false)
+			} else if publishError := publisher.PublishSIMProfile(ctx, messageevent.SIMProfile{PhoneNumber: profile.PhoneNumber, LineName: profile.Operator}); publishError != nil {
+				logger.Warn("encrypted SIM profile synchronization failed", "slot_key", deviceIdentity.SlotKey, "slot_index", deviceIdentity.SlotIndex, "subscriber_number_provisioned", profile.PhoneNumber != "", "operator_available", profile.Operator != "", "error", publishError)
+			} else {
+				logger.Info("encrypted SIM profile synchronized", "slot_key", deviceIdentity.SlotKey, "slot_index", deviceIdentity.SlotIndex, "subscriber_number_provisioned", profile.PhoneNumber != "", "operator_available", profile.Operator != "")
+			}
+		}
+	}
 	if err := session.RetryPendingSMS(ctx); err != nil {
 		return fmt.Errorf("synchronize pending SMS: %w", err)
 	}
@@ -411,7 +442,7 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 		return fmt.Errorf("create call media runtime: %w", err)
 	}
 	defer callMedia.Close()
-	commands, err := dependencies.newCommands(config, deviceIdentity, session.Calls(), command.Dependencies{Events: events, Media: callMedia, Messages: session})
+	commands, err := dependencies.newCommands(config, deviceIdentity, session.Calls(), command.Dependencies{Events: events, Media: callMedia, Messages: session, Logger: logger})
 	if err != nil {
 		return fmt.Errorf("create encrypted command runtime: %w", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -158,6 +159,78 @@ var _ = Describe("Incoming message publisher", func() {
 		Expect(publisher.Publish(context.Background(), message)).To(MatchError(ContainSubstring("list message recipients")))
 	})
 
+	It("encrypts detected SIM metadata without exposing the phone number to the server", func() {
+		state.SlotID = "01900000-0000-7000-8000-000000000201"
+		state.SIMID = "01900000-0000-7000-8000-000000000301"
+		publisher.identity = state
+
+		Expect(publisher.PublishSIMProfile(context.Background(), SIMProfile{
+			PhoneNumber: "+8613500000000",
+			LineName:    "CHINA MOBILE",
+		})).To(Succeed())
+
+		Expect(remote.envelopes).To(HaveLen(2))
+		envelope := remote.envelopes[0]
+		Expect(envelope.Type).To(Equal("sim.profile"))
+		Expect(envelope.RecipientInstallationID).To(Equal("01900000-0000-7000-8000-000000000102"))
+		Expect(string(envelope.Ciphertext)).NotTo(ContainSubstring("13500000000"))
+		Expect(string(envelope.Ciphertext)).NotTo(ContainSubstring("CHINA MOBILE"))
+		Expect(ed25519.Verify(state.PublicKey(), signedData(envelope), envelope.Signature)).To(BeTrue())
+
+		payload := openSIMProfileEnvelope(state, envelope, privateTwo)
+		Expect(payload.PhoneNumber).To(Equal("+8613500000000"))
+		Expect(payload.LineName).To(Equal("CHINA MOBILE"))
+		Expect(payload.SlotID).To(Equal(state.SlotID))
+		Expect(payload.SIMID).To(Equal(state.SIMID))
+	})
+
+	It("rejects empty or malformed detected SIM metadata", func() {
+		Expect(publisher.PublishSIMProfile(context.Background(), SIMProfile{})).To(MatchError("detected SIM profile is invalid"))
+		Expect(publisher.PublishSIMProfile(context.Background(), SIMProfile{PhoneNumber: "secret-number"})).To(MatchError("detected SIM profile is invalid"))
+		Expect(publisher.PublishSIMProfile(context.Background(), SIMProfile{LineName: strings.Repeat("x", 65)})).To(MatchError("detected SIM profile is invalid"))
+	})
+
+	It("keeps detected SIM metadata pending when delivery is unavailable", func() {
+		profile := SIMProfile{PhoneNumber: "+8613500000000", LineName: "CHINA MOBILE"}
+
+		remote.recipients = nil
+		Expect(publisher.PublishSIMProfile(context.Background(), profile)).To(MatchError(ErrNoRecipients))
+
+		remote.listError = errors.New("database unavailable")
+		Expect(publisher.PublishSIMProfile(context.Background(), profile)).To(MatchError(ContainSubstring("list SIM profile recipients")))
+
+		remote.listError = nil
+		remote.recipients = []incomingcall.Recipient{{
+			InstallationID:        "01900000-0000-7000-8000-000000000101",
+			IdentityPublicKey:     bytes.Repeat([]byte{1}, ed25519.PublicKeySize),
+			KeyAgreementPublicKey: privateOne.PublicKey().Bytes(),
+		}}
+		remote.uploadAt = 1
+		Expect(publisher.PublishSIMProfile(context.Background(), profile)).To(MatchError(ContainSubstring("upload SIM profile event")))
+	})
+
+	It("rejects unusable SIM profile recipient and key material", func() {
+		profile := SIMProfile{LineName: "CHINA MOBILE"}
+		remote.recipients[0].KeyAgreementPublicKey = []byte("short")
+		Expect(publisher.PublishSIMProfile(context.Background(), profile)).To(MatchError("SIM profile recipient identity is invalid"))
+
+		remote.recipients[0] = incomingcall.Recipient{
+			InstallationID:        "01900000-0000-7000-8000-000000000102",
+			IdentityPublicKey:     bytes.Repeat([]byte{2}, ed25519.PublicKeySize),
+			KeyAgreementPublicKey: make([]byte, 32),
+		}
+		Expect(publisher.PublishSIMProfile(context.Background(), profile)).To(MatchError(ContainSubstring("derive recipient SIM profile key")))
+
+		publisher.identity.CommandPrivateKey = []byte("short")
+		remote.recipients[0].KeyAgreementPublicKey = privateTwo.PublicKey().Bytes()
+		Expect(publisher.PublishSIMProfile(context.Background(), profile)).To(MatchError(ContainSubstring("parse device SIM profile key")))
+	})
+
+	It("fails closed when a random SIM profile event ID cannot be generated", func() {
+		_, err := randomEventID(strings.NewReader("short"))
+		Expect(err).To(HaveOccurred())
+	})
+
 	DescribeTable("rejects unsafe message and recipient data",
 		func(mutate func(*sms.ReceivedMessage, *[]incomingcall.Recipient)) {
 			candidate := message
@@ -196,6 +269,20 @@ var _ = Describe("Incoming message publisher", func() {
 func openEnvelope(state identity.State, envelope callevent.Envelope, privateKey *ecdh.PrivateKey) Payload {
 	payload, err := tryOpenEnvelope(state, envelope, privateKey)
 	Expect(err).NotTo(HaveOccurred())
+	return payload
+}
+
+func openSIMProfileEnvelope(state identity.State, envelope callevent.Envelope, privateKey *ecdh.PrivateKey) SIMProfilePayload {
+	devicePublic, err := ecdh.X25519().NewPublicKey(state.CommandPublicKey())
+	Expect(err).NotTo(HaveOccurred())
+	sharedSecret, err := privateKey.ECDH(devicePublic)
+	Expect(err).NotTo(HaveOccurred())
+	aead, err := eventAEADWithContext(sharedSecret, envelope.ID, envelope.DeviceUUID, simProfileContext)
+	Expect(err).NotTo(HaveOccurred())
+	plaintext, err := aead.Open(nil, envelope.Nonce, envelope.Ciphertext, associatedData(envelope))
+	Expect(err).NotTo(HaveOccurred())
+	var payload SIMProfilePayload
+	Expect(json.Unmarshal(plaintext, &payload)).To(Succeed())
 	return payload
 }
 

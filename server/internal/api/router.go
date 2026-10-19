@@ -87,6 +87,7 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("GET /healthz", router.health)
 	mux.HandleFunc("GET /v1/auth/passkey", router.passkeyPage)
 	mux.HandleFunc("GET /.well-known/sim-deck", router.discovery)
+	mux.HandleFunc("GET /.well-known/apple-app-site-association", router.appleAppSiteAssociation)
 	mux.HandleFunc("GET /v1/media/turn-credentials", router.requireOwner(router.turnCredentialsForOwner))
 	mux.HandleFunc("GET /v1/devices/{deviceID}/media/turn-credentials", router.turnCredentialsForDevice)
 	mux.HandleFunc("GET /v1/devices", router.requireOwner(router.listDevices))
@@ -387,6 +388,15 @@ func (router *router) discovery(writer http.ResponseWriter, _ *http.Request) {
 		"api_version":   "v1",
 		"websocket_url": websocketBaseURL(baseURL) + "/v1/events/ws",
 		"media":         map[string]any{"transport": "webrtc", "relay": "turn"},
+	})
+}
+
+func (router *router) appleAppSiteAssociation(writer http.ResponseWriter, _ *http.Request) {
+	writer.Header().Set("Content-Type", "application/json")
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"webcredentials": map[string]any{
+			"apps": []string{"97YACL9S6W.com.nowcent.simdeck"},
+		},
 	})
 }
 
@@ -1032,7 +1042,7 @@ func (router *router) updateDeviceSIMIdentity(writer http.ResponseWriter, reques
 		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to synchronize the SIM identity.")
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"sim_id": simID, "numeric_id": numericID})
+	writeJSON(writer, http.StatusOK, assignment)
 }
 
 func validRadioAccessTechnology(value string) bool {

@@ -23,6 +23,7 @@ it does not decrypt it.
 
 - A Linux host with Docker Engine and Docker Compose v2.
 - A DNS name and TLS reverse proxy for `PUBLIC_BASE_URL`.
+- HTTPS port 443 on the same hostname must serve `/.well-known/apple-app-site-association` so iOS can authorize native passkeys. The API itself may continue to use a different public port.
 - TCP 443 reachable by the iPhone and modem hosts.
 - TURN TCP/UDP 3478 and the configured UDP relay range reachable by the
   iPhone and modem hosts.

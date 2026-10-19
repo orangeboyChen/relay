@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -42,9 +43,17 @@ func New(store Store, baseURL string) (*Service, error) {
 	if store == nil || baseURL == "" {
 		return nil, errors.New("webauthn store and base URL are required")
 	}
-	rpURL := strings.TrimPrefix(strings.TrimPrefix(baseURL, "https://"), "http://")
-	rpURL = strings.SplitN(rpURL, "/", 2)[0]
-	rp := &webauthn.Config{RPID: rpURL, RPDisplayName: "Sim Deck", RPOrigins: []string{baseURL}}
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return nil, errors.New("webauthn base URL must be an absolute HTTP or HTTPS URL")
+	}
+	rpID := parsed.Hostname()
+	origins := []string{baseURL}
+	nativeOrigin := "https://" + rpID
+	if nativeOrigin != baseURL {
+		origins = append(origins, nativeOrigin)
+	}
+	rp := &webauthn.Config{RPID: rpID, RPDisplayName: "Sim Deck", RPOrigins: origins}
 	instance, err := webauthn.New(rp)
 	if err != nil {
 		return nil, err

@@ -514,6 +514,11 @@ var _ = Describe("HTTP API", func() {
 		Expect(body["api_version"]).To(Equal("v1"))
 		Expect(body["websocket_url"]).To(Equal("wss://deck.example/v1/events/ws"))
 		Expect(body["media"]).To(Equal(map[string]any{"transport": "webrtc", "relay": "turn"}))
+
+		association := perform(http.MethodGet, "/.well-known/apple-app-site-association", "", "")
+		Expect(association.Code).To(Equal(http.StatusOK))
+		Expect(association.Header().Get("Content-Type")).To(ContainSubstring("application/json"))
+		Expect(association.Body.String()).To(MatchJSON(`{"webcredentials":{"apps":["97YACL9S6W.com.nowcent.simdeck"]}}`))
 	})
 
 	It("starts passkey ceremonies and validates missing ceremony identifiers", func() {

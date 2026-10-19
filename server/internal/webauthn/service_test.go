@@ -49,6 +49,30 @@ func TestNewValidatesInputs(t *testing.T) {
 	if _, err := New(store, ""); err == nil {
 		t.Fatal("expected empty base URL to fail")
 	}
+	if _, err := New(store, "not a URL"); err == nil {
+		t.Fatal("expected malformed base URL to fail")
+	}
+}
+
+func TestNewUsesHostnameAsRPIDAndAcceptsNativeOrigin(t *testing.T) {
+	store := &memoryStore{owner: "01900000-0000-7000-8000-000000000001"}
+	service, err := New(store, "https://sim-deck.home.nowcent.cn:54443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.rp.Config.RPID != "sim-deck.home.nowcent.cn" {
+		t.Fatalf("unexpected RP ID %q", service.rp.Config.RPID)
+	}
+	want := map[string]bool{
+		"https://sim-deck.home.nowcent.cn:54443": true,
+		"https://sim-deck.home.nowcent.cn":       true,
+	}
+	for _, origin := range service.rp.Config.RPOrigins {
+		delete(want, origin)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing native or API origin: %#v", want)
+	}
 }
 
 func TestBeginRegistrationPropagatesCredentialLookupFailure(t *testing.T) {

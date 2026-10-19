@@ -1,5 +1,6 @@
 import AVFAudio
 import Foundation
+import OSLog
 import WebRTC
 
 enum CallMediaSessionError: LocalizedError, Equatable, Sendable {
@@ -39,6 +40,11 @@ protocol CallMediaSession: AnyObject {
 
 @MainActor
 final class WebRTCCallMediaSession: NSObject, CallMediaSession {
+    private static let logger = Logger(
+        subsystem: "com.nowcent.simdeck",
+        category: "CallMediaSession"
+    )
+
     private static let sharedFactory: RTCPeerConnectionFactory = {
         RTCInitializeSSL()
         return RTCPeerConnectionFactory()
@@ -47,6 +53,7 @@ final class WebRTCCallMediaSession: NSObject, CallMediaSession {
     private let peerConnection: RTCPeerConnection
     private let localAudioTrack: RTCAudioTrack
     private let offerTimeout: Duration
+    private var gatheringGate: ICEGatheringGate
     private var iceContinuation: CheckedContinuation<String, Error>?
     private var iceTimeoutTask: Task<Void, Never>?
     private var isClosed = false
@@ -57,6 +64,7 @@ final class WebRTCCallMediaSession: NSObject, CallMediaSession {
         offerTimeout: Duration = .seconds(10)
     ) throws {
         self.offerTimeout = offerTimeout
+        gatheringGate = ICEGatheringGate(requiresRelayCandidate: !iceServers.isEmpty)
 
         let configuration = RTCConfiguration()
         configuration.sdpSemantics = .unifiedPlan
@@ -125,10 +133,14 @@ final class WebRTCCallMediaSession: NSObject, CallMediaSession {
         let audioSession = RTCAudioSession.sharedInstance()
         audioSession.useManualAudio = true
         audioSession.isAudioEnabled = false
+        Self.logger.info(
+            "WebRTC audio session created; relay required: \(!iceServers.isEmpty, privacy: .public), ICE server count: \(iceServers.count, privacy: .public)"
+        )
     }
 
     func makeOffer() async throws -> String {
         guard !isClosed else { throw CallMediaSessionError.closed }
+        Self.logger.info("Creating WebRTC audio offer")
 
         let constraints = RTCMediaConstraints(
             mandatoryConstraints: [
@@ -147,15 +159,24 @@ final class WebRTCCallMediaSession: NSObject, CallMediaSession {
                 }
             }
         }
+        Self.logger.info("WebRTC audio offer created; setting local description")
         try await setLocalDescription(
             RTCSessionDescription(type: .offer, sdp: offerSDP)
         )
+        Self.logger.info(
+            "WebRTC local description set; ICE state: \(String(describing: self.peerConnection.iceGatheringState), privacy: .public)"
+        )
 
-        if peerConnection.iceGatheringState == .complete {
+        if gatheringGate.hasUsableCandidate {
+            Self.logger.info("WebRTC offer is ready with a usable ICE candidate")
             return try completeLocalDescription()
         }
         return try await withCheckedThrowingContinuation { continuation in
             iceContinuation = continuation
+            if gatheringGate.hasUsableCandidate {
+                finishPendingOffer()
+                return
+            }
             iceTimeoutTask = Task { [weak self] in
                 guard let self else { return }
                 do {
@@ -163,6 +184,9 @@ final class WebRTCCallMediaSession: NSObject, CallMediaSession {
                 } catch {
                     return
                 }
+                Self.logger.error(
+                    "WebRTC ICE gathering timed out; state: \(String(describing: self.peerConnection.iceGatheringState), privacy: .public), candidates: \(self.gatheringGate.observedCandidateCount, privacy: .public), usable: \(self.gatheringGate.usableCandidateCount, privacy: .public)"
+                )
                 failPendingOffer(with: .iceGatheringTimedOut)
             }
         }
@@ -236,7 +260,9 @@ final class WebRTCCallMediaSession: NSObject, CallMediaSession {
         guard let description = peerConnection.localDescription?.sdp,
               description.contains("m=audio"),
               description.localizedCaseInsensitiveContains("PCMU/8000"),
-              !description.contains("m=video") else {
+              !description.contains("m=video"),
+              gatheringGate.containsUsableCandidate(in: description) else {
+            Self.logger.error("WebRTC local description is missing required audio or ICE data")
             throw CallMediaSessionError.offerCreationFailed
         }
         return description
@@ -248,6 +274,9 @@ final class WebRTCCallMediaSession: NSObject, CallMediaSession {
         iceTimeoutTask?.cancel()
         iceTimeoutTask = nil
         do {
+            Self.logger.info(
+                "WebRTC offer gathering finished; candidates: \(self.gatheringGate.observedCandidateCount, privacy: .public), usable: \(self.gatheringGate.usableCandidateCount, privacy: .public)"
+            )
             continuation.resume(returning: try completeLocalDescription())
         } catch {
             continuation.resume(throwing: error)
@@ -260,6 +289,72 @@ final class WebRTCCallMediaSession: NSObject, CallMediaSession {
         iceTimeoutTask?.cancel()
         iceTimeoutTask = nil
         continuation.resume(throwing: error)
+    }
+
+    private func handleGeneratedCandidate(_ candidateSDP: String) {
+        let descriptor = gatheringGate.observe(candidateSDP: candidateSDP)
+        Self.logger.info(
+            "WebRTC ICE candidate generated; transport: \(descriptor.transport ?? "unknown", privacy: .public), type: \(descriptor.type ?? "unknown", privacy: .public), usable: \(descriptor.isUsable, privacy: .public)"
+        )
+        if descriptor.isUsable {
+            finishPendingOffer()
+        }
+    }
+}
+
+struct ICECandidateDescriptor: Equatable {
+    let transport: String?
+    let type: String?
+    let isUsable: Bool
+}
+
+struct ICEGatheringGate {
+    let requiresRelayCandidate: Bool
+    private(set) var observedCandidateCount = 0
+    private(set) var usableCandidateCount = 0
+
+    var hasUsableCandidate: Bool { usableCandidateCount > 0 }
+
+    mutating func observe(candidateSDP: String) -> ICECandidateDescriptor {
+        observedCandidateCount += 1
+        let fields = Self.candidateFields(candidateSDP)
+        let transport = fields.count > 2 ? fields[2].lowercased() : nil
+        let typeIndex = fields.firstIndex(where: { $0.caseInsensitiveCompare("typ") == .orderedSame })
+        let type = typeIndex.flatMap { index in
+            fields.indices.contains(index + 1) ? fields[index + 1].lowercased() : nil
+        }
+        let isUsable = type != nil && (!requiresRelayCandidate || type == "relay")
+        if isUsable {
+            usableCandidateCount += 1
+        }
+        return ICECandidateDescriptor(
+            transport: transport,
+            type: type,
+            isUsable: isUsable
+        )
+    }
+
+    func containsUsableCandidate(in description: String) -> Bool {
+        description
+            .split(whereSeparator: \Character.isNewline)
+            .map(String.init)
+            .filter { $0.hasPrefix("a=candidate:") }
+            .contains { line in
+                let fields = Self.candidateFields(line)
+                guard let typeIndex = fields.firstIndex(where: {
+                    $0.caseInsensitiveCompare("typ") == .orderedSame
+                }), fields.indices.contains(typeIndex + 1) else {
+                    return false
+                }
+                return !requiresRelayCandidate || fields[typeIndex + 1].caseInsensitiveCompare("relay") == .orderedSame
+            }
+    }
+
+    private static func candidateFields(_ candidateSDP: String) -> [String] {
+        let normalized = candidateSDP.hasPrefix("a=")
+            ? String(candidateSDP.dropFirst(2))
+            : candidateSDP
+        return normalized.split(whereSeparator: \Character.isWhitespace).map(String.init)
     }
 }
 
@@ -290,16 +385,31 @@ extension WebRTCCallMediaSession: RTCPeerConnectionDelegate {
         _ peerConnection: RTCPeerConnection,
         didChange newState: RTCIceGatheringState
     ) {
-        guard newState == .complete else { return }
         Task { @MainActor [weak self] in
-            self?.finishPendingOffer()
+            guard let self else { return }
+            Self.logger.info(
+                "WebRTC ICE gathering state changed: \(String(describing: newState), privacy: .public)"
+            )
+            if newState == .complete {
+                if gatheringGate.hasUsableCandidate {
+                    finishPendingOffer()
+                } else {
+                    Self.logger.error("WebRTC ICE gathering completed without a usable candidate")
+                    failPendingOffer(with: .offerCreationFailed)
+                }
+            }
         }
     }
 
     nonisolated func peerConnection(
         _ peerConnection: RTCPeerConnection,
         didGenerate candidate: RTCIceCandidate
-    ) {}
+    ) {
+        let candidateSDP = candidate.sdp
+        Task { @MainActor [weak self] in
+            self?.handleGeneratedCandidate(candidateSDP)
+        }
+    }
 
     nonisolated func peerConnection(
         _ peerConnection: RTCPeerConnection,

@@ -1,6 +1,7 @@
 import AVFAudio
 import CryptoKit
 import Foundation
+import OSLog
 
 enum LiveCallTransportError: LocalizedError, Equatable {
     case missingInstallationIdentity
@@ -36,6 +37,11 @@ final class InstallationCommandSigner {
 
 @MainActor
 final class LiveCallTransport: CallTransport, CallLineRouting {
+    private static let logger = Logger(
+        subsystem: "com.nowcent.simdeck",
+        category: "LiveCallTransport"
+    )
+
     let capabilities = CallCapabilities.cellular
 
     private let api: any EncryptedCallCommandAPI
@@ -137,12 +143,20 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
 
     func startOutgoingCall(callID: UUID, number: String, lineID: UUID) async throws {
         let deviceID = deviceID(for: lineID)
+        Self.logger.info(
+            "Outgoing call setup started; call: \(callID.uuidString, privacy: .public), line: \(lineID.uuidString, privacy: .public), device: \(deviceID.uuidString, privacy: .public)"
+        )
         let verificationKey = try await api.eventVerificationKey(deviceID: deviceID)
         guard verificationKey.count == 32 else { throw LiveCallTransportError.invalidDeviceKey }
+        Self.logger.info("Device verification key loaded for call \(callID.uuidString, privacy: .public)")
         let mediaSession = try await createMediaSession()
+        Self.logger.info("WebRTC media session created for call \(callID.uuidString, privacy: .public)")
         var remoteCallStarted = false
         do {
             let offer = try await mediaSession.makeOffer()
+            Self.logger.info(
+                "WebRTC offer ready; enqueueing call.start for call \(callID.uuidString, privacy: .public)"
+            )
             let exchange = try await send(
                 operation: "call.start",
                 callID: callID,
@@ -154,7 +168,9 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
             guard let answer = exchange.result.mediaAnswer else {
                 throw LiveCallTransportError.invalidResponse
             }
+            Self.logger.info("Encrypted call.start completed for call \(callID.uuidString, privacy: .public)")
             try await mediaSession.applyAnswer(answer)
+            Self.logger.info("WebRTC answer applied for call \(callID.uuidString, privacy: .public)")
 
             callLines[callID] = lineID
             callEvents[callID] = CallEventContext(
@@ -169,6 +185,9 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
                 startEventLoopIfNeeded()
             }
         } catch {
+            Self.logger.error(
+                "Outgoing call setup failed; call: \(callID.uuidString, privacy: .public), stage error: \(String(reflecting: error), privacy: .public)"
+            )
             mediaSession.close()
             if remoteCallStarted {
                 _ = try? await send(operation: "call.end", callID: callID, lineID: lineID)
@@ -307,10 +326,23 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
         } catch is CryptoKitError {
             throw LiveCallTransportError.invalidDeviceKey
         }
+        Self.logger.info(
+            "Encrypted device command prepared; operation: \(operation, privacy: .public), command: \(commandID.uuidString, privacy: .public), device: \(deviceID.uuidString, privacy: .public)"
+        )
         try await api.enqueueCommand(deviceID: deviceID, command: sealed.request)
+        Self.logger.info(
+            "Encrypted device command enqueued; operation: \(operation, privacy: .public), command: \(commandID.uuidString, privacy: .public)"
+        )
 
+        var lastState: String?
         for attempt in 0..<60 {
             let status = try await api.commandStatus(deviceID: deviceID, commandID: commandID)
+            if status.state != lastState {
+                Self.logger.info(
+                    "Encrypted device command state changed; command: \(commandID.uuidString, privacy: .public), state: \(status.state, privacy: .public), attempt: \(attempt + 1, privacy: .public)"
+                )
+                lastState = status.state
+            }
             if status.state == "completed" {
                 guard let encryptedResult = status.result else {
                     throw LiveCallTransportError.invalidResponse
@@ -343,9 +375,14 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
 
     private func createMediaSession() async throws -> any CallMediaSession {
         guard let provider = api as? any CallTURNCredentialProviding else {
+            Self.logger.info("Creating direct WebRTC media session without TURN")
             return try makeMediaSession()
         }
+        Self.logger.info("Fetching TURN credentials for WebRTC media session")
         let credentials = try await provider.turnCredentials()
+        Self.logger.info(
+            "TURN credentials fetched; URL count: \(credentials.urls.count, privacy: .public), expiration: \(credentials.expiresAt.timeIntervalSince1970, privacy: .public)"
+        )
         return try makeRelayMediaSession([credentials])
     }
 

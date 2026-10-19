@@ -100,8 +100,11 @@ var _ = Describe("Radio status runtime", func() {
 
 	It("publishes an unavailable status while the SIM is not registered", func() {
 		commander := &fakeCommander{responses: map[string]at.Response{
-			"AT+CEREG?": {Lines: []string{"+CEREG: 0,2"}, Terminal: "OK"},
-			"AT+CREG?":  {Lines: []string{"+CREG: 0,0"}, Terminal: "OK"},
+			"AT+CEREG?":  {Lines: []string{"+CEREG: 0,2"}, Terminal: "OK"},
+			"AT+CREG?":   {Lines: []string{"+CREG: 0,0"}, Terminal: "OK"},
+			"AT+CGREG?":  {Lines: []string{"+CGREG: 0,2"}, Terminal: "OK"},
+			"AT+QNWINFO": {Lines: []string{`+QNWINFO: "No Service"`}, Terminal: "OK"},
+			"AT+CSQ":     {Lines: []string{"+CSQ: 99,99"}, Terminal: "OK"},
 		}}
 		runtime, err := NewRuntime(commander, &fakeRemote{}, state, time.Hour, time.Second)
 		Expect(err).NotTo(HaveOccurred())
@@ -111,6 +114,44 @@ var _ = Describe("Radio status runtime", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status.RadioAccessTechnology).To(Equal("unknown"))
 		Expect(status.SignalBars).To(BeNil())
+	})
+
+	It("falls back to packet registration and still publishes current radio readings", func() {
+		commander := &fakeCommander{responses: map[string]at.Response{
+			"AT+CEREG?":  {Terminal: "ERROR"},
+			"AT+CREG?":   {Lines: []string{"+CREG: 0,0"}, Terminal: "OK"},
+			"AT+CGREG?":  {Lines: []string{"+CGREG: 0,1"}, Terminal: "OK"},
+			"AT+QNWINFO": {Lines: []string{`+QNWINFO: "EDGE","46000"`}, Terminal: "OK"},
+			"AT+CSQ":     {Lines: []string{"+CSQ: 12,99"}, Terminal: "OK"},
+		}}
+		runtime, err := NewRuntime(commander, &fakeRemote{}, state, time.Hour, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+
+		status, err := runtime.read(context.Background())
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status.RadioAccessTechnology).To(Equal("edge"))
+		Expect(status.SignalBars).NotTo(BeNil())
+		Expect(*status.SignalBars).To(Equal(2))
+	})
+
+	It("reports signal while cellular registration is still pending", func() {
+		commander := &fakeCommander{responses: map[string]at.Response{
+			"AT+CEREG?":  {Lines: []string{"+CEREG: 0,2"}, Terminal: "OK"},
+			"AT+CREG?":   {Lines: []string{"+CREG: 0,2"}, Terminal: "OK"},
+			"AT+CGREG?":  {Lines: []string{"+CGREG: 0,2"}, Terminal: "OK"},
+			"AT+QNWINFO": {Lines: []string{`+QNWINFO: "FDD LTE","46000"`}, Terminal: "OK"},
+			"AT+CSQ":     {Lines: []string{"+CSQ: 17,99"}, Terminal: "OK"},
+		}}
+		runtime, err := NewRuntime(commander, &fakeRemote{}, state, time.Hour, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+
+		status, err := runtime.read(context.Background())
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status.RadioAccessTechnology).To(Equal("lte"))
+		Expect(status.SignalBars).NotTo(BeNil())
+		Expect(*status.SignalBars).To(Equal(3))
 	})
 
 	DescribeTable("parses modem registration states",
@@ -169,6 +210,7 @@ var _ = Describe("Radio status runtime", func() {
 		commander = &fakeCommander{responses: map[string]at.Response{
 			"AT+CEREG?": {Terminal: "ERROR"},
 			"AT+CREG?":  {Terminal: "+CME ERROR: operation not supported"},
+			"AT+CGREG?": {Terminal: "+CME ERROR: operation not supported"},
 		}}
 		runtime, err = NewRuntime(commander, &fakeRemote{}, state, time.Second, time.Second)
 		Expect(err).NotTo(HaveOccurred())
@@ -177,10 +219,11 @@ var _ = Describe("Radio status runtime", func() {
 		commander = &fakeCommander{responses: map[string]at.Response{
 			"AT+CEREG?": {Lines: []string{"unexpected"}, Terminal: "OK"},
 			"AT+CREG?":  {Lines: []string{"unexpected"}, Terminal: "OK"},
+			"AT+CGREG?": {Lines: []string{"unexpected"}, Terminal: "OK"},
 		}}
 		runtime, err = NewRuntime(commander, &fakeRemote{}, state, time.Second, time.Second)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(runtime.Run(context.Background())).To(MatchError("modem registration response is missing +CEREG and +CREG status"))
+		Expect(runtime.Run(context.Background())).To(MatchError("modem registration response is missing +CEREG, +CREG, and +CGREG status"))
 	})
 
 	It("surfaces radio status upload failures", func() {
@@ -204,6 +247,7 @@ var _ = Describe("Radio status runtime", func() {
 		failed := map[string]at.Response{
 			"AT+CEREG?": {Terminal: "ERROR"},
 			"AT+CREG?":  {Terminal: "+CME ERROR: busy"},
+			"AT+CGREG?": {Terminal: "+CME ERROR: busy"},
 		}
 		commander := &sequencedCommander{responses: []map[string]at.Response{available, failed, available}, phase: -1}
 		remote := &fakeRemote{}

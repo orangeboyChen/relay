@@ -93,12 +93,9 @@ func (runtime *Runtime) publish(ctx context.Context) error {
 }
 
 func (runtime *Runtime) read(ctx context.Context) (Status, error) {
-	registered, err := runtime.readRegistration(ctx)
+	_, err := runtime.readRegistration(ctx)
 	if err != nil {
 		return Status{}, err
-	}
-	if !registered {
-		return Status{RadioAccessTechnology: "unknown"}, nil
 	}
 
 	network, err := runtime.send(ctx, "AT+QNWINFO")
@@ -140,22 +137,46 @@ func (runtime *Runtime) readRegistration(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("query circuit registration: %w", err)
 	}
-	if !circuit.OK() {
-		return false, fmt.Errorf("modem rejected registration queries: EPS %s, circuit %s", eps.Terminal, circuit.Terminal)
+	circuitStatus := -1
+	registrationFound := epsStatus >= 0
+	if circuit.OK() {
+		if registered, found, status := parseRegistrationStatus(circuit.Lines, "+CREG:"); found {
+			registrationFound = true
+			circuitStatus = status
+			if registered {
+				return true, nil
+			}
+		}
 	}
-	registered, found, circuitStatus := parseRegistrationStatus(circuit.Lines, "+CREG:")
-	if !found {
-		return false, errors.New("modem registration response is missing +CEREG and +CREG status")
+
+	packet, err := runtime.send(ctx, "AT+CGREG?")
+	if err != nil {
+		return false, fmt.Errorf("query packet registration: %w", err)
 	}
-	if !registered {
-		runtime.logger.Warn(
-			"modem is not registered with a cellular network",
-			"device_uuid", runtime.identity.DeviceUUID,
-			"eps_registration_status", epsStatus,
-			"circuit_registration_status", circuitStatus,
-		)
+	packetStatus := -1
+	if packet.OK() {
+		if registered, found, status := parseRegistrationStatus(packet.Lines, "+CGREG:"); found {
+			registrationFound = true
+			packetStatus = status
+			if registered {
+				return true, nil
+			}
+		}
 	}
-	return registered, nil
+	if !registrationFound {
+		if !eps.OK() && !circuit.OK() && !packet.OK() {
+			return false, fmt.Errorf("modem rejected registration queries: EPS %s, circuit %s, packet %s", eps.Terminal, circuit.Terminal, packet.Terminal)
+		}
+		return false, errors.New("modem registration response is missing +CEREG, +CREG, and +CGREG status")
+	}
+	runtime.logger.Warn(
+		"modem is not registered with a cellular network",
+		"device_uuid", runtime.identity.DeviceUUID,
+		"eps_registration_status", epsStatus,
+		"circuit_registration_status", circuitStatus,
+		"packet_registration_status", packetStatus,
+	)
+	return false, nil
 }
 
 func (runtime *Runtime) send(ctx context.Context, command string) (at.Response, error) {

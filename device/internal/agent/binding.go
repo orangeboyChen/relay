@@ -33,17 +33,26 @@ func EnsureBinding(ctx context.Context, config Config, store identity.Store, sta
 	if err != nil {
 		return identity.State{}, fmt.Errorf("prepare device discovery: %w", err)
 	}
-	result, err := client.GetDiscoveryStatus(ctx, prepared.DeviceUUID, prepared.PendingCredential)
-	if errors.Is(err, serverapi.ErrDiscoveryUnavailable) {
-		result, err = client.SubmitDiscovery(ctx, prepared.PendingCredential, prepared)
-	}
-	if err != nil {
-		return identity.State{}, err
-	}
-
 	ticker := time.NewTicker(config.DiscoveryPoll)
 	defer ticker.Stop()
+	var result serverapi.DiscoveryResult
 	for {
+		result, err = client.GetDiscoveryStatus(ctx, prepared.DeviceUUID, prepared.PendingCredential)
+		if errors.Is(err, serverapi.ErrDiscoveryUnavailable) {
+			result, err = client.SubmitDiscovery(ctx, prepared.PendingCredential, prepared)
+		}
+		if errors.Is(err, serverapi.ErrDiscoveryUnavailable) {
+			select {
+			case <-ctx.Done():
+				return identity.State{}, ctx.Err()
+			case <-ticker.C:
+				continue
+			}
+		}
+		if err != nil {
+			return identity.State{}, err
+		}
+
 		switch result.Status {
 		case serverapi.DiscoveryApproved:
 			bound, bindError := store.BindAssignment(
@@ -66,13 +75,6 @@ func EnsureBinding(ctx context.Context, config Config, store identity.Store, sta
 		case <-ctx.Done():
 			return identity.State{}, ctx.Err()
 		case <-ticker.C:
-		}
-		result, err = client.GetDiscoveryStatus(ctx, prepared.DeviceUUID, prepared.PendingCredential)
-		if errors.Is(err, serverapi.ErrDiscoveryUnavailable) {
-			return identity.State{}, errors.New("device discovery approval expired or became unavailable")
-		}
-		if err != nil {
-			return identity.State{}, err
 		}
 	}
 }

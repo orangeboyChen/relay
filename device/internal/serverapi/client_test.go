@@ -478,6 +478,7 @@ var _ = Describe("Server discovery client", func() {
 
 		_, err := client.SubmitDiscovery(context.Background(), credential, state)
 
+		Expect(errors.Is(err, ErrDiscoveryUnavailable)).To(BeTrue())
 		Expect(err).To(MatchError("submit device discovery: server returned 409 (device_discovery_closed)"))
 		Expect(err.Error()).NotTo(ContainSubstring(credential))
 		Expect(err.Error()).NotTo(ContainSubstring("secret details"))

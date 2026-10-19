@@ -337,7 +337,23 @@ func responseError(operation string, statusCode int, body io.Reader) error {
 	if failure.Error.Code == "" {
 		failure.Error.Code = "unexpected_response"
 	}
-	return fmt.Errorf("%s: server returned %d (%s)", operation, statusCode, failure.Error.Code)
+	message := fmt.Sprintf("%s: server returned %d (%s)", operation, statusCode, failure.Error.Code)
+	if failure.Error.Code == "device_discovery_closed" {
+		return discoveryUnavailableError{message: message}
+	}
+	return errors.New(message)
+}
+
+type discoveryUnavailableError struct {
+	message string
+}
+
+func (err discoveryUnavailableError) Error() string {
+	return err.message
+}
+
+func (err discoveryUnavailableError) Unwrap() error {
+	return ErrDiscoveryUnavailable
 }
 
 // DiscoveryResult is the app-controlled admission state returned by the server.

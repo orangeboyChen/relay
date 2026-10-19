@@ -19,12 +19,21 @@ type fakeDiscoveryClient struct {
 	statusCredentials    []string
 	submitResult         serverapi.DiscoveryResult
 	submitError          error
+	submitResults        []serverapi.DiscoveryResult
+	submitErrors         []error
 	statusResults        []serverapi.DiscoveryResult
 	statusErrors         []error
 }
 
 func (client *fakeDiscoveryClient) SubmitDiscovery(_ context.Context, credential string, _ identity.State) (serverapi.DiscoveryResult, error) {
 	client.submittedCredentials = append(client.submittedCredentials, credential)
+	index := len(client.submittedCredentials) - 1
+	if index < len(client.submitErrors) && client.submitErrors[index] != nil {
+		return serverapi.DiscoveryResult{}, client.submitErrors[index]
+	}
+	if index < len(client.submitResults) {
+		return client.submitResults[index], nil
+	}
 	return client.submitResult, client.submitError
 }
 
@@ -119,14 +128,43 @@ var _ = Describe("Device server binding", func() {
 		Expect(err).To(MatchError("configured server does not match the server bound to this device identity"))
 	})
 
-	It("keeps the durable credential when submission fails", func() {
+	It("waits for the owner to open discovery without losing the durable credential", func() {
 		client := &fakeDiscoveryClient{
-			statusErrors: []error{serverapi.ErrDiscoveryUnavailable}, submitError: errors.New("discovery closed"),
+			statusErrors: []error{
+				serverapi.ErrDiscoveryUnavailable,
+				serverapi.ErrDiscoveryUnavailable,
+				nil,
+			},
+			statusResults: []serverapi.DiscoveryResult{
+				{},
+				{},
+				{DeviceUUID: state.DeviceUUID, Status: serverapi.DiscoveryApproved, NumericID: 3},
+			},
+			submitErrors: []error{serverapi.ErrDiscoveryUnavailable, nil},
+			submitResults: []serverapi.DiscoveryResult{
+				{},
+				{DeviceUUID: state.DeviceUUID, Status: serverapi.DiscoveryPending},
+			},
+		}
+
+		bound, err := EnsureBinding(context.Background(), config, store, state, client)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(client.submittedCredentials).To(HaveLen(2))
+		Expect(bound.NumericID).To(Equal(3))
+		persisted, loadErr := store.LoadOrCreate()
+		Expect(loadErr).NotTo(HaveOccurred())
+		Expect(persisted.Credential).To(Equal(client.submittedCredentials[0]))
+	})
+
+	It("keeps the durable credential when submission fails permanently", func() {
+		client := &fakeDiscoveryClient{
+			statusErrors: []error{serverapi.ErrDiscoveryUnavailable}, submitError: errors.New("server unavailable"),
 		}
 
 		_, err := EnsureBinding(context.Background(), config, store, state, client)
 
-		Expect(err).To(MatchError("discovery closed"))
+		Expect(err).To(MatchError("server unavailable"))
 		persisted, loadErr := store.LoadOrCreate()
 		Expect(loadErr).NotTo(HaveOccurred())
 		Expect(persisted.PendingCredential).To(Equal(client.submittedCredentials[0]))
@@ -154,15 +192,24 @@ var _ = Describe("Device server binding", func() {
 		Expect(err).To(MatchError("device discovery was rejected by the owner"))
 	})
 
-	It("stops when a pending approval expires", func() {
+	It("resubmits when a pending approval expires", func() {
 		client := &fakeDiscoveryClient{
-			statusResults: []serverapi.DiscoveryResult{{DeviceUUID: state.DeviceUUID, Status: serverapi.DiscoveryPending}},
-			statusErrors:  []error{nil, serverapi.ErrDiscoveryUnavailable},
+			statusResults: []serverapi.DiscoveryResult{
+				{DeviceUUID: state.DeviceUUID, Status: serverapi.DiscoveryPending},
+				{},
+				{DeviceUUID: state.DeviceUUID, Status: serverapi.DiscoveryApproved, NumericID: 5},
+			},
+			statusErrors: []error{nil, serverapi.ErrDiscoveryUnavailable, nil},
+			submitResult: serverapi.DiscoveryResult{
+				DeviceUUID: state.DeviceUUID, Status: serverapi.DiscoveryPending,
+			},
 		}
 
-		_, err := EnsureBinding(context.Background(), config, store, state, client)
+		bound, err := EnsureBinding(context.Background(), config, store, state, client)
 
-		Expect(err).To(MatchError("device discovery approval expired or became unavailable"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(client.submittedCredentials).To(HaveLen(1))
+		Expect(bound.NumericID).To(Equal(5))
 	})
 
 	It("honors cancellation while waiting for approval", func() {

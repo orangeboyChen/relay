@@ -104,8 +104,13 @@ private struct OnboardingServerPage: View {
 
     @Bindable private var connection: ServerConnectionManager
     @State private var password = ""
-    @State private var isSigningIn = false
+    @State private var signInMethod: SignInMethod?
     @State private var errorMessage: String?
+
+    private enum SignInMethod {
+        case password
+        case passkey
+    }
 
     init(model: AppModel) {
         self.model = model
@@ -134,9 +139,9 @@ private struct OnboardingServerPage: View {
                         .textContentType(.password)
 
                     Button {
-                        Task { await signIn() }
+                        Task { await signInWithPassword() }
                     } label: {
-                        if isSigningIn {
+                        if signInMethod == .password {
                             ProgressView()
                                 .frame(maxWidth: .infinity)
                         } else {
@@ -146,7 +151,22 @@ private struct OnboardingServerPage: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                    .disabled(!canSignIn)
+                    .disabled(!canSignInWithPassword)
+
+                    Button {
+                        Task { await signInWithPasskey() }
+                    } label: {
+                        if signInMethod == .passkey {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Label("Sign In with Passkey", systemImage: "person.badge.key")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .disabled(!canSignInWithPasskey)
                 }
 
                 HStack(spacing: 8) {
@@ -166,19 +186,35 @@ private struct OnboardingServerPage: View {
         }
     }
 
-    private var canSignIn: Bool {
-        !isSigningIn
+    private var canSignInWithPassword: Bool {
+        signInMethod == nil
             && !connection.address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !password.isEmpty
     }
 
-    private func signIn() async {
-        isSigningIn = true
+    private var canSignInWithPasskey: Bool {
+        signInMethod == nil
+            && !connection.address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func signInWithPassword() async {
+        signInMethod = .password
         errorMessage = nil
-        defer { isSigningIn = false }
+        defer { signInMethod = nil }
         do {
             try await model.signInToServer(password: password)
             password = ""
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func signInWithPasskey() async {
+        signInMethod = .passkey
+        errorMessage = nil
+        defer { signInMethod = nil }
+        do {
+            try await model.signInWithPasskey()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -387,5 +423,13 @@ private struct OnboardingActions: View {
 #Preview("Onboarding - Accessibility") {
     OnboardingScreen(model: .preview(onboardingCompleted: false))
         .environment(\.dynamicTypeSize, .accessibility4)
+}
+
+#Preview("Onboarding - Passkey Sign In") {
+    NavigationStack {
+        OnboardingServerPage(model: .preview(onboardingCompleted: false))
+            .padding()
+            .background(Color(uiColor: .systemGroupedBackground))
+    }
 }
 #endif

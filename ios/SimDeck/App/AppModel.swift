@@ -39,6 +39,7 @@ final class AppModel {
     @ObservationIgnored private let defaultLineStore: any DefaultLineStoring
     @ObservationIgnored private let recentCallLineStore: any RecentCallLineStoring
     @ObservationIgnored private let onboardingStore: any OnboardingStoring
+    @ObservationIgnored private let passkeyAuthorizer: any PasskeyAuthorizing
     @ObservationIgnored private var installationIdentity: InstallationIdentity?
     @ObservationIgnored private var recoveredVaultKey: VaultKey?
     @ObservationIgnored private var voipPushCoordinator: VoIPPushCoordinator?
@@ -69,6 +70,7 @@ final class AppModel {
         defaultLineStore: (any DefaultLineStoring)? = nil,
         recentCallLineStore: (any RecentCallLineStoring)? = nil,
         onboardingStore: (any OnboardingStoring)? = nil,
+        passkeyAuthorizer: (any PasskeyAuthorizing)? = nil,
         messageHistoryStore: EncryptedMessageHistoryStore = EncryptedMessageHistoryStore(),
         remoteDeviceRefreshEnabled: Bool = true
     ) {
@@ -103,6 +105,7 @@ final class AppModel {
         self.defaultLineStore = resolvedDefaultLineStore
         self.recentCallLineStore = resolvedRecentCallLineStore
         self.onboardingStore = resolvedOnboardingStore
+        self.passkeyAuthorizer = passkeyAuthorizer ?? NativePasskeyAuthorizer()
         self.commandSigner = resolvedCommandSigner
         self.messageHistoryStore = messageHistoryStore
         self.messageTransport = messageTransport ?? LiveMessageTransport(
@@ -168,6 +171,20 @@ final class AppModel {
 
     func signInToServer(password: String) async throws {
         try await serverConnection.signIn(password: password)
+        try await completeServerSignIn()
+    }
+
+    func signInWithPasskey() async throws {
+        let ceremony = try await serverConnection.beginPasskeyLogin()
+        let credential = try await passkeyAuthorizer.assert(ceremony.challenge)
+        try await serverConnection.finishPasskeyLogin(
+            ceremonyID: ceremony.id,
+            credential: credential
+        )
+        try await completeServerSignIn()
+    }
+
+    private func completeServerSignIn() async throws {
         try await registerInstallationIfNeeded()
         devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
         callCoordinator.updateLineRoutes(devices)
@@ -177,16 +194,12 @@ final class AppModel {
     }
 
     func registerPasskey() async throws {
-        guard let serverURL = serverConnection.authenticatedBaseURL,
-              let accessToken = serverConnection.accessToken else {
-            throw ServerConnectionError.authenticationRequired
-        }
-        let callback = try await PasskeyWebAuthenticationSession().authenticate(
-            serverURL: serverURL, mode: "register", accessToken: accessToken
+        let ceremony = try await serverConnection.beginPasskeyRegistration()
+        let credential = try await passkeyAuthorizer.register(ceremony.challenge)
+        try await serverConnection.finishPasskeyRegistration(
+            ceremonyID: ceremony.id,
+            credential: credential
         )
-        guard callback.scheme == "simdeck", callback.fragment != nil else {
-            throw ServerConnectionError.invalidResponse
-        }
     }
 
     func startVoIPPushes() {

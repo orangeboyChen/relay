@@ -4,6 +4,125 @@ import XCTest
 
 @MainActor
 final class ServerConnectionManagerTests: XCTestCase {
+    func testRegistersNativePasskeyWithAuthenticatedWebAuthnCeremony() async throws {
+        let challengeData = Data([0xfb, 0xff, 0x00])
+        let userID = Data([0x01, 0x02, 0x03])
+        let credentialID = Data([0xfa, 0xfb, 0xfc])
+        let clientData = Data("client-data".utf8)
+        let attestation = Data("attestation".utf8)
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
+        )
+        let network = ScriptedServerNetwork { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
+            switch request.url?.path {
+            case "/v1/auth/passkey/registration/options":
+                return Self.response(status: 200, body: """
+                {"ceremony_id":"registration-1","options":{"publicKey":{
+                  "challenge":"\(Base64URL.encode(challengeData))",
+                  "rp":{"id":"deck.example.test","name":"Sim Deck"},
+                  "user":{"id":"\(Base64URL.encode(userID))","name":"admin","displayName":"Owner"}
+                }}}
+                """)
+            case "/v1/auth/passkey/registration/finish":
+                XCTAssertEqual(request.url?.query, "ceremony_id=registration-1")
+                let body = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+                )
+                XCTAssertEqual(body["id"] as? String, Base64URL.encode(credentialID))
+                XCTAssertEqual(body["rawId"] as? String, Base64URL.encode(credentialID))
+                let response = try XCTUnwrap(body["response"] as? [String: String])
+                XCTAssertEqual(response["clientDataJSON"], Base64URL.encode(clientData))
+                XCTAssertEqual(response["attestationObject"], Base64URL.encode(attestation))
+                return Self.response(status: 204, body: "")
+            default:
+                XCTFail("Unexpected passkey request: \(request.url?.absoluteString ?? "")")
+                return Self.response(status: 500, body: "{}")
+            }
+        }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+
+        let ceremony = try await manager.beginPasskeyRegistration()
+        XCTAssertEqual(ceremony.id, "registration-1")
+        XCTAssertEqual(ceremony.challenge.relyingPartyID, "deck.example.test")
+        XCTAssertEqual(ceremony.challenge.challenge, challengeData)
+        XCTAssertEqual(ceremony.challenge.userID, userID)
+        XCTAssertEqual(ceremony.challenge.userName, "admin")
+
+        try await manager.finishPasskeyRegistration(
+            ceremonyID: ceremony.id,
+            credential: PasskeyRegistrationCredential(
+                credentialID: credentialID,
+                clientDataJSON: clientData,
+                attestationObject: attestation
+            )
+        )
+        XCTAssertEqual(network.requests.count, 2)
+    }
+
+    func testSignsInWithNativePasskeyAndPersistsSession() async throws {
+        let challengeData = Data([0xfe, 0xed, 0x01])
+        let credentialID = Data([0xfa, 0xfb, 0xfc])
+        let clientData = Data("client-data".utf8)
+        let authenticatorData = Data("authenticator".utf8)
+        let signature = Data("signature".utf8)
+        let userID = Data([0x01, 0x02, 0x03])
+        let store = MemoryServerSessionStore()
+        let network = ScriptedServerNetwork { request in
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+            switch request.url?.path {
+            case "/v1/auth/passkey/login/options":
+                return Self.response(status: 200, body: """
+                {"ceremony_id":"login-1","options":{"publicKey":{
+                  "challenge":"\(Base64URL.encode(challengeData))",
+                  "rpId":"deck.example.test"
+                }}}
+                """)
+            case "/v1/auth/passkey/login/finish":
+                XCTAssertEqual(request.url?.query, "ceremony_id=login-1")
+                let body = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+                )
+                XCTAssertEqual(body["id"] as? String, Base64URL.encode(credentialID))
+                let response = try XCTUnwrap(body["response"] as? [String: String])
+                XCTAssertEqual(response["authenticatorData"], Base64URL.encode(authenticatorData))
+                XCTAssertEqual(response["signature"], Base64URL.encode(signature))
+                XCTAssertEqual(response["userHandle"], Base64URL.encode(userID))
+                return Self.response(
+                    status: 201,
+                    body: Self.sessionJSON(accessToken: "passkey-access", refreshToken: "passkey-refresh")
+                )
+            default:
+                XCTFail("Unexpected passkey request: \(request.url?.absoluteString ?? "")")
+                return Self.response(status: 500, body: "{}")
+            }
+        }
+        let defaults = isolatedDefaults()
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+        manager.address = "https://deck.example.test:54443"
+
+        let ceremony = try await manager.beginPasskeyLogin()
+        XCTAssertEqual(ceremony.challenge.relyingPartyID, "deck.example.test")
+        XCTAssertEqual(ceremony.challenge.challenge, challengeData)
+        try await manager.finishPasskeyLogin(
+            ceremonyID: ceremony.id,
+            credential: PasskeyAssertionCredential(
+                credentialID: credentialID,
+                clientDataJSON: clientData,
+                authenticatorData: authenticatorData,
+                signature: signature,
+                userID: userID
+            )
+        )
+
+        XCTAssertTrue(manager.isSignedIn)
+        XCTAssertEqual(manager.state, .connected)
+        XCTAssertTrue(String(decoding: try XCTUnwrap(store.value), as: UTF8.self).contains("passkey-access"))
+        XCTAssertEqual(defaults.string(forKey: "sim-deck.server-address.v1"), manager.address)
+    }
+
     func testRevokeCurrentSessionCallsLogoutAndClearsLocalSession() async throws {
         let store = MemoryServerSessionStore(
             value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)

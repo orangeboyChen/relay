@@ -234,6 +234,16 @@
     "An online SIM is required." : {
 
     },
+    "Another passkey request is already active." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已有另一个通行密钥请求正在进行。"
+          }
+        }
+      }
+    },
     "Answered" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2423,6 +2433,16 @@
         }
       }
     },
+    "Sign In with Passkey" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用通行密钥登录"
+          }
+        }
+      }
+    },
     "Sign Out" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2783,6 +2803,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "卡槽必须在线才能更改控制设置。"
+          }
+        }
+      }
+    },
+    "The system returned an invalid passkey credential." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "系统返回了无效的通行密钥凭证。"
           }
         }
       }

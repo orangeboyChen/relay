@@ -33,10 +33,24 @@ extension AppModel {
             messageTransport: PreviewMessageTransport(),
             slotSettingsTransport: PreviewSlotSettingsTransport(),
             onboardingStore: PreviewOnboardingStore(isCompleted: onboardingCompleted),
+            passkeyAuthorizer: PreviewPasskeyAuthorizer(),
             remoteDeviceRefreshEnabled: false
         )
         model.bootstrapInstallation()
         return model
+    }
+}
+
+@MainActor
+private final class PreviewPasskeyAuthorizer: PasskeyAuthorizing {
+    func register(_ challenge: PasskeyRegistrationChallenge) async throws
+        -> PasskeyRegistrationCredential {
+        throw CancellationError()
+    }
+
+    func assert(_ challenge: PasskeyAssertionChallenge) async throws
+        -> PasskeyAssertionCredential {
+        throw CancellationError()
     }
 }
 

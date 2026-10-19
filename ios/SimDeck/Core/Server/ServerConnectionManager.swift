@@ -445,6 +445,149 @@ final class ServerConnectionManager {
         }
     }
 
+    func beginPasskeyRegistration() async throws -> PasskeyRegistrationCeremony {
+        let (data, response) = try await authenticatedRequest(
+            path: "v1/auth/passkey/registration/options",
+            method: "POST"
+        )
+        guard response.statusCode == 200,
+              let options = try? Self.decoder.decode(PasskeyOptionsResponse.self, from: data),
+              let relyingPartyID = options.options.publicKey.relyingParty?.id,
+              let user = options.options.publicKey.user,
+              let challenge = Base64URL.decode(options.options.publicKey.challenge),
+              let userID = Base64URL.decode(user.id),
+              !options.ceremonyID.isEmpty,
+              !relyingPartyID.isEmpty,
+              !user.name.isEmpty else {
+            throw ServerConnectionError.invalidResponse
+        }
+        return PasskeyRegistrationCeremony(
+            id: options.ceremonyID,
+            challenge: PasskeyRegistrationChallenge(
+                relyingPartyID: relyingPartyID,
+                challenge: challenge,
+                userID: userID,
+                userName: user.name
+            )
+        )
+    }
+
+    func finishPasskeyRegistration(
+        ceremonyID: String,
+        credential: PasskeyRegistrationCredential
+    ) async throws {
+        guard !ceremonyID.isEmpty,
+              !credential.credentialID.isEmpty,
+              !credential.clientDataJSON.isEmpty,
+              !credential.attestationObject.isEmpty else {
+            throw ServerConnectionError.invalidResponse
+        }
+        let credentialID = Base64URL.encode(credential.credentialID)
+        let body = try Self.encoder.encode(PasskeyRegistrationFinishRequest(
+            id: credentialID,
+            rawID: credentialID,
+            type: "public-key",
+            response: PasskeyRegistrationFinishResponse(
+                clientDataJSON: Base64URL.encode(credential.clientDataJSON),
+                attestationObject: Base64URL.encode(credential.attestationObject)
+            )
+        ))
+        let (_, response) = try await authenticatedRequest(
+            path: "v1/auth/passkey/registration/finish",
+            method: "POST",
+            body: body,
+            queryItems: [URLQueryItem(name: "ceremony_id", value: ceremonyID)]
+        )
+        guard response.statusCode == 204 else {
+            throw ServerConnectionError.requestFailed(response.statusCode)
+        }
+    }
+
+    func beginPasskeyLogin() async throws -> PasskeyAssertionCeremony {
+        state = .connecting
+        lastErrorDescription = nil
+        do {
+            let baseURL = try validatedBaseURL()
+            var request = URLRequest(url: baseURL.appending(path: "v1/auth/passkey/login/options"))
+            request.httpMethod = "POST"
+            let (data, response) = try await network.data(for: request)
+            guard response.statusCode == 200,
+                  let options = try? Self.decoder.decode(PasskeyOptionsResponse.self, from: data),
+                  let relyingPartyID = options.options.publicKey.relyingPartyID,
+                  let challenge = Base64URL.decode(options.options.publicKey.challenge),
+                  !options.ceremonyID.isEmpty,
+                  !relyingPartyID.isEmpty else {
+                throw ServerConnectionError.invalidResponse
+            }
+            return PasskeyAssertionCeremony(
+                id: options.ceremonyID,
+                challenge: PasskeyAssertionChallenge(
+                    relyingPartyID: relyingPartyID,
+                    challenge: challenge
+                )
+            )
+        } catch {
+            state = .failed
+            lastErrorDescription = error.localizedDescription
+            Self.logger.error("Passkey login start failed: \(String(reflecting: error), privacy: .public)")
+            throw error
+        }
+    }
+
+    func finishPasskeyLogin(
+        ceremonyID: String,
+        credential: PasskeyAssertionCredential
+    ) async throws {
+        guard !ceremonyID.isEmpty,
+              !credential.credentialID.isEmpty,
+              !credential.clientDataJSON.isEmpty,
+              !credential.authenticatorData.isEmpty,
+              !credential.signature.isEmpty else {
+            throw ServerConnectionError.invalidResponse
+        }
+        do {
+            let baseURL = try validatedBaseURL()
+            let credentialID = Base64URL.encode(credential.credentialID)
+            let body = try Self.encoder.encode(PasskeyAssertionFinishRequest(
+                id: credentialID,
+                rawID: credentialID,
+                type: "public-key",
+                response: PasskeyAssertionFinishResponse(
+                    clientDataJSON: Base64URL.encode(credential.clientDataJSON),
+                    authenticatorData: Base64URL.encode(credential.authenticatorData),
+                    signature: Base64URL.encode(credential.signature),
+                    userHandle: credential.userID.map(Base64URL.encode)
+                )
+            ))
+            var components = URLComponents(
+                url: baseURL.appending(path: "v1/auth/passkey/login/finish"),
+                resolvingAgainstBaseURL: false
+            )
+            components?.queryItems = [URLQueryItem(name: "ceremony_id", value: ceremonyID)]
+            guard let url = components?.url else {
+                throw ServerConnectionError.invalidAddress
+            }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = body
+            let (data, response) = try await network.data(for: request)
+            guard response.statusCode == 201 else {
+                throw ServerConnectionError.requestFailed(response.statusCode)
+            }
+            let session = try Self.decoder.decode(ServerSession.self, from: data)
+            try save(session)
+            defaults.set(address.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Self.addressKey)
+            state = .connected
+            lastErrorDescription = nil
+        } catch {
+            state = .failed
+            lastErrorDescription = error.localizedDescription
+            Self.logger.error("Passkey login finish failed: \(String(reflecting: error), privacy: .public)")
+            throw error
+        }
+    }
+
     func signOut() throws {
         try sessionStore.delete()
         session = nil
@@ -1053,6 +1196,83 @@ private struct RefreshRequest: Encodable {
     enum CodingKeys: String, CodingKey {
         case refreshToken = "refresh_token"
     }
+}
+
+private struct PasskeyOptionsResponse: Decodable {
+    let ceremonyID: String
+    let options: PasskeyOptions
+
+    enum CodingKeys: String, CodingKey {
+        case ceremonyID = "ceremony_id"
+        case options
+    }
+}
+
+private struct PasskeyOptions: Decodable {
+    let publicKey: PasskeyPublicKeyOptions
+}
+
+private struct PasskeyPublicKeyOptions: Decodable {
+    let challenge: String
+    let relyingParty: PasskeyRelyingParty?
+    let relyingPartyID: String?
+    let user: PasskeyUser?
+
+    enum CodingKeys: String, CodingKey {
+        case challenge
+        case relyingParty = "rp"
+        case relyingPartyID = "rpId"
+        case user
+    }
+}
+
+private struct PasskeyRelyingParty: Decodable {
+    let id: String?
+}
+
+private struct PasskeyUser: Decodable {
+    let id: String
+    let name: String
+}
+
+private struct PasskeyRegistrationFinishRequest: Encodable {
+    let id: String
+    let rawID: String
+    let type: String
+    let response: PasskeyRegistrationFinishResponse
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case rawID = "rawId"
+        case type
+        case response
+    }
+}
+
+private struct PasskeyRegistrationFinishResponse: Encodable {
+    let clientDataJSON: String
+    let attestationObject: String
+}
+
+private struct PasskeyAssertionFinishRequest: Encodable {
+    let id: String
+    let rawID: String
+    let type: String
+    let response: PasskeyAssertionFinishResponse
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case rawID = "rawId"
+        case type
+        case response
+    }
+}
+
+private struct PasskeyAssertionFinishResponse: Encodable {
+    let clientDataJSON: String
+    let authenticatorData: String
+    let signature: String
+    let userHandle: String?
 }
 
 private struct AppInstallationRegistrationRequest: Encodable {

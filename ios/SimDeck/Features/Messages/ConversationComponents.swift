@@ -15,33 +15,36 @@ struct ConversationHeader: View {
                 }
             }
         } label: {
-            VStack(spacing: 2) {
+            HStack(spacing: 8) {
                 MessageContactAvatar(
                     displayName: conversation.displayName,
                     remoteNumber: conversation.remoteNumber,
-                    diameter: 36
+                    diameter: 30
                 )
 
-                HStack(spacing: 3) {
-                    Text(conversation.displayName)
-                        .lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 3) {
+                        Text(conversation.displayName)
+                            .lineLimit(1)
 
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(.tertiary)
-                }
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.primary)
+                        Image(systemName: "chevron.down")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
 
-                HStack(spacing: 3) {
-                    SIMBadge(line: line, size: 12)
-                    Text(line.displayName)
-                        .lineLimit(1)
+                    HStack(spacing: 3) {
+                        SIMBadge(line: line, size: 12)
+                        Text(line.displayName)
+                            .lineLimit(1)
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
                 }
-                .font(.caption2)
-                .foregroundStyle(.secondary)
             }
-            .frame(maxWidth: 220)
+            .frame(maxWidth: 240, alignment: .leading)
+            .padding(.vertical, 2)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)

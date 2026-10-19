@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -403,6 +404,34 @@ var _ = Describe("Server command", func() {
 		Expect(server.tlsCalls).To(BeZero())
 	})
 
+	It("validates and loads TURN shared-secret configuration", func() {
+		environment["TURN_URL"] = "turn:turn.example.test:53490?transport=udp"
+		_, err := loadRuntimeConfig(func(name string) string { return environment[name] })
+		Expect(err).To(MatchError("TURN_URL and TURN_SHARED_SECRET_FILE must be configured together"))
+
+		delete(environment, "TURN_URL")
+		environment["TURN_SHARED_SECRET_FILE"] = "/missing-turn-secret"
+		_, err = loadRuntimeConfig(func(name string) string { return environment[name] })
+		Expect(err).To(MatchError("TURN_URL and TURN_SHARED_SECRET_FILE must be configured together"))
+
+		environment["TURN_URL"] = "turn:turn.example.test:53490?transport=udp"
+		_, err = loadRuntimeConfig(func(name string) string { return environment[name] })
+		Expect(err).To(MatchError(ContainSubstring("read TURN shared secret")))
+
+		secretPath := GinkgoT().TempDir() + "/turn-secret"
+		Expect(os.WriteFile(secretPath, []byte("short"), 0o600)).To(Succeed())
+		environment["TURN_SHARED_SECRET_FILE"] = secretPath
+		_, err = loadRuntimeConfig(func(name string) string { return environment[name] })
+		Expect(err).To(MatchError("TURN shared secret must contain at least 16 bytes"))
+
+		Expect(os.WriteFile(secretPath, []byte("  sufficiently-long-turn-secret  \n"), 0o600)).To(Succeed())
+		config, err := loadRuntimeConfig(func(name string) string { return environment[name] })
+		Expect(err).NotTo(HaveOccurred())
+		Expect(config.turnURL).To(Equal(environment["TURN_URL"]))
+		Expect(config.turnSecret).To(Equal([]byte("sufficiently-long-turn-secret")))
+		Expect(config.turnTTL).To(Equal(10 * time.Minute))
+	})
+
 	It("starts TLS with configured credentials", func() {
 		environment["TLS_CERT_FILE"] = "/cert.pem"
 		environment["TLS_KEY_FILE"] = "/key.pem"
@@ -446,6 +475,20 @@ var _ = Describe("Server command", func() {
 		cancel()
 
 		Eventually(result).Should(Receive(MatchError("shutdown failed")))
+	})
+
+	It("times out while waiting for HTTP and push worker shutdown", func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		blockedServer := newMemoryHTTPServer()
+		blockedServer.shutdownError = errors.New("shutdown failed")
+
+		err := stopHTTPServer(ctx, blockedServer, make(chan error))
+		Expect(err).To(MatchError(And(
+			ContainSubstring("shutdown failed"),
+			ContainSubstring("wait for HTTP server: context canceled"),
+		)))
+		Expect(waitForWorker(ctx, make(chan error))).To(MatchError("wait for push worker: context canceled"))
 	})
 
 	It("starts an APNs worker from the configured secret and stops it with the server", func() {

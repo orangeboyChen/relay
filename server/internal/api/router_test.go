@@ -531,6 +531,58 @@ var _ = Describe("HTTP API", func() {
 		Expect(failedRegistration.Code).To(Equal(http.StatusUnauthorized))
 	})
 
+	It("reports passkeys as unavailable when the public origin is not configured", func() {
+		handler = Handler(repository, Config{})
+
+		loginOptions := perform(http.MethodPost, "/v1/auth/passkey/login/options", "", "")
+		Expect(loginOptions.Code).To(Equal(http.StatusNotImplemented))
+		Expect(loginOptions.Body.String()).To(ContainSubstring("passkey_unavailable"))
+
+		loginFinish := perform(http.MethodPost, "/v1/auth/passkey/login/finish?ceremony_id=ceremony", "{}", "")
+		Expect(loginFinish.Code).To(Equal(http.StatusNotImplemented))
+		Expect(loginFinish.Body.String()).To(ContainSubstring("passkey_unavailable"))
+
+		registrationOptions := perform(http.MethodPost, "/v1/auth/passkey/registration/options", "", "access-token")
+		Expect(registrationOptions.Code).To(Equal(http.StatusNotImplemented))
+		Expect(registrationOptions.Body.String()).To(ContainSubstring("passkey_unavailable"))
+
+		registrationFinish := perform(
+			http.MethodPost,
+			"/v1/auth/passkey/registration/finish?ceremony_id=ceremony",
+			"{}",
+			"access-token",
+		)
+		Expect(registrationFinish.Code).To(Equal(http.StatusBadRequest))
+		Expect(registrationFinish.Body.String()).To(ContainSubstring("invalid_passkey_ceremony"))
+	})
+
+	It("keeps owner-only handlers protected without authentication middleware", func() {
+		directRouter := &router{repository: repository, config: Config{}}
+		ownerHandlers := []func(http.ResponseWriter, *http.Request){
+			directRouter.upsertPushToken,
+			directRouter.deletePushToken,
+			directRouter.registerAppInstallation,
+			directRouter.claimIncomingCall,
+			directRouter.createPairingToken,
+			directRouter.openDeviceDiscovery,
+			directRouter.getDeviceDiscoverySession,
+			directRouter.closeDeviceDiscovery,
+			directRouter.listDeviceDiscoveries,
+			directRouter.approveDeviceDiscovery,
+			directRouter.rejectDeviceDiscovery,
+		}
+
+		for _, ownerHandler := range ownerHandlers {
+			request := httptest.NewRequest(http.MethodPost, "/", nil)
+			response := httptest.NewRecorder()
+
+			ownerHandler(response, request)
+
+			Expect(response.Code).To(Equal(http.StatusUnauthorized))
+			Expect(response.Body.String()).To(ContainSubstring("invalid_access_token"))
+		}
+	})
+
 	It("issues short-lived TURN credentials to authenticated app and device clients", func() {
 		now := time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC)
 		handler = Handler(repository, Config{

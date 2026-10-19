@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	webauthnlib "github.com/go-webauthn/webauthn/webauthn"
 	"github.com/jackc/pgx/v5"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -139,6 +140,49 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		exists, err = database.OwnerExists(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(exists).To(BeTrue())
+	})
+
+	It("persists passkeys and disables the bootstrap password", func() {
+		owner := createOwner()
+		ownerID, err := database.OwnerID(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ownerID).To(Equal(owner.ID))
+
+		credential := webauthnlib.Credential{
+			ID:        []byte("credential-id"),
+			PublicKey: bytes.Repeat([]byte{7}, 32),
+			Authenticator: webauthnlib.Authenticator{
+				SignCount: 3,
+			},
+		}
+		Expect(database.SaveWebAuthnCredential(context.Background(), owner.ID, credential)).To(Succeed())
+		credentials, err := database.WebAuthnCredentials(context.Background(), owner.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(credentials).To(Equal([]webauthnlib.Credential{credential}))
+
+		credential.Authenticator.SignCount = 4
+		Expect(database.SaveWebAuthnCredential(context.Background(), owner.ID, credential)).To(Succeed())
+		credentials, err = database.WebAuthnCredentials(context.Background(), owner.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(credentials).To(Equal([]webauthnlib.Credential{credential}))
+
+		disabledAt := now.Add(time.Minute)
+		Expect(database.DisableOwnerPassword(context.Background(), owner.ID, disabledAt)).To(Succeed())
+		owner, err = database.OwnerCredentialByUsername(context.Background(), "admin")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(owner.PasswordHash).To(BeEmpty())
+		Expect(owner.PasswordDisabledAt).To(HaveValue(Equal(disabledAt)))
+	})
+
+	It("rejects malformed persisted passkey data", func() {
+		owner := createOwner()
+		_, err := database.pool.Exec(context.Background(), `
+			INSERT INTO webauthn_credentials (id, owner_id, public_key, sign_count)
+			VALUES ($1, $2, $3, 0)`, []byte("invalid-credential"), owner.ID, []byte("not-json"))
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = database.WebAuthnCredentials(context.Background(), owner.ID)
+		Expect(err).To(MatchError(ContainSubstring("decode passkey credential")))
 	})
 
 	It("creates, authenticates, rotates, and revokes owner sessions", func() {
@@ -1005,6 +1049,53 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(errors.Is(err, domain.ErrIdempotencyConflict)).To(BeTrue())
 	})
 
+	It("queues targeted encrypted SMS alerts without exposing profile events", func() {
+		deliveryNow := time.Now().UTC().Truncate(time.Microsecond)
+		owner := createOwner()
+		installation := AppInstallationRegistration{
+			ID:                    "01900000-0000-7000-8000-000000000101",
+			IdentityPublicKey:     bytes.Repeat([]byte{9}, ed25519.PublicKeySize),
+			KeyAgreementPublicKey: bytes.Repeat([]byte{10}, 32),
+		}
+		_, created, err := database.RegisterAppInstallation(context.Background(), owner.ID, installation, deliveryNow)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
+		alertToken := []byte("encrypted-alert-token")
+		Expect(database.UpsertPushToken(
+			context.Background(), owner.ID, installation.ID, "sandbox", "alert", alertToken, deliveryNow,
+		)).To(Succeed())
+		device := createDevice(firstDeviceID)
+		event := domain.EventEnvelope{
+			ID: "01900000-0000-7000-8000-000000000011", Type: "message.received",
+			DeviceUUID: device.ID, RecipientInstallationID: installation.ID,
+			OccurredAt: deliveryNow, KeyEpoch: 1, Nonce: bytes.Repeat([]byte{1}, 12),
+			Ciphertext: []byte("opaque SMS"), Signature: bytes.Repeat([]byte{2}, ed25519.SignatureSize),
+		}
+		_, inserted, err := database.InsertEvent(context.Background(), event, deliveryNow.Add(time.Hour))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(inserted).To(BeTrue())
+
+		job, err := database.ClaimPushJob(context.Background(), deliveryNow.Add(time.Second), time.Minute)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(job.Kind).To(Equal("alert.incoming_message"))
+		Expect(job.RoutingKey).To(Equal(installation.ID))
+		Expect(job.Environment).To(Equal("sandbox"))
+		Expect(job.DeviceToken).To(Equal(alertToken))
+		var delivered domain.EventEnvelope
+		Expect(json.Unmarshal(job.Payload, &delivered)).To(Succeed())
+		Expect(delivered).To(Equal(event))
+		Expect(database.CompletePushJob(context.Background(), job.ID, job.Attempt, deliveryNow.Add(2*time.Second))).To(Succeed())
+
+		profileEvent := event
+		profileEvent.ID = "01900000-0000-7000-8000-000000000012"
+		profileEvent.Type = "sim.profile"
+		_, inserted, err = database.InsertEvent(context.Background(), profileEvent, deliveryNow.Add(time.Hour))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(inserted).To(BeTrue())
+		_, err = database.ClaimPushJob(context.Background(), deliveryNow.Add(3*time.Second), time.Minute)
+		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
+	})
+
 	It("atomically stores incoming call ciphertexts and one VoIP outbox job per approved recipient", func() {
 		owner := createOwner()
 		installation := AppInstallationRegistration{
@@ -1313,6 +1404,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(events).To(HaveLen(1))
 		Expect(events[0].Sequence).To(Equal(secondSequence))
 		Expect(events[0].Ciphertext).To(Equal([]byte("second")))
+		Expect(events[0].RecipientInstallationID).To(BeEmpty())
 	})
 
 	It("wraps PostgreSQL connection and foreign-key failures", func() {
@@ -1325,7 +1417,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 			OccurredAt: now,
 			KeyEpoch:   1,
 		}, now.Add(time.Hour))
-		Expect(err).To(MatchError(ContainSubstring("insert event")))
+		Expect(err).To(MatchError(ContainSubstring("insert encrypted event")))
 	})
 
 	It("reports duplicate constraints for sessions, pairing tokens, and devices", func() {
@@ -1389,6 +1481,12 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(err).To(MatchError(ContainSubstring("begin owner bootstrap")))
 		_, err = database.OwnerCredentialByUsername(ctx, "admin")
 		Expect(err).To(HaveOccurred())
+		_, err = database.OwnerID(ctx)
+		Expect(err).To(HaveOccurred())
+		_, err = database.WebAuthnCredentials(ctx, owner.ID)
+		Expect(err).To(MatchError(ContainSubstring("list passkey credentials")))
+		Expect(database.SaveWebAuthnCredential(ctx, owner.ID, webauthnlib.Credential{})).To(HaveOccurred())
+		Expect(database.DisableOwnerPassword(ctx, owner.ID, now)).To(HaveOccurred())
 		Expect(database.CreateSession(ctx, owner.ID, pair)).To(MatchError(ContainSubstring("create auth session")))
 		Expect(database.RotateSession(ctx, pair.RefreshToken, newPair(), now)).To(MatchError(ContainSubstring("begin session rotation")))
 		Expect(database.RevokeSession(ctx, pair.AccessToken, now)).To(MatchError(ContainSubstring("revoke auth session")))
@@ -1409,7 +1507,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		_, err = database.ListDevices(ctx)
 		Expect(err).To(MatchError(ContainSubstring("list devices")))
 		_, _, err = database.InsertEvent(ctx, domain.EventEnvelope{}, now)
-		Expect(err).To(MatchError(ContainSubstring("insert event")))
+		Expect(err).To(MatchError(ContainSubstring("insert encrypted event")))
 		_, _, err = database.RegisterAppInstallation(ctx, owner.ID, AppInstallationRegistration{}, now)
 		Expect(err).To(MatchError(ContainSubstring("begin app installation registration")))
 		_, err = database.ListApprovedAppInstallationRecipients(ctx)
@@ -1430,7 +1528,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(database.DiscardPushJob(ctx, 1, 1, now, "discarded")).To(MatchError(ContainSubstring("finish push job")))
 		Expect(database.RetryPushJob(ctx, 1, 1, now, "retry")).To(MatchError(ContainSubstring("retry push job")))
 		Expect(database.DeleteVoIPPushToken(ctx, "installation", "sandbox", nil)).To(
-			MatchError(ContainSubstring("delete VoIP push token")),
+			MatchError(ContainSubstring("delete push token")),
 		)
 		_, err = database.OpenDeviceDiscovery(ctx, owner.ID, now, now.Add(time.Minute))
 		Expect(err).To(MatchError(ContainSubstring("open device discovery")))

@@ -46,4 +46,14 @@ var _ = Describe("Request logging", func() {
 		Expect(response.Header().Get("X-Request-ID")).NotTo(BeEmpty())
 		Expect(output.String()).To(ContainSubstring(`"bytes":2`))
 	})
+
+	It("exposes response-controller flush and unwrap behavior", func() {
+		response := httptest.NewRecorder()
+		writer := &requestLogWriter{ResponseWriter: response}
+
+		writer.Flush()
+
+		Expect(writer.Unwrap()).To(BeIdenticalTo(response))
+		Expect(response.Flushed).To(BeTrue())
+	})
 })

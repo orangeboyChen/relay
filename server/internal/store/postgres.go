@@ -1559,7 +1559,7 @@ func (store *Postgres) UpdateDeviceSIMIdentity(ctx context.Context, deviceID str
 func (store *Postgres) InsertEvent(ctx context.Context, envelope domain.EventEnvelope, expiresAt time.Time) (int64, bool, error) {
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
-		return 0, false, fmt.Errorf("begin event insert: %w", err)
+		return 0, false, fmt.Errorf("insert encrypted event: begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var recipient any
@@ -1598,7 +1598,7 @@ func (store *Postgres) InsertEvent(ctx context.Context, envelope domain.EventEnv
 		return sequence, false, nil
 	}
 	if err != nil {
-		return 0, false, fmt.Errorf("insert event: %w", err)
+		return 0, false, fmt.Errorf("insert encrypted event: %w", err)
 	}
 	if envelope.Type == "message.received" && envelope.RecipientInstallationID != "" {
 		payload, err := json.Marshal(envelope)
@@ -1607,10 +1607,10 @@ func (store *Postgres) InsertEvent(ctx context.Context, envelope domain.EventEnv
 		}
 		command, err := tx.Exec(ctx, `
 			INSERT INTO outbox_jobs (kind, routing_key, payload, available_at, expires_at)
-			SELECT 'alert.incoming_message', $1, $2, $3, $4
+			SELECT 'alert.incoming_message', $1::text, $2, $3, $4
 			WHERE EXISTS (
 				SELECT 1 FROM app_installations
-				WHERE id = $1 AND approved_at IS NOT NULL AND revoked_at IS NULL
+				WHERE id = $1::uuid AND approved_at IS NOT NULL AND revoked_at IS NULL
 			)`, envelope.RecipientInstallationID, payload, time.Now().UTC(), expiresAt)
 		if err != nil {
 			return 0, false, fmt.Errorf("enqueue SMS alert push: %w", err)
@@ -1641,12 +1641,13 @@ func (store *Postgres) ListEvents(ctx context.Context, afterSequence int64, limi
 	events := make([]domain.EventEnvelope, 0)
 	for rows.Next() {
 		var envelope domain.EventEnvelope
+		var recipientInstallationID pgtype.Text
 		if err := rows.Scan(
 			&envelope.ID,
 			&envelope.Sequence,
 			&envelope.Type,
 			&envelope.DeviceUUID,
-			&envelope.RecipientInstallationID,
+			&recipientInstallationID,
 			&envelope.OccurredAt,
 			&envelope.KeyEpoch,
 			&envelope.Nonce,
@@ -1654,6 +1655,9 @@ func (store *Postgres) ListEvents(ctx context.Context, afterSequence int64, limi
 			&envelope.Signature,
 		); err != nil {
 			return nil, fmt.Errorf("scan encrypted event: %w", err)
+		}
+		if recipientInstallationID.Valid {
+			envelope.RecipientInstallationID = recipientInstallationID.String
 		}
 		events = append(events, envelope)
 	}

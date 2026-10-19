@@ -178,6 +178,26 @@
         }
       }
     },
+    "Airplane Mode" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "飞行模式"
+          }
+        }
+      }
+    },
+    "Airplane mode disables cellular data, incoming calls, and incoming SMS. Your individual choices are restored when airplane mode is turned off." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "飞行模式会停用蜂窝数据、来电和短信接收。关闭飞行模式后会恢复各项原有选择。"
+          }
+        }
+      }
+    },
     "All SIMs" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1195,6 +1215,26 @@
         }
       }
     },
+    "Incoming Calls" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接听通话"
+          }
+        }
+      }
+    },
+    "Incoming SMS" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接收短信"
+          }
+        }
+      }
+    },
     "Incoming call notifications" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1277,6 +1317,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在加载短信"
+          }
+        }
+      }
+    },
+    "Loading slot controls…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在载入卡槽控制…"
           }
         }
       }
@@ -1440,6 +1490,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未接"
+          }
+        }
+      }
+    },
+    "Mobile Data" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "蜂窝数据"
           }
         }
       }
@@ -2033,6 +2093,9 @@
     "Resume" : {
 
     },
+    "Retry" : {
+
+    },
     "Revoke Device" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -2130,6 +2193,16 @@
     },
     "SIM Card" : {
 
+    },
+    "SIM Card Information" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SIM 卡信息"
+          }
+        }
+      }
     },
     "SIM Cards" : {
       "localizations" : {
@@ -2389,6 +2462,16 @@
         }
       }
     },
+    "Slot Controls" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "卡槽控制"
+          }
+        }
+      }
+    },
     "Start one container for this modem" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -2553,6 +2636,16 @@
         }
       }
     },
+    "The device returned invalid encrypted slot controls." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设备返回了无效的加密卡槽控制数据。"
+          }
+        }
+      }
+    },
     "The modem credential will stop working immediately. This action cannot be undone." : {
       "localizations" : {
         "zh-Hans" : {
@@ -2585,6 +2678,16 @@
     },
     "The modem rejected the message." : {
 
+    },
+    "The modem rejected the slot controls." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "调制解调器拒绝了卡槽控制操作。"
+          }
+        }
+      }
     },
     "The real-time event connection is unavailable." : {
 
@@ -2650,6 +2753,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "服务器返回了无效响应。"
+          }
+        }
+      }
+    },
+    "The slot must be online before its controls can be changed." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "卡槽必须在线才能更改控制设置。"
+          }
+        }
+      }
+    },
+    "These controls are end-to-end encrypted and applied directly by the modem device." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这些控制会进行端到端加密，并由调制解调器设备直接执行。"
           }
         }
       }

@@ -600,19 +600,22 @@ struct CallCommandResult: Codable, Equatable, Sendable {
     let errorCode: String?
     let callState: String?
     let mediaAnswer: String?
+    let slotSettings: SlotSettings?
 
     init(
         version: Int,
         success: Bool,
         errorCode: String? = nil,
         callState: String? = nil,
-        mediaAnswer: String? = nil
+        mediaAnswer: String? = nil,
+        slotSettings: SlotSettings? = nil
     ) {
         self.version = version
         self.success = success
         self.errorCode = errorCode
         self.callState = callState
         self.mediaAnswer = mediaAnswer
+        self.slotSettings = slotSettings
     }
 
     enum CodingKeys: String, CodingKey {
@@ -621,6 +624,7 @@ struct CallCommandResult: Codable, Equatable, Sendable {
         case errorCode = "error_code"
         case callState = "call_state"
         case mediaAnswer = "media_answer"
+        case slotSettings = "slot_settings"
     }
 }
 

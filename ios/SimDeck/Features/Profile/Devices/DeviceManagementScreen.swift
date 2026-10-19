@@ -131,14 +131,10 @@ private struct DeviceSlotListRow: View {
     let line: DeviceLineIdentity
 
     var body: some View {
-        VStack {
-            if line.simID != nil {
-                NavigationLink {
-                    SIMSettingsScreen(model: model, line: line)
-                } label: {
-                    DeviceSlotRow(line: line)
-                }
-            } else {
+        NavigationLink {
+            SlotSettingsScreen(model: model, line: line)
+        } label: {
+            VStack {
                 DeviceSlotRow(line: line)
             }
         }

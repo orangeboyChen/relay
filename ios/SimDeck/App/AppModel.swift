@@ -45,6 +45,7 @@ final class AppModel {
     @ObservationIgnored private var alertPushCoordinator: AlertPushCoordinator?
     @ObservationIgnored private let commandSigner: InstallationCommandSigner
     @ObservationIgnored private let messageTransport: any MessageTransport
+    @ObservationIgnored private let slotSettingsTransport: any SlotSettingsTransport
     @ObservationIgnored private let messageHistoryStore: EncryptedMessageHistoryStore
 
     var canEditDeviceProfiles: Bool { recoveredVaultKey != nil }
@@ -63,6 +64,7 @@ final class AppModel {
         callCoordinator: CallKitCoordinator? = nil,
         installationBootstrapper: any InstallationBootstrapping = InstallationBootstrapper.live(),
         messageTransport: (any MessageTransport)? = nil,
+        slotSettingsTransport: (any SlotSettingsTransport)? = nil,
         defaultLineStore: (any DefaultLineStoring)? = nil,
         recentCallLineStore: (any RecentCallLineStoring)? = nil,
         onboardingStore: (any OnboardingStoring)? = nil,
@@ -107,6 +109,10 @@ final class AppModel {
             cursorStore: UserDefaultsMessageCursorStore {
                 resolvedCommandSigner.identity?.id
             }
+        )
+        self.slotSettingsTransport = slotSettingsTransport ?? LiveSlotSettingsTransport(
+            api: resolvedServerConnection,
+            commandSigner: resolvedCommandSigner
         )
         self.callCoordinator.updateLineRoutes(devices)
         self.messageTransport.updateLineRoutes(devices)
@@ -452,6 +458,14 @@ final class AppModel {
         devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
         callCoordinator.updateLineRoutes(devices)
         messageTransport.updateLineRoutes(devices)
+    }
+
+    func loadSlotSettings(line: DeviceLineIdentity) async throws -> SlotSettings {
+        try await slotSettingsTransport.load(line: line)
+    }
+
+    func saveSlotSettings(_ settings: SlotSettings, line: DeviceLineIdentity) async throws -> SlotSettings {
+        try await slotSettingsTransport.update(settings, line: line)
     }
 
     func removeDevice(line: DeviceLineIdentity) async throws {

@@ -31,6 +31,7 @@ extension AppModel {
             ),
             installationBootstrapper: PreviewInstallationBootstrapper(),
             messageTransport: PreviewMessageTransport(),
+            slotSettingsTransport: PreviewSlotSettingsTransport(),
             onboardingStore: PreviewOnboardingStore(isCompleted: onboardingCompleted)
         )
         model.bootstrapInstallation()
@@ -44,6 +45,15 @@ private final class PreviewMessageTransport: MessageTransport {
 
     func synchronize(lines: [DeviceLineIdentity]) async throws -> MessageSyncBatch {
         MessageSyncBatch(deliveries: [], nextSequence: 0)
+    }
+}
+
+@MainActor
+private final class PreviewSlotSettingsTransport: SlotSettingsTransport {
+    func load(line: DeviceLineIdentity) async throws -> SlotSettings { .enabled }
+
+    func update(_ settings: SlotSettings, line: DeviceLineIdentity) async throws -> SlotSettings {
+        settings
     }
 }
 

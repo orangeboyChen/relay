@@ -38,7 +38,9 @@ would refer to the client itself. Do not expose PostgreSQL to the network.
 
 Run these commands from the `relay-control` checkout. Keep the recovery private
 key outside Docker and outside backups containing the database. The server only
-receives the matching public key.
+receives the matching public key. The Compose stack requires
+`secrets/admin_password.txt` on first startup; it is intentionally not an
+optional bind mount.
 
 ```sh
 mkdir -p secrets
@@ -94,17 +96,15 @@ docker compose exec postgres pg_isready -U simdeck -d simdeck
 The server initializes its schema at startup; there is no separate migration
 command in this deployment.
 
-On the first successful startup the owner account is `admin`. If
-`admin_password.txt` was present, use that password once. If it was absent,
-the server generates a password and prints it exactly once in the server log:
+On the first successful startup the owner account is `admin`. Use the password
+stored in `secrets/admin_password.txt` once, then immediately sign in from the
+iOS app, register a passkey, and remove the temporary password from operational
+notes. The server's generated-password fallback is only used by custom
+launches that omit `ADMIN_PASSWORD_FILE`; the base Compose file always mounts
+the explicit secret file.
 
-```sh
-docker compose logs server | grep 'generated initial admin password'
-```
-
-Immediately sign in from the iOS app, register a passkey, and remove the
-temporary password from operational notes. Recovery requires the private key on
-the Linux host; it is not mounted into the server container.
+Recovery requires the private key on the Linux host; it is not mounted into the
+server container.
 
 ## Enable APNs and PushKit (optional)
 

@@ -35,7 +35,24 @@ struct IncomingMessageDelivery: Equatable, Sendable {
 
 struct MessageSyncBatch: Equatable, Sendable {
     let deliveries: [IncomingMessageDelivery]
+    let detectedSIMProfiles: [DetectedSIMProfile]
     let nextSequence: Int64
+
+    init(
+        deliveries: [IncomingMessageDelivery],
+        detectedSIMProfiles: [DetectedSIMProfile] = [],
+        nextSequence: Int64
+    ) {
+        self.deliveries = deliveries
+        self.detectedSIMProfiles = detectedSIMProfiles
+        self.nextSequence = nextSequence
+    }
+}
+
+struct DetectedSIMProfile: Equatable, Sendable {
+    let lineID: UUID
+    let lineName: String
+    let phoneNumber: String
 }
 
 @MainActor
@@ -205,6 +222,7 @@ final class LiveMessageTransport: MessageTransport {
         let linesByDevice = Dictionary(grouping: lines, by: { $0.deviceID })
         var verificationKeys: [UUID: Data] = [:]
         var deliveries: [IncomingMessageDelivery] = []
+        var detectedSIMProfiles: [DetectedSIMProfile] = []
 
         for envelope in page.events where envelope.type == "message.received" {
             guard envelope.recipientInstallationID == installationIdentity.id else {
@@ -251,7 +269,54 @@ final class LiveMessageTransport: MessageTransport {
                 )
             )
         }
-        return MessageSyncBatch(deliveries: deliveries, nextSequence: page.nextSequence)
+        for envelope in page.events where envelope.type == "sim.profile" {
+            guard envelope.recipientInstallationID == installationIdentity.id else {
+                continue
+            }
+            guard let candidates = linesByDevice[envelope.deviceUUID],
+                  let commandPublicKey = candidates.first?.commandPublicKey else {
+                throw LiveMessageTransportError.invalidResponse
+            }
+            let verificationKey: Data
+            if let cached = verificationKeys[envelope.deviceUUID] {
+                verificationKey = cached
+            } else {
+                verificationKey = try await api.eventVerificationKey(
+                    deviceID: envelope.deviceUUID
+                )
+                verificationKeys[envelope.deviceUUID] = verificationKey
+            }
+            let payload = try EncryptedSIMProfileEventCodec.open(
+                envelope,
+                installationIdentity: installationIdentity,
+                deviceCommandPublicKey: commandPublicKey,
+                deviceVerificationKey: verificationKey
+            )
+            let matchingLines = candidates.filter { line in
+                if let slotID = payload.slotID, line.slotID != slotID {
+                    return false
+                }
+                if let simID = payload.simID, line.simID != simID {
+                    return false
+                }
+                return payload.slotID != nil || payload.simID != nil || candidates.count == 1
+            }
+            guard matchingLines.count == 1 else {
+                throw LiveMessageTransportError.invalidResponse
+            }
+            detectedSIMProfiles.append(
+                DetectedSIMProfile(
+                    lineID: matchingLines[0].id,
+                    lineName: payload.lineName,
+                    phoneNumber: payload.phoneNumber
+                )
+            )
+        }
+        return MessageSyncBatch(
+            deliveries: deliveries,
+            detectedSIMProfiles: detectedSIMProfiles,
+            nextSequence: page.nextSequence
+        )
     }
 
     func acknowledge(sequence: Int64) {
@@ -426,6 +491,97 @@ enum EncryptedMessageEventCodec {
               payload.messageID.allSatisfy({ $0.isHexDigit }),
               !payload.remoteNumber.isEmpty,
               !payload.body.isEmpty else {
+            throw LiveMessageTransportError.invalidResponse
+        }
+        return payload
+    }
+}
+
+struct IncomingSIMProfilePayload: Codable, Equatable, Sendable {
+    let version: Int
+    let deviceUUID: UUID
+    let slotID: UUID?
+    let simID: UUID?
+    let numericID: Int
+    let phoneNumber: String
+    let lineName: String
+    let installationID: UUID
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case deviceUUID = "device_uuid"
+        case slotID = "slot_id"
+        case simID = "sim_id"
+        case numericID = "numeric_id"
+        case phoneNumber = "phone_number"
+        case lineName = "line_name"
+        case installationID = "installation_id"
+    }
+}
+
+enum EncryptedSIMProfileEventCodec {
+    static func open(
+        _ envelope: EncryptedEventEnvelope,
+        installationIdentity: InstallationIdentity,
+        deviceCommandPublicKey: Data,
+        deviceVerificationKey: Data
+    ) throws -> IncomingSIMProfilePayload {
+        guard envelope.type == "sim.profile",
+              envelope.keyEpoch == 1,
+              envelope.nonce.count == 12,
+              envelope.ciphertext.count > 16,
+              envelope.signature.count == 64,
+              deviceCommandPublicKey.count == 32,
+              deviceVerificationKey.count == 32 else {
+            throw LiveMessageTransportError.invalidResponse
+        }
+        let signingKey = try Curve25519.Signing.PublicKey(
+            rawRepresentation: deviceVerificationKey
+        )
+        guard signingKey.isValidSignature(
+            envelope.signature,
+            for: EncryptedCallEventCodec.signedData(envelope)
+        ) else {
+            throw LiveMessageTransportError.invalidResponse
+        }
+        let installationKey = try Curve25519.KeyAgreement.PrivateKey(
+            rawRepresentation: installationIdentity.keyAgreementPrivateKey
+        )
+        let deviceKey = try Curve25519.KeyAgreement.PublicKey(
+            rawRepresentation: deviceCommandPublicKey
+        )
+        let sharedSecret = try installationKey.sharedSecretFromKeyAgreement(with: deviceKey)
+        let key = sharedSecret.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: Data(
+                "\(envelope.id.uuidString.lowercased())\0\(envelope.deviceUUID.uuidString.lowercased())".utf8
+            ),
+            sharedInfo: Data("sim-deck-sim-profile-event-v1".utf8),
+            outputByteCount: 32
+        )
+        let box = try AES.GCM.SealedBox(
+            nonce: AES.GCM.Nonce(data: envelope.nonce),
+            ciphertext: Data(envelope.ciphertext.dropLast(16)),
+            tag: Data(envelope.ciphertext.suffix(16))
+        )
+        let plaintext = try AES.GCM.open(
+            box,
+            using: key,
+            authenticating: EncryptedCallEventCodec.associatedData(envelope)
+        )
+        let payload = try JSONDecoder().decode(IncomingSIMProfilePayload.self, from: plaintext)
+        let normalizedNumber = DialString.normalized(payload.phoneNumber)
+        let normalizedLineName = payload.lineName.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard payload.version == 1,
+              payload.deviceUUID == envelope.deviceUUID,
+              payload.installationID == installationIdentity.id,
+              payload.numericID >= 1,
+              payload.numericID <= 99,
+              payload.lineName.count <= 64,
+              payload.phoneNumber.isEmpty || DialString.isValid(normalizedNumber),
+              !normalizedNumber.isEmpty || !normalizedLineName.isEmpty else {
             throw LiveMessageTransportError.invalidResponse
         }
         return payload

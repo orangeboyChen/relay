@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import OSLog
 import Security
 
 struct EncryptedCallCommandRequest: Encodable, Equatable, Sendable {
@@ -361,6 +362,10 @@ struct URLSessionServerNetworking: ServerNetworking {
 @MainActor
 @Observable
 final class ServerConnectionManager {
+    @ObservationIgnored private static let logger = Logger(
+        subsystem: "com.nowcent.simdeck",
+        category: "ServerConnection"
+    )
     var address: String
     private(set) var state: ServerConnectionState
     private(set) var lastErrorDescription: String?
@@ -409,6 +414,7 @@ final class ServerConnectionManager {
     func markRequestFailed(_ error: Error) {
         state = .failed
         lastErrorDescription = error.localizedDescription
+        Self.logger.error("Server operation failed: \(String(reflecting: error), privacy: .public)")
     }
 
     var authenticatedBaseURL: URL? { try? validatedBaseURL() }
@@ -434,6 +440,7 @@ final class ServerConnectionManager {
         } catch {
             state = .failed
             lastErrorDescription = error.localizedDescription
+            Self.logger.error("Server sign-in failed: \(String(reflecting: error), privacy: .public)")
             throw error
         }
     }
@@ -922,6 +929,7 @@ final class ServerConnectionManager {
             )
             var result = try await network.data(for: urlRequest)
             if result.1.statusCode == 401 {
+                Self.logger.notice("Access token rejected; refreshing session for \(method, privacy: .public) \(path, privacy: .public)")
                 activeSession = try await refresh(baseURL: baseURL, session: activeSession)
                 urlRequest = request(
                     baseURL: baseURL,
@@ -933,10 +941,23 @@ final class ServerConnectionManager {
                 )
                 result = try await network.data(for: urlRequest)
             }
+            let requestID = result.1.value(forHTTPHeaderField: "X-Request-ID") ?? "missing"
+            if result.1.statusCode >= 400 {
+                Self.logger.error(
+                    "Server request failed: \(method, privacy: .public) \(path, privacy: .public), status \(result.1.statusCode, privacy: .public), request ID \(requestID, privacy: .public)"
+                )
+            } else {
+                Self.logger.info(
+                    "Server request completed: \(method, privacy: .public) \(path, privacy: .public), status \(result.1.statusCode, privacy: .public), request ID \(requestID, privacy: .public)"
+                )
+            }
             return result
         } catch {
             state = .failed
             lastErrorDescription = error.localizedDescription
+            Self.logger.error(
+                "Server request transport failed: \(method, privacy: .public) \(path, privacy: .public), error \(String(reflecting: error), privacy: .public)"
+            )
             throw error
         }
     }
@@ -959,6 +980,8 @@ final class ServerConnectionManager {
         request.httpBody = try JSONEncoder().encode(RefreshRequest(refreshToken: session.refreshToken))
         let (data, response) = try await network.data(for: request)
         guard response.statusCode == 200 else {
+            let requestID = response.value(forHTTPHeaderField: "X-Request-ID") ?? "missing"
+            Self.logger.error("Session refresh failed with status \(response.statusCode, privacy: .public), request ID \(requestID, privacy: .public)")
             throw ServerConnectionError.authenticationRequired
         }
         let replacement = try Self.decoder.decode(ServerSession.self, from: data)

@@ -1,9 +1,14 @@
 import Foundation
 import Observation
+import OSLog
 
 @MainActor
 @Observable
 final class AppModel {
+    @ObservationIgnored private static let logger = Logger(
+        subsystem: "com.nowcent.simdeck",
+        category: "AppModel"
+    )
     var devices: [DeviceLineIdentity]
     var managedSIMs: [ManagedSIM]
     var callHistory: CallHistoryState
@@ -257,11 +262,13 @@ final class AppModel {
         do {
             let batch = try await messageTransport.synchronize(lines: devices)
             mergeIncomingMessages(batch.deliveries)
+            try await applyDetectedSIMProfiles(batch.detectedSIMProfiles)
             if let recoveredVaultKey {
                 try messageHistoryStore.save(loadedConversations, using: recoveredVaultKey)
             }
             messageTransport.acknowledge(sequence: batch.nextSequence)
         } catch {
+            Self.logger.error("Message and SIM profile synchronization failed: \(String(reflecting: error), privacy: .public)")
             serverConnection.markRequestFailed(error)
             if case .loaded(let conversations) = messages, !conversations.isEmpty {
                 return
@@ -588,6 +595,39 @@ final class AppModel {
             }
         }
         messages = .loaded(sortedConversations(conversations))
+    }
+
+    private func applyDetectedSIMProfiles(_ profiles: [DetectedSIMProfile]) async throws {
+        guard let recoveredVaultKey, !profiles.isEmpty else { return }
+        var changed = false
+        for detected in profiles {
+            guard let line = devices.first(where: { $0.id == detected.lineID }),
+                  let simID = line.simID else {
+                Self.logger.error("Detected SIM profile has no matching managed SIM: \(detected.lineID.uuidString, privacy: .public)")
+                continue
+            }
+            let lineName = line.lineName.isEmpty ? detected.lineName : line.lineName
+            let phoneNumber = line.phoneNumber.isEmpty
+                ? DialString.normalized(detected.phoneNumber)
+                : line.phoneNumber
+            guard lineName != line.lineName || phoneNumber != line.phoneNumber else { continue }
+            let ciphertext = try DeviceProfileCodec.seal(
+                DeviceProfile(deviceName: "", lineName: lineName, phoneNumber: phoneNumber),
+                using: recoveredVaultKey
+            )
+            try await serverConnection.updateSIMProfile(
+                simID: simID,
+                profileCiphertext: ciphertext
+            )
+            changed = true
+            Self.logger.info(
+                "Stored encrypted modem-detected SIM profile for SIM \(simID.uuidString, privacy: .public); number available: \(!phoneNumber.isEmpty, privacy: .public), operator available: \(!lineName.isEmpty, privacy: .public)"
+            )
+        }
+        guard changed else { return }
+        devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
+        callCoordinator.updateLineRoutes(devices)
+        messageTransport.updateLineRoutes(devices)
     }
 
     private func persistMessageHistoryIfAvailable() {

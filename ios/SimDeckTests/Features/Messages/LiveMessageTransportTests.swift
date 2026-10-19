@@ -212,6 +212,76 @@ final class LiveMessageTransportTests: XCTestCase {
         XCTAssertEqual(cursor.sequence, 0)
     }
 
+    func testSynchronizeDecryptsModemDetectedSIMProfile() async throws {
+        let api = try MessageCommandAPIFake(deviceID: deviceID, outcome: .success)
+        try api.appendSIMProfile(phoneNumber: "+8613500000000", lineName: "CHINA MOBILE")
+        let transport = makeTransport(api: api)
+
+        let batch = try await transport.synchronize(lines: [api.line])
+
+        XCTAssertEqual(batch.deliveries, [])
+        XCTAssertEqual(
+            batch.detectedSIMProfiles,
+            [
+                DetectedSIMProfile(
+                    lineID: api.line.id,
+                    lineName: "CHINA MOBILE",
+                    phoneNumber: "+8613500000000"
+                ),
+            ]
+        )
+        let serverVisibleEvent = String(
+            decoding: try XCTUnwrap(api.events.first).ciphertext,
+            as: UTF8.self
+        )
+        XCTAssertFalse(serverVisibleEvent.contains("13500000000"))
+        XCTAssertFalse(serverVisibleEvent.contains("CHINA MOBILE"))
+    }
+
+    func testSynchronizeRejectsSIMProfileForReplacedCardInSameSlot() async throws {
+        let api = try MessageCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let slotID = UUID(uuidString: "01900000-0000-7000-8000-000000000303")!
+        let oldSIMID = UUID(uuidString: "01900000-0000-7000-8000-000000000304")!
+        let currentSIMID = UUID(uuidString: "01900000-0000-7000-8000-000000000305")!
+        try api.appendSIMProfile(
+            phoneNumber: "+8613500000000",
+            lineName: "CHINA MOBILE",
+            slotID: slotID,
+            simID: oldSIMID
+        )
+        let currentLine = DeviceLineIdentity(
+            id: currentSIMID,
+            deviceID: deviceID,
+            slotID: slotID,
+            simID: currentSIMID,
+            numericID: 1,
+            deviceName: "EC20F",
+            lineName: "",
+            phoneNumber: "",
+            isOnline: true,
+            commandPublicKey: api.recipientKey
+        )
+
+        do {
+            _ = try await makeTransport(api: api).synchronize(lines: [currentLine])
+            XCTFail("Expected stale SIM profile to be rejected")
+        } catch {
+            XCTAssertEqual(error as? LiveMessageTransportError, .invalidResponse)
+        }
+    }
+
+    func testSynchronizeRejectsMalformedDetectedNumberEvenWithOperatorName() async throws {
+        let api = try MessageCommandAPIFake(deviceID: deviceID, outcome: .success)
+        try api.appendSIMProfile(phoneNumber: "not-a-number", lineName: "CHINA MOBILE")
+
+        do {
+            _ = try await makeTransport(api: api).synchronize(lines: [api.line])
+            XCTFail("Expected malformed detected number to be rejected")
+        } catch {
+            XCTAssertEqual(error as? LiveMessageTransportError, .invalidResponse)
+        }
+    }
+
     func testSameRemoteNumberOnTwoDevicesRemainsTwoDeliveries() async throws {
         let secondDeviceID = UUID(uuidString: "01900000-0000-7000-8000-000000000203")!
         let installationIdentity = InstallationIdentity.generate()
@@ -485,6 +555,82 @@ private final class MessageCommandAPIFake: EncryptedCallCommandAPI {
             encoder.encode(payload),
             using: eventKey,
             nonce: AES.GCM.Nonce(data: envelope.nonce),
+            authenticating: EncryptedCallEventCodec.associatedData(envelope)
+        )
+        envelope = EncryptedEventEnvelope(
+            id: envelope.id,
+            sequence: envelope.sequence,
+            type: envelope.type,
+            deviceUUID: envelope.deviceUUID,
+            recipientInstallationID: envelope.recipientInstallationID,
+            occurredAt: envelope.occurredAt,
+            keyEpoch: envelope.keyEpoch,
+            nonce: envelope.nonce,
+            ciphertext: box.ciphertext + box.tag,
+            signature: Data()
+        )
+        let signature = try deviceSigningKey.signature(
+            for: EncryptedCallEventCodec.signedData(envelope)
+        )
+        events.append(EncryptedEventEnvelope(
+            id: envelope.id,
+            sequence: envelope.sequence,
+            type: envelope.type,
+            deviceUUID: envelope.deviceUUID,
+            recipientInstallationID: envelope.recipientInstallationID,
+            occurredAt: envelope.occurredAt,
+            keyEpoch: envelope.keyEpoch,
+            nonce: envelope.nonce,
+            ciphertext: envelope.ciphertext,
+            signature: signature
+        ))
+    }
+
+    func appendSIMProfile(
+        phoneNumber: String,
+        lineName: String,
+        slotID: UUID? = nil,
+        simID: UUID? = nil
+    ) throws {
+        let eventID = UUID()
+        let sequence = Int64(events.count + 1)
+        let payload = IncomingSIMProfilePayload(
+            version: 1,
+            deviceUUID: deviceID,
+            slotID: slotID ?? line.slotID,
+            simID: simID ?? line.simID,
+            numericID: line.numericID,
+            phoneNumber: phoneNumber,
+            lineName: lineName,
+            installationID: installationIdentity.id
+        )
+        let nonce = Data(repeating: UInt8(sequence), count: 12)
+        var envelope = EncryptedEventEnvelope(
+            id: eventID,
+            sequence: sequence,
+            type: "sim.profile",
+            deviceUUID: deviceID,
+            recipientInstallationID: installationIdentity.id,
+            occurredAt: Date(timeIntervalSince1970: 1_792_138_160),
+            keyEpoch: 1,
+            nonce: nonce,
+            ciphertext: Data(),
+            signature: Data()
+        )
+        let installationPublicKey = try Curve25519.KeyAgreement.PrivateKey(
+            rawRepresentation: installationIdentity.keyAgreementPrivateKey
+        ).publicKey
+        let secret = try devicePrivateKey.sharedSecretFromKeyAgreement(with: installationPublicKey)
+        let eventKey = secret.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: Data("\(eventID.uuidString.lowercased())\0\(deviceID.uuidString.lowercased())".utf8),
+            sharedInfo: Data("sim-deck-sim-profile-event-v1".utf8),
+            outputByteCount: 32
+        )
+        let box = try AES.GCM.seal(
+            JSONEncoder().encode(payload),
+            using: eventKey,
+            nonce: AES.GCM.Nonce(data: nonce),
             authenticating: EncryptedCallEventCodec.associatedData(envelope)
         )
         envelope = EncryptedEventEnvelope(

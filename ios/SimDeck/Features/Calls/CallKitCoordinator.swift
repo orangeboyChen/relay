@@ -2,10 +2,15 @@ import AVFAudio
 import CallKit
 import Foundation
 import Observation
+import OSLog
 
 @MainActor
 @Observable
 final class CallKitCoordinator: NSObject, CallStarting, CallControlling, IncomingCallReporting {
+    @ObservationIgnored private static let logger = Logger(
+        subsystem: "com.nowcent.simdeck",
+        category: "CallKit"
+    )
     private(set) var activeCall: ActiveCallSession?
     private(set) var callStartFailureID: UUID?
 
@@ -99,6 +104,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
                 do {
                     try await controller.request(CXTransaction(action: action))
                 } catch {
+                    Self.logger.error("CallKit start transaction failed for call \(callID.uuidString, privacy: .public): \(String(reflecting: error), privacy: .public)")
                     failStart(callID: callID, error: error)
                 }
             }
@@ -142,6 +148,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
                 lineID: call.lineID
             )
         } catch {
+            Self.logger.error("Reporting incoming call failed for call \(call.callID.uuidString, privacy: .public): \(String(reflecting: error), privacy: .public)")
             transport.discardIncomingCall(callID: call.callID)
             finishCall(callID: call.callID)
             throw error
@@ -174,6 +181,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
             return true
         } catch {
             activeCall?.status = .ringing
+            Self.logger.error("Answering incoming call failed for call \(callID.uuidString, privacy: .public): \(String(reflecting: error), privacy: .public)")
             throw error
         }
     }
@@ -362,6 +370,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
             )
             completeStart(callID: request.callID, result: .success(()))
         } catch {
+            Self.logger.error("Outgoing call setup failed for call \(request.callID.uuidString, privacy: .public), line \(request.lineID.uuidString, privacy: .public): \(String(reflecting: error), privacy: .public)")
             failStart(callID: request.callID, error: error)
             if reportToCallKit {
                 provider.reportCall(with: request.callID, endedAt: .now, reason: .failed)
@@ -432,9 +441,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
                 try await transport.endCall(callID: callID)
             }
         } catch {
-#if DEBUG
-            print("call end command failed after local hangup: \(String(reflecting: error))")
-#endif
+            Self.logger.error("Remote call end failed after local hangup for call \(callID.uuidString, privacy: .public): \(String(reflecting: error), privacy: .public)")
         }
         pendingEndCallKinds.removeValue(forKey: callID)
     }

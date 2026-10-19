@@ -137,8 +137,12 @@ func (repository *memoryRepository) UpdateDeviceCommandPublicKey(context.Context
 func (repository *memoryRepository) UpdateDeviceRadioStatus(context.Context, string, string, int, string, *int, time.Time) error {
 	return nil
 }
-func (repository *memoryRepository) UpdateDeviceSIMIdentity(context.Context, string, string, int, []byte, time.Time) (string, int, error) {
-	return "01900000-0000-7000-8000-000000000099", 1, nil
+func (repository *memoryRepository) UpdateDeviceSIMIdentity(context.Context, string, string, int, []byte, time.Time) (store.SIMSlotAssignment, error) {
+	return store.SIMSlotAssignment{
+		SlotID:    "01900000-0000-7000-8000-000000000098",
+		SIMID:     "01900000-0000-7000-8000-000000000099",
+		NumericID: 1,
+	}, nil
 }
 func (repository *memoryRepository) RegisterAppInstallation(_ context.Context, _ string, registration store.AppInstallationRegistration, now time.Time) (store.AppInstallationRecord, bool, error) {
 	approvedAt := now.UTC()

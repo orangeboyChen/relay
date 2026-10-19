@@ -32,7 +32,8 @@ extension AppModel {
             installationBootstrapper: PreviewInstallationBootstrapper(),
             messageTransport: PreviewMessageTransport(),
             slotSettingsTransport: PreviewSlotSettingsTransport(),
-            onboardingStore: PreviewOnboardingStore(isCompleted: onboardingCompleted)
+            onboardingStore: PreviewOnboardingStore(isCompleted: onboardingCompleted),
+            remoteDeviceRefreshEnabled: false
         )
         model.bootstrapInstallation()
         return model

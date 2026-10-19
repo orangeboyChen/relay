@@ -47,6 +47,7 @@ final class AppModel {
     @ObservationIgnored private let messageTransport: any MessageTransport
     @ObservationIgnored private let slotSettingsTransport: any SlotSettingsTransport
     @ObservationIgnored private let messageHistoryStore: EncryptedMessageHistoryStore
+    @ObservationIgnored private let remoteDeviceRefreshEnabled: Bool
 
     var canEditDeviceProfiles: Bool { recoveredVaultKey != nil }
 
@@ -68,7 +69,8 @@ final class AppModel {
         defaultLineStore: (any DefaultLineStoring)? = nil,
         recentCallLineStore: (any RecentCallLineStoring)? = nil,
         onboardingStore: (any OnboardingStoring)? = nil,
-        messageHistoryStore: EncryptedMessageHistoryStore = EncryptedMessageHistoryStore()
+        messageHistoryStore: EncryptedMessageHistoryStore = EncryptedMessageHistoryStore(),
+        remoteDeviceRefreshEnabled: Bool = true
     ) {
         let resolvedServerConnection = serverConnection ?? .live()
         let resolvedDefaultLineStore = defaultLineStore ?? UserDefaultsDefaultLineStore()
@@ -114,6 +116,7 @@ final class AppModel {
             api: resolvedServerConnection,
             commandSigner: resolvedCommandSigner
         )
+        self.remoteDeviceRefreshEnabled = remoteDeviceRefreshEnabled
         self.callCoordinator.updateLineRoutes(devices)
         self.messageTransport.updateLineRoutes(devices)
     }
@@ -141,6 +144,7 @@ final class AppModel {
     }
 
     func refreshDevices() async {
+        guard remoteDeviceRefreshEnabled else { return }
         guard serverConnection.isSignedIn else {
             devices = []
             managedSIMs = []

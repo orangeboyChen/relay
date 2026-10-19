@@ -64,6 +64,19 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testDisabledRemoteRefreshPreservesInjectedDevices() async {
+        let fixture = Self.line(id: UUID(), numericID: 1)
+        let model = AppModel(
+            devices: [fixture],
+            remoteDeviceRefreshEnabled: false
+        )
+
+        await model.refreshDevices()
+
+        XCTAssertEqual(model.devices, [fixture])
+    }
+
+    @MainActor
     func testRefreshDevicesPublishesServerDeviceLines() async throws {
         let deviceID = UUID(uuidString: "01900000-0000-7000-8000-000000000001")!
         let session = Data("""

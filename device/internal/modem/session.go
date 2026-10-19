@@ -19,6 +19,7 @@ import (
 var initializationCommands = []string{
 	"ATE0",
 	"AT+CMEE=2",
+	"AT+CFUN=1",
 	"AT+CMGF=0",
 	"AT+CNMI=2,2,0,1,0",
 	"AT+CLIP=1",

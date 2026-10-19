@@ -96,6 +96,27 @@ var _ = Describe("APNs client", func() {
 		Expect(requests).To(Equal(2))
 	})
 
+	It("sends an encrypted SMS alert to the notification service extension", func() {
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			Expect(request.Header.Get("apns-topic")).To(Equal("com.nowcent.simdeck"))
+			Expect(request.Header.Get("apns-push-type")).To(Equal("alert"))
+			Expect(request.Header.Get("apns-priority")).To(Equal("5"))
+			var payload map[string]json.RawMessage
+			body, err := io.ReadAll(request.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(json.Unmarshal(body, &payload)).To(Succeed())
+			Expect(payload).To(HaveKey("ciphertext"))
+			Expect(string(payload["aps"])).To(MatchJSON(`{"alert":{"title":"Sim Deck","body":"New message"},"content-available":1,"mutable-content":1}`))
+			writer.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		Expect(newClient(server).SendAlert(
+			context.Background(), "production", []byte{1, 2, 3},
+			[]byte(`{"ciphertext":"opaque"}`),
+		)).To(Succeed())
+	})
+
 	DescribeTable("classifies APNs failures",
 		func(status int, reason string, retryable bool, invalidates bool) {
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {

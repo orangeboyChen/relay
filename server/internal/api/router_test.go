@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	webauthnlib "github.com/go-webauthn/webauthn/webauthn"
 	"github.com/jackc/pgx/v5"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -139,6 +140,9 @@ type fakeRepository struct {
 	installationError           error
 	installationRecipients      []store.AppInstallationRecipient
 	installationListError       error
+	webauthnCredentials         []webauthnlib.Credential
+	webauthnSaveError           error
+	webauthnDisableError        error
 	pushTokenOwnerID            string
 	pushTokenInstallationID     string
 	pushTokenEnvironment        string
@@ -161,6 +165,26 @@ type fakeRepository struct {
 	incomingClaimInstallationID string
 	incomingClaimNow            time.Time
 	incomingClaimError          error
+}
+
+func (fake *fakeRepository) OwnerID(context.Context) (string, error) {
+	return fake.ownerID, fake.ownerAuthError
+}
+
+func (fake *fakeRepository) WebAuthnCredentials(context.Context, string) ([]webauthnlib.Credential, error) {
+	return append([]webauthnlib.Credential(nil), fake.webauthnCredentials...), nil
+}
+
+func (fake *fakeRepository) SaveWebAuthnCredential(_ context.Context, _ string, credential webauthnlib.Credential) error {
+	if fake.webauthnSaveError != nil {
+		return fake.webauthnSaveError
+	}
+	fake.webauthnCredentials = append(fake.webauthnCredentials, credential)
+	return nil
+}
+
+func (fake *fakeRepository) DisableOwnerPassword(context.Context, string, time.Time) error {
+	return fake.webauthnDisableError
 }
 
 func (fake *fakeRepository) UpdateDeviceRadioStatus(_ context.Context, deviceID string, slotKey string, slotIndex int, technology string, signalBars *int, now time.Time) error {
@@ -486,6 +510,25 @@ var _ = Describe("HTTP API", func() {
 		Expect(body["api_version"]).To(Equal("v1"))
 		Expect(body["websocket_url"]).To(Equal("wss://deck.example/v1/events/ws"))
 		Expect(body["media"]).To(Equal(map[string]any{"transport": "webrtc", "relay": "turn"}))
+	})
+
+	It("starts passkey ceremonies and validates missing ceremony identifiers", func() {
+		login := perform(http.MethodPost, "/v1/auth/passkey/login/options", "", "")
+		Expect(login.Code).To(Equal(http.StatusOK))
+		Expect(login.Body.String()).To(ContainSubstring("ceremony_id"))
+
+		registration := perform(http.MethodPost, "/v1/auth/passkey/registration/options", "", "access-token")
+		Expect(registration.Code).To(Equal(http.StatusOK))
+		Expect(registration.Body.String()).To(ContainSubstring("ceremony_id"))
+
+		missing := perform(http.MethodPost, "/v1/auth/passkey/login/finish", "{}", "")
+		Expect(missing.Code).To(Equal(http.StatusBadRequest))
+		Expect(missing.Body.String()).To(ContainSubstring("invalid_passkey_ceremony"))
+
+		failedLogin := perform(http.MethodPost, "/v1/auth/passkey/login/finish?ceremony_id=missing", "{}", "")
+		Expect(failedLogin.Code).To(Equal(http.StatusUnauthorized))
+		failedRegistration := perform(http.MethodPost, "/v1/auth/passkey/registration/finish?ceremony_id=missing", "{}", "access-token")
+		Expect(failedRegistration.Code).To(Equal(http.StatusUnauthorized))
 	})
 
 	It("issues short-lived TURN credentials to authenticated app and device clients", func() {

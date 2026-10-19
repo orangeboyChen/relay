@@ -1,6 +1,59 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+property() {
+  local key="$1" data="$2"
+  printf '%s\n' "$data" | awk -F= -v key="$key" '$1 == key { print substr($0, length(key) + 2); exit }'
+}
+
+audio_node() {
+  local kind="$1" serial="$2"
+  case "$kind" in
+    control) printf '%s' "${audio_control[$serial]:-}" ;;
+    capture) printf '%s' "${audio_capture[$serial]:-}" ;;
+    playback) printf '%s' "${audio_playback[$serial]:-}" ;;
+  esac
+}
+
+discover_audio_nodes() {
+  local dev_root="$1" node data serial card candidate
+  local -a capture_candidates playback_candidates
+  for node in "$dev_root"/snd/controlC*; do
+    [[ -e "$node" ]] || continue
+    data="$(udevadm info --query=property --name="$node" 2>/dev/null || true)"
+    [[ "$(property ID_VENDOR_ID "$data")" == 2c7c ]] || continue
+    serial="$(property ID_SERIAL_SHORT "$data")"
+    [[ -n "$serial" ]] || continue
+    card="${node##*controlC}"
+    [[ "$card" =~ ^[0-9]+$ ]] || continue
+    capture_candidates=()
+    playback_candidates=()
+    for candidate in "$dev_root"/snd/pcmC"$card"D*c; do
+      [[ -e "$candidate" ]] && capture_candidates+=("$candidate")
+    done
+    for candidate in "$dev_root"/snd/pcmC"$card"D*p; do
+      [[ -e "$candidate" ]] && playback_candidates+=("$candidate")
+    done
+    audio_control[$serial]="$node"
+    if [[ ${#capture_candidates[@]} -eq 1 ]]; then
+      audio_capture[$serial]="${capture_candidates[0]}"
+    fi
+    if [[ ${#playback_candidates[@]} -eq 1 ]]; then
+      audio_playback[$serial]="${playback_candidates[0]}"
+    fi
+  done
+}
+
+write_tty_rule() {
+  local serial="$1" interface="$2" index="$3"
+  if [[ -n "$interface" ]]; then
+    printf 'SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="2c7c", ENV{ID_SERIAL_SHORT}=="%s", ENV{ID_USB_INTERFACE_NUM}=="%s", ENV{ID_MM_DEVICE_IGNORE}="1", SYMLINK+="sim-deck/modem-%s-at", GROUP="dialout", MODE="0660"\n' "$serial" "$interface" "$index"
+  else
+    printf 'SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="2c7c", ENV{ID_SERIAL_SHORT}=="%s", ENV{ID_MM_DEVICE_IGNORE}="1", SYMLINK+="sim-deck/modem-%s-at", GROUP="dialout", MODE="0660"\n' "$serial" "$index"
+  fi
+}
+
+main() {
 server_url="${SIM_DECK_SERVER_URL:-}"
 output_dir="${SIM_DECK_OUTPUT_DIR:-/etc/sim-deck}"
 image="${SIM_DECK_DEVICE_IMAGE:-}"
@@ -40,19 +93,6 @@ case "$allow_insecure_http" in
   *) printf '%s\n' "SIM_DECK_ALLOW_INSECURE_HTTP must be true or false." >&2; exit 1 ;;
 esac
 
-property() {
-  local key="$1" data="$2"
-  printf '%s\n' "$data" | awk -F= -v key="$key" '$1 == key { print substr($0, length(key) + 2); exit }'
-}
-audio_node() {
-  local kind="$1" serial="$2"
-  case "$kind" in
-    control) printf '%s' "${audio_control[$serial]:-}" ;;
-    capture) printf '%s' "${audio_capture[$serial]:-}" ;;
-    playback) printf '%s' "${audio_playback[$serial]:-}" ;;
-  esac
-}
-
 declare -A at_node=() at_interface=() at_parent=() audio_control=() audio_capture=() audio_playback=()
 for node in /dev/ttyUSB* /dev/ttyACM*; do
   [[ -e "$node" ]] || continue
@@ -73,18 +113,7 @@ for node in /dev/ttyUSB* /dev/ttyACM*; do
     at_interface[$serial]="$interface"
   fi
 done
-for node in /dev/snd/controlC* /dev/snd/pcmC*D*c /dev/snd/pcmC*D*p; do
-  [[ -e "$node" ]] || continue
-  data="$(udevadm info --query=property --name="$node" 2>/dev/null || true)"
-  [[ "$(property ID_VENDOR_ID "$data")" == 2c7c ]] || continue
-  serial="$(property ID_SERIAL_SHORT "$data")"
-  [[ -n "$serial" ]] || continue
-  case "$node" in
-    /dev/snd/controlC*) audio_control[$serial]="$node" ;;
-    /dev/snd/pcm*C*D*c) audio_capture[$serial]="$node" ;;
-    /dev/snd/pcm*C*D*p) audio_playback[$serial]="$node" ;;
-  esac
-done
+discover_audio_nodes /dev
 
 serials=()
 while IFS= read -r serial; do [[ -n "$serial" ]] && serials+=("$serial"); done < <(printf '%s\n' "${!at_node[@]}" | sort)
@@ -116,11 +145,7 @@ if [[ -e "$rules_file" ]]; then cp -p "$rules_file" "$rules_file.bak.$(date +%s)
   index=1
   for serial in "${serials[@]}"; do
     interface="${at_interface[$serial]}"
-    if [[ -n "$interface" ]]; then
-      printf 'SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="2c7c", ENV{ID_SERIAL_SHORT}=="%s", ENV{ID_USB_INTERFACE_NUM}=="%s", SYMLINK+="sim-deck/modem-%s-at", GROUP="dialout", MODE="0660"\n' "$serial" "$interface" "$index"
-    else
-      printf 'SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="2c7c", ENV{ID_SERIAL_SHORT}=="%s", SYMLINK+="sim-deck/modem-%s-at", GROUP="dialout", MODE="0660"\n' "$serial" "$index"
-    fi
+    write_tty_rule "$serial" "$interface" "$index"
     for kind in control capture playback; do
       [[ -n "$(audio_node "$kind" "$serial")" ]] || continue
       case "$kind" in control) kernel='controlC*' ;; capture) kernel='pcmC*D*c' ;; playback) kernel='pcmC*D*p' ;; esac
@@ -129,8 +154,15 @@ if [[ -e "$rules_file" ]]; then cp -p "$rules_file" "$rules_file.bak.$(date +%s)
     index=$((index + 1))
   done
 } > "$rules_file"
+modem_manager_active=false
+if command -v systemctl >/dev/null && systemctl is-active --quiet ModemManager; then
+  modem_manager_active=true
+fi
 udevadm control --reload-rules
 udevadm trigger --subsystem-match=tty --subsystem-match=sound
+if [[ "$modem_manager_active" == true ]]; then
+  systemctl restart ModemManager
+fi
 
 {
   printf '%s\n' 'x-device-defaults: &device-defaults'
@@ -139,6 +171,8 @@ udevadm trigger --subsystem-match=tty --subsystem-match=sound
   printf '%s\n' '  security_opt: [no-new-privileges:true]' '  cap_drop: [ALL]' '  read_only: true' '  tmpfs: [/tmp:rw,noexec,nosuid,size=16m]' '' 'services:'
   index=1
   for serial in "${serials[@]}"; do
+    # Keep Compose substitutions literal in the generated file.
+    # shellcheck disable=SC2016
     printf '  modem-%s:\n    <<: *device-defaults\n    hostname: sim-deck-modem-%s\n    environment:\n      SIM_DECK_SERVER_URL: ${SIM_DECK_SERVER_URL}\n      SIM_DECK_ALLOW_INSECURE_HTTP: ${SIM_DECK_ALLOW_INSECURE_HTTP:-false}\n      SIM_DECK_AT_DEVICE: /dev/sim-deck/at\n      SIM_DECK_AUDIO_MODE: alsa\n      SIM_DECK_STATE_DIRECTORY: /var/lib/sim-deck\n    devices:\n      - /dev/sim-deck/modem-%s-at:/dev/sim-deck/at\n' "$index" "$index" "$index"
     for kind in control capture playback; do
       [[ -n "$(audio_node "$kind" "$serial")" ]] || continue
@@ -162,3 +196,8 @@ chmod 0640 "$env_file" "$compose_file"
 printf 'Discovered %s modem(s).\nGenerated %s and %s.\n' "${#serials[@]}" "$rules_file" "$compose_file"
 printf 'Start with: docker compose --env-file %s -f %s up -d\n' "$env_file" "$compose_file"
 if [[ "$start" == true ]]; then docker compose --env-file "$env_file" -f "$compose_file" up -d; fi
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

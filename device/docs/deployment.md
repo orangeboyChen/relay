@@ -25,6 +25,12 @@ The image runs as an unprivileged user, drops all Linux capabilities, and maps
 only the AT and audio character devices belonging to that modem. Do not use
 `--privileged` or map the host's whole `/dev` directory.
 
+The installer marks only the discovered Quectel serial ports with
+`ID_MM_DEVICE_IGNORE=1` and restarts ModemManager when it is active. Other
+modems remain managed normally. ALSA PCM nodes are associated through the
+matching USB control node because Linux does not copy USB identity properties
+onto every `pcmC*` device node.
+
 ## Verify and enable modem audio
 
 Voice requires the Quectel USB Audio Class (UAC) interfaces. Run the AT query

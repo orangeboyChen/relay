@@ -241,7 +241,12 @@ own queue and must keep its state volume private.
 `scripts/install-linux-device.sh` discovers every connected Quectel modem and
 generates one fully isolated service per modem. It also installs stable udev
 links from the modem USB serial identity, so transient `ttyUSB` and ALSA card
-numbers never enter the container configuration:
+numbers never enter the container configuration.
+
+The installer prevents ModemManager from claiming only the selected Quectel
+ports. It correlates playback and capture nodes through their ALSA control
+card, which supports Linux systems where PCM nodes do not repeat the USB
+vendor and serial udev properties.
 
 ```sh
 sudo SIM_DECK_SERVER_URL=https://sim-deck.example \

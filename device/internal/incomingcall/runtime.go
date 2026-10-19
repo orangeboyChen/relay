@@ -9,6 +9,7 @@ import (
 
 	"sim-deck-device/internal/call"
 	"sim-deck-device/internal/identity"
+	"sim-deck-device/internal/slotpolicy"
 )
 
 // Remote provides authenticated recipient discovery and opaque call delivery.
@@ -23,12 +24,24 @@ type EventRegistrar interface {
 	Unregister(string)
 }
 
+// CallRejecter rejects a ringing or waiting cellular call.
+type CallRejecter interface {
+	Reject(context.Context) error
+}
+
+// Policy provides the current owner controls for this physical slot.
+type Policy interface {
+	Current() slotpolicy.Settings
+}
+
 // Runtime turns incoming modem transitions into recipient-encrypted notifications.
 type Runtime struct {
 	remote        Remote
 	identity      identity.State
 	snapshots     <-chan call.Snapshot
 	events        EventRegistrar
+	calls         CallRejecter
+	policy        Policy
 	builder       *Builder
 	activeCallID  string
 	pending       *pendingCall
@@ -44,16 +57,16 @@ type pendingCall struct {
 const deliveryRetryInterval = time.Second
 
 // NewRuntime creates an incoming call notification runtime for one modem.
-func NewRuntime(remote Remote, state identity.State, snapshots <-chan call.Snapshot, events EventRegistrar) (*Runtime, error) {
-	if remote == nil || snapshots == nil || events == nil || state.Credential == "" {
-		return nil, errors.New("incoming-call runtime requires a bound identity, remote, snapshots, and event registrar")
+func NewRuntime(remote Remote, state identity.State, snapshots <-chan call.Snapshot, events EventRegistrar, calls CallRejecter, policy Policy) (*Runtime, error) {
+	if remote == nil || snapshots == nil || events == nil || calls == nil || policy == nil || state.Credential == "" {
+		return nil, errors.New("incoming-call runtime requires a bound identity, remote, snapshots, event registrar, call controller, and slot policy")
 	}
 	builder, err := NewBuilder(state)
 	if err != nil {
 		return nil, err
 	}
 	return &Runtime{
-		remote: remote, identity: state, snapshots: snapshots, events: events, builder: builder,
+		remote: remote, identity: state, snapshots: snapshots, events: events, calls: calls, policy: policy, builder: builder,
 		retryInterval: deliveryRetryInterval,
 	}, nil
 }
@@ -104,6 +117,14 @@ func (runtime *Runtime) deliverPending(ctx context.Context) error {
 	if pending == nil {
 		return nil
 	}
+	if !runtime.policy.Current().IncomingCallsEnabled {
+		if err := runtime.calls.Reject(ctx); err != nil {
+			return fmt.Errorf("reject disabled incoming call: %w", err)
+		}
+		runtime.pending = nil
+		slog.Info("incoming call rejected by slot policy")
+		return nil
+	}
 	if pending.notification.ID == "" {
 		recipients, err := runtime.remote.ListInstallationRecipients(ctx, runtime.identity.DeviceUUID, runtime.identity.Credential)
 		if err != nil {
@@ -139,6 +160,12 @@ func (runtime *Runtime) process(ctx context.Context, snapshot call.Snapshot) err
 	if runtime.activeCallID != "" ||
 		(snapshot.State != call.StateRinging && snapshot.State != call.StateWaiting) ||
 		snapshot.IncomingNumber == "" {
+		return nil
+	}
+	if !runtime.policy.Current().IncomingCallsEnabled {
+		if err := runtime.calls.Reject(ctx); err != nil {
+			return fmt.Errorf("reject disabled incoming call: %w", err)
+		}
 		return nil
 	}
 	recipients, err := runtime.remote.ListInstallationRecipients(ctx, runtime.identity.DeviceUUID, runtime.identity.Credential)

@@ -14,6 +14,7 @@ import (
 
 	"sim-deck-device/internal/call"
 	"sim-deck-device/internal/identity"
+	"sim-deck-device/internal/slotpolicy"
 )
 
 type fakeRemote struct {
@@ -62,6 +63,20 @@ func (registrar *fakeEventRegistrar) Unregister(callID string) {
 	registrar.unregistered = append(registrar.unregistered, callID)
 }
 
+type fakeCallRejecter struct {
+	count int
+	err   error
+}
+
+func (rejecter *fakeCallRejecter) Reject(context.Context) error {
+	rejecter.count++
+	return rejecter.err
+}
+
+type fakePolicy struct{ settings slotpolicy.Settings }
+
+func (policy *fakePolicy) Current() slotpolicy.Settings { return policy.settings }
+
 var _ = Describe("Incoming call runtime", func() {
 	const deviceID = "01900000-0000-7000-8000-000000000001"
 	var (
@@ -70,6 +85,8 @@ var _ = Describe("Incoming call runtime", func() {
 		events    *fakeEventRegistrar
 		snapshots chan call.Snapshot
 		runtime   *Runtime
+		calls     *fakeCallRejecter
+		policy    *fakePolicy
 	)
 
 	BeforeEach(func() {
@@ -87,7 +104,9 @@ var _ = Describe("Incoming call runtime", func() {
 		}}}
 		events = &fakeEventRegistrar{}
 		snapshots = make(chan call.Snapshot, 4)
-		runtime, err = NewRuntime(remote, state, snapshots, events)
+		calls = &fakeCallRejecter{}
+		policy = &fakePolicy{settings: slotpolicy.Settings{IncomingCallsEnabled: true}}
+		runtime, err = NewRuntime(remote, state, snapshots, events, calls, policy)
 		Expect(err).NotTo(HaveOccurred())
 		runtime.builder.random = &sequenceReader{next: 1}
 	})
@@ -137,6 +156,18 @@ var _ = Describe("Incoming call runtime", func() {
 		Expect(runtime.activeCallID).To(BeEmpty())
 	})
 
+	It("rejects an incoming call locally when owner policy disables calls", func() {
+		policy.settings.IncomingCallsEnabled = false
+
+		Expect(runtime.process(context.Background(), call.Snapshot{
+			State: call.StateRinging, IncomingNumber: "13500000000",
+		})).To(Succeed())
+
+		Expect(calls.count).To(Equal(1))
+		Expect(remote.notifications).To(BeEmpty())
+		Expect(events.callID).To(BeEmpty())
+	})
+
 	It("surfaces recipient, upload, encryption, and registration failures", func() {
 		remote.listError = errors.New("server unavailable")
 		Expect(runtime.process(context.Background(), call.Snapshot{State: call.StateRinging, IncomingNumber: "13500000000"})).To(MatchError(ContainSubstring("list incoming call recipients")))
@@ -161,7 +192,7 @@ var _ = Describe("Incoming call runtime", func() {
 
 		closedSnapshots := make(chan call.Snapshot)
 		close(closedSnapshots)
-		closedRuntime, err := NewRuntime(remote, state, closedSnapshots, events)
+		closedRuntime, err := NewRuntime(remote, state, closedSnapshots, events, calls, policy)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(closedRuntime.Run(context.Background())).To(MatchError("incoming-call snapshot stream closed"))
 
@@ -196,14 +227,18 @@ var _ = Describe("Incoming call runtime", func() {
 	})
 
 	It("validates construction dependencies", func() {
-		_, err := NewRuntime(nil, state, snapshots, events)
+		_, err := NewRuntime(nil, state, snapshots, events, calls, policy)
 		Expect(err).To(HaveOccurred())
-		_, err = NewRuntime(remote, state, nil, events)
+		_, err = NewRuntime(remote, state, nil, events, calls, policy)
 		Expect(err).To(HaveOccurred())
-		_, err = NewRuntime(remote, state, snapshots, nil)
+		_, err = NewRuntime(remote, state, snapshots, nil, calls, policy)
+		Expect(err).To(HaveOccurred())
+		_, err = NewRuntime(remote, state, snapshots, events, nil, policy)
+		Expect(err).To(HaveOccurred())
+		_, err = NewRuntime(remote, state, snapshots, events, calls, nil)
 		Expect(err).To(HaveOccurred())
 		state.Credential = ""
-		_, err = NewRuntime(remote, state, snapshots, events)
+		_, err = NewRuntime(remote, state, snapshots, events, calls, policy)
 		Expect(err).To(HaveOccurred())
 	})
 })

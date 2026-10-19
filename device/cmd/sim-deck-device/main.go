@@ -29,6 +29,7 @@ import (
 	"sim-deck-device/internal/radio"
 	"sim-deck-device/internal/serialport"
 	"sim-deck-device/internal/serverapi"
+	"sim-deck-device/internal/slotpolicy"
 	"sim-deck-device/internal/sms"
 )
 
@@ -161,6 +162,11 @@ type messageEventPublisher interface {
 	Publish(context.Context, sms.ReceivedMessage) error
 }
 
+type slotPolicyRuntime interface {
+	command.SlotSettings
+	Restore(context.Context) error
+}
+
 type simProfileReader interface {
 	ReadSIMProfile(context.Context) (modem.SIMProfile, error)
 }
@@ -179,7 +185,8 @@ type deviceDependencies struct {
 	syncCommandKey              func(context.Context, agent.Config, identity.State) error
 	syncSIMIdentity             func(context.Context, agent.Config, identity.State) (string, int, error)
 	newCallEvents               func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error)
-	newIncomingCalls            func(agent.Config, identity.State, <-chan call.Snapshot, incomingcall.EventRegistrar) (commandRuntime, error)
+	newIncomingCalls            func(agent.Config, identity.State, <-chan call.Snapshot, incomingcall.EventRegistrar, incomingcall.CallRejecter, incomingcall.Policy) (commandRuntime, error)
+	newSlotPolicy               func(agent.Config, *at.Client) (slotPolicyRuntime, error)
 	newCallMedia                func(agent.Config) (callMediaRuntime, error)
 	newCallMediaWithICE         func(agent.Config, []media.ICEServer) (callMediaRuntime, error)
 	newCallMediaWithICEProvider func(agent.Config, identity.State, func(context.Context, agent.Config, identity.State) ([]media.ICEServer, error)) (callMediaRuntime, error)
@@ -243,8 +250,11 @@ func productionDependencies(httpClient *http.Client) deviceDependencies {
 		newCallEvents: func(config agent.Config, state identity.State, snapshots <-chan call.Snapshot) (callEventRuntime, error) {
 			return callevent.NewPublisher(serverapi.NewClient(config.ServerURL, httpClient), state, snapshots)
 		},
-		newIncomingCalls: func(config agent.Config, state identity.State, snapshots <-chan call.Snapshot, events incomingcall.EventRegistrar) (commandRuntime, error) {
-			return incomingcall.NewRuntime(serverapi.NewClient(config.ServerURL, httpClient), state, snapshots, events)
+		newIncomingCalls: func(config agent.Config, state identity.State, snapshots <-chan call.Snapshot, events incomingcall.EventRegistrar, calls incomingcall.CallRejecter, policy incomingcall.Policy) (commandRuntime, error) {
+			return incomingcall.NewRuntime(serverapi.NewClient(config.ServerURL, httpClient), state, snapshots, events, calls, policy)
+		},
+		newSlotPolicy: func(config agent.Config, client *at.Client) (slotPolicyRuntime, error) {
+			return slotpolicy.NewController(config.StateDirectory, client, config.CommandTimeout)
 		},
 		newCallMedia: func(config agent.Config) (callMediaRuntime, error) {
 			return newCallMedia(config, nil)
@@ -333,6 +343,10 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 		"device_uuid", deviceIdentity.DeviceUUID,
 		"identity_fingerprint", deviceIdentity.IdentityFingerprint(),
 	)
+	policy, err := dependencies.newSlotPolicy(config, client)
+	if err != nil {
+		return fmt.Errorf("open slot policy: %w", err)
+	}
 
 	inbox, err := dependencies.openInbox(
 		filepath.Join(config.StateDirectory, "sms-inbox.json"),
@@ -344,6 +358,10 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	}
 	var messageEvents messageEventPublisher
 	messageSink := modem.MessageSinkFunc(func(ctx context.Context, message sms.ReceivedMessage) error {
+		if !policy.Current().IncomingSMSEnabled {
+			logger.Info("SMS retained because incoming SMS is disabled", "message_id", message.ID, "segments", message.Segments)
+			return modem.ErrMessageDeliveryDeferred
+		}
 		if messageEvents == nil {
 			return modem.ErrMessageDeliveryDeferred
 		}
@@ -359,6 +377,9 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	}
 	if err := session.Initialize(ctx); err != nil {
 		return err
+	}
+	if err := policy.Restore(ctx); err != nil {
+		return fmt.Errorf("restore slot policy: %w", err)
 	}
 	if slots, slotError := session.ReadSIMSlotStatus(ctx); slotError == nil {
 		logger.Info("SIM slot status detected", "slots", slots)
@@ -426,7 +447,7 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	if err != nil {
 		return fmt.Errorf("create encrypted call event runtime: %w", err)
 	}
-	incomingCalls, err := dependencies.newIncomingCalls(config, deviceIdentity, session.Calls().Subscribe(), events)
+	incomingCalls, err := dependencies.newIncomingCalls(config, deviceIdentity, session.Calls().Subscribe(), events, session.Calls(), policy)
 	if err != nil {
 		return fmt.Errorf("create incoming call runtime: %w", err)
 	}
@@ -442,7 +463,7 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 		return fmt.Errorf("create call media runtime: %w", err)
 	}
 	defer callMedia.Close()
-	commands, err := dependencies.newCommands(config, deviceIdentity, session.Calls(), command.Dependencies{Events: events, Media: callMedia, Messages: session, Logger: logger})
+	commands, err := dependencies.newCommands(config, deviceIdentity, session.Calls(), command.Dependencies{Events: events, Media: callMedia, Messages: session, SlotSettings: policy, Logger: logger})
 	if err != nil {
 		return fmt.Errorf("create encrypted command runtime: %w", err)
 	}

@@ -26,6 +26,7 @@ import (
 	"sim-deck-device/internal/identity"
 	"sim-deck-device/internal/incomingcall"
 	"sim-deck-device/internal/modem"
+	"sim-deck-device/internal/slotpolicy"
 	"sim-deck-device/internal/sms"
 )
 
@@ -170,6 +171,29 @@ type fakeMessageEventPublisher struct {
 	messages []sms.ReceivedMessage
 }
 
+type fakeSlotPolicy struct {
+	settings     slotpolicy.Settings
+	restoreError error
+}
+
+func (policy *fakeSlotPolicy) Current() slotpolicy.Settings  { return policy.settings }
+func (policy *fakeSlotPolicy) Restore(context.Context) error { return policy.restoreError }
+func (policy *fakeSlotPolicy) Configure(_ context.Context, update slotpolicy.Update) (slotpolicy.Settings, error) {
+	if update.DataEnabled != nil {
+		policy.settings.DataEnabled = *update.DataEnabled
+	}
+	if update.AirplaneModeEnabled != nil {
+		policy.settings.AirplaneModeEnabled = *update.AirplaneModeEnabled
+	}
+	if update.IncomingCallsEnabled != nil {
+		policy.settings.IncomingCallsEnabled = *update.IncomingCallsEnabled
+	}
+	if update.IncomingSMSEnabled != nil {
+		policy.settings.IncomingSMSEnabled = *update.IncomingSMSEnabled
+	}
+	return policy.settings, nil
+}
+
 func (publisher *fakeMessageEventPublisher) Publish(_ context.Context, message sms.ReceivedMessage) error {
 	publisher.messages = append(publisher.messages, message)
 	return publisher.err
@@ -263,8 +287,11 @@ func testDependencies(transport io.ReadWriteCloser, session deviceSession) devic
 		newCallEvents: func(agent.Config, identity.State, <-chan call.Snapshot) (callEventRuntime, error) {
 			return eventRunner, nil
 		},
-		newIncomingCalls: func(agent.Config, identity.State, <-chan call.Snapshot, incomingcall.EventRegistrar) (commandRuntime, error) {
+		newIncomingCalls: func(agent.Config, identity.State, <-chan call.Snapshot, incomingcall.EventRegistrar, incomingcall.CallRejecter, incomingcall.Policy) (commandRuntime, error) {
 			return &fakeCommandRuntime{}, nil
+		},
+		newSlotPolicy: func(agent.Config, *at.Client) (slotPolicyRuntime, error) {
+			return &fakeSlotPolicy{settings: slotpolicy.Settings{DataEnabled: true, IncomingCallsEnabled: true, IncomingSMSEnabled: true}}, nil
 		},
 		newCallMedia: func(agent.Config) (callMediaRuntime, error) { return mediaRunner, nil },
 		newMessageEvents: func(agent.Config, identity.State) (messageEventPublisher, error) {
@@ -583,7 +610,7 @@ var _ = Describe("Device command runtime", func() {
 	It("returns an incoming call runtime construction failure before readiness", func() {
 		transport := newBlockingTransport()
 		dependencies := testDependencies(transport, &fakeDeviceSession{})
-		dependencies.newIncomingCalls = func(agent.Config, identity.State, <-chan call.Snapshot, incomingcall.EventRegistrar) (commandRuntime, error) {
+		dependencies.newIncomingCalls = func(agent.Config, identity.State, <-chan call.Snapshot, incomingcall.EventRegistrar, incomingcall.CallRejecter, incomingcall.Policy) (commandRuntime, error) {
 			return nil, errors.New("incoming call runtime unavailable")
 		}
 
@@ -857,6 +884,28 @@ var _ = Describe("Device command runtime", func() {
 		Expect(publisher.messages).To(Equal([]sms.ReceivedMessage{message}))
 	})
 
+	It("retains pending SMS while incoming SMS is disabled", func() {
+		transport := newBlockingTransport()
+		message := sms.ReceivedMessage{ID: "message-id", Sender: "10086", Text: "pending", Segments: 1}
+		session := &fakeDeviceSession{retryMessage: &message}
+		dependencies := testDependencies(transport, session)
+		publisher := &fakeMessageEventPublisher{}
+		dependencies.newSlotPolicy = func(agent.Config, *at.Client) (slotPolicyRuntime, error) {
+			return &fakeSlotPolicy{settings: slotpolicy.Settings{DataEnabled: true, IncomingCallsEnabled: true, IncomingSMSEnabled: false}}, nil
+		}
+		dependencies.newMessageEvents = func(agent.Config, identity.State) (messageEventPublisher, error) {
+			return publisher, nil
+		}
+		dependencies.newCommands = func(agent.Config, identity.State, command.Calls, command.Dependencies) (commandRuntime, error) {
+			return &fakeCommandRuntime{runError: errors.New("stop after synchronization")}, nil
+		}
+
+		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError("stop after synchronization"))
+		Expect(publisher.messages).To(BeEmpty())
+	})
+
 	It("keeps pending SMS durable when encrypted event upload is unavailable", func() {
 		transport := newBlockingTransport()
 		message := sms.ReceivedMessage{ID: "message-id", Sender: "10086", Text: "pending", Segments: 1}
@@ -911,7 +960,7 @@ var _ = Describe("Device command runtime", func() {
 		transport := newBlockingTransport()
 		session := &fakeDeviceSession{runStarted: make(chan struct{})}
 		dependencies := testDependencies(transport, session)
-		dependencies.newIncomingCalls = func(agent.Config, identity.State, <-chan call.Snapshot, incomingcall.EventRegistrar) (commandRuntime, error) {
+		dependencies.newIncomingCalls = func(agent.Config, identity.State, <-chan call.Snapshot, incomingcall.EventRegistrar, incomingcall.CallRejecter, incomingcall.Policy) (commandRuntime, error) {
 			return &fakeCommandRuntime{runError: errors.New("incoming call server unavailable")}, nil
 		}
 
@@ -1060,7 +1109,9 @@ var _ = Describe("Device command runtime", func() {
 		Expect(err).NotTo(HaveOccurred())
 		events, err := dependencies.newCallEvents(config, state, session.Calls().Events())
 		Expect(err).NotTo(HaveOccurred())
-		incomingCalls, err := dependencies.newIncomingCalls(config, state, session.Calls().Subscribe(), events)
+		policy, err := dependencies.newSlotPolicy(config, client)
+		Expect(err).NotTo(HaveOccurred())
+		incomingCalls, err := dependencies.newIncomingCalls(config, state, session.Calls().Subscribe(), events, session.Calls(), policy)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(incomingCalls).NotTo(BeNil())
 		callMedia, err := dependencies.newCallMedia(config)
@@ -1069,7 +1120,7 @@ var _ = Describe("Device command runtime", func() {
 		messageEvents, err := dependencies.newMessageEvents(config, state)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(messageEvents).NotTo(BeNil())
-		commands, err := dependencies.newCommands(config, state, session.Calls(), command.Dependencies{Events: events, Media: callMedia, Messages: session})
+		commands, err := dependencies.newCommands(config, state, session.Calls(), command.Dependencies{Events: events, Media: callMedia, Messages: session, SlotSettings: policy})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(commands).NotTo(BeNil())
 		radioStatus, err := dependencies.newRadioStatus(config, state, client)

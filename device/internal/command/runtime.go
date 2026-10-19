@@ -21,6 +21,7 @@ import (
 	"sim-deck-device/internal/call"
 	"sim-deck-device/internal/identity"
 	"sim-deck-device/internal/incomingcall"
+	"sim-deck-device/internal/slotpolicy"
 )
 
 const (
@@ -50,25 +51,30 @@ type EncryptedResult struct {
 
 // Payload is the command plaintext visible only to the iPhone and target device.
 type Payload struct {
-	Version    int    `json:"version"`
-	Operation  string `json:"operation"`
-	SlotID     string `json:"slot_id,omitempty"`
-	SIMID      string `json:"sim_id,omitempty"`
-	CallID     string `json:"call_id,omitempty"`
-	MessageID  string `json:"message_id,omitempty"`
-	Number     string `json:"number,omitempty"`
-	Body       string `json:"body,omitempty"`
-	Digits     string `json:"digits,omitempty"`
-	MediaOffer string `json:"media_offer,omitempty"`
+	Version              int    `json:"version"`
+	Operation            string `json:"operation"`
+	SlotID               string `json:"slot_id,omitempty"`
+	SIMID                string `json:"sim_id,omitempty"`
+	CallID               string `json:"call_id,omitempty"`
+	MessageID            string `json:"message_id,omitempty"`
+	Number               string `json:"number,omitempty"`
+	Body                 string `json:"body,omitempty"`
+	Digits               string `json:"digits,omitempty"`
+	MediaOffer           string `json:"media_offer,omitempty"`
+	DataEnabled          *bool  `json:"data_enabled,omitempty"`
+	AirplaneModeEnabled  *bool  `json:"airplane_mode_enabled,omitempty"`
+	IncomingCallsEnabled *bool  `json:"incoming_calls_enabled,omitempty"`
+	IncomingSMSEnabled   *bool  `json:"incoming_sms_enabled,omitempty"`
 }
 
 // Result is the encrypted execution outcome consumed by the initiating iPhone.
 type Result struct {
-	Version     int        `json:"version"`
-	Success     bool       `json:"success"`
-	ErrorCode   string     `json:"error_code,omitempty"`
-	CallState   call.State `json:"call_state"`
-	MediaAnswer string     `json:"media_answer,omitempty"`
+	Version      int                  `json:"version"`
+	Success      bool                 `json:"success"`
+	ErrorCode    string               `json:"error_code,omitempty"`
+	CallState    call.State           `json:"call_state"`
+	MediaAnswer  string               `json:"media_answer,omitempty"`
+	SlotSettings *slotpolicy.Settings `json:"slot_settings,omitempty"`
 }
 
 // Remote provides authenticated opaque command delivery.
@@ -109,12 +115,19 @@ type CallMedia interface {
 	Stop(string) error
 }
 
+// SlotSettings applies owner policy that is visible only inside encrypted commands.
+type SlotSettings interface {
+	Current() slotpolicy.Settings
+	Configure(context.Context, slotpolicy.Update) (slotpolicy.Settings, error)
+}
+
 // Dependencies contains the endpoint capabilities used by the command runtime.
 type Dependencies struct {
-	Events   CallEventRegistrar
-	Media    CallMedia
-	Messages Messages
-	Logger   *slog.Logger
+	Events       CallEventRegistrar
+	Media        CallMedia
+	Messages     Messages
+	SlotSettings SlotSettings
+	Logger       *slog.Logger
 }
 
 // Runtime polls, decrypts, executes, and acknowledges commands for one modem.
@@ -127,6 +140,7 @@ type Runtime struct {
 	events       CallEventRegistrar
 	media        CallMedia
 	messages     Messages
+	slotSettings SlotSettings
 	now          func() time.Time
 	logger       *slog.Logger
 }
@@ -136,8 +150,8 @@ func NewRuntime(remote Remote, state identity.State, calls Calls, pollInterval t
 	if remote == nil || calls == nil || state.Credential == "" || len(state.CommandPrivateKey) != keyBytes || pollInterval <= 0 {
 		return nil, errors.New("command runtime requires a bound identity, remote, call controller, and positive poll interval")
 	}
-	if dependencies.Events == nil || dependencies.Media == nil || dependencies.Messages == nil {
-		return nil, errors.New("command runtime requires call event, media, and message dependencies")
+	if dependencies.Events == nil || dependencies.Media == nil || dependencies.Messages == nil || dependencies.SlotSettings == nil {
+		return nil, errors.New("command runtime requires call event, media, message, and slot settings dependencies")
 	}
 	logger := dependencies.Logger
 	if logger == nil {
@@ -145,7 +159,8 @@ func NewRuntime(remote Remote, state identity.State, calls Calls, pollInterval t
 	}
 	return &Runtime{
 		remote: remote, identity: state, calls: calls, pollInterval: pollInterval,
-		random: rand.Reader, events: dependencies.Events, media: dependencies.Media, messages: dependencies.Messages, now: time.Now,
+		random: rand.Reader, events: dependencies.Events, media: dependencies.Media, messages: dependencies.Messages,
+		slotSettings: dependencies.SlotSettings, now: time.Now,
 		logger: logger,
 	}, nil
 }
@@ -199,7 +214,7 @@ func (runtime *Runtime) process(ctx context.Context, envelope Envelope) error {
 			return fmt.Errorf("register call events for command %s: %w", envelope.ID, err)
 		}
 	}
-	mediaAnswer, executionError := runtime.execute(ctx, payload)
+	execution, executionError := runtime.execute(ctx, payload)
 	if executionError != nil {
 		if registered {
 			runtime.events.Unregister(payload.CallID)
@@ -218,7 +233,8 @@ func (runtime *Runtime) process(ctx context.Context, envelope Envelope) error {
 	} else {
 		result.Success = true
 		result.CallState = runtime.calls.State()
-		result.MediaAnswer = mediaAnswer
+		result.MediaAnswer = execution.mediaAnswer
+		result.SlotSettings = execution.slotSettings
 	}
 	encrypted, err := sealResult(runtime.random, sharedSecret, envelope, result)
 	if err != nil {
@@ -240,50 +256,66 @@ func (runtime *Runtime) process(ctx context.Context, envelope Envelope) error {
 	return nil
 }
 
-func (runtime *Runtime) execute(ctx context.Context, payload Payload) (string, error) {
+type executionResult struct {
+	mediaAnswer  string
+	slotSettings *slotpolicy.Settings
+}
+
+func (runtime *Runtime) execute(ctx context.Context, payload Payload) (executionResult, error) {
 	if payload.Version != protocolVersion {
-		return "", errInvalidCommand
+		return executionResult{}, errInvalidCommand
 	}
 	if !runtime.targetMatches(payload) {
-		return "", errWrongSlot
+		return executionResult{}, errWrongSlot
 	}
 	switch payload.Operation {
+	case "slot.configure":
+		settings, err := runtime.slotSettings.Configure(ctx, slotpolicy.Update{
+			DataEnabled:          payload.DataEnabled,
+			AirplaneModeEnabled:  payload.AirplaneModeEnabled,
+			IncomingCallsEnabled: payload.IncomingCallsEnabled,
+			IncomingSMSEnabled:   payload.IncomingSMSEnabled,
+		})
+		if err != nil {
+			return executionResult{}, err
+		}
+		return executionResult{slotSettings: &settings}, nil
 	case "message.send":
 		if !identity.ValidDeviceUUID(payload.MessageID) || strings.TrimSpace(payload.Number) == "" || strings.TrimSpace(payload.Body) == "" {
-			return "", errInvalidCommand
+			return executionResult{}, errInvalidCommand
 		}
 		reference := sha256.Sum256([]byte(payload.MessageID))
 		if registrar, ok := runtime.messages.(interface{ PrepareMessageStatus(string) }); ok {
 			registrar.PrepareMessageStatus(payload.MessageID)
 		}
-		return "", runtime.messages.SendSMS(ctx, payload.Number, payload.Body, reference[0])
+		return executionResult{}, runtime.messages.SendSMS(ctx, payload.Number, payload.Body, reference[0])
 	case "call.start":
 		if strings.TrimSpace(payload.CallID) == "" ||
 			strings.TrimSpace(payload.Number) == "" ||
 			strings.TrimSpace(payload.MediaOffer) == "" {
-			return "", errInvalidCommand
+			return executionResult{}, errInvalidCommand
 		}
 		if err := runtime.calls.Dial(ctx, payload.Number); err != nil {
 			_ = runtime.media.Stop(payload.CallID)
-			return "", err
+			return executionResult{}, err
 		}
 		answer, err := runtime.media.Negotiate(ctx, payload.CallID, payload.MediaOffer)
 		if err != nil {
 			// The modem is already dialing; release it if media negotiation cannot complete.
 			_ = runtime.calls.Hangup(context.WithoutCancel(ctx))
 			_ = runtime.media.Stop(payload.CallID)
-			return "", fmt.Errorf("%w: %v", errMediaUnavailable, err)
+			return executionResult{}, fmt.Errorf("%w: %v", errMediaUnavailable, err)
 		}
-		return answer, nil
+		return executionResult{mediaAnswer: answer}, nil
 	case "call.answer":
 		if strings.TrimSpace(payload.CallID) == "" || strings.TrimSpace(payload.MediaOffer) == "" {
-			return "", errInvalidCommand
+			return executionResult{}, errInvalidCommand
 		}
 		answer, err := runtime.media.Negotiate(ctx, payload.CallID, payload.MediaOffer)
 		if err != nil {
 			_ = runtime.media.Stop(payload.CallID)
 			_ = runtime.calls.Reject(context.WithoutCancel(ctx))
-			return "", fmt.Errorf("%w: %v", errMediaUnavailable, err)
+			return executionResult{}, fmt.Errorf("%w: %v", errMediaUnavailable, err)
 		}
 		if runtime.calls.State() == call.StateWaiting {
 			err = runtime.calls.AnswerWaiting(ctx)
@@ -293,58 +325,58 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload) (string, e
 		if err != nil {
 			_ = runtime.media.Stop(payload.CallID)
 			_ = runtime.calls.Reject(context.WithoutCancel(ctx))
-			return "", err
+			return executionResult{}, err
 		}
-		return answer, nil
+		return executionResult{mediaAnswer: answer}, nil
 	case "call.reject":
 		if strings.TrimSpace(payload.CallID) == "" {
-			return "", errInvalidCommand
+			return executionResult{}, errInvalidCommand
 		}
 		if err := runtime.calls.Reject(ctx); err != nil {
-			return "", err
+			return executionResult{}, err
 		}
 		_ = runtime.media.Stop(payload.CallID)
-		return "", nil
+		return executionResult{}, nil
 	case "call.end":
 		if strings.TrimSpace(payload.CallID) == "" {
-			return "", errInvalidCommand
+			return executionResult{}, errInvalidCommand
 		}
 		if err := runtime.calls.Hangup(ctx); err != nil {
-			return "", err
+			return executionResult{}, err
 		}
 		_ = runtime.media.Stop(payload.CallID)
-		return "", nil
+		return executionResult{}, nil
 	case "call.hold":
 		if strings.TrimSpace(payload.CallID) == "" {
-			return "", errInvalidCommand
+			return executionResult{}, errInvalidCommand
 		}
-		return "", runtime.calls.Hold(ctx)
+		return executionResult{}, runtime.calls.Hold(ctx)
 	case "call.resume":
 		if strings.TrimSpace(payload.CallID) == "" {
-			return "", errInvalidCommand
+			return executionResult{}, errInvalidCommand
 		}
-		return "", runtime.calls.Resume(ctx)
+		return executionResult{}, runtime.calls.Resume(ctx)
 	case "call.swap":
 		if strings.TrimSpace(payload.CallID) == "" {
-			return "", errInvalidCommand
+			return executionResult{}, errInvalidCommand
 		}
-		return "", runtime.calls.Swap(ctx)
+		return executionResult{}, runtime.calls.Swap(ctx)
 	case "call.dtmf":
 		digits := strings.TrimSpace(payload.Digits)
 		if strings.TrimSpace(payload.CallID) == "" || digits == "" || digits != payload.Digits {
-			return "", errInvalidCommand
+			return executionResult{}, errInvalidCommand
 		}
 		for _, digit := range digits {
 			if !strings.ContainsRune("0123456789*#", digit) {
-				return "", errInvalidCommand
+				return executionResult{}, errInvalidCommand
 			}
 			if err := runtime.calls.SendDTMF(ctx, string(digit)); err != nil {
-				return "", err
+				return executionResult{}, err
 			}
 		}
-		return "", nil
+		return executionResult{}, nil
 	default:
-		return "", errInvalidCommand
+		return executionResult{}, errInvalidCommand
 	}
 }
 

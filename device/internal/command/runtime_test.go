@@ -22,6 +22,7 @@ import (
 	"sim-deck-device/internal/call"
 	"sim-deck-device/internal/identity"
 	"sim-deck-device/internal/incomingcall"
+	"sim-deck-device/internal/slotpolicy"
 )
 
 const testInstallationID = "01900000-0000-7000-8000-000000000101"
@@ -165,6 +166,19 @@ type fakeMessages struct {
 	err         error
 }
 
+type fakeSlotSettings struct {
+	settings slotpolicy.Settings
+	update   slotpolicy.Update
+	err      error
+}
+
+func (settings *fakeSlotSettings) Current() slotpolicy.Settings { return settings.settings }
+
+func (settings *fakeSlotSettings) Configure(_ context.Context, update slotpolicy.Update) (slotpolicy.Settings, error) {
+	settings.update = update
+	return settings.settings, settings.err
+}
+
 func (messages *fakeMessages) SendSMS(_ context.Context, destination string, body string, reference byte) error {
 	messages.destination = destination
 	messages.body = body
@@ -199,6 +213,7 @@ var _ = Describe("Encrypted command runtime", func() {
 		events    *fakeEventRegistrar
 		media     *fakeCallMedia
 		messages  *fakeMessages
+		settings  *fakeSlotSettings
 		runtime   *Runtime
 		sequence  []string
 	)
@@ -222,7 +237,8 @@ var _ = Describe("Encrypted command runtime", func() {
 		events = &fakeEventRegistrar{}
 		media = &fakeCallMedia{answer: "answer-sdp", sequence: &sequence}
 		messages = &fakeMessages{}
-		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: events, Media: media, Messages: messages})
+		settings = &fakeSlotSettings{settings: slotpolicy.Settings{DataEnabled: true, IncomingCallsEnabled: true, IncomingSMSEnabled: true}}
+		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: events, Media: media, Messages: messages, SlotSettings: settings})
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -259,6 +275,36 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(result.Success).To(BeFalse())
 		Expect(result.ErrorCode).To(Equal("modem_rejected"))
 		Expect(string(remote.result.Ciphertext)).NotTo(ContainSubstring("CMS ERROR"))
+	})
+
+	It("applies and returns slot policy only through the encrypted command", func() {
+		disabled, enabled := false, true
+		settings.settings = slotpolicy.Settings{
+			DataEnabled: false, AirplaneModeEnabled: true,
+			IncomingCallsEnabled: false, IncomingSMSEnabled: true,
+		}
+		payload := Payload{
+			Version: 1, Operation: "slot.configure",
+			DataEnabled: &disabled, AirplaneModeEnabled: &enabled,
+			IncomingCallsEnabled: &disabled, IncomingSMSEnabled: &enabled,
+		}
+		envelope, sharedSecret := sealCommand(state, senderKey, commandID, payload)
+
+		Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+
+		result := openResult(sharedSecret, envelope, remote.result)
+		Expect(result.Success).To(BeTrue())
+		Expect(result.SlotSettings).To(Equal(&settings.settings))
+		Expect(settings.update.DataEnabled).NotTo(BeNil())
+		Expect(*settings.update.DataEnabled).To(BeFalse())
+		Expect(settings.update.AirplaneModeEnabled).NotTo(BeNil())
+		Expect(*settings.update.AirplaneModeEnabled).To(BeTrue())
+		Expect(settings.update.IncomingCallsEnabled).NotTo(BeNil())
+		Expect(*settings.update.IncomingCallsEnabled).To(BeFalse())
+		Expect(settings.update.IncomingSMSEnabled).NotTo(BeNil())
+		Expect(*settings.update.IncomingSMSEnabled).To(BeTrue())
+		Expect(string(envelope.Ciphertext)).NotTo(ContainSubstring("slot.configure"))
+		Expect(string(remote.result.Ciphertext)).NotTo(ContainSubstring("slot_settings"))
 	})
 
 	DescribeTable("executes supported call operations from authenticated plaintext",
@@ -422,7 +468,7 @@ var _ = Describe("Encrypted command runtime", func() {
 	It("registers the outgoing call secret before dialing", func() {
 		registrar := &fakeEventRegistrar{}
 		var err error
-		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: registrar, Media: media, Messages: messages})
+		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: registrar, Media: media, Messages: messages, SlotSettings: settings})
 		Expect(err).NotTo(HaveOccurred())
 		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086", MediaOffer: "offer-sdp"})
 
@@ -437,7 +483,7 @@ var _ = Describe("Encrypted command runtime", func() {
 		registrar := &fakeEventRegistrar{}
 		calls.error = errors.New("modem rejected")
 		var err error
-		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: registrar, Media: media, Messages: messages})
+		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: registrar, Media: media, Messages: messages, SlotSettings: settings})
 		Expect(err).NotTo(HaveOccurred())
 		envelope, _ := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086", MediaOffer: "offer-sdp"})
 
@@ -449,7 +495,7 @@ var _ = Describe("Encrypted command runtime", func() {
 	It("fails closed when outgoing event registration fails", func() {
 		registrar := &fakeEventRegistrar{err: errors.New("event key unavailable")}
 		var err error
-		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: registrar, Media: media, Messages: messages})
+		runtime, err = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: registrar, Media: media, Messages: messages, SlotSettings: settings})
 		Expect(err).NotTo(HaveOccurred())
 		envelope, _ := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086", MediaOffer: "offer-sdp"})
 
@@ -487,7 +533,7 @@ var _ = Describe("Encrypted command runtime", func() {
 		state.SlotID = "01900000-0000-7000-8000-000000000002"
 		state.SIMID = "01900000-0000-7000-8000-000000000003"
 		var runtimeErr error
-		runtime, runtimeErr = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: events, Media: media, Messages: messages})
+		runtime, runtimeErr = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: events, Media: media, Messages: messages, SlotSettings: settings})
 		Expect(runtimeErr).NotTo(HaveOccurred())
 
 		for _, payload := range []Payload{
@@ -562,7 +608,7 @@ var _ = Describe("Encrypted command runtime", func() {
 	})
 
 	It("validates runtime dependencies", func() {
-		dependencies := Dependencies{Events: events, Media: media, Messages: messages}
+		dependencies := Dependencies{Events: events, Media: media, Messages: messages, SlotSettings: settings}
 		_, err := NewRuntime(nil, state, calls, time.Second, dependencies)
 		Expect(err).To(HaveOccurred())
 		_, err = NewRuntime(remote, identity.State{}, calls, time.Second, dependencies)
@@ -571,11 +617,13 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(err).To(HaveOccurred())
 		_, err = NewRuntime(remote, state, calls, 0, dependencies)
 		Expect(err).To(HaveOccurred())
-		_, err = NewRuntime(remote, state, calls, time.Second, Dependencies{Media: media, Messages: messages})
+		_, err = NewRuntime(remote, state, calls, time.Second, Dependencies{Media: media, Messages: messages, SlotSettings: settings})
 		Expect(err).To(HaveOccurred())
-		_, err = NewRuntime(remote, state, calls, time.Second, Dependencies{Events: events, Messages: messages})
+		_, err = NewRuntime(remote, state, calls, time.Second, Dependencies{Events: events, Messages: messages, SlotSettings: settings})
 		Expect(err).To(HaveOccurred())
-		_, err = NewRuntime(remote, state, calls, time.Second, Dependencies{Events: events, Media: media})
+		_, err = NewRuntime(remote, state, calls, time.Second, Dependencies{Events: events, Media: media, SlotSettings: settings})
+		Expect(err).To(HaveOccurred())
+		_, err = NewRuntime(remote, state, calls, time.Second, Dependencies{Events: events, Media: media, Messages: messages})
 		Expect(err).To(HaveOccurred())
 	})
 })

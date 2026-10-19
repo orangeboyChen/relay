@@ -150,10 +150,30 @@ struct MessageBubble: View {
         HStack(spacing: 5) {
             SIMBadge(line: line, size: 14)
             Text(message.sentAt, format: .dateTime.hour().minute())
-            Text(deliveryStatus)
+            deliveryStatusView
         }
         .font(.caption2)
         .foregroundStyle(.secondary)
+        .animation(.easeInOut(duration: 0.2), value: message.status)
+    }
+
+    @ViewBuilder
+    private var deliveryStatusView: some View {
+        if message.direction == .sent, message.status == .failed {
+            Button(action: retryAction) {
+                Label("Not Delivered", systemImage: "exclamationmark.circle.fill")
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.red)
+                    .frame(minHeight: 44)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Double-tap to try sending this message again.")
+            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+        } else {
+            Text(deliveryStatus)
+                .transition(.opacity)
+        }
     }
 
     private var bubbleColor: Color {
@@ -259,6 +279,22 @@ struct AttachmentPreview: View {
             MessageBubble(message: message, line: PreviewFixtures.devices[0]) {}
         }
     }
+    .padding()
+}
+
+#Preview("Failed message") {
+    MessageBubble(
+        message: MessageItem(
+            id: UUID(uuidString: "20000000-0000-0000-0000-000000000099")!,
+            direction: .sent,
+            body: "Please try sending this again.",
+            attachment: nil,
+            sentAt: PreviewFixtures.now,
+            status: .failed
+        ),
+        line: PreviewFixtures.devices[0],
+        retryAction: {}
+    )
     .padding()
 }
 #endif

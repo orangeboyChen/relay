@@ -48,6 +48,39 @@ var _ = Describe("Modem session", func() {
 		Expect(value).To(Equal("867530900000001"))
 	})
 
+	It("falls back to the generic equipment identity command", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := at.NewClient(clientTransport)
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			_, _ = reader.ReadString('\r')
+			_, _ = modemTransport.Write([]byte("ERROR\r\n"))
+			_, _ = reader.ReadString('\r')
+			_, _ = modemTransport.Write([]byte("867530900000002\r\nOK\r\n"))
+		}()
+
+		value, err := ReadEquipmentIdentity(context.Background(), client, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(value).To(Equal("867530900000002"))
+	})
+
+	It("rejects equipment identity responses without a valid numeric value", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := at.NewClient(clientTransport)
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			for range 2 {
+				_, _ = reader.ReadString('\r')
+				_, _ = modemTransport.Write([]byte("+CGSN: invalid\r\nOK\r\n"))
+			}
+		}()
+
+		_, err := ReadEquipmentIdentity(context.Background(), client, time.Second)
+		Expect(err).To(MatchError("modem did not return a valid equipment identity"))
+	})
+
 	It("reads every exposed physical slot index", func() {
 		clientTransport, modemTransport := net.Pipe()
 		client := at.NewClient(clientTransport)
@@ -61,6 +94,19 @@ var _ = Describe("Modem session", func() {
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(indexes).To(Equal([]int{1, 2}))
+	})
+
+	It("rejects slot status responses without valid indexes", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := at.NewClient(clientTransport)
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		go func() {
+			_, _ = bufio.NewReader(modemTransport).ReadString('\r')
+			_, _ = modemTransport.Write([]byte("+QSIMSTAT: bad,1\r\n+QSIMSTAT: 0,1\r\nOK\r\n"))
+		}()
+
+		_, err := ReadSIMSlotIndexes(context.Background(), client, time.Second)
+		Expect(err).To(MatchError(ErrSIMSlotUnsupported))
 	})
 
 	It("reads physical SIM slot presence when QSIMSTAT is supported", func() {
@@ -83,6 +129,17 @@ var _ = Describe("Modem session", func() {
 		go func() {
 			_, _ = bufio.NewReader(modemTransport).ReadString('\r')
 			_, _ = modemTransport.Write([]byte("ERROR\r\n"))
+		}()
+		_, err := session.ReadSIMSlotStatus(context.Background())
+		Expect(err).To(MatchError(ErrSIMSlotUnsupported))
+	})
+
+	It("rejects malformed physical slot presence lines", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		go func() {
+			_, _ = bufio.NewReader(modemTransport).ReadString('\r')
+			_, _ = modemTransport.Write([]byte("+QSIMSTAT: bad,1\r\n+QSIMSTAT: 0,1\r\nOK\r\n"))
 		}()
 		_, err := session.ReadSIMSlotStatus(context.Background())
 		Expect(err).To(MatchError(ErrSIMSlotUnsupported))
@@ -718,6 +775,64 @@ var _ = Describe("Modem session", func() {
 		Expect(pdus).To(Equal([]string{"AABB", "CCDD"}))
 		Expect(err).To(MatchError(ContainSubstring("response line 3 has no PDU")))
 	})
+
+	It("tracks SMS delivery report metadata and parses modem helper values", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		reportSink := func(context.Context, sms.DeliveryReport) error { return nil }
+		session.SetDeliveryReportSink(reportSink)
+		session.PrepareMessageStatus("message-1")
+		Expect(session.deliveryReportSink).NotTo(BeNil())
+		Expect(session.pendingMessageID).To(Equal("message-1"))
+
+		reference, ok := parseMessageReference([]string{"+CMGS: 42"})
+		Expect(reference).To(Equal(byte(42)))
+		Expect(ok).To(BeTrue())
+		_, ok = parseMessageReference([]string{"+CMGS: invalid"})
+		Expect(ok).To(BeFalse())
+		Expect(hasMessageReference([]string{"+CMGS: 42"})).To(BeTrue())
+		Expect(hasMessageReference([]string{"+CMGS: "})).To(BeFalse())
+		index, ok := storedMessageIndex("+CMTI: \"ME\", 7")
+		Expect(index).To(Equal(7))
+		Expect(ok).To(BeTrue())
+		_, ok = storedMessageIndex("+CMTI: malformed")
+		Expect(ok).To(BeFalse())
+		pdu, ok := storedMessagePDU([]string{"+CMGR: 1,,23", testDeliverPDU})
+		Expect(pdu).To(Equal(testDeliverPDU))
+		Expect(ok).To(BeTrue())
+		_, ok = storedMessagePDU([]string{"+CMGR: 1,,23", "+ERROR"})
+		Expect(ok).To(BeFalse())
+	})
+
+	It("publishes a correlated SMS delivery report", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		reports := make(chan sms.DeliveryReport, 1)
+		session.references[7] = "message-7"
+		session.SetDeliveryReportSink(func(_ context.Context, report sms.DeliveryReport) error {
+			reports <- report
+			return nil
+		})
+
+		Expect(session.handleURC(context.Background(), "+CDS: 18\n0002070B913105000000F0620151214365006201512143650000")).To(Succeed())
+		report := <-reports
+		Expect(report.MessageID).To(Equal("message-7"))
+		Expect(report.Status).To(Equal(sms.DeliveryDelivered))
+		_, exists := session.references[7]
+		Expect(exists).To(BeFalse())
+	})
+
+	DescribeTable("classifies call notifications", func(notification string, expected bool) {
+		Expect(isCallURC(notification)).To(Equal(expected))
+	},
+		Entry("ring", "RING", true),
+		Entry("caller ID", "+CLIP: 1", true),
+		Entry("call waiting", "+CCWA: 1", true),
+		Entry("no carrier", "NO CARRIER", true),
+		Entry("no answer", "NO ANSWER", true),
+		Entry("busy", "BUSY", true),
+		Entry("unrelated", "READY", false),
+	)
 
 	DescribeTable("classifies notification metadata without exposing payloads",
 		func(notification string, expected string) {

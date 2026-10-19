@@ -58,6 +58,32 @@ var _ = Describe("SMS PDU codec", func() {
 		Expect(message.Timestamp.Day()).To(Equal(15))
 	})
 
+	It("decodes SMS delivery status reports for delivered and failed messages", func() {
+		report, err := DecodeStatusReport("0002070B913105000000F0620151214365006201512143650000")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(report.MessageReference).To(Equal(byte(7)))
+		Expect(report.Recipient).To(Equal("+8613500000000"))
+		Expect(report.Status).To(Equal(DeliveryDelivered))
+		Expect(report.StatusCode).To(Equal(byte(0)))
+
+		failed, err := DecodeStatusReport("0002070B913105000000F0620151214365006201512143650040")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(failed.Status).To(Equal(DeliveryFailed))
+
+		pending, err := DecodeStatusReport("0002070B913105000000F0620151214365006201512143650020")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pending.Status).To(Equal(DeliveryPending))
+	})
+
+	DescribeTable("rejects malformed status reports", func(encoded string) {
+		_, err := DecodeStatusReport(encoded)
+		Expect(err).To(HaveOccurred())
+	},
+		Entry("invalid hex", "not-hex"),
+		Entry("truncated", "0002"),
+		Entry("wrong message type", "000100"),
+	)
+
 	It("encodes a single GSM-7 message", func() {
 		pdus, err := EncodeSubmit("+8613500000000", "hello", 7)
 

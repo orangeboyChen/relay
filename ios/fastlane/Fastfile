@@ -72,6 +72,9 @@ def validate_archive_metadata(archive_path, version, build_number)
   required_usage_descriptions = %w[NSCameraUsageDescription NSContactsUsageDescription]
   missing_descriptions = required_usage_descriptions.select { |key| app_info[key].to_s.strip.empty? }
   UI.user_error!("Archive is missing purpose strings: #{missing_descriptions.join(", ")}") unless missing_descriptions.empty?
+  unless app_info["ITSAppUsesNonExemptEncryption"] == false
+    UI.user_error!("Archive must declare ITSAppUsesNonExemptEncryption as false")
+  end
 
   bundles = [app_path] + Dir.glob(File.join(app_path, "PlugIns", "*.appex"))
   bundles.each do |bundle|

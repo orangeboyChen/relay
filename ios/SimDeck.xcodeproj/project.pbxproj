@@ -476,11 +476,12 @@
 				CLANG_ENABLE_OBJC_WEAK = YES;
 				CODE_SIGN_ENTITLEMENTS = SimDeck/SimDeck.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = 97YACL9S6W;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = SimDeck/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Sim Deck";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Sim Deck's calling framework checks camera availability during call setup. Sim Deck does not capture or send video.";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Sim Deck uses your contacts to display names for phone calls and messages.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Sim Deck uses the microphone to send your voice during calls.";
@@ -512,11 +513,12 @@
 				CLANG_ENABLE_OBJC_WEAK = YES;
 				CODE_SIGN_ENTITLEMENTS = SimDeck/SimDeck.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = 97YACL9S6W;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = SimDeck/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Sim Deck";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Sim Deck's calling framework checks camera availability during call setup. Sim Deck does not capture or send video.";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Sim Deck uses your contacts to display names for phone calls and messages.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Sim Deck uses the microphone to send your voice during calls.";
@@ -586,7 +588,7 @@
 				CODE_SIGN_ENTITLEMENTS = SMSNotificationService/SMSNotificationService.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 97YACL9S6W;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -641,7 +643,7 @@
 				CODE_SIGN_ENTITLEMENTS = SMSNotificationService/SMSNotificationService.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 97YACL9S6W;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -691,7 +693,7 @@
 				CODE_SIGN_ENTITLEMENTS = SimDeckAutoFill/SimDeckAutoFill.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 97YACL9S6W;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -746,7 +748,7 @@
 				CODE_SIGN_ENTITLEMENTS = SimDeckAutoFill/SimDeckAutoFill.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 97YACL9S6W;
 				ENABLE_NS_ASSERTIONS = NO;

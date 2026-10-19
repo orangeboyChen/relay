@@ -58,43 +58,31 @@ server_url="${SIM_DECK_SERVER_URL:-}"
 output_dir="${SIM_DECK_OUTPUT_DIR:-/etc/sim-deck}"
 image="${SIM_DECK_DEVICE_IMAGE:-}"
 allow_insecure_http="${SIM_DECK_ALLOW_INSECURE_HTTP:-false}"
+dev_root="${SIM_DECK_DEV_ROOT:-/dev}"
+install_compose=false
 start=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --server-url) server_url="${2:?missing URL}"; shift 2 ;;
     --output-dir) output_dir="${2:?missing directory}"; shift 2 ;;
     --image) image="${2:?missing image}"; shift 2 ;;
+    --install-compose) install_compose=true; shift ;;
     --start) start=true; shift ;;
     -h|--help)
-      printf '%s\n' 'Usage: install-linux-device.sh --server-url https://server.example --image ghcr.io/orangeboychen/sim-deck-device:x.y.z [--output-dir DIR] [--start]'
+      printf '%s\n' 'Usage: install-linux-device.sh [--install-compose --server-url URL --image IMAGE [--output-dir DIR] [--start]]'
       exit 0
       ;;
     *) printf 'Unknown argument: %s\n' "$1" >&2; exit 1 ;;
   esac
 done
-if [[ "$(uname -s)" != Linux || "$(id -u)" != 0 ]]; then
-  printf '%s\n' "Run this installer as root on Linux." >&2
+if [[ "$(uname -s)" != Linux ]]; then
+  printf '%s\n' "Run this discovery script on Linux." >&2
   exit 1
 fi
-for command in udevadm getent install docker; do
-  command -v "$command" >/dev/null || { printf 'Missing required command: %s\n' "$command" >&2; exit 1; }
-done
-if [[ -z "$server_url" ]]; then
-  printf '%s\n' "Set SIM_DECK_SERVER_URL or pass --server-url." >&2
-  exit 1
-fi
-if [[ -z "$image" ]]; then
-  printf '%s\n' "Set SIM_DECK_DEVICE_IMAGE or pass --image with an explicit published version tag." >&2
-  exit 1
-fi
-case "$server_url" in https://*|http://*) ;; *) printf '%s\n' "Server URL must start with https:// or http://." >&2; exit 1 ;; esac
-case "$allow_insecure_http" in
-  true|false) ;;
-  *) printf '%s\n' "SIM_DECK_ALLOW_INSECURE_HTTP must be true or false." >&2; exit 1 ;;
-esac
+command -v udevadm >/dev/null || { printf '%s\n' 'Missing required command: udevadm' >&2; exit 1; }
 
 declare -A at_node=() at_interface=() at_parent=() audio_control=() audio_capture=() audio_playback=()
-for node in /dev/ttyUSB* /dev/ttyACM*; do
+for node in "$dev_root"/ttyUSB* "$dev_root"/ttyACM*; do
   [[ -e "$node" ]] || continue
   data="$(udevadm info --query=property --name="$node" 2>/dev/null || true)"
   [[ "$(property ID_VENDOR_ID "$data")" == 2c7c ]] || continue
@@ -113,7 +101,7 @@ for node in /dev/ttyUSB* /dev/ttyACM*; do
     at_interface[$serial]="$interface"
   fi
 done
-discover_audio_nodes /dev
+discover_audio_nodes "$dev_root"
 
 serials=()
 while IFS= read -r serial; do [[ -n "$serial" ]] && serials+=("$serial"); done < <(printf '%s\n' "${!at_node[@]}" | sort)
@@ -131,6 +119,47 @@ for serial in "${serials[@]}"; do
     exit 1
   fi
 done
+
+printf 'Discovered %s modem(s). No files were changed.\n' "${#serials[@]}"
+index=1
+for serial in "${serials[@]}"; do
+  printf 'modem-%s\n' "$index"
+  printf '  usb_serial: %s\n' "$serial"
+  printf '  at_device: %s\n' "${at_node[$serial]}"
+  printf '  at_interface: %s\n' "${at_interface[$serial]}"
+  printf '  audio_control: %s\n' "${audio_control[$serial]}"
+  printf '  audio_capture: %s\n' "${audio_capture[$serial]}"
+  printf '  audio_playback: %s\n' "${audio_playback[$serial]}"
+  index=$((index + 1))
+done
+
+if [[ "$start" == true && "$install_compose" != true ]]; then
+  printf '%s\n' "--start requires --install-compose." >&2
+  exit 1
+fi
+if [[ "$install_compose" != true ]]; then
+  return 0
+fi
+if [[ "$(id -u)" != 0 ]]; then
+  printf '%s\n' "Run Compose installation as root." >&2
+  exit 1
+fi
+for command in getent install docker; do
+  command -v "$command" >/dev/null || { printf 'Missing required command: %s\n' "$command" >&2; exit 1; }
+done
+if [[ -z "$server_url" ]]; then
+  printf '%s\n' "Set SIM_DECK_SERVER_URL or pass --server-url." >&2
+  exit 1
+fi
+if [[ -z "$image" ]]; then
+  printf '%s\n' "Set SIM_DECK_DEVICE_IMAGE or pass --image with an explicit published version tag." >&2
+  exit 1
+fi
+case "$server_url" in https://*|http://*) ;; *) printf '%s\n' "Server URL must start with https:// or http://." >&2; exit 1 ;; esac
+case "$allow_insecure_http" in
+  true|false) ;;
+  *) printf '%s\n' "SIM_DECK_ALLOW_INSECURE_HTTP must be true or false." >&2; exit 1 ;;
+esac
 dialout_gid="$(getent group dialout | cut -d: -f3)"
 audio_gid="$(getent group audio | cut -d: -f3)"
 [[ -n "$dialout_gid" && -n "$audio_gid" ]] || { printf '%s\n' 'The dialout and audio groups must exist.' >&2; exit 1; }
@@ -193,7 +222,7 @@ printf 'SIM_DECK_SERVER_URL=%s\n' "$server_url" > "$env_file"
 printf 'SIM_DECK_ALLOW_INSECURE_HTTP=%s\n' "$allow_insecure_http" >> "$env_file"
 chmod 0640 "$env_file" "$compose_file"
 
-printf 'Discovered %s modem(s).\nGenerated %s and %s.\n' "${#serials[@]}" "$rules_file" "$compose_file"
+printf 'Generated %s and %s.\n' "$rules_file" "$compose_file"
 printf 'Start with: docker compose --env-file %s -f %s up -d\n' "$env_file" "$compose_file"
 if [[ "$start" == true ]]; then docker compose --env-file "$env_file" -f "$compose_file" up -d; fi
 }

@@ -239,9 +239,13 @@ own queue and must keep its state volume private.
 ## Running two modems
 
 `scripts/install-linux-device.sh` discovers every connected Quectel modem and
-generates one fully isolated service per modem. It also installs stable udev
-links from the modem USB serial identity, so transient `ttyUSB` and ALSA card
-numbers never enter the container configuration.
+prints its AT and ALSA nodes without changing the host. This read-only default
+is suitable for collecting paths for a Kubernetes deployment.
+
+Passing `--install-compose` explicitly generates one fully isolated service
+per modem and installs stable udev links from the modem USB serial identity,
+so transient `ttyUSB` and ALSA card numbers never enter the container
+configuration.
 
 The installer prevents ModemManager from claiming only the selected Quectel
 ports. It correlates playback and capture nodes through their ALSA control
@@ -251,6 +255,7 @@ vendor and serial udev properties.
 ```sh
 sudo SIM_DECK_SERVER_URL=https://sim-deck.example \
   ./scripts/install-linux-device.sh \
+    --install-compose \
     --image ghcr.io/orangeboychen/sim-deck-device:x.y.z \
     --output-dir /etc/sim-deck
 docker compose --env-file /etc/sim-deck/.env \

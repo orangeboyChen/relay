@@ -62,11 +62,24 @@ is absent, stop and use a firmware/configuration that exposes it; do not guess
 an ALSA node or map a random PCM device. The installer intentionally rejects a
 modem without all three UAC nodes.
 
-## Install and discover all modems
+## Discover all modems
 
-Plug in every modem that should run on this host. The installer looks for
-Quectel USB serial identities with a stable USB serial number and matching UAC
-nodes. It creates:
+Plug in every modem that should run on this host. By default, the script only
+reports Quectel USB serial identities and matching AT and UAC nodes. It does
+not write udev rules, create `/etc/sim-deck`, restart services, or start a
+container:
+
+```sh
+./scripts/install-linux-device.sh
+```
+
+Use this read-only mode to collect host paths for a Kubernetes or other
+externally managed deployment.
+
+## Install a Docker Compose deployment
+
+Compose installation is an explicit opt-in. With `--install-compose`, the
+script creates:
 
 - `/etc/sim-deck/.env` with the server URL and HTTP safety setting;
 - `/etc/sim-deck/compose.yaml` with one service and state volume per modem;
@@ -79,6 +92,7 @@ Run it with a versioned image:
 sudo SIM_DECK_SERVER_URL=https://sim-deck.example.com \
   SIM_DECK_DEVICE_IMAGE=ghcr.io/orangeboychen/sim-deck-device:x.y.z \
   ./scripts/install-linux-device.sh \
+  --install-compose \
   --output-dir /etc/sim-deck
 ```
 
@@ -92,7 +106,7 @@ For an isolated development LAN or encrypted VPN only, HTTP can be enabled:
 sudo SIM_DECK_SERVER_URL=http://server.lan:8443 \
   SIM_DECK_ALLOW_INSECURE_HTTP=true \
   SIM_DECK_DEVICE_IMAGE=ghcr.io/orangeboychen/sim-deck-device:x.y.z \
-  ./scripts/install-linux-device.sh
+  ./scripts/install-linux-device.sh --install-compose
 ```
 
 Never enable that option on an untrusted network. Production deployments use

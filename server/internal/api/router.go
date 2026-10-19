@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -73,6 +74,7 @@ type Config struct {
 	TURNSecret    []byte
 	TURNTTL       time.Duration
 	Now           func() time.Time
+	Logger        *slog.Logger
 }
 
 // Handler builds the versioned HTTP API.
@@ -128,7 +130,7 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("POST /v1/auth/passkey/registration/finish", router.requireOwner(router.passkeyRegistrationFinish))
 	mux.HandleFunc("POST /v1/auth/passkey/login/options", router.passkeyLoginOptions)
 	mux.HandleFunc("POST /v1/auth/passkey/login/finish", router.passkeyLoginFinish)
-	return withJSONContentType(mux)
+	return withRequestLogging(withJSONContentType(mux), config.Logger)
 }
 
 type router struct {
@@ -1238,6 +1240,9 @@ func writeJSON(writer http.ResponseWriter, status int, value any) {
 }
 
 func writeError(writer http.ResponseWriter, status int, code string, message string) {
+	if recorder, ok := writer.(interface{ recordAPIError(string, string) }); ok {
+		recorder.recordAPIError(code, message)
+	}
 	writeJSON(writer, status, map[string]any{"error": map[string]string{"code": code, "message": message}})
 }
 

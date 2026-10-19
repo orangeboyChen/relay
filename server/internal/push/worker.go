@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -46,6 +47,7 @@ type Worker struct {
 	minimumBackoff time.Duration
 	maximumBackoff time.Duration
 	now            func() time.Time
+	logger         *slog.Logger
 }
 
 // Config controls polling, leasing, and exponential retry timing.
@@ -55,6 +57,7 @@ type Config struct {
 	MinimumBackoff time.Duration
 	MaximumBackoff time.Duration
 	Now            func() time.Time
+	Logger         *slog.Logger
 }
 
 // NewWorker creates a worker with safe delivery defaults.
@@ -74,6 +77,9 @@ func NewWorker(repository Repository, sender Sender, config Config) *Worker {
 	if config.Now == nil {
 		config.Now = time.Now
 	}
+	if config.Logger == nil {
+		config.Logger = slog.Default()
+	}
 	return &Worker{
 		repository:     repository,
 		sender:         sender,
@@ -82,6 +88,7 @@ func NewWorker(repository Repository, sender Sender, config Config) *Worker {
 		minimumBackoff: config.MinimumBackoff,
 		maximumBackoff: config.MaximumBackoff,
 		now:            config.Now,
+		logger:         config.Logger,
 	}
 }
 
@@ -121,6 +128,7 @@ func (worker *Worker) ProcessOne(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("claim push job: %w", err)
 	}
+	worker.logger.Info("push job claimed", "job_id", job.ID, "kind", job.Kind, "attempt", job.Attempt, "environment", job.Environment)
 	if len(job.DeviceToken) == 0 || job.Environment == "" {
 		return true, worker.retry(ctx, job, now, ErrMissingVoIPToken)
 	}
@@ -134,8 +142,13 @@ func (worker *Worker) ProcessOne(ctx context.Context) (bool, error) {
 		err = worker.sender.SendVoIP(ctx, job.Environment, job.DeviceToken, job.Payload)
 	}
 	if err == nil {
-		return true, worker.repository.CompletePushJob(ctx, job.ID, job.Attempt, now)
+		if completeError := worker.repository.CompletePushJob(ctx, job.ID, job.Attempt, now); completeError != nil {
+			return true, fmt.Errorf("complete push job %d: %w", job.ID, completeError)
+		}
+		worker.logger.Info("push job delivered", "job_id", job.ID, "kind", job.Kind, "attempt", job.Attempt, "environment", job.Environment)
+		return true, nil
 	}
+	worker.logger.Warn("push delivery failed", "job_id", job.ID, "kind", job.Kind, "attempt", job.Attempt, "environment", job.Environment, "error", err)
 
 	var responseError *apns.ResponseError
 	if errors.As(err, &responseError) {
@@ -151,11 +164,11 @@ func (worker *Worker) ProcessOne(ctx context.Context) (bool, error) {
 			}
 		}
 		if !responseError.Retryable() {
-			return true, worker.repository.DiscardPushJob(ctx, job.ID, job.Attempt, now, boundedError(err))
+			return true, worker.discard(ctx, job, now, err)
 		}
 	}
 	if errors.Is(err, apns.ErrInvalidPayload) {
-		return true, worker.repository.DiscardPushJob(ctx, job.ID, job.Attempt, now, boundedError(err))
+		return true, worker.discard(ctx, job, now, err)
 	}
 	return true, worker.retry(ctx, job, now, err)
 }
@@ -175,6 +188,7 @@ func (worker *Worker) retry(ctx context.Context, job store.OutboxPushJob, now ti
 			delay = worker.maximumBackoff
 		}
 	}
+	worker.logger.Warn("push job scheduled for retry", "job_id", job.ID, "kind", job.Kind, "attempt", job.Attempt, "retry_delay_ms", delay.Milliseconds(), "error", deliveryError)
 	return worker.repository.RetryPushJob(
 		ctx,
 		job.ID,
@@ -182,6 +196,11 @@ func (worker *Worker) retry(ctx context.Context, job store.OutboxPushJob, now ti
 		now.Add(delay),
 		boundedError(deliveryError),
 	)
+}
+
+func (worker *Worker) discard(ctx context.Context, job store.OutboxPushJob, now time.Time, deliveryError error) error {
+	worker.logger.Error("push job discarded", "job_id", job.ID, "kind", job.Kind, "attempt", job.Attempt, "error", deliveryError)
+	return worker.repository.DiscardPushJob(ctx, job.ID, job.Attempt, now, boundedError(deliveryError))
 }
 
 func boundedError(err error) string {

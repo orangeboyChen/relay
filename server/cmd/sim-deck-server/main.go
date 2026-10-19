@@ -20,6 +20,8 @@ import (
 )
 
 func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	if err := run(ctx, productionDependencies()); err != nil {
@@ -87,7 +89,7 @@ func productionDependencies() dependencies {
 			if err != nil {
 				return nil, err
 			}
-			return push.NewWorker(repository, client, push.Config{}), nil
+			return push.NewWorker(repository, client, push.Config{Logger: slog.Default()}), nil
 		},
 	}
 }
@@ -119,12 +121,13 @@ func run(ctx context.Context, dependencies dependencies) error {
 
 	server := dependencies.newHTTPServer(
 		config.httpAddress,
-		api.Handler(repository, api.Config{PublicBaseURL: config.publicBaseURL, TURNURL: config.turnURL, TURNSecret: config.turnSecret, TURNTTL: config.turnTTL}),
+		api.Handler(repository, api.Config{PublicBaseURL: config.publicBaseURL, TURNURL: config.turnURL, TURNSecret: config.turnSecret, TURNTTL: config.turnTTL, Logger: slog.Default()}),
 	)
 	worker, err := configuredPushWorker(repository, dependencies)
 	if err != nil {
 		return err
 	}
+	slog.Info("server ready", "http_address", config.httpAddress, "public_base_url", config.publicBaseURL, "turn_configured", config.turnURL != "", "push_configured", worker != nil)
 	runContext, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 	serverResult := make(chan error, 1)

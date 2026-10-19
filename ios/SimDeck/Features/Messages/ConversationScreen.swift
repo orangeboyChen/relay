@@ -96,6 +96,25 @@ struct ConversationScreen: View {
                 scrollToBottom(using: proxy, animated: true)
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if dynamicTypeSize.isAccessibilitySize {
+                ConversationHeader(
+                    conversation: conversation,
+                    line: line,
+                    alternatives: conversations,
+                    lines: lines,
+                    usesAccessibilityLayout: true,
+                    selectedID: animatedSelectedID
+                )
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .background(Color(uiColor: .systemBackground))
+                .overlay(alignment: .bottom) {
+                    Divider()
+                }
+            }
+        }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 0) {
                 if let errorMessage {
@@ -126,17 +145,20 @@ struct ConversationScreen: View {
                 )
             }
         }
-        .navigationTitle(conversation.displayName)
+        .navigationTitle(dynamicTypeSize.isAccessibilitySize ? "" : conversation.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                ConversationHeader(
-                    conversation: conversation,
-                    line: line,
-                    alternatives: conversations,
-                    lines: lines,
-                    selectedID: animatedSelectedID
-                )
+                if !dynamicTypeSize.isAccessibilitySize {
+                    ConversationHeader(
+                        conversation: conversation,
+                        line: line,
+                        alternatives: conversations,
+                        lines: lines,
+                        usesAccessibilityLayout: false,
+                        selectedID: animatedSelectedID
+                    )
+                }
             }
         }
         .onAppear {

@@ -5,6 +5,7 @@ struct ConversationHeader: View {
     let line: DeviceLineIdentity
     let alternatives: [MessageConversation]
     let lines: [DeviceLineIdentity]
+    let usesAccessibilityLayout: Bool
     @Binding var selectedID: ConversationID
 
     var body: some View {
@@ -15,14 +16,14 @@ struct ConversationHeader: View {
                 }
             }
         } label: {
-            HStack(spacing: 8) {
+            adaptiveLayout {
                 MessageContactAvatar(
                     displayName: conversation.displayName,
                     remoteNumber: conversation.remoteNumber,
-                    diameter: 30
+                    diameter: usesAccessibilityLayout ? 48 : 30
                 )
 
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: usesAccessibilityLayout ? .center : .leading, spacing: 1) {
                     HStack(spacing: 3) {
                         Text(conversation.displayName)
                             .lineLimit(1)
@@ -43,8 +44,11 @@ struct ConversationHeader: View {
                     .foregroundStyle(.secondary)
                 }
             }
-            .frame(maxWidth: 240, alignment: .leading)
-            .padding(.vertical, 2)
+            .frame(
+                maxWidth: usesAccessibilityLayout ? 270 : 240,
+                alignment: usesAccessibilityLayout ? .center : .leading
+            )
+            .padding(.vertical, usesAccessibilityLayout ? 4 : 2)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -55,6 +59,12 @@ struct ConversationHeader: View {
 
     private func lineFor(_ conversation: MessageConversation) -> DeviceLineIdentity {
         lines.first(where: { $0.id == conversation.lineID }) ?? line
+    }
+
+    private var adaptiveLayout: AnyLayout {
+        usesAccessibilityLayout
+            ? AnyLayout(VStackLayout(spacing: 2))
+            : AnyLayout(HStackLayout(spacing: 8))
     }
 }
 
@@ -280,6 +290,7 @@ struct AttachmentPreview: View {
             line: PreviewFixtures.devices[0],
             alternatives: PreviewFixtures.conversations,
             lines: PreviewFixtures.devices,
+            usesAccessibilityLayout: false,
             selectedID: .constant(PreviewFixtures.conversations[0].id)
         )
 

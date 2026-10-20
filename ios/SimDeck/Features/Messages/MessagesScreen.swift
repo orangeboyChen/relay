@@ -113,6 +113,12 @@ struct MessagesScreen: View {
                         } label: {
                             ConversationRow(conversation: conversation, line: line)
                         }
+                        .listRowInsets(
+                            EdgeInsets(top: 0, leading: 26, bottom: 0, trailing: 8)
+                        )
+                        .alignmentGuide(.listRowSeparatorLeading) { dimensions in
+                            dimensions[.leading] + 57
+                        }
                     }
                 }
                 .listStyle(.plain)

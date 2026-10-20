@@ -18,8 +18,7 @@ struct ConversationHeader: View {
         } label: {
             adaptiveLayout {
                 MessageContactAvatar(
-                    displayName: conversation.displayName,
-                    remoteNumber: conversation.remoteNumber,
+                    contactName: conversation.contactName,
                     diameter: usesAccessibilityLayout ? 48 : 30
                 )
 

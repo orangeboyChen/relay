@@ -33,11 +33,8 @@ struct ConversationRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 11) {
-            unreadIndicator
-
             MessageContactAvatar(
-                displayName: conversation.displayName,
-                remoteNumber: conversation.remoteNumber
+                contactName: conversation.contactName
             )
 
             VStack(alignment: .leading, spacing: 5) {
@@ -51,6 +48,10 @@ struct ConversationRow: View {
             .padding(.top, 1)
         }
         .padding(.vertical, 6)
+        .overlay(alignment: .leading) {
+            unreadIndicator
+                .offset(x: -15)
+        }
         .accessibilityElement(children: .combine)
     }
 
@@ -62,11 +63,6 @@ struct ConversationRow: View {
                 .frame(width: 8, height: 8)
                 .padding(.top, 21)
                 .accessibilityLabel("\(conversation.unreadCount) unread messages")
-        } else {
-            Color.clear
-                .frame(width: 8, height: 8)
-                .padding(.top, 21)
-                .accessibilityHidden(true)
         }
     }
 
@@ -130,34 +126,41 @@ struct ConversationRow: View {
 }
 
 struct MessageContactAvatar: View {
-    let displayName: String
-    let remoteNumber: String
+    let contactName: String?
     var diameter: CGFloat = 46
 
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(Color(uiColor: .tertiarySystemFill))
-            Text(monogram)
-                .font(.headline.weight(.medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.65)
-                .padding(8)
+        Group {
+            if let monogram {
+                ZStack {
+                    Circle()
+                        .fill(Color(uiColor: .tertiarySystemFill))
+                    Text(monogram)
+                        .font(.headline.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                        .padding(8)
+                }
+            } else {
+                Image(systemName: "person.crop.circle.fill")
+                    .resizable()
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, Color(uiColor: .systemBlue).opacity(0.62))
+            }
         }
         .frame(width: diameter, height: diameter)
         .accessibilityHidden(true)
     }
 
-    private var monogram: String {
-        let nameParts = displayName.split(whereSeparator: { $0.isWhitespace })
-        let initials = nameParts.prefix(2).compactMap(\.first)
-        if !initials.isEmpty, displayName != remoteNumber {
-            return String(initials).uppercased()
+    private var monogram: String? {
+        guard let contactName = contactName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !contactName.isEmpty else {
+            return nil
         }
-
-        let digits = remoteNumber.filter(\.isNumber)
-        return String(digits.suffix(2))
+        let nameParts = contactName.split(whereSeparator: { $0.isWhitespace })
+        let initials = nameParts.prefix(2).compactMap(\.first)
+        return initials.isEmpty ? nil : String(initials).uppercased()
     }
 }
 

@@ -17,7 +17,9 @@ struct MessageConversation: Identifiable, Equatable, Sendable, Codable {
     }
 
     var displayName: String {
-        guard let contactName, !contactName.isEmpty else { return remoteNumber }
+        guard let contactName, !contactName.isEmpty else {
+            return PhoneNumberDisplayFormatter.string(from: remoteNumber)
+        }
         return contactName
     }
 

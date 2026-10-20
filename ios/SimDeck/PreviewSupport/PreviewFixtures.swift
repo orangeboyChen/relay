@@ -190,6 +190,38 @@ enum PreviewFixtures {
                     status: .sent
                 )
             ]
+        ),
+        MessageConversation(
+            lineID: devices[0].id,
+            remoteNumber: "+861069100979",
+            contactName: nil,
+            unreadCount: 0,
+            messages: [
+                MessageItem(
+                    id: UUID(uuidString: "20000000-0000-0000-0000-000000000005")!,
+                    direction: .received,
+                    body: "Your reservation has been confirmed.",
+                    attachment: nil,
+                    sentAt: now.addingTimeInterval(-172_800),
+                    status: .delivered
+                )
+            ]
+        ),
+        MessageConversation(
+            lineID: devices[1].id,
+            remoteNumber: "+8619945168684",
+            contactName: nil,
+            unreadCount: 1,
+            messages: [
+                MessageItem(
+                    id: UUID(uuidString: "20000000-0000-0000-0000-000000000006")!,
+                    direction: .received,
+                    body: "Sorry, I called the wrong number.",
+                    attachment: nil,
+                    sentAt: now.addingTimeInterval(-259_200),
+                    status: .delivered
+                )
+            ]
         )
     ]
 }

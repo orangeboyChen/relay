@@ -14,6 +14,13 @@ extension AppModel {
             defaults: UserDefaults(suiteName: "sim-deck.preview")!
         )
         serverConnection.address = "https://sim-deck.example.com"
+        let messageHistoryStore = EncryptedMessageHistoryStore(
+            fileURL: FileManager.default.temporaryDirectory
+                .appending(path: "sim-deck-preview-\(UUID().uuidString).bin")
+        )
+        if let vaultKey = try? VaultKey(data: Data(repeating: 2, count: VaultKey.length)) {
+            try? messageHistoryStore.save(PreviewFixtures.conversations, using: vaultKey)
+        }
         let model = AppModel(
             devices: devices,
             managedSIMs: PreviewFixtures.managedSIMs,
@@ -34,6 +41,7 @@ extension AppModel {
             slotSettingsTransport: PreviewSlotSettingsTransport(),
             onboardingStore: PreviewOnboardingStore(isCompleted: onboardingCompleted),
             passkeyAuthorizer: PreviewPasskeyAuthorizer(),
+            messageHistoryStore: messageHistoryStore,
             remoteDeviceRefreshEnabled: false
         )
         model.bootstrapInstallation()

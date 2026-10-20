@@ -89,7 +89,7 @@ struct ContactsScreen: View {
                                 }
                                 .buttonStyle(.plain)
                                 .listRowInsets(
-                                    EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 34)
+                                    EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 44)
                                 )
                             }
                         }
@@ -183,15 +183,15 @@ private struct ContactSectionIndex: View {
             VStack(spacing: 0) {
                 ForEach(Array(ContactSectionIndexResolver.titles.enumerated()), id: \.offset) { index, title in
                     Text(title)
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.tint)
                         .frame(maxHeight: .infinity)
                         .opacity(activeIndex == nil || activeIndex == index ? 1 : 0.7)
                 }
             }
-            .frame(width: 28)
+            .frame(width: 44)
             .contentShape(Rectangle())
-            .gesture(
+            .highPriorityGesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .local)
                     .onChanged { value in
                         selectIndex(for: value.location.y, height: proxy.size.height)
@@ -201,7 +201,7 @@ private struct ContactSectionIndex: View {
                     }
             )
         }
-        .frame(width: 28)
+        .frame(width: 44)
         .padding(.vertical, 8)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Contact index")
@@ -210,9 +210,11 @@ private struct ContactSectionIndex: View {
 
     private func selectIndex(for locationY: CGFloat, height: CGFloat) {
         let titles = ContactSectionIndexResolver.titles
-        guard height > 0, !titles.isEmpty else { return }
-        let fraction = min(max(locationY / height, 0), 0.999_999)
-        let index = min(Int(fraction * CGFloat(titles.count)), titles.count - 1)
+        guard let index = ContactSectionIndexResolver.index(
+            at: locationY,
+            height: height,
+            itemCount: titles.count
+        ) else { return }
         guard index != activeIndex else { return }
         activeIndex = index
         guard let target = ContactSectionIndexResolver.targetTitle(

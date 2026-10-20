@@ -6,7 +6,7 @@
 import Foundation
 
 enum PreviewContactFixtures {
-    static let contacts = [
+    private static let featuredContacts = [
         ContactRecord(
             id: "apple",
             givenName: "Apple",
@@ -39,6 +39,30 @@ enum PreviewContactFixtures {
             thumbnailImageData: nil
         ),
     ]
+
+    private static let indexedNames = [
+        "Alpha", "Charlie", "Delta", "Echo", "Foxtrot", "Gamma", "Hotel", "India",
+        "Juliet", "Kilo", "Lima", "Mike", "November", "Oscar", "Papa", "Quebec",
+        "Romeo", "Tango", "Uniform", "Victor", "Whiskey", "Xray", "Yankee", "Zulu",
+        "13500000000",
+    ]
+
+    static let contacts = featuredContacts + indexedNames.enumerated().map { index, name in
+        ContactRecord(
+            id: "indexed-\(index)",
+            givenName: name,
+            familyName: "",
+            organizationName: "",
+            phoneNumbers: [
+                ContactPhoneNumber(
+                    id: "indexed-\(index)-mobile",
+                    label: "mobile",
+                    value: "+86 135 0000 \(String(format: "%04d", 1700 + index))"
+                ),
+            ],
+            thumbnailImageData: nil
+        )
+    }
 }
 
 @MainActor

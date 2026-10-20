@@ -115,6 +115,12 @@ enum ContactDirectory {
 enum ContactSectionIndexResolver {
     static let titles = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ").map(String.init) + ["#"]
 
+    static func index(at locationY: CGFloat, height: CGFloat, itemCount: Int) -> Int? {
+        guard height > 0, itemCount > 0 else { return nil }
+        let fraction = min(max(locationY / height, 0), 0.999_999)
+        return min(Int(fraction * CGFloat(itemCount)), itemCount - 1)
+    }
+
     static func targetTitle(for indexTitle: String, availableTitles: [String]) -> String? {
         guard !availableTitles.isEmpty else { return nil }
         if availableTitles.contains(indexTitle) {

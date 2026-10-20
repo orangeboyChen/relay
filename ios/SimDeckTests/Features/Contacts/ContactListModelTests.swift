@@ -87,6 +87,24 @@ final class ContactListModelTests: XCTestCase {
         )
     }
 
+    func testSectionIndexMapsTheEntireDragTrack() {
+        XCTAssertEqual(
+            ContactSectionIndexResolver.index(at: -20, height: 540, itemCount: 27),
+            0
+        )
+        XCTAssertEqual(
+            ContactSectionIndexResolver.index(at: 270, height: 540, itemCount: 27),
+            13
+        )
+        XCTAssertEqual(
+            ContactSectionIndexResolver.index(at: 560, height: 540, itemCount: 27),
+            26
+        )
+        XCTAssertNil(
+            ContactSectionIndexResolver.index(at: 20, height: 0, itemCount: 27)
+        )
+    }
+
     func testDirectorySearchesNamesOrganizationsAndPhoneNumbers() {
         let contacts = [
             contact(

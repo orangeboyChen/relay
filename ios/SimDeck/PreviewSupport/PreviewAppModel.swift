@@ -50,6 +50,7 @@ extension AppModel {
             slotSettingsTransport: PreviewSlotSettingsTransport(),
             onboardingStore: PreviewOnboardingStore(isCompleted: onboardingCompleted),
             passkeyAuthorizer: PreviewPasskeyAuthorizer(),
+            contactStore: PreviewContactStore(contacts: PreviewContactFixtures.contacts),
             messageHistoryStore: messageHistoryStore,
             callHistoryStore: callHistoryStore,
             remoteDeviceRefreshEnabled: false

@@ -31,9 +31,10 @@ struct ContactRecord: Identifiable, Equatable, Sendable {
     let thumbnailImageData: Data?
 
     var displayName: String {
-        let personName = [givenName, familyName]
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
+        let personName = ContactNameFormatting.displayName(
+            givenName: givenName,
+            familyName: familyName
+        )
         if !personName.isEmpty {
             return personName
         }
@@ -50,9 +51,17 @@ struct ContactRecord: Identifiable, Equatable, Sendable {
     }
 
     var sectionTitle: String {
-        guard let first = displayName.first else { return "#" }
+        guard let first = sortKey.first else { return "#" }
         let title = String(first).uppercased()
         return title.rangeOfCharacter(from: .letters) == nil ? "#" : title
+    }
+
+    var sortKey: String {
+        ContactNameFormatting.sortKey(
+            displayName: displayName,
+            givenName: givenName,
+            familyName: familyName
+        )
     }
 
     func matches(_ query: String) -> Bool {
@@ -88,7 +97,7 @@ enum ContactDirectory {
         let visibleContacts = contacts
             .filter { $0.matches(query) }
             .sorted {
-                $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+                $0.sortKey.localizedStandardCompare($1.sortKey) == .orderedAscending
             }
         let grouped = Dictionary(grouping: visibleContacts, by: \.sectionTitle)
         return grouped.keys
@@ -100,5 +109,82 @@ enum ContactDirectory {
             .map { title in
                 ContactSection(id: title, title: title, contacts: grouped[title] ?? [])
             }
+    }
+}
+
+enum ContactNameFormatting {
+    static func displayName(givenName: String, familyName: String) -> String {
+        let givenName = givenName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let familyName = familyName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if containsHanCharacters(givenName) || containsHanCharacters(familyName) {
+            return familyName + givenName
+        }
+        return [givenName, familyName]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    static func sortKey(
+        displayName: String,
+        givenName: String,
+        familyName: String
+    ) -> String {
+        let source: String
+        if containsHanCharacters(givenName) || containsHanCharacters(familyName) {
+            source = familyName + givenName
+        } else {
+            source = displayName
+        }
+        return source
+            .applyingTransform(.toLatin, reverse: false)?
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            ?? source
+    }
+
+    private static func containsHanCharacters(_ value: String) -> Bool {
+        value.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xF900...0xFAFF:
+                true
+            default:
+                false
+            }
+        }
+    }
+}
+
+struct ContactNameIndex: Equatable, Sendable {
+    private let namesByNumber: [String: String]
+
+    init(contacts: [ContactRecord] = []) {
+        var namesByNumber: [String: String] = [:]
+        for contact in contacts {
+            for phoneNumber in contact.phoneNumbers {
+                for key in Self.lookupKeys(for: phoneNumber.value) {
+                    namesByNumber[key, default: contact.displayName] = contact.displayName
+                }
+            }
+        }
+        self.namesByNumber = namesByNumber
+    }
+
+    func name(for phoneNumber: String) -> String? {
+        Self.lookupKeys(for: phoneNumber).lazy.compactMap { namesByNumber[$0] }.first
+    }
+
+    private static func lookupKeys(for phoneNumber: String) -> [String] {
+        let digits = phoneNumber.filter(\.isNumber)
+        guard !digits.isEmpty else { return [] }
+
+        var keys = [digits]
+        if digits.count == 13, digits.hasPrefix("86") {
+            keys.append(String(digits.dropFirst(2)))
+        } else if digits.count == 15, digits.hasPrefix("0086") {
+            keys.append(String(digits.dropFirst(4)))
+        } else if digits.count == 11 {
+            keys.append("86" + digits)
+            keys.append("0086" + digits)
+        }
+        return keys
     }
 }

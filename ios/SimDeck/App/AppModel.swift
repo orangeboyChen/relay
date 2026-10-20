@@ -40,6 +40,7 @@ final class AppModel {
     let serverConnection: ServerConnectionManager
     let callCoordinator: CallKitCoordinator
     let installationBootstrapper: any InstallationBootstrapping
+    let contactStore: any ContactStoreProviding
     @ObservationIgnored private let defaultLineStore: any DefaultLineStoring
     @ObservationIgnored private let recentCallLineStore: any RecentCallLineStoring
     @ObservationIgnored private let onboardingStore: any OnboardingStoring
@@ -55,6 +56,8 @@ final class AppModel {
     @ObservationIgnored private let callHistoryStore: EncryptedCallHistoryStore
     @ObservationIgnored private let remoteDeviceRefreshEnabled: Bool
     @ObservationIgnored private var messageEventMonitor: MessageEventMonitor?
+    @ObservationIgnored private var contactNameIndex = ContactNameIndex()
+    @ObservationIgnored private var contactUpdatesTask: Task<Void, Never>?
 
     var canEditDeviceProfiles: Bool { recoveredVaultKey != nil }
 
@@ -77,6 +80,7 @@ final class AppModel {
         recentCallLineStore: (any RecentCallLineStoring)? = nil,
         onboardingStore: (any OnboardingStoring)? = nil,
         passkeyAuthorizer: (any PasskeyAuthorizing)? = nil,
+        contactStore: (any ContactStoreProviding)? = nil,
         messageHistoryStore: EncryptedMessageHistoryStore = EncryptedMessageHistoryStore(),
         callHistoryStore: EncryptedCallHistoryStore = EncryptedCallHistoryStore(),
         remoteDeviceRefreshEnabled: Bool = true
@@ -113,6 +117,7 @@ final class AppModel {
         self.recentCallLineStore = resolvedRecentCallLineStore
         self.onboardingStore = resolvedOnboardingStore
         self.passkeyAuthorizer = passkeyAuthorizer ?? NativePasskeyAuthorizer()
+        self.contactStore = contactStore ?? SystemContactStore()
         self.commandSigner = resolvedCommandSigner
         self.messageHistoryStore = messageHistoryStore
         self.callHistoryStore = callHistoryStore
@@ -333,7 +338,43 @@ final class AppModel {
         messageEventMonitor?.stop()
     }
 
+    func startContactUpdates() {
+        guard contactUpdatesTask == nil else { return }
+        contactUpdatesTask = Task { [weak self] in
+            guard let self else { return }
+            for await _ in contactStore.changes() {
+                guard !Task.isCancelled else { return }
+                refreshContactNames()
+            }
+        }
+    }
+
+    func stopContactUpdates() {
+        contactUpdatesTask?.cancel()
+        contactUpdatesTask = nil
+    }
+
+    func refreshContactNames() {
+        let refreshedIndex: ContactNameIndex
+        switch contactStore.authorizationState {
+        case .limited, .authorized:
+            do {
+                refreshedIndex = ContactNameIndex(contacts: try contactStore.fetchContacts())
+            } catch {
+                Self.logger.error(
+                    "Refreshing contact names failed: \(String(reflecting: error), privacy: .public)"
+                )
+                return
+            }
+        case .notDetermined, .denied:
+            refreshedIndex = ContactNameIndex()
+        }
+        contactNameIndex = refreshedIndex
+        applyContactNames()
+    }
+
     func refreshForegroundState() async {
+        refreshContactNames()
         await refreshDevices()
         await refreshMessages()
     }
@@ -762,6 +803,9 @@ final class AppModel {
                 remoteNumber: delivery.remoteNumber
             )
             if let index = conversations.firstIndex(where: { $0.id == conversationID }) {
+                conversations[index].contactName = contactNameIndex.name(
+                    for: delivery.remoteNumber
+                )
                 guard !conversations[index].messages.contains(where: {
                     $0.sourceID == delivery.sourceID
                 }) else { continue }
@@ -786,7 +830,7 @@ final class AppModel {
                             LineHistorySnapshot.init(line:)
                         ),
                         remoteNumber: delivery.remoteNumber,
-                        contactName: nil,
+                        contactName: contactNameIndex.name(for: delivery.remoteNumber),
                         unreadCount: 1,
                         messages: [
                             MessageItem(
@@ -849,6 +893,7 @@ final class AppModel {
     private func restoreLocalHistory(using vaultKey: VaultKey) {
         do {
             messages = .loaded(try messageHistoryStore.load(using: vaultKey))
+            applyContactNames()
         } catch {
             messages = .failed
             Self.logger.error("Restoring encrypted message history failed: \(String(reflecting: error), privacy: .public)")
@@ -908,7 +953,7 @@ final class AppModel {
                         LineHistorySnapshot.init(line:)
                     ),
                     remoteNumber: remoteNumber,
-                    contactName: nil,
+                    contactName: contactNameIndex.name(for: remoteNumber),
                     unreadCount: 0,
                     messages: [message]
                 )
@@ -941,6 +986,20 @@ final class AppModel {
         conversations.sorted {
             ($0.lastMessage?.sentAt ?? .distantPast) > ($1.lastMessage?.sentAt ?? .distantPast)
         }
+    }
+
+    private func applyContactNames() {
+        guard case .loaded(var conversations) = messages else { return }
+        var didChange = false
+        for index in conversations.indices {
+            let resolvedName = contactNameIndex.name(for: conversations[index].remoteNumber)
+            guard resolvedName != conversations[index].contactName else { continue }
+            conversations[index].contactName = resolvedName
+            didChange = true
+        }
+        guard didChange else { return }
+        messages = .loaded(sortedConversations(conversations))
+        persistMessageHistoryIfAvailable()
     }
 
     private func reconcileLineHistory(using lines: [DeviceLineIdentity]) {
@@ -1069,7 +1128,7 @@ final class AppModel {
                 installationID: installationIdentity.id,
                 numericID: opened.payload.numericID,
                 remoteNumber: opened.payload.remoteNumber,
-                contactName: nil,
+                contactName: contactNameIndex.name(for: opened.payload.remoteNumber),
                 callSecret: opened.payload.callSecret,
                 deviceVerificationKey: verificationKey
             )

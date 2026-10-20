@@ -30,6 +30,37 @@ final class ContactListModelTests: XCTestCase {
         XCTAssertEqual(sections.flatMap(\.contacts).map(\.id), ["1", "2", "3"])
     }
 
+    func testChineseNameUsesFamilyNameFirstWithoutWhitespaceAndSortsByPinyin() {
+        let contacts = [
+            contact(id: "li", givenName: "四", familyName: "李"),
+            contact(id: "zhang", givenName: "三", familyName: "张"),
+            contact(id: "alpha", givenName: "Alpha"),
+        ]
+
+        let sections = ContactDirectory.sections(for: contacts)
+
+        XCTAssertEqual(contacts[0].displayName, "李四")
+        XCTAssertEqual(contacts[1].displayName, "张三")
+        XCTAssertEqual(sections.map(\.title), ["A", "L", "Z"])
+        XCTAssertEqual(sections.flatMap(\.contacts).map(\.id), ["alpha", "li", "zhang"])
+    }
+
+    func testContactNameIndexMatchesChineseCountryCodeAndNativeFormatting() {
+        let index = ContactNameIndex(
+            contacts: [
+                contact(
+                    id: "zhang",
+                    givenName: "三",
+                    familyName: "张",
+                    phoneNumber: "+86 135 0000 0000"
+                ),
+            ]
+        )
+
+        XCTAssertEqual(index.name(for: "13500000000"), "张三")
+        XCTAssertEqual(index.name(for: "0086 135 0000 0000"), "张三")
+    }
+
     func testDirectorySearchesNamesOrganizationsAndPhoneNumbers() {
         let contacts = [
             contact(
@@ -119,13 +150,14 @@ final class ContactListModelTests: XCTestCase {
     private func contact(
         id: String,
         givenName: String,
+        familyName: String = "",
         organizationName: String = "",
         phoneNumber: String = ""
     ) -> ContactRecord {
         ContactRecord(
             id: id,
             givenName: givenName,
-            familyName: "",
+            familyName: familyName,
             organizationName: organizationName,
             phoneNumbers: phoneNumber.isEmpty
                 ? []

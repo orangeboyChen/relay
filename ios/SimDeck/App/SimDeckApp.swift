@@ -97,6 +97,8 @@ struct SimDeckApp: App {
             }
                 .task {
                     NotificationPreferences.migrateToSharedDefaults()
+                    model.refreshContactNames()
+                    model.startContactUpdates()
                     appDelegate.setRemoteNotificationHandler {
                         await model.refreshMessages()
                     }

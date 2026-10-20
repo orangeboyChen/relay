@@ -19,7 +19,7 @@ struct ContactsScreen: View {
         self.model = model
         _contactModel = State(
             initialValue: ContactListModel(
-                store: contactStore ?? SystemContactStore(),
+                store: contactStore ?? model.contactStore,
                 state: initialState
             )
         )
@@ -54,6 +54,11 @@ struct ContactsScreen: View {
         .task {
             guard startsSynchronization else { return }
             await contactModel.run()
+        }
+        .onChange(of: contactModel.state) { _, state in
+            if case .loaded = state {
+                model.refreshContactNames()
+            }
         }
     }
 

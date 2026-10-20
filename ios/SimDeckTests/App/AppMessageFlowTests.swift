@@ -190,6 +190,78 @@ final class AppMessageFlowTests: XCTestCase {
         XCTAssertEqual(transport.synchronizedLineIDs, [[firstLine.id, secondLine.id]])
     }
 
+    func testRefreshResolvesFormattedContactNameForEverySIMConversation() async {
+        let contactStore = MessageContactStore(
+            authorizationState: .authorized,
+            contacts: [
+                ContactRecord(
+                    id: "zhang",
+                    givenName: "三",
+                    familyName: "张",
+                    organizationName: "",
+                    phoneNumbers: [
+                        ContactPhoneNumber(
+                            id: "zhang:0",
+                            label: "mobile",
+                            value: "+86 (138) 0013-8000"
+                        ),
+                    ],
+                    thumbnailImageData: nil
+                ),
+            ]
+        )
+        let transport = MessageTransportFake(
+            deliveries: [
+                IncomingMessageDelivery(
+                    id: UUID(),
+                    sourceID: String(repeating: "a", count: 64),
+                    lineID: firstLine.id,
+                    remoteNumber: "13800138000",
+                    body: "first SIM",
+                    receivedAt: Date(timeIntervalSince1970: 100)
+                ),
+                IncomingMessageDelivery(
+                    id: UUID(),
+                    sourceID: String(repeating: "b", count: 64),
+                    lineID: secondLine.id,
+                    remoteNumber: "+86 138 0013 8000",
+                    body: "second SIM",
+                    receivedAt: Date(timeIntervalSince1970: 101)
+                ),
+            ]
+        )
+        let model = makeModel(transport: transport, contactStore: contactStore)
+
+        model.refreshContactNames()
+        await model.refreshMessages()
+
+        XCTAssertEqual(model.conversations.map(\.contactName), ["张三", "张三"])
+        XCTAssertEqual(Set(model.conversations.map(\.lineID)), [firstLine.id, secondLine.id])
+    }
+
+    func testRevokedContactAccessRemovesPreviouslyResolvedName() {
+        let conversation = MessageConversation(
+            lineID: firstLine.id,
+            remoteNumber: "13800138000",
+            contactName: "张三",
+            unreadCount: 0,
+            messages: []
+        )
+        let contactStore = MessageContactStore(
+            authorizationState: .denied,
+            contacts: []
+        )
+        let model = makeModel(
+            transport: MessageTransportFake(),
+            messages: .loaded([conversation]),
+            contactStore: contactStore
+        )
+
+        model.refreshContactNames()
+
+        XCTAssertNil(model.conversations.first?.contactName)
+    }
+
     func testConversationAlternativesIncludeTheSameRecipientAcrossSIMs() {
         let first = MessageConversation(
             lineID: firstLine.id,
@@ -311,6 +383,7 @@ final class AppMessageFlowTests: XCTestCase {
         transport: MessageTransportFake,
         devices: [DeviceLineIdentity]? = nil,
         messages: MessageListState = .loaded([]),
+        contactStore: (any ContactStoreProviding)? = nil,
         remoteDeviceRefreshEnabled: Bool = true
     ) -> AppModel {
         let defaults = UserDefaults(suiteName: "AppMessageFlowTests.\(UUID().uuidString)")!
@@ -325,6 +398,7 @@ final class AppMessageFlowTests: XCTestCase {
             messages: messages,
             serverConnection: connection,
             messageTransport: transport,
+            contactStore: contactStore,
             remoteDeviceRefreshEnabled: remoteDeviceRefreshEnabled
         )
     }
@@ -332,6 +406,29 @@ final class AppMessageFlowTests: XCTestCase {
     private static let activeSession = Data("""
     {"access_token":"access","refresh_token":"refresh","access_expires_at":"2098-01-01T00:00:00Z","refresh_expires_at":"2099-01-01T00:00:00Z"}
     """.utf8)
+}
+
+@MainActor
+private final class MessageContactStore: ContactStoreProviding {
+    var authorizationState: ContactAuthorizationState
+    var contacts: [ContactRecord]
+
+    init(authorizationState: ContactAuthorizationState, contacts: [ContactRecord]) {
+        self.authorizationState = authorizationState
+        self.contacts = contacts
+    }
+
+    func requestAccess() async throws -> Bool {
+        authorizationState == .authorized || authorizationState == .limited
+    }
+
+    func fetchContacts() throws -> [ContactRecord] {
+        contacts
+    }
+
+    func changes() -> AsyncStream<Void> {
+        AsyncStream { $0.finish() }
+    }
 }
 
 private extension AppModel {

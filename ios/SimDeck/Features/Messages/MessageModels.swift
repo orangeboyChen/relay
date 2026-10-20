@@ -13,7 +13,7 @@ struct MessageConversation: Identifiable, Equatable, Sendable, Codable {
     let lineID: UUID
     var lineSnapshot: LineHistorySnapshot?
     let remoteNumber: String
-    let contactName: String?
+    var contactName: String?
     var unreadCount: Int
     var messages: [MessageItem]
 

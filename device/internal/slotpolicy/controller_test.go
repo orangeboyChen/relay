@@ -86,6 +86,15 @@ var _ = Describe("Slot policy controller", func() {
 		Expect(commander.commands).To(Equal([]string{"AT+CFUN=1,1"}))
 	})
 
+	It("reports a modem restart failure to the caller", func() {
+		controller, err := NewController(directory, commander, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		commander.err = errors.New("serial disconnected")
+
+		Expect(controller.RestartModem(context.Background())).To(MatchError(ContainSubstring("serial disconnected")))
+		Expect(commander.commands).To(Equal([]string{"AT+CFUN=1,1"}))
+	})
+
 	It("keeps the previous VoLTE preference when IMS is unsupported", func() {
 		controller, err := NewController(directory, commander, time.Second)
 		Expect(err).NotTo(HaveOccurred())

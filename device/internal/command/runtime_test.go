@@ -349,6 +349,21 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(string(envelope.Ciphertext)).NotTo(ContainSubstring("slot.restart_modem"))
 	})
 
+	It("returns an encrypted failure when the modem restart is rejected", func() {
+		settings.err = errors.New("serial disconnected")
+		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{
+			Version: 1, Operation: "slot.restart_modem",
+		})
+
+		Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+
+		result := openResult(sharedSecret, envelope, remote.result)
+		Expect(result.Success).To(BeFalse())
+		Expect(result.ErrorCode).To(Equal("modem_rejected"))
+		Expect(settings.restarted).To(BeTrue())
+		Expect(string(remote.result.Ciphertext)).NotTo(ContainSubstring("serial disconnected"))
+	})
+
 	DescribeTable("executes supported call operations from authenticated plaintext",
 		func(payload Payload, expectedOperation string) {
 			envelope, sharedSecret := sealCommand(state, senderKey, commandID, payload)

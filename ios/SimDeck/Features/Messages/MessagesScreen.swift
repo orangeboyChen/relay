@@ -65,8 +65,6 @@ struct MessagesScreen: View {
         }
         .navigationTitle("Messages")
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $searchText, prompt: "Search messages")
-        .searchToolbarBehavior(.minimize)
         .environment(\.editMode, $editMode)
         .task {
             await refreshAction()
@@ -82,24 +80,25 @@ struct MessagesScreen: View {
                             editMode = editMode.isEditing ? .inactive : .active
                         }
                     }
+                    .controlSize(.large)
                 }
             }
-            ToolbarItemGroup(placement: .topBarTrailing) {
+            ToolbarItem(placement: .topBarTrailing) {
                 SIMFilterMenu(lines: lines, selection: $selectedLineID)
-                if !editMode.isEditing {
-                    Button {
-                        composition = MessageComposition()
-                    } label: {
-                        Label("New Message", systemImage: "square.and.pencil")
-                    }
-                    .disabled(!hasOnlineLine)
-                    .accessibilityHint(hasOnlineLine ? Text("") : Text("An online SIM is required."))
-                }
+                    .controlSize(.large)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if editMode.isEditing {
                 messageSelectionBar
+            } else if case .loaded(let conversations) = state, !conversations.isEmpty {
+                MessageListBottomBar(
+                    searchText: $searchText,
+                    canCompose: hasOnlineLine,
+                    composeAction: {
+                        composition = MessageComposition()
+                    }
+                )
             }
         }
         .onChange(of: editMode) { _, newMode in
@@ -149,10 +148,10 @@ struct MessagesScreen: View {
                         conversationRow(conversation, in: conversations)
                             .tag(conversation.id)
                             .listRowInsets(
-                                EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 8)
+                                EdgeInsets(top: 0, leading: 26, bottom: 0, trailing: 8)
                             )
                             .alignmentGuide(.listRowSeparatorLeading) { dimensions in
-                                dimensions[.leading] + 57
+                                dimensions[.leading] + 58
                             }
                     }
                 }

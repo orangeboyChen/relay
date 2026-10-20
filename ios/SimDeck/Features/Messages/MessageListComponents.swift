@@ -4,6 +4,47 @@
 
 import SwiftUI
 
+struct MessageListBottomBar: View {
+    @Binding var searchText: String
+    let canCompose: Bool
+    let composeAction: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.secondary)
+
+                TextField("Search", text: $searchText)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+
+                Image(systemName: "mic.fill")
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .glassEffect(.regular, in: Capsule())
+
+            Button(action: composeAction) {
+                Image(systemName: "square.and.pencil")
+                    .font(.system(size: 20, weight: .medium))
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .disabled(!canCompose)
+            .accessibilityLabel("New Message")
+            .accessibilityHint(canCompose ? Text("") : Text("An online SIM is required."))
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 8)
+    }
+}
+
 struct SIMFilterMenu: View {
     let lines: [DeviceLineIdentity]
     @Binding var selection: UUID?
@@ -36,12 +77,12 @@ struct ConversationRow: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        HStack(alignment: .top, spacing: 11) {
+        HStack(alignment: .top, spacing: 12) {
             MessageContactAvatar(
                 contactName: conversation.contactName
             )
 
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 4) {
                 if dynamicTypeSize.isAccessibilitySize {
                     accessibilityTitle
                 } else {
@@ -51,10 +92,10 @@ struct ConversationRow: View {
             }
             .padding(.top, 1)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 15)
         .overlay(alignment: .leading) {
             unreadIndicator
-                .offset(x: -10)
+                .offset(x: -14)
         }
         .accessibilityElement(children: .combine)
     }
@@ -72,8 +113,7 @@ struct ConversationRow: View {
     private var titleRow: some View {
         HStack(spacing: 8) {
             Text(conversation.displayName)
-                .font(.body)
-                .fontWeight(conversation.unreadCount > 0 ? .semibold : .regular)
+                .font(.headline)
                 .lineLimit(1)
 
             Spacer(minLength: 8)
@@ -91,8 +131,7 @@ struct ConversationRow: View {
     private var accessibilityTitle: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(conversation.displayName)
-                .font(.body)
-                .fontWeight(conversation.unreadCount > 0 ? .semibold : .regular)
+                .font(.headline)
                 .lineLimit(2)
 
             if let lastMessage = conversation.lastMessage {
@@ -107,7 +146,7 @@ struct ConversationRow: View {
 
     private var previewRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: 7) {
-            SIMBadge(snapshot: linePresentation.snapshot)
+            SIMBadge(snapshot: linePresentation.snapshot, size: 14)
 
             Text(summary)
                 .font(.subheadline)

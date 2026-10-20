@@ -299,6 +299,7 @@ var _ = Describe("Encrypted command runtime", func() {
 			Version: 1, Operation: "slot.configure",
 			DataEnabled: &disabled, AirplaneModeEnabled: &enabled,
 			IncomingCallsEnabled: &disabled, IncomingSMSEnabled: &enabled,
+			VoLTEEnabled: &enabled,
 		}
 		envelope, sharedSecret := sealCommand(state, senderKey, commandID, payload)
 
@@ -315,6 +316,8 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(*settings.update.IncomingCallsEnabled).To(BeFalse())
 		Expect(settings.update.IncomingSMSEnabled).NotTo(BeNil())
 		Expect(*settings.update.IncomingSMSEnabled).To(BeTrue())
+		Expect(settings.update.VoLTEEnabled).NotTo(BeNil())
+		Expect(*settings.update.VoLTEEnabled).To(BeTrue())
 		Expect(string(envelope.Ciphertext)).NotTo(ContainSubstring("slot.configure"))
 		Expect(string(remote.result.Ciphertext)).NotTo(ContainSubstring("slot_settings"))
 	})

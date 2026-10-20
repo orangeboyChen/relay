@@ -71,6 +71,7 @@ type Payload struct {
 	AirplaneModeEnabled  *bool  `json:"airplane_mode_enabled,omitempty"`
 	IncomingCallsEnabled *bool  `json:"incoming_calls_enabled,omitempty"`
 	IncomingSMSEnabled   *bool  `json:"incoming_sms_enabled,omitempty"`
+	VoLTEEnabled         *bool  `json:"volte_enabled,omitempty"`
 }
 
 // Result is the encrypted execution outcome consumed by the initiating iPhone.
@@ -313,6 +314,7 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload, senderInst
 			AirplaneModeEnabled:  payload.AirplaneModeEnabled,
 			IncomingCallsEnabled: payload.IncomingCallsEnabled,
 			IncomingSMSEnabled:   payload.IncomingSMSEnabled,
+			VoLTEEnabled:         payload.VoLTEEnabled,
 		})
 		if err != nil {
 			return executionResult{}, err

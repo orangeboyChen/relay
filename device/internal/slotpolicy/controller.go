@@ -21,6 +21,7 @@ type Settings struct {
 	AirplaneModeEnabled  bool `json:"airplane_mode_enabled"`
 	IncomingCallsEnabled bool `json:"incoming_calls_enabled"`
 	IncomingSMSEnabled   bool `json:"incoming_sms_enabled"`
+	VoLTEEnabled         bool `json:"volte_enabled"`
 }
 
 // Update contains optional policy changes from an authenticated encrypted command.
@@ -29,6 +30,7 @@ type Update struct {
 	AirplaneModeEnabled  *bool
 	IncomingCallsEnabled *bool
 	IncomingSMSEnabled   *bool
+	VoLTEEnabled         *bool
 }
 
 // Commander is the serialized AT command capability required by the policy controller.
@@ -98,6 +100,14 @@ func (controller *Controller) Configure(ctx context.Context, update Update) (Set
 	if update.IncomingSMSEnabled != nil {
 		next.IncomingSMSEnabled = *update.IncomingSMSEnabled
 	}
+	if update.VoLTEEnabled != nil {
+		next.VoLTEEnabled = *update.VoLTEEnabled
+	}
+	if previous.VoLTEEnabled != next.VoLTEEnabled {
+		if err := controller.applyVoLTE(ctx, next.VoLTEEnabled); err != nil {
+			return previous, err
+		}
+	}
 	if err := controller.applyRadio(
 		ctx,
 		next,
@@ -114,6 +124,14 @@ func (controller *Controller) Configure(ctx context.Context, update Update) (Set
 	}
 	controller.settings = next
 	return next, nil
+}
+
+func (controller *Controller) applyVoLTE(ctx context.Context, enabled bool) error {
+	value := "0"
+	if enabled {
+		value = "1"
+	}
+	return controller.send(ctx, `AT+QCFG="ims",`+value)
 }
 
 func (controller *Controller) applyRadio(ctx context.Context, settings Settings, airplaneChanged bool, dataChanged bool) error {

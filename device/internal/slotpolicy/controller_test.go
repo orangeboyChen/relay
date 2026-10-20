@@ -62,6 +62,34 @@ var _ = Describe("Slot policy controller", func() {
 		Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o600)))
 	})
 
+	It("persists VoLTE preference after the modem accepts the IMS setting", func() {
+		controller, err := NewController(directory, commander, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		enabled := true
+
+		settings, err := controller.Configure(context.Background(), Update{VoLTEEnabled: &enabled})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(settings.VoLTEEnabled).To(BeTrue())
+		Expect(commander.commands).To(Equal([]string{`AT+QCFG="ims",1`}))
+		reloaded, err := NewController(directory, commander, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(reloaded.Current().VoLTEEnabled).To(BeTrue())
+	})
+
+	It("keeps the previous VoLTE preference when IMS is unsupported", func() {
+		controller, err := NewController(directory, commander, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		commander.response = at.Response{Terminal: "+CME ERROR: 4"}
+		enabled := true
+
+		settings, err := controller.Configure(context.Background(), Update{VoLTEEnabled: &enabled})
+
+		Expect(err).To(MatchError(`modem rejected slot policy command AT+QCFG="ims",1: +CME ERROR: 4`))
+		Expect(settings.VoLTEEnabled).To(BeFalse())
+		Expect(controller.Current().VoLTEEnabled).To(BeFalse())
+	})
+
 	It("applies airplane and data changes in modem-safe order", func() {
 		controller, err := NewController(directory, commander, time.Second)
 		Expect(err).NotTo(HaveOccurred())

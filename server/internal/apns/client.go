@@ -78,8 +78,7 @@ func (failure *ResponseError) Error() string {
 
 // Retryable reports whether APNs recommends attempting the delivery later.
 func (failure *ResponseError) Retryable() bool {
-	return failure.InvalidatesProviderToken() ||
-		failure.StatusCode == http.StatusTooManyRequests ||
+	return failure.StatusCode == http.StatusTooManyRequests ||
 		failure.StatusCode >= http.StatusInternalServerError
 }
 

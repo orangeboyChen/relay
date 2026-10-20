@@ -973,6 +973,42 @@ var _ = Describe("Modem session", func() {
 		Expect(exists).To(BeFalse())
 	})
 
+	It("synchronizes delivery report correlation across command and URC workers", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		reports := make(chan sms.DeliveryReport, 256)
+		session.SetDeliveryReportSink(func(_ context.Context, report sms.DeliveryReport) error {
+			reports <- report
+			return nil
+		})
+
+		completed := make(chan struct{})
+		mismatches := make(chan string, 1)
+		go func() {
+			defer close(completed)
+			for index := 0; index < 256; index++ {
+				messageID := fmt.Sprintf("message-%d", index)
+				session.PrepareMessageStatus(messageID)
+				if actual := session.takePendingMessageID(); actual != messageID {
+					mismatches <- fmt.Sprintf("pending message ID = %q, want %q", actual, messageID)
+					return
+				}
+				session.trackMessageReference(byte(index), messageID)
+			}
+		}()
+		for index := 0; index < 256; index++ {
+			_ = session.handleURC(context.Background(), "+CDS: 18\n0002070B913105000000F0620151214365006201512143650000")
+		}
+		<-completed
+		Consistently(mismatches).ShouldNot(Receive())
+
+		session.trackMessageReference(7, "message-final")
+		Expect(session.handleURC(context.Background(), "+CDS: 18\n0002070B913105000000F0620151214365006201512143650000")).To(Succeed())
+		Eventually(reports).Should(Receive(WithTransform(func(report sms.DeliveryReport) string {
+			return report.MessageID
+		}, Equal("message-final"))))
+	})
+
 	DescribeTable("classifies call notifications", func(notification string, expected bool) {
 		Expect(isCallURC(notification)).To(Equal(expected))
 	},

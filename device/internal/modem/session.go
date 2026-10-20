@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"sim-deck-device/internal/at"
@@ -139,6 +140,7 @@ type Session struct {
 	messagePollInterval  time.Duration
 	references           map[byte]string
 	pendingMessageID     string
+	messageStatusMu      sync.Mutex
 	deliveryReportSink   DeliveryReportSink
 }
 
@@ -180,6 +182,8 @@ func (session *Session) SetDeliveryReportSink(sink DeliveryReportSink) {
 
 // PrepareMessageStatus associates the next SMS submission with its application message ID.
 func (session *Session) PrepareMessageStatus(messageID string) {
+	session.messageStatusMu.Lock()
+	defer session.messageStatusMu.Unlock()
 	session.pendingMessageID = messageID
 }
 
@@ -342,6 +346,7 @@ func allDigits(value string) bool {
 
 // SendSMS encodes and submits every segment of one SMS through the modem.
 func (session *Session) SendSMS(ctx context.Context, destination string, text string, reference byte) error {
+	messageID := session.takePendingMessageID()
 	pdus, err := sms.EncodeSubmit(destination, text, reference)
 	if err != nil {
 		return fmt.Errorf("encode outbound SMS: %w", err)
@@ -363,14 +368,41 @@ func (session *Session) SendSMS(ctx context.Context, destination string, text st
 			session.logger.Warn("SMS submission failed", "segment", pdu.Segment, "total", pdu.Total, "error", failure)
 			return failure
 		}
-		if session.pendingMessageID != "" {
+		if messageID != "" {
 			if reference, ok := parseMessageReference(response.Lines); ok {
-				session.references[reference] = session.pendingMessageID
+				session.trackMessageReference(reference, messageID)
 			}
 		}
 	}
-	session.pendingMessageID = ""
 	return nil
+}
+
+func (session *Session) takePendingMessageID() string {
+	session.messageStatusMu.Lock()
+	defer session.messageStatusMu.Unlock()
+	messageID := session.pendingMessageID
+	session.pendingMessageID = ""
+	return messageID
+}
+
+func (session *Session) trackMessageReference(reference byte, messageID string) {
+	session.messageStatusMu.Lock()
+	defer session.messageStatusMu.Unlock()
+	session.references[reference] = messageID
+}
+
+func (session *Session) messageIDForReference(reference byte) string {
+	session.messageStatusMu.Lock()
+	defer session.messageStatusMu.Unlock()
+	return session.references[reference]
+}
+
+func (session *Session) removeMessageReference(reference byte, messageID string) {
+	session.messageStatusMu.Lock()
+	defer session.messageStatusMu.Unlock()
+	if session.references[reference] == messageID {
+		delete(session.references, reference)
+	}
 }
 
 // Initialize configures modem notifications and imports stored messages before readiness.
@@ -735,14 +767,14 @@ func (session *Session) handleURC(ctx context.Context, urc string) error {
 			session.logger.Warn("discarded malformed SMS delivery status report", "error", err)
 			return nil
 		}
-		if messageID := session.references[report.MessageReference]; messageID != "" {
+		if messageID := session.messageIDForReference(report.MessageReference); messageID != "" {
 			if session.deliveryReportSink != nil {
 				report.MessageID = messageID
 				if err := session.deliveryReportSink(ctx, report); err != nil {
 					return fmt.Errorf("publish SMS delivery report: %w", err)
 				}
 			}
-			delete(session.references, report.MessageReference)
+			session.removeMessageReference(report.MessageReference, messageID)
 		}
 	case isCallURC(urc):
 		session.calls.ApplyURC(urc)

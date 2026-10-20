@@ -15,31 +15,27 @@ struct ContactDetailScreen: View {
     @State private var messageRecipient: ContactPhoneNumber?
 
     var body: some View {
-        ZStack {
-            ContactDetailBackdrop()
-                .ignoresSafeArea()
+        ScrollView {
+            VStack(spacing: 18) {
+                contactHeader
+                communicationActions
 
-            ScrollView {
-                VStack(spacing: 18) {
-                    contactHeader
-                    communicationActions
-
-                    if !contact.phoneNumbers.isEmpty {
-                        phoneNumbersCard
-                    }
-
-                    if !contact.organizationName.isEmpty,
-                       contact.organizationName != contact.displayName {
-                        informationCard
-                    }
+                if !contact.phoneNumbers.isEmpty {
+                    phoneNumbersCard
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 120)
+
+                if !contact.organizationName.isEmpty,
+                   contact.organizationName != contact.displayName {
+                    informationCard
+                }
             }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 120)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationTitle("")
+        .background(Color(uiColor: .systemGroupedBackground))
+        .navigationTitle(contact.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
         .confirmationDialog(
@@ -71,28 +67,10 @@ struct ContactDetailScreen: View {
 
     private var contactHeader: some View {
         VStack(spacing: 10) {
-            ContactAvatar(contact: contact, size: 240)
-                .background(.ultraThinMaterial, in: Circle())
-                .overlay {
-                    Circle()
-                        .stroke(.white.opacity(0.24), lineWidth: 1)
-                }
-                .shadow(color: .black.opacity(0.08), radius: 20, y: 10)
+            ContactAvatar(contact: contact, size: 128)
+                .shadow(color: .black.opacity(0.06), radius: 10, y: 5)
 
             VStack(spacing: 4) {
-                if let defaultLine {
-                    HStack(spacing: 6) {
-                        Text("Default:")
-                        SIMBadge(line: defaultLine, size: 16)
-                        Text(defaultLine.displayName)
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                    }
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .accessibilityElement(children: .combine)
-                }
-
                 Text(contact.displayName)
                     .font(.title.bold())
                     .multilineTextAlignment(.center)
@@ -110,7 +88,7 @@ struct ContactDetailScreen: View {
     }
 
     private var communicationActions: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 44) {
             ContactActionButton(
                 title: "Message",
                 systemImage: "message.fill",
@@ -125,8 +103,6 @@ struct ContactDetailScreen: View {
             ) {
                 choosePhoneNumber(for: .call)
             }
-            ContactActionButton(title: "Video", systemImage: "video.fill", isEnabled: false) {}
-            ContactActionButton(title: "Mail", systemImage: "envelope.fill", isEnabled: false) {}
         }
         .frame(maxWidth: .infinity)
     }
@@ -178,7 +154,7 @@ struct ContactDetailScreen: View {
                 }
             }
         }
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .background(.background, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
     }
 
     private var informationCard: some View {
@@ -191,15 +167,7 @@ struct ContactDetailScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-    }
-
-    private var defaultLine: DeviceLineIdentity? {
-        if let defaultMessageLineID,
-           let line = lines.first(where: { $0.id == defaultMessageLineID }) {
-            return line
-        }
-        return lines.first(where: \.isOnline) ?? lines.first
+        .background(.background, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
     }
 
     private var preferredMessageLineID: UUID? {
@@ -259,26 +227,11 @@ private struct ContactActionButton: View {
                 Text(title)
                     .font(.caption)
             }
-            .frame(maxWidth: .infinity)
+            .frame(width: 72)
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.48)
-    }
-}
-
-private struct ContactDetailBackdrop: View {
-    var body: some View {
-        LinearGradient(
-            colors: [
-                Color.blue.opacity(0.42),
-                Color.indigo.opacity(0.34),
-                Color(uiColor: .systemGroupedBackground).opacity(0.94),
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-        .overlay(.ultraThinMaterial.opacity(0.28))
     }
 }
 

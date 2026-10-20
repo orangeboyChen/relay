@@ -219,13 +219,23 @@ private struct CallDurationText: View {
 
     var body: some View {
         let duration = max(0, currentDate.timeIntervalSince(connectedAt))
-        if duration < 1 {
-            Text(verbatim: "0:00")
-                .monospacedDigit()
-        } else {
-            Text((connectedAt..<connectedAt.addingTimeInterval(duration)).formatted(.timeDuration))
-                .monospacedDigit()
+        Text(verbatim: CallDurationFormatter.string(elapsed: duration))
+            .monospacedDigit()
+    }
+}
+
+enum CallDurationFormatter {
+    static func string(elapsed: TimeInterval) -> String {
+        let wholeSeconds = Int64(max(0, elapsed.rounded(.down)))
+        let duration = Duration.seconds(wholeSeconds)
+        if wholeSeconds >= 3_600 {
+            return duration.formatted(
+                .time(pattern: .hourMinuteSecond(padHourToLength: 2))
+            )
         }
+        return duration.formatted(
+            .time(pattern: .minuteSecond(padMinuteToLength: 2))
+        )
     }
 }
 

@@ -3035,6 +3035,16 @@
         }
       }
     },
+    "Unnamed Contact" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未命名联系人"
+          }
+        }
+      }
+    },
     "Unnamed Device" : {
       "localizations" : {
         "zh-Hans" : {

@@ -17,6 +17,7 @@ struct DialerScreen: View {
     @State private var number = ""
     @State private var isCalling = false
     @State private var consumedRequestID: UUID?
+    @State private var unknownContactNumber: DialerUnknownContactNumber?
 
     init(
         lines: [DeviceLineIdentity],
@@ -83,10 +84,27 @@ struct DialerScreen: View {
             HStack {
                 LinePicker(lines: onlineLines, selection: $selectedLineID)
                 Spacer()
+                if !number.isEmpty {
+                    Button {
+                        unknownContactNumber = DialerUnknownContactNumber(number: number)
+                    } label: {
+                        Image(systemName: "person.crop.circle.badge.plus")
+                            .font(.system(size: 22, weight: .medium))
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
+                    .accessibilityLabel("Add Contact")
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
             }
             .frame(height: 54)
             .padding(.horizontal, 28)
             .background(Color(uiColor: .systemBackground))
+        }
+        .animation(.snappy, value: number.isEmpty)
+        .sheet(item: $unknownContactNumber) { item in
+            SystemUnknownContactView(phoneNumber: item.number)
         }
         .toolbar(.hidden, for: .navigationBar)
         .onChange(of: externalRequest, initial: true) { _, request in
@@ -196,6 +214,11 @@ struct DialerScreen: View {
         selectedLineID = externalLineID
         onExternalRequestConsumed(request.id)
     }
+}
+
+private struct DialerUnknownContactNumber: Identifiable {
+    let id = UUID()
+    let number: String
 }
 
 #if DEBUG

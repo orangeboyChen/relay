@@ -20,14 +20,19 @@ struct LinePicker: View {
                     }
                 }
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: 8) {
                     SIMBadge(line: selectedLine, size: 22)
-                    Image(systemName: "chevron.up.chevron.down")
+                    Text(selectedLine.displayName)
+                        .font(.body)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.tertiary)
                 }
-                .frame(minWidth: 44, minHeight: 44)
-                .contentShape(.rect)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 44)
+                .contentShape(Capsule())
+                .glassEffect(.regular.interactive(), in: Capsule())
             }
             .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .buttonStyle(.plain)

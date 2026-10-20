@@ -23,12 +23,18 @@ type fakeRemote struct {
 	credential string
 	envelopes  []Envelope
 	err        error
+	errors     []error
 }
 
 func (remote *fakeRemote) UploadEvent(_ context.Context, deviceID string, credential string, envelope Envelope) error {
 	remote.deviceID = deviceID
 	remote.credential = credential
 	remote.envelopes = append(remote.envelopes, envelope)
+	if len(remote.errors) > 0 {
+		err := remote.errors[0]
+		remote.errors = remote.errors[1:]
+		return err
+	}
 	return remote.err
 }
 
@@ -139,12 +145,19 @@ var _ = Describe("Encrypted call event publisher", func() {
 		Expect(remote.envelopes).To(HaveLen(3))
 	})
 
-	It("runs until cancellation and surfaces delivery failures", func() {
+	It("retries a transient delivery failure with the same encrypted event", func() {
 		Expect(publisher.RegisterOutgoing("call-1", sharedSecret)).To(Succeed())
-		remote.err = errors.New("server unavailable")
+		publisher.retryInterval = time.Millisecond
+		remote.errors = []error{errors.New("server unavailable"), nil}
 		snapshots <- call.Snapshot{State: call.StateDialing}
-		Expect(publisher.Run(context.Background())).To(MatchError("upload call event: server unavailable"))
+		close(snapshots)
 
+		Expect(publisher.Run(context.Background())).To(MatchError("call event snapshot stream closed"))
+		Expect(remote.envelopes).To(HaveLen(2))
+		Expect(remote.envelopes[1]).To(Equal(remote.envelopes[0]))
+
+		snapshots = make(chan call.Snapshot)
+		publisher.snapshots = snapshots
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		Expect(publisher.Run(ctx)).To(MatchError(context.Canceled))

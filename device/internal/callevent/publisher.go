@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -69,11 +70,12 @@ type callContext struct {
 
 // Publisher encrypts modem state transitions for the iPhone that initiated the call.
 type Publisher struct {
-	remote    Remote
-	identity  identity.State
-	snapshots <-chan call.Snapshot
-	random    io.Reader
-	now       func() time.Time
+	remote        Remote
+	identity      identity.State
+	snapshots     <-chan call.Snapshot
+	random        io.Reader
+	now           func() time.Time
+	retryInterval time.Duration
 
 	mu      sync.RWMutex
 	current *callContext
@@ -86,6 +88,7 @@ func NewPublisher(remote Remote, state identity.State, snapshots <-chan call.Sna
 	}
 	return &Publisher{
 		remote: remote, identity: state, snapshots: snapshots, random: rand.Reader, now: time.Now,
+		retryInterval: time.Second,
 	}, nil
 }
 
@@ -128,7 +131,7 @@ func (publisher *Publisher) Run(ctx context.Context) error {
 			if !ok {
 				return errors.New("call event snapshot stream closed")
 			}
-			if err := publisher.publish(ctx, snapshot); err != nil {
+			if err := publisher.publishWithRetry(ctx, snapshot); err != nil {
 				return err
 			}
 		}
@@ -136,13 +139,63 @@ func (publisher *Publisher) Run(ctx context.Context) error {
 }
 
 func (publisher *Publisher) publish(ctx context.Context, snapshot call.Snapshot) error {
+	envelope, callID, ok, err := publisher.prepare(snapshot)
+	if err != nil || !ok {
+		return err
+	}
+	if err := publisher.remote.UploadEvent(ctx, publisher.identity.DeviceUUID, publisher.identity.Credential, envelope); err != nil {
+		return fmt.Errorf("upload call event: %w", err)
+	}
+	if snapshot.State == call.StateEnded {
+		publisher.Unregister(callID)
+	}
+	return nil
+}
+
+func (publisher *Publisher) publishWithRetry(ctx context.Context, snapshot call.Snapshot) error {
+	envelope, callID, ok, err := publisher.prepare(snapshot)
+	if err != nil || !ok {
+		return err
+	}
+	for {
+		err := publisher.remote.UploadEvent(
+			ctx,
+			publisher.identity.DeviceUUID,
+			publisher.identity.Credential,
+			envelope,
+		)
+		if err == nil {
+			if snapshot.State == call.StateEnded {
+				publisher.Unregister(callID)
+			}
+			return nil
+		}
+		slog.Warn(
+			"call event delivery deferred",
+			"call_id", callID,
+			"state", snapshot.State,
+			"error", err,
+		)
+		timer := time.NewTimer(publisher.retryInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (publisher *Publisher) prepare(snapshot call.Snapshot) (Envelope, string, bool, error) {
 	registered := publisher.registeredCall()
 	if registered == nil {
-		return nil
+		return Envelope{}, "", false, nil
 	}
 	eventID, err := randomUUID(publisher.random)
 	if err != nil {
-		return fmt.Errorf("generate call event id: %w", err)
+		return Envelope{}, "", false, fmt.Errorf("generate call event id: %w", err)
 	}
 	envelope := Envelope{
 		ID: eventID, Type: eventType, DeviceUUID: publisher.identity.DeviceUUID,
@@ -154,19 +207,13 @@ func (publisher *Publisher) publish(ctx context.Context, snapshot call.Snapshot)
 		Active: snapshot.Active, Held: snapshot.Held, Waiting: snapshot.Waiting,
 	})
 	if err != nil {
-		return fmt.Errorf("encode call event: %w", err)
+		return Envelope{}, "", false, fmt.Errorf("encode call event: %w", err)
 	}
 	envelope, err = seal(publisher.random, registered.sharedSecret, publisher.identity.IdentityPrivateKey, envelope, payload)
 	if err != nil {
-		return fmt.Errorf("encrypt call event: %w", err)
+		return Envelope{}, "", false, fmt.Errorf("encrypt call event: %w", err)
 	}
-	if err := publisher.remote.UploadEvent(ctx, publisher.identity.DeviceUUID, publisher.identity.Credential, envelope); err != nil {
-		return fmt.Errorf("upload call event: %w", err)
-	}
-	if snapshot.State == call.StateEnded {
-		publisher.Unregister(registered.id)
-	}
-	return nil
+	return envelope, registered.id, true, nil
 }
 
 func (publisher *Publisher) registeredCall() *callContext {

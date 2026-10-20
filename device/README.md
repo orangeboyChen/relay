@@ -329,3 +329,12 @@ The named `modem-1-state` volume must remain attached to this modem. Removing
 or replacing it creates new cryptographic keys. Revoke the old device first,
 then enable discovery and approve the replacement. For a second modem, repeat
 the process with the `modem-2` paths and the independent `modem-2-state` volume.
+
+## License
+
+Copyright (C) 2026 orangeboyChen.
+
+Sim Deck Device is licensed under the GNU Affero General Public License
+version 3 only (`AGPL-3.0-only`). See [LICENSE](LICENSE). If you run a modified
+version for users over a network, Section 13 requires you to offer those users
+the corresponding source code.

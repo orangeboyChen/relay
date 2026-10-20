@@ -300,6 +300,11 @@ final class AppModel {
         }
     }
 
+    func refreshForegroundState() async {
+        await refreshDevices()
+        await refreshMessages()
+    }
+
     @discardableResult
     func sendMessage(lineID: UUID, remoteNumber: String, body: String) async throws -> UUID {
         guard devices.contains(where: { $0.id == lineID && $0.isOnline }) else {

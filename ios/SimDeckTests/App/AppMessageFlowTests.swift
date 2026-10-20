@@ -178,6 +178,15 @@ final class AppMessageFlowTests: XCTestCase {
         XCTAssertEqual(transport.synchronizedLineIDs, [[firstLine.id, secondLine.id]])
     }
 
+    func testForegroundRefreshSynchronizesMessagesWhenPushIsUnavailable() async {
+        let transport = MessageTransportFake()
+        let model = makeModel(transport: transport, remoteDeviceRefreshEnabled: false)
+
+        await model.refreshForegroundState()
+
+        XCTAssertEqual(transport.synchronizedLineIDs, [[firstLine.id, secondLine.id]])
+    }
+
     func testSendRejectsOfflineLineBeforeTransport() async {
         var offlineLine = firstLine
         offlineLine.isOnline = false
@@ -201,7 +210,8 @@ final class AppMessageFlowTests: XCTestCase {
 
     private func makeModel(
         transport: MessageTransportFake,
-        devices: [DeviceLineIdentity]? = nil
+        devices: [DeviceLineIdentity]? = nil,
+        remoteDeviceRefreshEnabled: Bool = true
     ) -> AppModel {
         let defaults = UserDefaults(suiteName: "AppMessageFlowTests.\(UUID().uuidString)")!
         defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
@@ -214,7 +224,8 @@ final class AppMessageFlowTests: XCTestCase {
             devices: devices ?? [firstLine, secondLine],
             messages: .loaded([]),
             serverConnection: connection,
-            messageTransport: transport
+            messageTransport: transport,
+            remoteDeviceRefreshEnabled: remoteDeviceRefreshEnabled
         )
     }
 

@@ -53,6 +53,7 @@ private final class BackgroundFetchCompletion: @unchecked Sendable {
 @main
 struct SimDeckApp: App {
     @UIApplicationDelegateAdaptor(SimDeckAppDelegate.self) private var appDelegate
+    @Environment(\.scenePhase) private var scenePhase
     @State private var model: AppModel
     private let shouldStartLiveServices: Bool
 
@@ -96,6 +97,12 @@ struct SimDeckApp: App {
                     model.startVoIPPushes()
                     await model.refreshDevices()
                     await model.refreshMessages()
+                }
+                .onChange(of: scenePhase) { _, phase in
+                    guard phase == .active, shouldStartLiveServices else { return }
+                    Task {
+                        await model.refreshForegroundState()
+                    }
                 }
         }
     }

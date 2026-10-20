@@ -79,6 +79,9 @@ struct MessageBubble: View {
     let retryAction: () -> Void
     let deleteAction: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var horizontalOffset: CGFloat = 0
+
     init(
         message: MessageItem,
         line: DeviceLineIdentity,
@@ -104,20 +107,88 @@ struct MessageBubble: View {
     }
 
     var body: some View {
-        HStack {
-            if message.direction == .sent {
-                Spacer(minLength: 48)
-            }
+        ZStack {
+            swipeAffordances
 
-            VStack(alignment: message.direction == .sent ? .trailing : .leading, spacing: 4) {
-                bubbleContent
-                messageMetadata
-            }
+            HStack {
+                if message.direction == .sent {
+                    Spacer(minLength: 48)
+                }
 
-            if message.direction == .received {
-                Spacer(minLength: 48)
+                VStack(alignment: message.direction == .sent ? .trailing : .leading, spacing: 4) {
+                    bubbleContent
+                    messageMetadata
+                }
+
+                if message.direction == .received {
+                    Spacer(minLength: 48)
+                }
             }
+            .offset(x: horizontalOffset)
         }
+        .contentShape(.rect)
+        .simultaneousGesture(horizontalSwipeGesture)
+        .accessibilityAction(named: Text("Reply")) {
+            replyAction()
+        }
+        .accessibilityAction(named: Text("Details")) {
+            detailsAction()
+        }
+    }
+
+    private var swipeAffordances: some View {
+        HStack(spacing: 0) {
+            Image(systemName: "arrowshape.turn.up.left.fill")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.blue)
+                .frame(width: 44, height: 44)
+                .scaleEffect(replyProgress)
+                .opacity(replyProgress)
+                .accessibilityHidden(true)
+
+            Spacer(minLength: 0)
+
+            Text(
+                message.sentAt,
+                format: .dateTime.month(.abbreviated).day().hour().minute()
+            )
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .opacity(timestampProgress)
+            .accessibilityHidden(true)
+        }
+    }
+
+    private var horizontalSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onChanged { value in
+                horizontalOffset = MessageSwipeInteraction.offset(
+                    horizontal: value.translation.width,
+                    vertical: value.translation.height
+                )
+            }
+            .onEnded { value in
+                let shouldReply = MessageSwipeInteraction.shouldReply(
+                    horizontal: value.translation.width,
+                    vertical: value.translation.height
+                )
+                withAnimation(reduceMotion ? nil : .snappy) {
+                    horizontalOffset = 0
+                }
+                if shouldReply {
+                    replyAction()
+                }
+            }
+    }
+
+    private var replyProgress: CGFloat {
+        min(max(horizontalOffset / MessageSwipeInteraction.replyThreshold, 0), 1)
+    }
+
+    private var timestampProgress: CGFloat {
+        min(max(-horizontalOffset / 36, 0), 1)
     }
 
     private var bubbleContent: some View {

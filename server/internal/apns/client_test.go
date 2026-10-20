@@ -139,10 +139,38 @@ var _ = Describe("APNs client", func() {
 		Entry("expired token", http.StatusGone, "Unregistered", false, true),
 		Entry("bad token", http.StatusBadRequest, "BadDeviceToken", false, true),
 		Entry("wrong topic", http.StatusBadRequest, "DeviceTokenNotForTopic", false, true),
+		Entry("invalid provider token", http.StatusForbidden, "InvalidProviderToken", true, false),
+		Entry("expired provider token", http.StatusForbidden, "ExpiredProviderToken", true, false),
 		Entry("throttled", http.StatusTooManyRequests, "TooManyRequests", true, false),
 		Entry("unavailable", http.StatusServiceUnavailable, "ServiceUnavailable", true, false),
 		Entry("other client error", http.StatusBadRequest, "PayloadEmpty", false, false),
 	)
+
+	It("refreshes a rejected provider token before returning a retryable error", func() {
+		var authorizations []string
+		requests := 0
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			authorizations = append(authorizations, request.Header.Get("authorization"))
+			requests++
+			if requests == 1 {
+				now = now.Add(time.Second)
+				writer.WriteHeader(http.StatusForbidden)
+				_, _ = writer.Write([]byte(`{"reason":"InvalidProviderToken"}`))
+				return
+			}
+			writer.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		Expect(newClient(server).SendAlert(
+			context.Background(),
+			"production",
+			[]byte{1, 2, 3},
+			[]byte(`{"ciphertext":"opaque"}`),
+		)).To(Succeed())
+		Expect(authorizations).To(HaveLen(2))
+		Expect(authorizations[1]).NotTo(Equal(authorizations[0]))
+	})
 
 	It("formats an APNs failure even when the service omits a reason", func() {
 		failure := &ResponseError{StatusCode: http.StatusForbidden}

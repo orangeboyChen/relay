@@ -78,7 +78,14 @@ func (failure *ResponseError) Error() string {
 
 // Retryable reports whether APNs recommends attempting the delivery later.
 func (failure *ResponseError) Retryable() bool {
-	return failure.StatusCode == http.StatusTooManyRequests || failure.StatusCode >= http.StatusInternalServerError
+	return failure.InvalidatesProviderToken() ||
+		failure.StatusCode == http.StatusTooManyRequests ||
+		failure.StatusCode >= http.StatusInternalServerError
+}
+
+// InvalidatesProviderToken reports whether APNs rejected the provider JWT rather than the device token.
+func (failure *ResponseError) InvalidatesProviderToken() bool {
+	return failure.Reason == "InvalidProviderToken" || failure.Reason == "ExpiredProviderToken"
 }
 
 // InvalidatesToken reports whether the device token must no longer be used.
@@ -137,6 +144,10 @@ func (client *Client) SendAlert(ctx context.Context, environment string, deviceT
 }
 
 func (client *Client) send(ctx context.Context, environment string, deviceToken []byte, encryptedDelivery []byte, pushType string, priority int) error {
+	return client.sendAttempt(ctx, environment, deviceToken, encryptedDelivery, pushType, priority, true)
+}
+
+func (client *Client) sendAttempt(ctx context.Context, environment string, deviceToken []byte, encryptedDelivery []byte, pushType string, priority int, refreshProviderToken bool) error {
 	baseURL := client.productionURL
 	if environment == "sandbox" {
 		baseURL = client.sandboxURL
@@ -191,7 +202,20 @@ func (client *Client) send(ctx context.Context, environment string, deviceToken 
 		Reason string `json:"reason"`
 	}
 	_ = json.NewDecoder(io.LimitReader(response.Body, 4*1024)).Decode(&body)
-	return &ResponseError{StatusCode: response.StatusCode, Reason: body.Reason}
+	failure := &ResponseError{StatusCode: response.StatusCode, Reason: body.Reason}
+	if refreshProviderToken && failure.InvalidatesProviderToken() {
+		client.invalidateAuthorizationToken()
+		return client.sendAttempt(
+			ctx,
+			environment,
+			deviceToken,
+			encryptedDelivery,
+			pushType,
+			priority,
+			false,
+		)
+	}
+	return failure
 }
 
 func parsePrivateKey(encoded []byte) (*ecdsa.PrivateKey, error) {
@@ -267,4 +291,11 @@ func (client *Client) authorizationToken() (string, error) {
 	client.providerToken = unsigned + "." + base64.RawURLEncoding.EncodeToString(signature)
 	client.tokenExpiresAt = now.Add(providerTokenTTL)
 	return client.providerToken, nil
+}
+
+func (client *Client) invalidateAuthorizationToken() {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	client.providerToken = ""
+	client.tokenExpiresAt = time.Time{}
 }

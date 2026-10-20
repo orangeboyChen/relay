@@ -83,6 +83,21 @@ var _ = Describe("Push worker", func() {
 		Expect(repository.retried.reason).To(Equal("network unavailable"))
 	})
 
+	It("retains jobs when APNs rejects the provider token", func() {
+		sender.err = &apns.ResponseError{
+			StatusCode: http.StatusForbidden,
+			Reason:     "InvalidProviderToken",
+		}
+
+		processed, err := worker.ProcessOne(context.Background())
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(processed).To(BeTrue())
+		Expect(repository.retried.reason).To(ContainSubstring("InvalidProviderToken"))
+		Expect(repository.discarded).To(Equal(jobAction{}))
+		Expect(repository.deletedToken).To(BeNil())
+	})
+
 	It("deletes rejected tokens and permanently discards their jobs", func() {
 		sender.err = &apns.ResponseError{StatusCode: http.StatusGone, Reason: "Unregistered"}
 

@@ -10,12 +10,37 @@ struct SlotSettings: Codable, Equatable, Sendable {
     var airplaneModeEnabled: Bool
     var incomingCallsEnabled: Bool
     var incomingSMSEnabled: Bool
+    var volteEnabled: Bool
+
+    init(
+        dataEnabled: Bool,
+        airplaneModeEnabled: Bool,
+        incomingCallsEnabled: Bool,
+        incomingSMSEnabled: Bool,
+        volteEnabled: Bool = false
+    ) {
+        self.dataEnabled = dataEnabled
+        self.airplaneModeEnabled = airplaneModeEnabled
+        self.incomingCallsEnabled = incomingCallsEnabled
+        self.incomingSMSEnabled = incomingSMSEnabled
+        self.volteEnabled = volteEnabled
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        dataEnabled = try container.decode(Bool.self, forKey: .dataEnabled)
+        airplaneModeEnabled = try container.decode(Bool.self, forKey: .airplaneModeEnabled)
+        incomingCallsEnabled = try container.decode(Bool.self, forKey: .incomingCallsEnabled)
+        incomingSMSEnabled = try container.decode(Bool.self, forKey: .incomingSMSEnabled)
+        volteEnabled = try container.decodeIfPresent(Bool.self, forKey: .volteEnabled) ?? false
+    }
 
     static let enabled = SlotSettings(
         dataEnabled: true,
         airplaneModeEnabled: false,
         incomingCallsEnabled: true,
-        incomingSMSEnabled: true
+        incomingSMSEnabled: true,
+        volteEnabled: false
     )
 
     enum CodingKeys: String, CodingKey {
@@ -23,6 +48,7 @@ struct SlotSettings: Codable, Equatable, Sendable {
         case airplaneModeEnabled = "airplane_mode_enabled"
         case incomingCallsEnabled = "incoming_calls_enabled"
         case incomingSMSEnabled = "incoming_sms_enabled"
+        case volteEnabled = "volte_enabled"
     }
 }
 
@@ -106,7 +132,8 @@ final class LiveSlotSettingsTransport: SlotSettingsTransport {
             dataEnabled: settings?.dataEnabled,
             airplaneModeEnabled: settings?.airplaneModeEnabled,
             incomingCallsEnabled: settings?.incomingCallsEnabled,
-            incomingSMSEnabled: settings?.incomingSMSEnabled
+            incomingSMSEnabled: settings?.incomingSMSEnabled,
+            volteEnabled: settings?.volteEnabled
         )
         let sealed: SealedCallCommand
         do {
@@ -164,6 +191,7 @@ struct SlotSettingsCommandPayload: Codable, Equatable, Sendable {
     let airplaneModeEnabled: Bool?
     let incomingCallsEnabled: Bool?
     let incomingSMSEnabled: Bool?
+    let volteEnabled: Bool?
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -174,5 +202,6 @@ struct SlotSettingsCommandPayload: Codable, Equatable, Sendable {
         case airplaneModeEnabled = "airplane_mode_enabled"
         case incomingCallsEnabled = "incoming_calls_enabled"
         case incomingSMSEnabled = "incoming_sms_enabled"
+        case volteEnabled = "volte_enabled"
     }
 }

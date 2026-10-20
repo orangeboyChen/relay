@@ -127,13 +127,15 @@ private struct SlotControlSection: View {
                 .disabled(settings.airplaneModeEnabled)
             Toggle("Incoming SMS", isOn: $settings.incomingSMSEnabled)
                 .disabled(settings.airplaneModeEnabled)
+            Toggle("VoLTE", isOn: $settings.volteEnabled)
+                .disabled(settings.airplaneModeEnabled)
         } header: {
             Text("Slot Controls")
         } footer: {
             if settings.airplaneModeEnabled {
                 Text("Airplane mode disables cellular data, incoming calls, and incoming SMS. Your individual choices are restored when airplane mode is turned off.")
             } else {
-                Text("These controls are end-to-end encrypted and applied directly by the modem device.")
+                Text("These controls are end-to-end encrypted and applied directly by the modem device. VoLTE requires compatible modem firmware, carrier provisioning, and a modem restart after the setting changes.")
             }
         }
     }

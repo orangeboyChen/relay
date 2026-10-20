@@ -27,6 +27,7 @@ final class SlotSettingsTransportTests: XCTestCase {
         XCTAssertNil(payload.airplaneModeEnabled)
         XCTAssertNil(payload.incomingCallsEnabled)
         XCTAssertNil(payload.incomingSMSEnabled)
+        XCTAssertNil(payload.volteEnabled)
         let serverVisible = String(decoding: try JSONEncoder().encode(api.requests[0]), as: UTF8.self)
         XCTAssertFalse(serverVisible.contains("slot.configure"))
         XCTAssertFalse(serverVisible.contains("incoming_sms_enabled"))
@@ -39,7 +40,8 @@ final class SlotSettingsTransportTests: XCTestCase {
             dataEnabled: false,
             airplaneModeEnabled: true,
             incomingCallsEnabled: false,
-            incomingSMSEnabled: false
+            incomingSMSEnabled: false,
+            volteEnabled: true
         )
 
         let effective = try await transport.update(requested, line: line(commandKey: api.commandPublicKey))
@@ -50,6 +52,7 @@ final class SlotSettingsTransportTests: XCTestCase {
         XCTAssertEqual(payload.airplaneModeEnabled, true)
         XCTAssertEqual(payload.incomingCallsEnabled, false)
         XCTAssertEqual(payload.incomingSMSEnabled, false)
+        XCTAssertEqual(payload.volteEnabled, true)
     }
 
     func testLoadUsesFreshServerAssignmentInsteadOfStaleScreenIdentifiers() async throws {
@@ -150,7 +153,8 @@ private final class SlotSettingsAPIFake: EncryptedCallCommandAPI {
         dataEnabled: true,
         airplaneModeEnabled: false,
         incomingCallsEnabled: true,
-        incomingSMSEnabled: false
+        incomingSMSEnabled: false,
+        volteEnabled: true
     )
     var statusState = "completed"
     var omitSettings = false

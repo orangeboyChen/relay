@@ -3314,11 +3314,22 @@
       }
     },
     "These controls are end-to-end encrypted and applied directly by the modem device." : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "这些控制会进行端到端加密，并由调制解调器设备直接执行。"
+          }
+        }
+      }
+    },
+    "These controls are end-to-end encrypted and applied directly by the modem device. VoLTE requires compatible modem firmware, carrier provisioning, and a modem restart after the setting changes." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这些控制会进行端到端加密，并由调制解调器设备直接执行。VoLTE 需要兼容的调制解调器固件、运营商开通，并在更改设置后重启调制解调器。"
           }
         }
       }
@@ -3615,6 +3626,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "查看源代码"
+          }
+        }
+      }
+    },
+    "VoLTE" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "VoLTE"
           }
         }
       }

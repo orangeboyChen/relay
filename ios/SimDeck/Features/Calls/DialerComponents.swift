@@ -69,34 +69,18 @@ struct LinePicker: View {
 struct NumberEntry: View {
     @Binding var number: String
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     var body: some View {
-        ZStack(alignment: .trailing) {
-            DialerNumberTextField(text: $number)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 48)
-
-            if !number.isEmpty {
-                Button {
-                    number.removeLast()
-                } label: {
-                    Image(systemName: "delete.left.fill")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(PressFeedbackButtonStyle())
-                .accessibilityLabel("Delete digit")
-                .transition(
-                    reduceMotion
-                        ? .opacity
-                        : .scale(scale: 0.8, anchor: .trailing).combined(with: .opacity)
-                )
-            }
-        }
+        DialerNumberTextField(text: $number)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 20)
         .frame(height: 54)
-        .animation(reduceMotion ? nil : .snappy, value: number.isEmpty)
+    }
+}
+
+enum DialerNumberMutation {
+    static func deletingLastCharacter(from number: String) -> String {
+        guard !number.isEmpty else { return number }
+        return String(number.dropLast())
     }
 }
 
@@ -289,5 +273,24 @@ struct CallButton: View {
         .disabled(!isEnabled || isCalling)
         .animation(.easeInOut(duration: 0.15), value: isCalling)
         .accessibilityLabel("Call")
+    }
+}
+
+struct DialerDeleteButton: View {
+    let isVisible: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "delete.left.fill")
+                .font(.system(size: 24, weight: .regular))
+                .foregroundStyle(.primary)
+                .frame(width: 56, height: 56)
+        }
+        .buttonStyle(PressFeedbackButtonStyle())
+        .opacity(isVisible ? 1 : 0)
+        .allowsHitTesting(isVisible)
+        .accessibilityHidden(!isVisible)
+        .accessibilityLabel("Delete digit")
     }
 }

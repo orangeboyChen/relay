@@ -6,10 +6,12 @@ import SwiftUI
 
 struct KeypadTabScreen: View {
     @Bindable var model: AppModel
+    @State private var contacts: [ContactRecord] = []
 
     var body: some View {
         DialerScreen(
             lines: model.devices,
+            contacts: contacts,
             initialLineID: preferredManualLineID,
             externalRequest: model.pendingExternalDialRequest,
             externalLineID: externalLineID,
@@ -22,6 +24,18 @@ struct KeypadTabScreen: View {
                 model.pendingExternalDialRequest = nil
             }
         )
+        .task {
+            reloadContacts()
+        }
+    }
+
+    private func reloadContacts() {
+        switch model.contactStore.authorizationState {
+        case .authorized, .limited:
+            contacts = (try? model.contactStore.fetchContacts()) ?? []
+        case .notDetermined, .denied:
+            contacts = []
+        }
     }
 
     private var preferredManualLineID: UUID? {

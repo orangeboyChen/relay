@@ -6,6 +6,7 @@ import SwiftUI
 
 struct DialerScreen: View {
     let lines: [DeviceLineIdentity]
+    let contacts: [ContactRecord]
     let externalRequest: ExternalDialRequest?
     let externalLineID: UUID?
     let callStarter: any CallStarting
@@ -16,9 +17,11 @@ struct DialerScreen: View {
     @State private var number = ""
     @State private var isCalling = false
     @State private var consumedRequestID: UUID?
+    @State private var isContactPickerPresented = false
 
     init(
         lines: [DeviceLineIdentity],
+        contacts: [ContactRecord] = [],
         initialLineID: UUID?,
         initialNumber: String = "",
         externalRequest: ExternalDialRequest? = nil,
@@ -28,6 +31,7 @@ struct DialerScreen: View {
         onExternalRequestConsumed: @escaping (UUID) -> Void = { _ in }
     ) {
         self.lines = lines
+        self.contacts = contacts
         self.externalRequest = externalRequest
         self.externalLineID = externalLineID
         self.callStarter = callStarter
@@ -38,22 +42,32 @@ struct DialerScreen: View {
     }
 
     var body: some View {
-        VStack(spacing: 14) {
-            Spacer(minLength: 72)
+        VStack(spacing: 10) {
+            Spacer(minLength: 40)
 
             NumberEntry(number: $number)
 
+            contactMatchContent
+                .frame(height: 62, alignment: .top)
+
             DialPad(number: $number)
 
-            if let reason = visibleValidationReason {
-                Text(reason)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
+            HStack {
+                Color.clear
+                    .frame(width: 72, height: 72)
 
-            CallButton(isCalling: isCalling, isEnabled: validationReason == nil) {
-                startCall()
+                Spacer()
+
+                CallButton(isCalling: isCalling, isEnabled: validationReason == nil) {
+                    startCall()
+                }
+
+                Spacer()
+
+                DialerDeleteButton(isVisible: !number.isEmpty) {
+                    number = DialerNumberMutation.deletingLastCharacter(from: number)
+                }
+                .frame(width: 72, height: 72)
             }
 
             Spacer(minLength: 10)
@@ -64,6 +78,21 @@ struct DialerScreen: View {
             ToolbarItem(placement: .topBarLeading) {
                 LinePicker(lines: onlineLines, selection: $selectedLineID)
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    isContactPickerPresented = true
+                } label: {
+                    Image(systemName: "person.crop.circle.badge.plus")
+                }
+                .accessibilityLabel("Choose contact")
+            }
+        }
+        .sheet(isPresented: $isContactPickerPresented) {
+            SystemContactNumberPicker { selectedNumber in
+                number = selectedNumber
+                isContactPickerPresented = false
+            }
+            .ignoresSafeArea()
         }
         .onChange(of: externalRequest, initial: true) { _, request in
             apply(request)
@@ -98,10 +127,51 @@ struct DialerScreen: View {
         return nil
     }
 
-    private var visibleValidationReason: LocalizedStringResource? {
-        guard number.isEmpty else { return validationReason }
-        guard onlineLines.isEmpty else { return nil }
-        return validationReason
+    @ViewBuilder
+    private var contactMatchContent: some View {
+        if let exactMatch {
+            HStack(spacing: 6) {
+                Text(exactMatch.contact.displayName)
+                Text(exactMatch.phoneNumber.label)
+                    .fontWeight(.semibold)
+            }
+            .font(.body)
+            .lineLimit(1)
+        } else if let firstMatch = partialMatches.first {
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    Image(systemName: "person.crop.circle")
+                    Text(firstMatch.contact.displayName)
+                    Text(firstMatch.phoneNumber.displayValue)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
+                .frame(minHeight: 30)
+
+                if partialMatches.count > 1 {
+                    Divider()
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
+                        Text("\(partialMatches.count - 1) More Results")
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                    }
+                    .frame(minHeight: 30)
+                }
+            }
+            .font(.subheadline)
+            .padding(.horizontal, 12)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+    }
+
+    private var exactMatch: DialerContactMatch? {
+        DialerContactMatcher.exactMatch(number: number, contacts: contacts)
+    }
+
+    private var partialMatches: [DialerContactMatch] {
+        guard exactMatch == nil else { return [] }
+        return DialerContactMatcher.matches(number: number, contacts: contacts)
     }
 
     private func startCall() {

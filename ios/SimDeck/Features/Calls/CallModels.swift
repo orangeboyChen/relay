@@ -1,6 +1,6 @@
 import Foundation
 
-struct CallRecord: Identifiable, Equatable, Sendable {
+struct CallRecord: Identifiable, Equatable, Sendable, Codable {
     let id: UUID
     let lineID: UUID
     var lineSnapshot: LineHistorySnapshot?
@@ -53,12 +53,12 @@ struct CallRecord: Identifiable, Equatable, Sendable {
     }
 }
 
-enum CallDirection: Equatable, Sendable {
+enum CallDirection: Equatable, Sendable, Codable {
     case incoming
     case outgoing
 }
 
-enum CallResult: Equatable, Sendable {
+enum CallResult: Equatable, Sendable, Codable {
     case answered
     case missed
     case rejected

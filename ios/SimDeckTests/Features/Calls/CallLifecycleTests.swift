@@ -107,6 +107,52 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertEqual(record.duration, 125)
     }
 
+    func testCompletedCallIsPersistedAndRestoredAfterBootstrap() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let callHistoryStore = EncryptedCallHistoryStore(
+            fileURL: directory.appending(path: "calls.bin"),
+            now: { Date(timeIntervalSince1970: 10_000) }
+        )
+        let messageHistoryStore = EncryptedMessageHistoryStore(
+            fileURL: directory.appending(path: "messages.bin")
+        )
+        let vaultKey = VaultKey.random()
+        let transport = RecordingCallTransport()
+        let coordinator = CallKitCoordinator(
+            transport: transport,
+            integratesWithSystem: false,
+            now: { Date(timeIntervalSince1970: 10_000) }
+        )
+        let line = DeviceLineIdentity(
+            id: UUID(),
+            numericID: 2,
+            deviceName: "Test modem",
+            lineName: "Primary",
+            phoneNumber: "13500000000",
+            isOnline: true
+        )
+        let model = AppModel(
+            devices: [line],
+            callCoordinator: coordinator,
+            installationBootstrapper: CallHistoryInstallationBootstrapper(vaultKey: vaultKey),
+            messageHistoryStore: messageHistoryStore,
+            callHistoryStore: callHistoryStore,
+            remoteDeviceRefreshEnabled: false
+        )
+        model.bootstrapInstallation()
+
+        try await coordinator.startCall(to: "10086", using: line.id)
+        try await coordinator.endCall()
+
+        let restored = try callHistoryStore.load(using: vaultKey)
+        XCTAssertEqual(restored.count, 1)
+        XCTAssertEqual(restored[0].lineSnapshot, LineHistorySnapshot(line: line))
+        XCTAssertEqual(restored[0].remoteNumber, "10086")
+        XCTAssertEqual(restored[0].result, .answered)
+    }
+
     func testUnansweredIncomingCallIsRecordedAsMissed() async throws {
         let transport = RecordingCallTransport()
         let coordinator = CallKitCoordinator(
@@ -511,6 +557,26 @@ final class CallLifecycleTests: XCTestCase {
             deviceVerificationKey: Data(repeating: 2, count: 32)
         )
     }
+}
+
+private struct CallHistoryInstallationBootstrapper: InstallationBootstrapping {
+    let vaultKey: VaultKey
+
+    func bootstrap() throws -> InstallationBootstrapResult {
+        InstallationBootstrapResult(
+            identity: InstallationIdentity(
+                id: UUID(),
+                signingPrivateKey: Data(repeating: 1, count: 32),
+                keyAgreementPrivateKey: Data(repeating: 2, count: 32),
+                pendingRevocationIDs: []
+            ),
+            recoveredVaultKey: vaultKey,
+            pendingRevocationIDs: []
+        )
+    }
+
+    func saveVaultKey(_ key: VaultKey) throws {}
+    func markInstallationRevoked(_ id: UUID) throws {}
 }
 
 private final class RecordingSystemCallProvider: SystemCallProviding {

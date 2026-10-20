@@ -48,6 +48,7 @@ final class AppModel {
     @ObservationIgnored private let messageTransport: any MessageTransport
     @ObservationIgnored private let slotSettingsTransport: any SlotSettingsTransport
     @ObservationIgnored private let messageHistoryStore: EncryptedMessageHistoryStore
+    @ObservationIgnored private let callHistoryStore: EncryptedCallHistoryStore
     @ObservationIgnored private let remoteDeviceRefreshEnabled: Bool
 
     var canEditDeviceProfiles: Bool { recoveredVaultKey != nil }
@@ -72,6 +73,7 @@ final class AppModel {
         onboardingStore: (any OnboardingStoring)? = nil,
         passkeyAuthorizer: (any PasskeyAuthorizing)? = nil,
         messageHistoryStore: EncryptedMessageHistoryStore = EncryptedMessageHistoryStore(),
+        callHistoryStore: EncryptedCallHistoryStore = EncryptedCallHistoryStore(),
         remoteDeviceRefreshEnabled: Bool = true
     ) {
         let resolvedServerConnection = serverConnection ?? .live()
@@ -108,6 +110,7 @@ final class AppModel {
         self.passkeyAuthorizer = passkeyAuthorizer ?? NativePasskeyAuthorizer()
         self.commandSigner = resolvedCommandSigner
         self.messageHistoryStore = messageHistoryStore
+        self.callHistoryStore = callHistoryStore
         self.messageTransport = messageTransport ?? LiveMessageTransport(
             api: resolvedServerConnection,
             commandSigner: resolvedCommandSigner,
@@ -144,6 +147,7 @@ final class AppModel {
             keyRecoveryState = result.recoveredVaultKey == nil ? .approvalRequired : .available
             if let recoveredVaultKey {
                 messages = .loaded(try messageHistoryStore.load(using: recoveredVaultKey))
+                callHistory = .loaded(try callHistoryStore.load(using: recoveredVaultKey))
                 reconcileLineHistory(using: devices)
             }
         } catch {
@@ -817,6 +821,7 @@ final class AppModel {
             }
             if didChangeCalls {
                 callHistory = .loaded(records)
+                persistCallHistoryIfAvailable()
             }
         }
 
@@ -840,6 +845,16 @@ final class AppModel {
         records.append(record)
         records.sort { $0.startedAt > $1.startedAt }
         callHistory = .loaded(records)
+        persistCallHistoryIfAvailable()
+    }
+
+    private func persistCallHistoryIfAvailable() {
+        guard let recoveredVaultKey, case .loaded(let records) = callHistory else { return }
+        do {
+            try callHistoryStore.save(records, using: recoveredVaultKey)
+        } catch {
+            Self.logger.error("Persisting encrypted call history failed: \(String(reflecting: error), privacy: .public)")
+        }
     }
 
     private func processIncomingCallPush(_ data: Data) async throws {

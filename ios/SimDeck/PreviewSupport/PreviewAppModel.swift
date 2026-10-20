@@ -18,8 +18,13 @@ extension AppModel {
             fileURL: FileManager.default.temporaryDirectory
                 .appending(path: "sim-deck-preview-\(UUID().uuidString).bin")
         )
+        let callHistoryStore = EncryptedCallHistoryStore(
+            fileURL: FileManager.default.temporaryDirectory
+                .appending(path: "sim-deck-preview-calls-\(UUID().uuidString).bin")
+        )
         if let vaultKey = try? VaultKey(data: Data(repeating: 2, count: VaultKey.length)) {
             try? messageHistoryStore.save(PreviewFixtures.conversations, using: vaultKey)
+            try? callHistoryStore.save(PreviewFixtures.calls, using: vaultKey)
         }
         let model = AppModel(
             devices: devices,
@@ -42,6 +47,7 @@ extension AppModel {
             onboardingStore: PreviewOnboardingStore(isCompleted: onboardingCompleted),
             passkeyAuthorizer: PreviewPasskeyAuthorizer(),
             messageHistoryStore: messageHistoryStore,
+            callHistoryStore: callHistoryStore,
             remoteDeviceRefreshEnabled: false
         )
         model.bootstrapInstallation()

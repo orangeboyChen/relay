@@ -58,6 +58,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
     private var callLines: [UUID: UUID] = [:]
     private var callEvents: [UUID: CallEventContext] = [:]
     private var mediaSessions: [UUID: any CallMediaSession] = [:]
+    private var activeAudioSession: AVAudioSession?
     private var eventCursor: Int64 = 0
     private var eventTask: Task<Void, Never>?
     private var activeEventStream: (any EncryptedEventStream)?
@@ -180,7 +181,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
                 verificationKey: verificationKey,
                 hasConnected: false
             )
-            mediaSessions[callID] = mediaSession
+            installMediaSession(mediaSession, for: callID)
             if automaticallyPollEvents {
                 startEventLoopIfNeeded()
             }
@@ -215,7 +216,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
                 throw LiveCallTransportError.invalidResponse
             }
             try await mediaSession.applyAnswer(answer)
-            mediaSessions[callID] = mediaSession
+            installMediaSession(mediaSession, for: callID)
         } catch {
             mediaSession.close()
             if remoteCallAnswered {
@@ -262,6 +263,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
     }
 
     func audioSessionDidActivate(_ audioSession: AVAudioSession) async {
+        activeAudioSession = audioSession
         for mediaSession in mediaSessions.values {
             mediaSession.audioSessionDidActivate(audioSession)
         }
@@ -270,6 +272,9 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
     func audioSessionDidDeactivate(_ audioSession: AVAudioSession) async {
         for mediaSession in mediaSessions.values {
             mediaSession.audioSessionDidDeactivate(audioSession)
+        }
+        if activeAudioSession === audioSession {
+            activeAudioSession = nil
         }
     }
 
@@ -282,8 +287,16 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
             mediaSession.close()
         }
         mediaSessions.removeAll()
+        activeAudioSession = nil
         callLines.removeAll()
         callEvents.removeAll()
+    }
+
+    private func installMediaSession(_ mediaSession: any CallMediaSession, for callID: UUID) {
+        mediaSessions[callID] = mediaSession
+        if let activeAudioSession {
+            mediaSession.audioSessionDidActivate(activeAudioSession)
+        }
     }
 
     private func send(

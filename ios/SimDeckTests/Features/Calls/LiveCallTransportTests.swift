@@ -547,6 +547,56 @@ final class LiveCallTransportTests: XCTestCase {
         XCTAssertTrue(media.isClosed)
     }
 
+    func testOutgoingMediaReceivesEarlierCallKitAudioActivation() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let media = CallMediaSessionFake()
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: api.commandSigner,
+            makeMediaSession: { media },
+            waitBeforePollingAgain: {},
+            automaticallyPollEvents: false
+        )
+        let audioSession = AVAudioSession.sharedInstance()
+
+        await transport.audioSessionDidActivate(audioSession)
+        try await transport.startOutgoingCall(
+            callID: callID,
+            number: "13500000000",
+            lineID: deviceID
+        )
+
+        XCTAssertEqual(media.activatedAudioSessions, [ObjectIdentifier(audioSession)])
+        await transport.audioSessionDidDeactivate(audioSession)
+        XCTAssertEqual(media.deactivatedAudioSessions, [ObjectIdentifier(audioSession)])
+    }
+
+    func testIncomingMediaReceivesEarlierCallKitAudioActivation() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let media = CallMediaSessionFake()
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: api.commandSigner,
+            makeMediaSession: { media },
+            waitBeforePollingAgain: {},
+            automaticallyPollEvents: false
+        )
+        try transport.registerIncomingCall(
+            IncomingCallRegistration(
+                callID: callID,
+                lineID: deviceID,
+                callSecret: Data((97...128).map(UInt8.init)),
+                verificationKey: api.verificationKey
+            )
+        )
+        let audioSession = AVAudioSession.sharedInstance()
+
+        await transport.audioSessionDidActivate(audioSession)
+        try await transport.answerIncomingCall(callID: callID)
+
+        XCTAssertEqual(media.activatedAudioSessions, [ObjectIdentifier(audioSession)])
+    }
+
     func testMissingInstallationIdentityDoesNotQueueACommand() async throws {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
         let transport = LiveCallTransport(
@@ -639,6 +689,8 @@ private final class CallMediaSessionFake: CallMediaSession {
     var applyAnswerError: Error?
     private(set) var appliedAnswers: [String] = []
     private(set) var muteChanges: [Bool] = []
+    private(set) var activatedAudioSessions: [ObjectIdentifier] = []
+    private(set) var deactivatedAudioSessions: [ObjectIdentifier] = []
     private(set) var isClosed = false
 
     func makeOffer() async throws -> String {
@@ -656,8 +708,13 @@ private final class CallMediaSessionFake: CallMediaSession {
         muteChanges.append(isMuted)
     }
 
-    func audioSessionDidActivate(_ audioSession: AVAudioSession) {}
-    func audioSessionDidDeactivate(_ audioSession: AVAudioSession) {}
+    func audioSessionDidActivate(_ audioSession: AVAudioSession) {
+        activatedAudioSessions.append(ObjectIdentifier(audioSession))
+    }
+
+    func audioSessionDidDeactivate(_ audioSession: AVAudioSession) {
+        deactivatedAudioSessions.append(ObjectIdentifier(audioSession))
+    }
 
     func close() {
         isClosed = true

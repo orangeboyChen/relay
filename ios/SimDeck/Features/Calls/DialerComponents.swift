@@ -40,7 +40,7 @@ struct LinePicker: View {
             .frame(minHeight: 44)
             .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         } else if lines.isEmpty {
-            Label("No online SIM", systemImage: "simcard.slash")
+            Label("No online SIM", systemImage: "simcard")
                 .foregroundStyle(.secondary)
                 .frame(minHeight: 44)
         } else {

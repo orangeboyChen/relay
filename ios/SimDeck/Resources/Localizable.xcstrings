@@ -21,6 +21,7 @@
       }
     },
     "%lld bars" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -83,6 +84,16 @@
     },
     "?" : {
 
+    },
+    "A reachable Sim Deck server, a paired device, and an active SIM card are required for calls and messages." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拨打电话和收发短信需要可连接的 Sim Deck 服务器、已配对的设备和有效的 SIM 卡。"
+          }
+        }
+      }
     },
     "API" : {
       "localizations" : {
@@ -315,6 +326,16 @@
     },
     "Audio" : {
 
+    },
+    "Audio Output" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "音频输出"
+          }
+        }
+      }
     },
     "Authenticate & Delete" : {
       "extractionState" : "stale",
@@ -572,6 +593,7 @@
       }
     },
     "Close" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -678,6 +700,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "联系人"
+          }
+        }
+      }
+    },
+    "Contact index" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "联系人索引"
           }
         }
       }
@@ -1090,12 +1122,32 @@
         }
       }
     },
+    "Drag vertically to jump between contact sections." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上下拖动即可跳转到联系人分组。"
+          }
+        }
+      }
+    },
     "Duration" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "时长"
+          }
+        }
+      }
+    },
+    "Edit" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑"
           }
         }
       }
@@ -1388,9 +1440,27 @@
       }
     },
     "Keypad" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拨号键盘"
+          }
+        }
+      }
+    },
+    "License Unavailable" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "许可文本不可用"
+          }
+        }
+      }
     },
     "Licenses" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1526,6 +1596,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "MMSC"
+          }
+        }
+      }
+    },
+    "Make and receive calls and text messages on this iPhone using SIM cards in your connected Sim Deck device." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通过已连接的 Sim Deck 设备中的 SIM 卡，在这台 iPhone 上拨打、接听电话和收发短信。"
           }
         }
       }
@@ -1948,6 +2028,7 @@
       }
     },
     "Open Source Licenses" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1968,6 +2049,7 @@
       }
     },
     "Open dialer" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1978,6 +2060,7 @@
       }
     },
     "Open source license notices appear here." : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2691,6 +2774,17 @@
         }
       }
     },
+    "Source Code" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "源代码"
+          }
+        }
+      }
+    },
     "Start one container for this modem" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -2814,6 +2908,27 @@
     },
     "The SIM identity and its encrypted profile will be removed from this account. A future insertion creates a new managed record." : {
 
+    },
+    "The Sim Deck iOS source code is licensed under MPL 2.0." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sim Deck iOS 源代码采用 MPL 2.0 许可。"
+          }
+        }
+      }
+    },
+    "The WebRTC license could not be loaded." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法加载 WebRTC 许可文本。"
+          }
+        }
+      }
     },
     "The call command could not be completed." : {
 
@@ -3006,12 +3121,32 @@
         }
       }
     },
+    "These calls and messages use the SIM in your Sim Deck device, not the SIM in this iPhone." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这些电话和短信使用 Sim Deck 设备中的 SIM 卡，不使用这台 iPhone 的 SIM 卡。"
+          }
+        }
+      }
+    },
     "These controls are end-to-end encrypted and applied directly by the modem device." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "这些控制会进行端到端加密，并由调制解调器设备直接执行。"
+          }
+        }
+      }
+    },
+    "Third-Party Software" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第三方软件"
           }
         }
       }
@@ -3281,12 +3416,53 @@
         }
       }
     },
+    "View Source Code" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看源代码"
+          }
+        }
+      }
+    },
+    "WebRTC License" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "WebRTC 许可"
+          }
+        }
+      }
+    },
     "Welcome to sim-deck" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "欢迎使用 sim-deck"
+          }
+        }
+      }
+    },
+    "What Sim Deck Does" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sim Deck 的用途"
+          }
+        }
+      }
+    },
+    "What You Need" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用要求"
           }
         }
       }
@@ -3330,126 +3506,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "iCloud 钥匙串恢复"
-          }
-        }
-      }
-    },
-    "A reachable Sim Deck server, a paired device, and an active SIM card are required for calls and messages." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "拨打电话和收发短信需要可连接的 Sim Deck 服务器、已配对的设备和有效的 SIM 卡。"
-          }
-        }
-      }
-    },
-    "License Unavailable" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "许可文本不可用"
-          }
-        }
-      }
-    },
-    "Make and receive calls and text messages on this iPhone using SIM cards in your connected Sim Deck device." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "通过已连接的 Sim Deck 设备中的 SIM 卡，在这台 iPhone 上拨打、接听电话和收发短信。"
-          }
-        }
-      }
-    },
-    "The WebRTC license could not be loaded." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法加载 WebRTC 许可文本。"
-          }
-        }
-      }
-    },
-    "These calls and messages use the SIM in your Sim Deck device, not the SIM in this iPhone." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "这些电话和短信使用 Sim Deck 设备中的 SIM 卡，不使用这台 iPhone 的 SIM 卡。"
-          }
-        }
-      }
-    },
-    "Third-Party Software" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "第三方软件"
-          }
-        }
-      }
-    },
-    "WebRTC License" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "WebRTC 许可"
-          }
-        }
-      }
-    },
-    "What Sim Deck Does" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sim Deck 的用途"
-          }
-        }
-      }
-    },
-    "What You Need" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用要求"
-          }
-        }
-      }
-    },
-    "Source Code" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "源代码"
-          }
-        }
-      }
-    },
-    "The Sim Deck iOS source code is licensed under MPL 2.0." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sim Deck iOS 源代码采用 MPL 2.0 许可。"
-          }
-        }
-      }
-    },
-    "View Source Code" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "查看源代码"
           }
         }
       }

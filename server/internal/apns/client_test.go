@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net/http"
@@ -100,7 +101,8 @@ var _ = Describe("APNs client", func() {
 		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			Expect(request.Header.Get("apns-topic")).To(Equal("com.nowcent.simdeck"))
 			Expect(request.Header.Get("apns-push-type")).To(Equal("alert"))
-			Expect(request.Header.Get("apns-priority")).To(Equal("5"))
+			Expect(request.Header.Get("apns-priority")).To(Equal("10"))
+			Expect(request.Header.Get("apns-expiration")).To(Equal(fmt.Sprint(now.Add(alertExpiration).Unix())))
 			var payload map[string]json.RawMessage
 			body, err := io.ReadAll(request.Body)
 			Expect(err).NotTo(HaveOccurred())

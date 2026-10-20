@@ -25,6 +25,7 @@ const (
 	defaultSandboxURL    = "https://api.sandbox.push.apple.com"
 	maximumPayloadSize   = 5 * 1024
 	providerTokenTTL     = 50 * time.Minute
+	alertExpiration      = 24 * time.Hour
 )
 
 var (
@@ -130,7 +131,7 @@ func (client *Client) SendVoIP(ctx context.Context, environment string, deviceTo
 
 // SendAlert sends an encrypted background alert delivery to the notification service extension.
 func (client *Client) SendAlert(ctx context.Context, environment string, deviceToken []byte, encryptedDelivery []byte) error {
-	return client.send(ctx, environment, deviceToken, encryptedDelivery, "alert", 5)
+	return client.send(ctx, environment, deviceToken, encryptedDelivery, "alert", 10)
 }
 
 func (client *Client) send(ctx context.Context, environment string, deviceToken []byte, encryptedDelivery []byte, pushType string, priority int) error {
@@ -168,7 +169,11 @@ func (client *Client) send(ctx context.Context, environment string, deviceToken 
 	request.Header.Set("apns-topic", topic)
 	request.Header.Set("apns-push-type", pushType)
 	request.Header.Set("apns-priority", fmt.Sprint(priority))
-	request.Header.Set("apns-expiration", "0")
+	expiration := int64(0)
+	if pushType == "alert" {
+		expiration = client.now().UTC().Add(alertExpiration).Unix()
+	}
+	request.Header.Set("apns-expiration", fmt.Sprint(expiration))
 	request.Header.Set("content-type", "application/json")
 
 	response, err := client.httpClient.Do(request)

@@ -27,6 +27,7 @@ const (
 	maximumVoIPPayloadSize  = 5 * 1024
 	providerTokenTTL        = 50 * time.Minute
 	alertExpiration         = 24 * time.Hour
+	genericAlertPayload     = `{"aps":{"alert":{"title":"Sim Deck","body":"New message"},"content-available":1,"mutable-content":1}}`
 )
 
 var (
@@ -227,7 +228,13 @@ func alertPayload(encryptedDelivery []byte, voip bool) ([]byte, error) {
 	if voip {
 		maximumPayloadSize = maximumVoIPPayloadSize
 	}
-	if err != nil || len(encoded) > maximumPayloadSize {
+	if err != nil {
+		return nil, ErrInvalidPayload
+	}
+	if len(encoded) > maximumPayloadSize {
+		if !voip {
+			return []byte(genericAlertPayload), nil
+		}
 		return nil, ErrInvalidPayload
 	}
 	return encoded, nil

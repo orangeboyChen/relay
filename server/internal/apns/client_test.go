@@ -169,14 +169,17 @@ var _ = Describe("APNs client", func() {
 		Expect(client.SendVoIP(context.Background(), "sandbox", []byte{1}, large)).To(MatchError(ErrInvalidPayload))
 	})
 
-	It("enforces the smaller APNs alert payload limit", func() {
+	It("falls back to a generic alert when encrypted SMS metadata exceeds the alert limit", func() {
 		betweenLimits := []byte(`{"ciphertext":"` + strings.Repeat("a", 4_200) + `"}`)
 
-		_, voipError := alertPayload(betweenLimits, true)
-		_, alertError := alertPayload(betweenLimits, false)
+		voipPayload, voipError := alertPayload(betweenLimits, true)
+		fallbackPayload, alertError := alertPayload(betweenLimits, false)
 
 		Expect(voipError).NotTo(HaveOccurred())
-		Expect(alertError).To(MatchError(ErrInvalidPayload))
+		Expect(voipPayload).To(ContainSubstring("ciphertext"))
+		Expect(alertError).NotTo(HaveOccurred())
+		Expect(fallbackPayload).To(MatchJSON(genericAlertPayload))
+		Expect(fallbackPayload).NotTo(ContainSubstring("ciphertext"))
 	})
 
 	It("returns transport failures without converting them to APNs responses", func() {

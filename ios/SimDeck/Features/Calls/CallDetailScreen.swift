@@ -12,7 +12,7 @@ struct CallDetailScreen: View {
     let callAction: () -> Void
     let sendAction: (UUID, String, String) async throws -> Void
 
-    @State private var isMessagePresented = false
+    @State private var activeSheet: CallDetailSheet?
 
     var body: some View {
         ZStack {
@@ -24,6 +24,9 @@ struct CallDetailScreen: View {
                     header
                     actionButtons
                     callHistoryCard
+                    if record.contactName == nil {
+                        addNameCard
+                    }
                     numberCard
                 }
                 .frame(maxWidth: .infinity)
@@ -36,13 +39,18 @@ struct CallDetailScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
         .preferredColorScheme(.dark)
-        .sheet(isPresented: $isMessagePresented) {
-            NewMessageScreen(
-                lines: lines,
-                selectedLineID: preferredMessageLineID,
-                recipient: record.remoteNumber,
-                sendAction: sendAction
-            )
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .message:
+                NewMessageScreen(
+                    lines: lines,
+                    selectedLineID: preferredMessageLineID,
+                    recipient: record.remoteNumber,
+                    sendAction: sendAction
+                )
+            case .addName:
+                SystemUnknownContactView(phoneNumber: record.remoteNumber)
+            }
         }
     }
 
@@ -59,7 +67,7 @@ struct CallDetailScreen: View {
                         .font(.system(size: 84, weight: .medium, design: .rounded))
                 } else {
                     Image(systemName: "person.fill")
-                        .font(.system(size: 112))
+                        .font(.system(size: 154))
                 }
             }
             .foregroundStyle(.white)
@@ -101,7 +109,7 @@ struct CallDetailScreen: View {
     private var actionButtons: some View {
         HStack(spacing: 12) {
             detailAction(title: "Message", symbol: "message.fill") {
-                isMessagePresented = true
+                activeSheet = .message
             }
             detailAction(title: "Call", symbol: "phone.fill", action: callAction)
             detailAction(title: "Video", symbol: "video.fill", isEnabled: false) {}
@@ -156,6 +164,26 @@ struct CallDetailScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+    }
+
+    private var addNameCard: some View {
+        Button {
+            activeSheet = .addName
+        } label: {
+            HStack {
+                Text("Add Name")
+                    .foregroundStyle(.primary)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(minHeight: 44)
+            .padding(.horizontal, 16)
+            .contentShape(Rectangle())
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        }
+        .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.99))
     }
 
     private func detailAction(
@@ -220,6 +248,13 @@ struct CallDetailScreen: View {
         }
     }
 
+}
+
+private enum CallDetailSheet: String, Identifiable {
+    case message
+    case addName
+
+    var id: Self { self }
 }
 
 private struct CallDetailBackdrop: View {

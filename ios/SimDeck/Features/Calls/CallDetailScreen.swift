@@ -16,7 +16,7 @@ struct CallDetailScreen: View {
 
     var body: some View {
         ZStack {
-            CallDetailBackdrop()
+            PhoneDetailBackdrop()
                 .ignoresSafeArea()
 
             ScrollView {
@@ -257,7 +257,7 @@ private enum CallDetailSheet: String, Identifiable {
     var id: Self { self }
 }
 
-private struct CallDetailBackdrop: View {
+struct PhoneDetailBackdrop: View {
     var body: some View {
         LinearGradient(
             colors: [

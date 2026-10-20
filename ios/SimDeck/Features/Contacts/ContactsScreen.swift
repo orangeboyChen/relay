@@ -113,6 +113,7 @@ struct ContactsScreen: View {
                     ContactDetailScreen(
                         contact: contact,
                         lines: model.devices,
+                        defaultCallLineID: model.defaultCallLineID,
                         defaultMessageLineID: model.defaultMessageLineID,
                         callAction: { number in
                             await model.handleExternalDial(number: number)

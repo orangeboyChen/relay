@@ -48,6 +48,23 @@ final class SlotSettingsTransportTests: XCTestCase {
         XCTAssertEqual(payload.incomingSMSEnabled, false)
     }
 
+    func testLoadUsesFreshServerAssignmentInsteadOfStaleScreenIdentifiers() async throws {
+        let api = try SlotSettingsAPIFake(deviceID: deviceID)
+        let currentSlotID = UUID(uuidString: "01900000-0000-7000-8000-000000000406")!
+        let currentSIMID = UUID(uuidString: "01900000-0000-7000-8000-000000000407")!
+        api.refreshedTarget = EncryptedCommandTarget(
+            deviceID: deviceID,
+            slotID: currentSlotID,
+            simID: currentSIMID,
+            publicKey: api.commandPublicKey
+        )
+
+        _ = try await makeTransport(api: api).load(line: line(commandKey: api.commandPublicKey))
+
+        XCTAssertEqual(api.payloads.first?.slotID, currentSlotID)
+        XCTAssertEqual(api.payloads.first?.simID, currentSIMID)
+    }
+
     func testOfflineMissingIdentityTimeoutAndInvalidResultFailClosed() async throws {
         let offlineAPI = try SlotSettingsAPIFake(deviceID: deviceID)
         let offlineTransport = makeTransport(api: offlineAPI)
@@ -133,6 +150,7 @@ private final class SlotSettingsAPIFake: EncryptedCallCommandAPI {
     )
     var statusState = "completed"
     var omitSettings = false
+    var refreshedTarget: EncryptedCommandTarget?
     private(set) var payloads: [SlotSettingsCommandPayload] = []
     private(set) var requests: [EncryptedCallCommandRequest] = []
     private(set) var statusRequests = 0
@@ -158,6 +176,16 @@ private final class SlotSettingsAPIFake: EncryptedCallCommandAPI {
     func commandRecipient(deviceID: UUID) async throws -> Data {
         XCTAssertEqual(deviceID, self.deviceID)
         return commandPublicKey
+    }
+
+    func commandTarget(for line: DeviceLineIdentity) async throws -> EncryptedCommandTarget {
+        XCTAssertEqual(line.deviceID, deviceID)
+        return refreshedTarget ?? EncryptedCommandTarget(
+            deviceID: deviceID,
+            slotID: line.slotID,
+            simID: line.simID,
+            publicKey: commandPublicKey
+        )
     }
 
     func eventVerificationKey(deviceID: UUID) async throws -> Data { Data(repeating: 0, count: 32) }

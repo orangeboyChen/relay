@@ -302,6 +302,62 @@ final class ServerConnectionManagerTests: XCTestCase {
         XCTAssertEqual(lines[1].simID, simID)
     }
 
+    func testCommandTargetRefreshesStaleSlotAndSIMIdentifiersByStableSlotIdentity() async throws {
+        let deviceID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-000000000021")!
+        let currentSlotID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-000000000022")!
+        let currentSIMID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-000000000023")!
+        let staleSlotID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-000000000024")!
+        let staleSIMID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-000000000025")!
+        let commandKey = Data(repeating: 9, count: 32)
+        let lastSeenAt = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-1))
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
+        )
+        let network = ScriptedServerNetwork { request in
+            XCTAssertEqual(request.url?.path, "/v1/devices")
+            return Self.response(status: 200, body: """
+            {"devices":[{
+              "device_uuid":"\(deviceID.uuidString.lowercased())",
+              "numeric_id":1,
+              "identity_public_key":"\(commandKey.base64EncodedString())",
+              "command_public_key":"\(commandKey.base64EncodedString())",
+              "last_seen_at":"\(lastSeenAt)",
+              "slots":[{
+                "slot_id":"\(currentSlotID.uuidString.lowercased())",
+                "slot_index":1,
+                "slot_key":"physical-slot-a",
+                "sim_id":"\(currentSIMID.uuidString.lowercased())",
+                "numeric_id":1
+              }]
+            }]}
+            """)
+        }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+        let staleLine = DeviceLineIdentity(
+            id: staleSlotID,
+            deviceID: deviceID,
+            slotID: staleSlotID,
+            simID: staleSIMID,
+            numericID: 1,
+            slotKey: "physical-slot-a",
+            slotIndex: 1,
+            deviceName: "EC20F",
+            lineName: "Line",
+            phoneNumber: "13800000000",
+            isOnline: true,
+            commandPublicKey: commandKey
+        )
+
+        let target = try await manager.commandTarget(for: staleLine)
+
+        XCTAssertEqual(target.deviceID, deviceID)
+        XCTAssertEqual(target.slotID, currentSlotID)
+        XCTAssertEqual(target.simID, currentSIMID)
+        XCTAssertEqual(target.publicKey, commandKey)
+    }
+
     func testLoadsAndDecryptsDeviceProfileWithVaultKey() async throws {
         let deviceID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-000000000003")!
         let key = try VaultKey(data: Data(repeating: 6, count: VaultKey.length))

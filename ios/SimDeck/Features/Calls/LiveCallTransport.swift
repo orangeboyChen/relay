@@ -294,8 +294,16 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
         digits: String? = nil,
         mediaOffer: String? = nil
     ) async throws -> CallCommandExchange {
-        let deviceID = deviceID(for: lineID)
-        let deviceKeyData = try await api.commandRecipient(deviceID: deviceID)
+        let line = lineRoutes[lineID] ?? DeviceLineIdentity(
+            id: lineID,
+            numericID: 1,
+            deviceName: "",
+            lineName: "",
+            phoneNumber: "",
+            isOnline: true
+        )
+        let target = try await api.commandTarget(for: line)
+        let deviceID = target.deviceID
         let commandID = makeCommandID()
         let senderKey = makeSenderKey()
         guard let installationIdentity = commandSigner.identity else {
@@ -305,8 +313,8 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
             version: 1,
             operation: operation,
             callID: callID.uuidString.lowercased(),
-            slotID: lineRoutes[lineID]?.slotID,
-            simID: lineRoutes[lineID]?.simID,
+            slotID: target.slotID,
+            simID: target.simID,
             number: number,
             digits: digits,
             mediaOffer: mediaOffer
@@ -315,7 +323,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
         do {
             sealed = try EncryptedCallCommandCodec.seal(
                 payload: payload,
-                recipientPublicKey: deviceKeyData,
+                recipientPublicKey: target.publicKey,
                 senderPrivateKey: senderKey,
                 nonce: AES.GCM.Nonce(),
                 commandID: commandID,

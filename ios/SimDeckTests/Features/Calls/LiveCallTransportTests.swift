@@ -331,11 +331,19 @@ final class LiveCallTransportTests: XCTestCase {
             commandPublicKey: nil
         )
         transport.updateLineRoutes([line])
+        let currentSlotID = UUID(uuidString: "01900000-0000-7000-8000-000000000303")!
+        let currentSIMID = UUID(uuidString: "01900000-0000-7000-8000-000000000304")!
+        api.refreshedTarget = EncryptedCommandTarget(
+            deviceID: deviceID,
+            slotID: currentSlotID,
+            simID: currentSIMID,
+            publicKey: api.commandPublicKey
+        )
 
         try await transport.startOutgoingCall(callID: callID, number: "13500000000", lineID: simID)
 
-        XCTAssertEqual(api.payloads.first?.slotID, slotID)
-        XCTAssertEqual(api.payloads.first?.simID, simID)
+        XCTAssertEqual(api.payloads.first?.slotID, currentSlotID)
+        XCTAssertEqual(api.payloads.first?.simID, currentSIMID)
     }
 
     func testEncryptedModemFailureIsSurfacedWithoutLeakingModemDetails() async throws {
@@ -673,6 +681,7 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
     private var callSharedSecret: SharedSecret?
 
     var recipientKeyOverride: Data?
+    var refreshedTarget: EncryptedCommandTarget?
     var omitMediaAnswer = false
     private(set) var requests: [EncryptedCallCommandRequest] = []
     private(set) var payloads: [CallCommandPayload] = []
@@ -680,6 +689,7 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
     private(set) var requestedEventCursors: [Int64] = []
 
     var verificationKey: Data { identityPrivateKey.publicKey.rawRepresentation }
+    var commandPublicKey: Data { devicePrivateKey.publicKey.rawRepresentation }
     var commandSigner: InstallationCommandSigner {
         InstallationCommandSigner(identity: installationIdentity)
     }
@@ -704,6 +714,16 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
     func commandRecipient(deviceID: UUID) async throws -> Data {
         XCTAssertEqual(deviceID, self.deviceID)
         return recipientKeyOverride ?? devicePrivateKey.publicKey.rawRepresentation
+    }
+
+    func commandTarget(for line: DeviceLineIdentity) async throws -> EncryptedCommandTarget {
+        XCTAssertEqual(line.deviceID, deviceID)
+        return refreshedTarget ?? EncryptedCommandTarget(
+            deviceID: deviceID,
+            slotID: line.slotID,
+            simID: line.simID,
+            publicKey: recipientKeyOverride ?? commandPublicKey
+        )
     }
 
     func eventVerificationKey(deviceID: UUID) async throws -> Data {

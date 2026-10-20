@@ -260,10 +260,29 @@ protocol PushTokenRegistering: AnyObject {
 @MainActor
 protocol EncryptedCallCommandAPI: AnyObject {
     func commandRecipient(deviceID: UUID) async throws -> Data
+    func commandTarget(for line: DeviceLineIdentity) async throws -> EncryptedCommandTarget
     func eventVerificationKey(deviceID: UUID) async throws -> Data
     func enqueueCommand(deviceID: UUID, command: EncryptedCallCommandRequest) async throws
     func commandStatus(deviceID: UUID, commandID: UUID) async throws -> EncryptedCallCommandStatus
     func encryptedEvents(afterSequence: Int64) async throws -> EncryptedEventPage
+}
+
+struct EncryptedCommandTarget: Equatable, Sendable {
+    let deviceID: UUID
+    let slotID: UUID?
+    let simID: UUID?
+    let publicKey: Data
+}
+
+extension EncryptedCallCommandAPI {
+    func commandTarget(for line: DeviceLineIdentity) async throws -> EncryptedCommandTarget {
+        EncryptedCommandTarget(
+            deviceID: line.deviceID,
+            slotID: line.slotID,
+            simID: line.simID,
+            publicKey: try await commandRecipient(deviceID: line.deviceID)
+        )
+    }
 }
 
 @MainActor
@@ -867,6 +886,34 @@ final class ServerConnectionManager {
             throw ServerConnectionError.deviceUnavailable
         }
         return publicKey
+    }
+
+    func commandTarget(for line: DeviceLineIdentity) async throws -> EncryptedCommandTarget {
+        let candidates = try await loadDevices().filter { $0.deviceID == line.deviceID }
+        let currentLine: DeviceLineIdentity?
+        if let slotKey = line.slotKey, !slotKey.isEmpty {
+            currentLine = candidates.first {
+                $0.slotKey == slotKey && (line.slotIndex == nil || $0.slotIndex == line.slotIndex)
+            }
+        } else if let slotID = line.slotID {
+            currentLine = candidates.first { $0.slotID == slotID }
+        } else if let simID = line.simID {
+            currentLine = candidates.first { $0.simID == simID }
+        } else {
+            currentLine = candidates.count == 1 ? candidates[0] : nil
+        }
+        guard let currentLine,
+              currentLine.isOnline,
+              let publicKey = currentLine.commandPublicKey,
+              publicKey.count == 32 else {
+            throw ServerConnectionError.deviceUnavailable
+        }
+        return EncryptedCommandTarget(
+            deviceID: currentLine.deviceID,
+            slotID: currentLine.slotID,
+            simID: currentLine.simID,
+            publicKey: publicKey
+        )
     }
 
     func turnCredentials() async throws -> CallTURNCredentials {

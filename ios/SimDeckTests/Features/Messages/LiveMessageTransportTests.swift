@@ -89,6 +89,14 @@ final class LiveMessageTransportTests: XCTestCase {
             commandPublicKey: api.recipientKey
         )
         transport.updateLineRoutes([line])
+        let currentSlotID = UUID(uuidString: "01900000-0000-7000-8000-000000000305")!
+        let currentSIMID = UUID(uuidString: "01900000-0000-7000-8000-000000000306")!
+        api.refreshedTarget = EncryptedCommandTarget(
+            deviceID: deviceID,
+            slotID: currentSlotID,
+            simID: currentSIMID,
+            publicKey: api.recipientKey
+        )
 
         try await transport.send(
             messageID: messageID,
@@ -97,8 +105,8 @@ final class LiveMessageTransportTests: XCTestCase {
             body: "test"
         )
 
-        XCTAssertEqual(api.payloads.first?.slotID, slotID)
-        XCTAssertEqual(api.payloads.first?.simID, simID)
+        XCTAssertEqual(api.payloads.first?.slotID, currentSlotID)
+        XCTAssertEqual(api.payloads.first?.simID, currentSIMID)
     }
 
     func testSendRejectsMissingIdentityInvalidDeviceKeyAndTimeout() async throws {
@@ -404,6 +412,7 @@ private final class MessageCommandAPIFake: EncryptedCallCommandAPI {
     private var results: [UUID: EncryptedCallCommandResult] = [:]
 
     var recipientKey: Data
+    var refreshedTarget: EncryptedCommandTarget?
     var verificationKeys: [UUID: Data]
     var events: [EncryptedEventEnvelope] = []
     private(set) var requests: [EncryptedCallCommandRequest] = []
@@ -441,6 +450,16 @@ private final class MessageCommandAPIFake: EncryptedCallCommandAPI {
     func commandRecipient(deviceID: UUID) async throws -> Data {
         XCTAssertEqual(deviceID, self.deviceID)
         return recipientKey
+    }
+
+    func commandTarget(for line: DeviceLineIdentity) async throws -> EncryptedCommandTarget {
+        XCTAssertEqual(line.deviceID, deviceID)
+        return refreshedTarget ?? EncryptedCommandTarget(
+            deviceID: deviceID,
+            slotID: line.slotID,
+            simID: line.simID,
+            publicKey: recipientKey
+        )
     }
 
     func eventVerificationKey(deviceID: UUID) async throws -> Data {

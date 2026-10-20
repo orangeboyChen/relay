@@ -92,13 +92,13 @@ final class LiveSlotSettingsTransport: SlotSettingsTransport {
         guard line.isOnline, let installationIdentity = commandSigner.identity else {
             throw SlotSettingsTransportError.unavailable
         }
-        let recipientKey = try await api.commandRecipient(deviceID: line.deviceID)
+        let target = try await api.commandTarget(for: line)
         let commandID = makeCommandID()
         let payload = SlotSettingsCommandPayload(
             version: 1,
             operation: "slot.configure",
-            slotID: line.slotID,
-            simID: line.simID,
+            slotID: target.slotID,
+            simID: target.simID,
             dataEnabled: settings?.dataEnabled,
             airplaneModeEnabled: settings?.airplaneModeEnabled,
             incomingCallsEnabled: settings?.incomingCallsEnabled,
@@ -108,20 +108,20 @@ final class LiveSlotSettingsTransport: SlotSettingsTransport {
         do {
             sealed = try EncryptedCallCommandCodec.seal(
                 payload: payload,
-                recipientPublicKey: recipientKey,
+                recipientPublicKey: target.publicKey,
                 senderPrivateKey: makeSenderKey(),
                 nonce: AES.GCM.Nonce(),
                 commandID: commandID,
-                deviceID: line.deviceID,
+                deviceID: target.deviceID,
                 createdAt: Date(timeIntervalSince1970: floor(now().timeIntervalSince1970)),
                 installationIdentity: installationIdentity
             )
         } catch {
             throw SlotSettingsTransportError.unavailable
         }
-        try await api.enqueueCommand(deviceID: line.deviceID, command: sealed.request)
+        try await api.enqueueCommand(deviceID: target.deviceID, command: sealed.request)
         for attempt in 0..<60 {
-            let status = try await api.commandStatus(deviceID: line.deviceID, commandID: commandID)
+            let status = try await api.commandStatus(deviceID: target.deviceID, commandID: commandID)
             if status.state == "completed" {
                 guard let encryptedResult = status.result else {
                     throw SlotSettingsTransportError.invalidResponse
@@ -132,7 +132,7 @@ final class LiveSlotSettingsTransport: SlotSettingsTransport {
                         encryptedResult,
                         sharedSecret: sealed.sharedSecret,
                         commandID: commandID,
-                        deviceID: line.deviceID
+                        deviceID: target.deviceID
                     )
                 } catch {
                     throw SlotSettingsTransportError.invalidResponse

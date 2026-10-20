@@ -159,16 +159,22 @@ final class LiveMessageTransport: MessageTransport {
         guard let installationIdentity = commandSigner.identity else {
             throw LiveMessageTransportError.missingInstallationIdentity
         }
-        let line = lineRoutes[lineID]
-        let deviceID = line?.deviceID ?? lineID
-        let recipientKey = try await api.commandRecipient(deviceID: deviceID)
+        let line = lineRoutes[lineID] ?? DeviceLineIdentity(
+            id: lineID,
+            numericID: 1,
+            deviceName: "",
+            lineName: "",
+            phoneNumber: "",
+            isOnline: true
+        )
+        let target = try await api.commandTarget(for: line)
         let commandID = makeCommandID()
         let payload = MessageCommandPayload(
             version: 1,
             operation: "message.send",
             messageID: messageID.uuidString.lowercased(),
-            slotID: line?.slotID,
-            simID: line?.simID,
+            slotID: target.slotID,
+            simID: target.simID,
             number: remoteNumber,
             body: body
         )
@@ -176,21 +182,21 @@ final class LiveMessageTransport: MessageTransport {
         do {
             sealed = try EncryptedCallCommandCodec.seal(
                 payload: payload,
-                recipientPublicKey: recipientKey,
+                recipientPublicKey: target.publicKey,
                 senderPrivateKey: makeSenderKey(),
                 nonce: AES.GCM.Nonce(),
                 commandID: commandID,
-                deviceID: deviceID,
+                deviceID: target.deviceID,
                 createdAt: Date(timeIntervalSince1970: floor(now().timeIntervalSince1970)),
                 installationIdentity: installationIdentity
             )
         } catch is CryptoKitError {
             throw LiveMessageTransportError.invalidDeviceKey
         }
-        try await api.enqueueCommand(deviceID: deviceID, command: sealed.request)
+        try await api.enqueueCommand(deviceID: target.deviceID, command: sealed.request)
 
         for attempt in 0..<60 {
-            let status = try await api.commandStatus(deviceID: deviceID, commandID: commandID)
+            let status = try await api.commandStatus(deviceID: target.deviceID, commandID: commandID)
             if status.state == "completed" {
                 guard let encryptedResult = status.result else {
                     throw LiveMessageTransportError.invalidResponse
@@ -201,7 +207,7 @@ final class LiveMessageTransport: MessageTransport {
                         encryptedResult,
                         sharedSecret: sealed.sharedSecret,
                         commandID: commandID,
-                        deviceID: deviceID
+                        deviceID: target.deviceID
                     )
                 } catch {
                     throw LiveMessageTransportError.invalidResponse

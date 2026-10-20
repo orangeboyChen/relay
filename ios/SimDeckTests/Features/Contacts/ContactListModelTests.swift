@@ -75,6 +75,33 @@ final class ContactListModelTests: XCTestCase {
         XCTAssertEqual(store.fetchCount, 1)
     }
 
+    func testRunReloadsContactsAfterTheSystemDirectoryChanges() async {
+        let store = ContactStoreStub(
+            authorizationState: .authorized,
+            contacts: [contact(id: "1", givenName: "Alpha")]
+        )
+        let model = ContactListModel(store: store)
+        let runTask = Task {
+            await model.run()
+        }
+
+        while store.fetchCount < 1 || !store.isObservingChanges {
+            await Task.yield()
+        }
+        store.contacts = [contact(id: "2", givenName: "Beta")]
+        store.emitChange()
+        while store.fetchCount < 2 {
+            await Task.yield()
+        }
+
+        guard case .loaded(let sections) = model.state else {
+            runTask.cancel()
+            return XCTFail("Expected reloaded contacts")
+        }
+        XCTAssertEqual(sections.flatMap(\.contacts).map(\.id), ["2"])
+        runTask.cancel()
+    }
+
     private func contact(
         id: String,
         givenName: String,
@@ -97,9 +124,14 @@ final class ContactListModelTests: XCTestCase {
 @MainActor
 private final class ContactStoreStub: ContactStoreProviding {
     var authorizationState: ContactAuthorizationState
-    let contacts: [ContactRecord]
+    var contacts: [ContactRecord]
     var grantsAccess = false
     private(set) var fetchCount = 0
+    private var changeContinuation: AsyncStream<Void>.Continuation?
+
+    var isObservingChanges: Bool {
+        changeContinuation != nil
+    }
 
     init(authorizationState: ContactAuthorizationState, contacts: [ContactRecord]) {
         self.authorizationState = authorizationState
@@ -119,6 +151,12 @@ private final class ContactStoreStub: ContactStoreProviding {
     }
 
     func changes() -> AsyncStream<Void> {
-        AsyncStream { $0.finish() }
+        AsyncStream { continuation in
+            changeContinuation = continuation
+        }
+    }
+
+    func emitChange() {
+        changeContinuation?.yield()
     }
 }

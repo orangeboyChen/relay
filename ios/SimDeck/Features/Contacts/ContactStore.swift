@@ -129,7 +129,6 @@ final class ContactListModel {
 
     func run() async {
         await refresh()
-        guard canReadContacts else { return }
         for await _ in store.changes() {
             guard !Task.isCancelled else { return }
             await refresh()
@@ -159,15 +158,6 @@ final class ContactListModel {
             } catch {
                 state = .failed
             }
-        }
-    }
-
-    private var canReadContacts: Bool {
-        switch store.authorizationState {
-        case .limited, .authorized:
-            true
-        case .notDetermined, .denied:
-            false
         }
     }
 

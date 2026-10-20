@@ -54,9 +54,10 @@ struct CallHistoryScreen: View {
                                 Image(systemName: "info.circle")
                                     .font(.title3)
                                     .foregroundStyle(.blue)
-                                    .frame(width: 44, height: 44)
                             }
                             .buttonStyle(.plain)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                             .accessibilityLabel("Call details")
                         }
                     }

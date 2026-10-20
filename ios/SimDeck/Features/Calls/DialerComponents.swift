@@ -30,6 +30,7 @@ struct LinePicker: View {
                 .contentShape(.rect)
             }
             .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            .buttonStyle(.plain)
         } else if lines.isEmpty {
             Image(systemName: "simcard")
                 .foregroundStyle(.secondary)
@@ -51,6 +52,7 @@ struct LinePicker: View {
                     .contentShape(.rect)
                     .accessibilityLabel("Select SIM")
             }
+            .buttonStyle(.plain)
         }
     }
 }
@@ -139,8 +141,8 @@ struct DialPad: View {
 
     var body: some View {
         LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(), spacing: 20), count: 3),
-            spacing: 14
+            columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 3),
+            spacing: 18
         ) {
             ForEach(keys, id: \.self) { key in
                 DialPadKey(content: key) { press in
@@ -152,7 +154,7 @@ struct DialPad: View {
                 }
             }
         }
-        .frame(maxWidth: 318)
+        .frame(maxWidth: 288)
         .sensoryFeedback(.selection, trigger: feedbackTrigger)
     }
 }
@@ -183,7 +185,7 @@ private struct DialPadKey: View {
     let onPress: (DialPadPress) -> Void
 
     @State private var handledLongPress = false
-    @ScaledMetric(relativeTo: .title) private var scaledSize = 72.0
+    @ScaledMetric(relativeTo: .title) private var scaledSize = 80.0
 
     var body: some View {
         Button {
@@ -205,7 +207,7 @@ private struct DialPadKey: View {
                     .opacity(content.letters.isEmpty ? 0 : 1)
                     .accessibilityHidden(true)
             }
-            .frame(width: min(scaledSize, 82), height: min(scaledSize, 82))
+            .frame(width: min(scaledSize, 86), height: min(scaledSize, 86))
             .glassEffect(.regular.interactive(), in: Circle())
             .contentShape(Circle())
         }
@@ -253,7 +255,7 @@ struct CallButton: View {
                         .font(.system(size: 28, weight: .semibold))
                 }
             }
-            .frame(width: 72, height: 72)
+            .frame(width: 64, height: 64)
             .foregroundStyle(.white)
         }
         .buttonStyle(.glassProminent)
@@ -269,17 +271,21 @@ struct DialerDeleteButton: View {
     let isVisible: Bool
     let action: () -> Void
 
+    @ViewBuilder
     var body: some View {
-        Button(action: action) {
-            Image(systemName: "delete.left.fill")
-                .font(.system(size: 24, weight: .regular))
-                .foregroundStyle(.primary)
+        if isVisible {
+            Button(action: action) {
+                Image(systemName: "delete.left.fill")
+                    .font(.system(size: 24, weight: .regular))
+                    .foregroundStyle(.primary)
+                    .frame(width: 56, height: 56)
+            }
+            .buttonStyle(PressFeedbackButtonStyle())
+            .accessibilityLabel("Delete digit")
+        } else {
+            Color.clear
                 .frame(width: 56, height: 56)
+                .accessibilityHidden(true)
         }
-        .buttonStyle(PressFeedbackButtonStyle())
-        .opacity(isVisible ? 1 : 0)
-        .allowsHitTesting(isVisible)
-        .accessibilityHidden(!isVisible)
-        .accessibilityLabel("Delete digit")
     }
 }

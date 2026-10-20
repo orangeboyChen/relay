@@ -17,7 +17,6 @@ struct DialerScreen: View {
     @State private var number = ""
     @State private var isCalling = false
     @State private var consumedRequestID: UUID?
-    @State private var isContactPickerPresented = false
 
     init(
         lines: [DeviceLineIdentity],
@@ -43,7 +42,9 @@ struct DialerScreen: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            Spacer(minLength: 40)
+            Color.clear
+                .frame(height: 4)
+                .accessibilityHidden(true)
 
             NumberEntry(number: $number)
 
@@ -57,7 +58,7 @@ struct DialerScreen: View {
 
             HStack {
                 Color.clear
-                    .frame(width: 72, height: 72)
+                    .frame(width: 80, height: 80)
 
                 Spacer()
 
@@ -70,33 +71,24 @@ struct DialerScreen: View {
                 DialerDeleteButton(isVisible: !number.isEmpty) {
                     number = DialerNumberMutation.deletingLastCharacter(from: number)
                 }
-                .frame(width: 72, height: 72)
+                .frame(width: 80, height: 80)
             }
+            .padding(.top, 14)
 
             Spacer(minLength: 10)
         }
         .padding(.horizontal, 28)
         .padding(.bottom, 8)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {
                 LinePicker(lines: onlineLines, selection: $selectedLineID)
+                Spacer()
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    isContactPickerPresented = true
-                } label: {
-                    Image(systemName: "person.crop.circle.badge.plus")
-                }
-                .accessibilityLabel("Choose contact")
-            }
+            .frame(height: 54)
+            .padding(.horizontal, 28)
+            .background(Color(uiColor: .systemBackground))
         }
-        .sheet(isPresented: $isContactPickerPresented) {
-            SystemContactNumberPicker { selectedNumber in
-                number = selectedNumber
-                isContactPickerPresented = false
-            }
-            .ignoresSafeArea()
-        }
+        .toolbar(.hidden, for: .navigationBar)
         .onChange(of: externalRequest, initial: true) { _, request in
             apply(request)
         }
@@ -133,13 +125,18 @@ struct DialerScreen: View {
     @ViewBuilder
     private var contactMatchContent: some View {
         if let exactMatch {
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "person.crop.circle")
                 Text(exactMatch.contact.displayName)
                 Text(exactMatch.phoneNumber.label)
-                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
             }
-            .font(.body)
+            .font(.subheadline)
             .lineLimit(1)
+            .frame(minHeight: 44)
+            .padding(.horizontal, 12)
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         } else if let firstMatch = partialMatches.first {
             VStack(spacing: 0) {
                 HStack(spacing: 8) {

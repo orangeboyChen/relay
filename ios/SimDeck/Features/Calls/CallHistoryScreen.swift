@@ -35,7 +35,7 @@ struct CallHistoryScreen: View {
                     description: Text("Calls made through sim-deck appear here.")
                 )
             case .loaded(let records):
-                List(selection: $selectedRecordIDs) {
+                List {
                     ForEach(filtered(records)) { record in
                         let linePresentation = record.linePresentation(in: lines)
                         CallHistoryRecordRow(
@@ -43,8 +43,12 @@ struct CallHistoryScreen: View {
                             linePresentation: linePresentation,
                             referenceDate: referenceDate,
                             isEditing: editMode.isEditing,
+                            isSelected: selectedRecordIDs.contains(record.id),
                             isStarting: startingRecordID == record.id,
                             isInteractionDisabled: startingRecordID != nil,
+                            onSelect: {
+                                toggleSelection(for: record.id)
+                            },
                             onCall: { startCall(from: record) },
                             onDetails: {
                                 selectedDetail = CallDetailSelection(
@@ -53,7 +57,6 @@ struct CallHistoryScreen: View {
                                 )
                             }
                         )
-                        .tag(record.id)
                         .listRowInsets(
                             EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 8)
                         )
@@ -84,7 +87,6 @@ struct CallHistoryScreen: View {
                 )
             }
         }
-        .environment(\.editMode, $editMode)
         .navigationTitle("Recents")
         .navigationBarTitleDisplayMode(.large)
         .onChange(of: editMode) { _, newMode in
@@ -100,8 +102,6 @@ struct CallHistoryScreen: View {
                             editMode = editMode.isEditing ? .inactive : .active
                         }
                     }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.capsule)
                     .controlSize(.large)
                 }
                 ToolbarItem(placement: .principal) {
@@ -202,6 +202,14 @@ struct CallHistoryScreen: View {
         filter.records(from: records, lineID: selectedLineID)
     }
 
+    private func toggleSelection(for recordID: UUID) {
+        if selectedRecordIDs.contains(recordID) {
+            selectedRecordIDs.remove(recordID)
+        } else {
+            selectedRecordIDs.insert(recordID)
+        }
+    }
+
     private var detailIsPresented: Binding<Bool> {
         Binding(
             get: { selectedDetail != nil },
@@ -300,21 +308,35 @@ private struct CallHistoryRecordRow: View {
     let linePresentation: LineHistoryPresentation
     let referenceDate: Date
     let isEditing: Bool
+    let isSelected: Bool
     let isStarting: Bool
     let isInteractionDisabled: Bool
+    let onSelect: () -> Void
     let onCall: () -> Void
     let onDetails: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
             if isEditing {
-                CallHistoryRow(
-                    record: record,
-                    linePresentation: linePresentation,
-                    referenceDate: referenceDate
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+                Button(action: onSelect) {
+                    HStack(spacing: 12) {
+                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 22, weight: .regular))
+                            .foregroundStyle(isSelected ? .blue : Color(uiColor: .systemGray3))
+
+                        CallHistoryRow(
+                            record: record,
+                            linePresentation: linePresentation,
+                            referenceDate: referenceDate
+                        )
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(record.displayName)
+                .accessibilityValue(isSelected ? Text("Selected") : Text("Not selected"))
+                .accessibilityHint("Toggles this call for deletion")
             } else {
                 Button(action: onCall) {
                     CallHistoryRow(

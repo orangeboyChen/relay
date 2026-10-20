@@ -118,16 +118,55 @@ struct AdvancedSettingsScreen: View {
 }
 
 struct AboutScreen: View {
+    private var version: String {
+        let release = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+        return "\(release) (\(build))"
+    }
+
     var body: some View {
         Form {
-            LabeledContent("App Version", value: "0.1.0 (1)")
-            NavigationLink("Open Source Licenses") {
-                Text("Open source license notices appear here.")
-                    .padding()
-                    .navigationTitle("Licenses")
+            Section("What Sim Deck Does") {
+                Text("Make and receive calls and text messages on this iPhone using SIM cards in your connected Sim Deck device.")
+                Text("These calls and messages use the SIM in your Sim Deck device, not the SIM in this iPhone.")
+            }
+            Section("What You Need") {
+                Text("A reachable Sim Deck server, a paired device, and an active SIM card are required for calls and messages.")
+            }
+            Section {
+                LabeledContent("App Version", value: version)
+            }
+            Section("Third-Party Software") {
+                NavigationLink("WebRTC License") {
+                    WebRTCLicenseScreen()
+                }
             }
         }
         .navigationTitle("About")
+    }
+}
+
+private struct WebRTCLicenseScreen: View {
+    private var licenseText: String? {
+        guard let url = Bundle.main.url(forResource: "WebRTC-License", withExtension: "txt") else {
+            return nil
+        }
+        return try? String(contentsOf: url, encoding: .utf8)
+    }
+
+    var body: some View {
+        ScrollView {
+            if let licenseText {
+                Text(licenseText)
+                    .font(.footnote)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+            } else {
+                ContentUnavailableView("License Unavailable", systemImage: "doc.text", description: Text("The WebRTC license could not be loaded."))
+            }
+        }
+        .navigationTitle("WebRTC License")
     }
 }
 

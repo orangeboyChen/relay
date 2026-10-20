@@ -3334,6 +3334,96 @@
         }
       }
     },
+    "A reachable Sim Deck server, a paired device, and an active SIM card are required for calls and messages." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拨打电话和收发短信需要可连接的 Sim Deck 服务器、已配对的设备和有效的 SIM 卡。"
+          }
+        }
+      }
+    },
+    "License Unavailable" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "许可文本不可用"
+          }
+        }
+      }
+    },
+    "Make and receive calls and text messages on this iPhone using SIM cards in your connected Sim Deck device." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通过已连接的 Sim Deck 设备中的 SIM 卡，在这台 iPhone 上拨打、接听电话和收发短信。"
+          }
+        }
+      }
+    },
+    "The WebRTC license could not be loaded." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法加载 WebRTC 许可文本。"
+          }
+        }
+      }
+    },
+    "These calls and messages use the SIM in your Sim Deck device, not the SIM in this iPhone." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这些电话和短信使用 Sim Deck 设备中的 SIM 卡，不使用这台 iPhone 的 SIM 卡。"
+          }
+        }
+      }
+    },
+    "Third-Party Software" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第三方软件"
+          }
+        }
+      }
+    },
+    "WebRTC License" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "WebRTC 许可"
+          }
+        }
+      }
+    },
+    "What Sim Deck Does" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sim Deck 的用途"
+          }
+        }
+      }
+    },
+    "What You Need" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用要求"
+          }
+        }
+      }
+    },
     "·" : {
       "localizations" : {
         "zh-Hans" : {

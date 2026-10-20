@@ -236,7 +236,13 @@ func productionDependencies(httpClient *http.Client) deviceDependencies {
 			return modem.NewSession(client, inbox, sink, logger, timeout)
 		},
 		configureAudio: func(ctx context.Context, config agent.Config, client *at.Client) error {
-			if config.AudioMode == agent.AudioModeALSA || config.AudioMode == agent.AudioModeRemotePCM {
+			switch config.AudioMode {
+			case agent.AudioModeALSA:
+				if err := modem.ConfigureUAC(ctx, client, config.CommandTimeout); err != nil {
+					return err
+				}
+				return media.ValidateALSADevices(ctx, config.ALSACaptureDevice, config.ALSAPlaybackDevice)
+			case agent.AudioModeRemotePCM:
 				return modem.ConfigureUAC(ctx, client, config.CommandTimeout)
 			}
 			return nil

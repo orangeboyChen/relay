@@ -72,6 +72,9 @@ type audioProcessFactory func(context.Context, string, ...string) audioProcess
 
 // OpenALSAEndpoint starts arecord and aplay for one ALSA full-duplex device.
 func OpenALSAEndpoint(ctx context.Context, captureDevice string, playbackDevice string) (*PCMEndpoint, error) {
+	if err := ValidateALSADevices(ctx, captureDevice, playbackDevice); err != nil {
+		return nil, err
+	}
 	return openALSAEndpoint(ctx, captureDevice, playbackDevice, func(ctx context.Context, executable string, arguments ...string) audioProcess {
 		return &execAudioProcess{command: exec.CommandContext(ctx, executable, arguments...)}
 	})

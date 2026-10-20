@@ -47,8 +47,11 @@ struct DialerScreen: View {
 
             NumberEntry(number: $number)
 
-            contactMatchContent
-                .frame(height: 62, alignment: .top)
+            ZStack(alignment: .top) {
+                contactMatchContent
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 62, alignment: .top)
 
             DialPad(number: $number)
 

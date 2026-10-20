@@ -9,6 +9,8 @@ struct CallHistoryScreen: View {
     let lines: [DeviceLineIdentity]
     let referenceDate: Date
     let callStarter: any CallStarting
+    let defaultMessageLineID: UUID?
+    let sendMessage: (UUID, String, String) async throws -> Void
     @Binding var editMode: EditMode
     let onDelete: (Set<UUID>) throws -> Void
     let onStarted: (UUID) -> Void
@@ -18,21 +20,22 @@ struct CallHistoryScreen: View {
     @State private var selectedDetail: CallDetailSelection?
     @State private var selectedRecordIDs: Set<UUID> = []
     @State private var isDeleteConfirmationPresented = false
+    @State private var filter: CallHistoryFilter = .all
 
     var body: some View {
         Group {
             switch state {
             case .loading:
                 ProgressView("Loading calls")
-            case .loaded(let records) where records.isEmpty:
+            case .loaded(let records) where filtered(records).isEmpty:
                 ContentUnavailableView(
-                    "No Calls",
+                    filter == .missed ? "No Missed Calls" : "No Calls",
                     systemImage: "phone",
                     description: Text("Calls made through sim-deck appear here.")
                 )
             case .loaded(let records):
                 List(selection: $selectedRecordIDs) {
-                    ForEach(records) { record in
+                    ForEach(filtered(records)) { record in
                         let linePresentation = record.linePresentation(in: lines)
                         CallHistoryRecordRow(
                             record: record,
@@ -75,7 +78,7 @@ struct CallHistoryScreen: View {
             }
         }
         .environment(\.editMode, $editMode)
-        .navigationTitle("Calls")
+        .navigationTitle("Recents")
         .onChange(of: editMode) { _, newMode in
             if !newMode.isEditing {
                 selectedRecordIDs.removeAll()
@@ -83,30 +86,53 @@ struct CallHistoryScreen: View {
         }
         .toolbar {
             if case .loaded(let records) = state, !records.isEmpty {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .topBarLeading) {
                     Button(editMode.isEditing ? "Done" : "Edit") {
                         withAnimation {
                             editMode = editMode.isEditing ? .inactive : .active
                         }
                     }
                 }
+                ToolbarItem(placement: .principal) {
+                    Picker("Call filter", selection: $filter) {
+                        Text("All").tag(CallHistoryFilter.all)
+                        Text("Missed").tag(CallHistoryFilter.missed)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 190)
+                }
             }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             if editMode.isEditing {
-                ToolbarItem(placement: .bottomBar) {
+                HStack {
+                    Text("\(selectedRecordIDs.count) Selected")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
                     Button(role: .destructive) {
                         isDeleteConfirmationPresented = true
                     } label: {
                         Label("Delete", systemImage: "trash")
+                            .fontWeight(.semibold)
                     }
                     .disabled(selectedRecordIDs.isEmpty)
+                    .frame(minHeight: 44)
                 }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 6)
+                .background(.bar)
             }
         }
         .navigationDestination(isPresented: detailIsPresented) {
             if let selectedDetail {
                 CallDetailScreen(
                     record: selectedDetail.record,
-                    linePresentation: selectedDetail.linePresentation
+                    linePresentation: selectedDetail.linePresentation,
+                    lines: lines,
+                    defaultMessageLineID: defaultMessageLineID,
+                    callAction: { startCall(from: selectedDetail.record) },
+                    sendAction: sendMessage
                 )
             }
         }
@@ -127,6 +153,10 @@ struct CallHistoryScreen: View {
             }
             Button("Cancel", role: .cancel) {}
         }
+    }
+
+    private func filtered(_ records: [CallRecord]) -> [CallRecord] {
+        filter.records(from: records)
     }
 
     private var detailIsPresented: Binding<Bool> {
@@ -282,7 +312,7 @@ private struct CallHistoryRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            SIMBadge(snapshot: linePresentation.snapshot)
+            CallHistoryAvatar(record: record)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(record.displayName)
@@ -291,7 +321,9 @@ private struct CallHistoryRow: View {
                     .lineLimit(1)
 
                 HStack(spacing: 5) {
-                    Label(callKind, systemImage: directionSymbol)
+                    Image(systemName: directionSymbol)
+                    SIMBadge(snapshot: linePresentation.snapshot, size: 14)
+                    Text(linePresentation.displayName)
                     if let duration = record.duration {
                         Text("·")
                         DurationText(seconds: duration)
@@ -312,21 +344,6 @@ private struct CallHistoryRow: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var callKind: LocalizedStringResource {
-        switch record.result {
-        case .missed:
-            "Missed"
-        case .rejected:
-            "Rejected"
-        case .failed:
-            "Failed"
-        case .answered where record.direction == .incoming:
-            "Incoming"
-        case .answered:
-            "Outgoing"
-        }
-    }
-
     private var directionSymbol: String {
         record.direction == .incoming ? "phone.arrow.down.left" : "phone.arrow.up.right"
     }
@@ -336,6 +353,56 @@ private struct CallHistoryRow: View {
             return .dateTime.hour().minute()
         }
         return .dateTime.month(.abbreviated).day()
+    }
+}
+
+enum CallHistoryFilter: Equatable {
+    case all
+    case missed
+
+    func records(from records: [CallRecord]) -> [CallRecord] {
+        switch self {
+        case .all:
+            records
+        case .missed:
+            records.filter { $0.result == .missed }
+        }
+    }
+}
+
+private struct CallHistoryAvatar: View {
+    let record: CallRecord
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [.blue.opacity(0.32), .indigo.opacity(0.52)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+            if let initials {
+                Text(initials)
+                    .font(.system(size: 18, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white)
+            } else {
+                Image(systemName: "person.fill")
+                    .font(.system(size: 25))
+                    .foregroundStyle(.white)
+            }
+        }
+        .frame(width: 50, height: 50)
+        .accessibilityHidden(true)
+    }
+
+    private var initials: String? {
+        guard let name = record.contactName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty else { return nil }
+        let components = name.split(whereSeparator: \.isWhitespace)
+        if components.isEmpty { return String(name.prefix(1)).uppercased() }
+        return components.prefix(2).compactMap(\.first).map(String.init).joined().uppercased()
     }
 }
 
@@ -359,6 +426,8 @@ struct DurationText: View {
                 transport: PreviewCallTransport(),
                 integratesWithSystem: false
             ),
+            defaultMessageLineID: PreviewFixtures.devices.first?.id,
+            sendMessage: { _, _, _ in },
             editMode: .constant(.inactive),
             onDelete: { _ in },
             onStarted: { _ in }
@@ -376,6 +445,8 @@ struct DurationText: View {
                 transport: PreviewCallTransport(),
                 integratesWithSystem: false
             ),
+            defaultMessageLineID: nil,
+            sendMessage: { _, _, _ in },
             editMode: .constant(.inactive),
             onDelete: { _ in },
             onStarted: { _ in }
@@ -393,6 +464,8 @@ struct DurationText: View {
                 transport: PreviewCallTransport(),
                 integratesWithSystem: false
             ),
+            defaultMessageLineID: nil,
+            sendMessage: { _, _, _ in },
             editMode: .constant(.inactive),
             onDelete: { _ in },
             onStarted: { _ in }
@@ -410,6 +483,8 @@ struct DurationText: View {
                 transport: PreviewCallTransport(),
                 integratesWithSystem: false
             ),
+            defaultMessageLineID: nil,
+            sendMessage: { _, _, _ in },
             editMode: .constant(.inactive),
             onDelete: { _ in },
             onStarted: { _ in }
@@ -429,6 +504,8 @@ struct DurationText: View {
                 transport: PreviewCallTransport(),
                 integratesWithSystem: false
             ),
+            defaultMessageLineID: nil,
+            sendMessage: { _, _, _ in },
             editMode: .constant(.inactive),
             onDelete: { _ in },
             onStarted: { _ in }

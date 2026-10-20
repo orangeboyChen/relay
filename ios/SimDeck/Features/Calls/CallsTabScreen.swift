@@ -16,6 +16,10 @@ struct CallsTabScreen: View {
             lines: model.devices,
             referenceDate: .now,
             callStarter: model.callCoordinator,
+            defaultMessageLineID: model.defaultMessageLineID,
+            sendMessage: { lineID, number, body in
+                try await model.sendMessage(lineID: lineID, remoteNumber: number, body: body)
+            },
             editMode: $historyEditMode,
             onDelete: model.deleteCallHistoryRecords(withIDs:)
         ) { lineID in

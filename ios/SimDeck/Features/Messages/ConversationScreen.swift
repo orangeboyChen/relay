@@ -156,6 +156,7 @@ struct ConversationScreen: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
+        .toolbar(.hidden, for: .tabBar)
         .onAppear {
             markReadAction(selectedID)
         }

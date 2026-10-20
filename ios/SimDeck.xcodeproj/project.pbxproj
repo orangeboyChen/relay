@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		200000000000000000000001 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 200000000000000000000002 /* WebRTC */; };
-		300000000000000000000001 /* SimDeck/Core/Notifications/CommunicationNotification.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000002 /* SimDeck/Core/Notifications/CommunicationNotification.swift */; };
 		6483377B30858A3600B91620 /* SMSNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 6483377430858A3600B91620 /* SMSNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		64833A4E3085B93F00B91620 /* AuthenticationServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 64833A4D3085B93F00B91620 /* AuthenticationServices.framework */; };
 		64833A593085B93F00B91620 /* SimDeckAutoFill.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 64833A4B3085B93F00B91620 /* SimDeckAutoFill.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -56,7 +55,6 @@
 /* Begin PBXFileReference section */
 		100000000000000000000001 /* SimDeck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SimDeck.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		100000000000000000000002 /* SimDeckTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SimDeckTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		300000000000000000000002 /* SimDeck/Core/Notifications/CommunicationNotification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimDeck/Core/Notifications/CommunicationNotification.swift; sourceTree = SOURCE_ROOT; };
 		6483377430858A3600B91620 /* SMSNotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SMSNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		64833A4B3085B93F00B91620 /* SimDeckAutoFill.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SimDeckAutoFill.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		64833A4D3085B93F00B91620 /* AuthenticationServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AuthenticationServices.framework; path = System/Library/Frameworks/AuthenticationServices.framework; sourceTree = SDKROOT; };
@@ -87,6 +85,7 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		300000000000000000000010 /* Shared */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Shared; sourceTree = "<group>"; };
 		100000000000000000000010 /* SimDeck */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (649001BD30817E37005A16BD /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = SimDeck; sourceTree = "<group>"; };
 		100000000000000000000011 /* SimDeckTests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = SimDeckTests; sourceTree = "<group>"; };
 		6483377530858A3600B91620 /* SMSNotificationService */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (6483377F30858A3600B91620 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = SMSNotificationService; sourceTree = "<group>"; };
@@ -130,6 +129,7 @@
 		100000000000000000000030 = {
 			isa = PBXGroup;
 			children = (
+				300000000000000000000010 /* Shared */,
 				100000000000000000000010 /* SimDeck */,
 				100000000000000000000011 /* SimDeckTests */,
 				6483377530858A3600B91620 /* SMSNotificationService */,
@@ -178,6 +178,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				100000000000000000000010 /* SimDeck */,
+				300000000000000000000010 /* Shared */,
 			);
 			name = SimDeck;
 			packageProductDependencies = (
@@ -222,6 +223,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				6483377530858A3600B91620 /* SMSNotificationService */,
+				300000000000000000000010 /* Shared */,
 			);
 			name = SMSNotificationService;
 			packageProductDependencies = (
@@ -353,7 +355,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				300000000000000000000001 /* SimDeck/Core/Notifications/CommunicationNotification.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

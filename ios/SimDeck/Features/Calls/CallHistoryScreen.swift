@@ -84,7 +84,11 @@ struct CallHistoryScreen: View {
         .toolbar {
             if case .loaded(let records) = state, !records.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {
-                    EditButton()
+                    Button(editMode.isEditing ? "Done" : "Edit") {
+                        withAnimation {
+                            editMode = editMode.isEditing ? .inactive : .active
+                        }
+                    }
                 }
             }
             if editMode.isEditing {

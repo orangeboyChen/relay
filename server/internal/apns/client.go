@@ -21,11 +21,12 @@ import (
 )
 
 const (
-	defaultProductionURL = "https://api.push.apple.com"
-	defaultSandboxURL    = "https://api.sandbox.push.apple.com"
-	maximumPayloadSize   = 5 * 1024
-	providerTokenTTL     = 50 * time.Minute
-	alertExpiration      = 24 * time.Hour
+	defaultProductionURL    = "https://api.push.apple.com"
+	defaultSandboxURL       = "https://api.sandbox.push.apple.com"
+	maximumAlertPayloadSize = 4 * 1024
+	maximumVoIPPayloadSize  = 5 * 1024
+	providerTokenTTL        = 50 * time.Minute
+	alertExpiration         = 24 * time.Hour
 )
 
 var (
@@ -222,6 +223,10 @@ func alertPayload(encryptedDelivery []byte, voip bool) ([]byte, error) {
 		payload["aps"] = json.RawMessage(`{"alert":{"title":"Sim Deck","body":"New message"},"content-available":1,"mutable-content":1}`)
 	}
 	encoded, err := json.Marshal(payload)
+	maximumPayloadSize := maximumAlertPayloadSize
+	if voip {
+		maximumPayloadSize = maximumVoIPPayloadSize
+	}
 	if err != nil || len(encoded) > maximumPayloadSize {
 		return nil, ErrInvalidPayload
 	}

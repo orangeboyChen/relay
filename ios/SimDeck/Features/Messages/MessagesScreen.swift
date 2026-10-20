@@ -180,6 +180,9 @@ struct MessagesScreen: View {
                             initialID: conversation.id,
                             conversations: conversation.lineAlternatives(in: conversations),
                             lines: lines,
+                            backUnreadCount: conversations.reduce(into: 0) { count, item in
+                                count += item.unreadCount
+                            },
                             sendAction: sendAction,
                             retryAction: retryAction,
                             deleteAction: deleteAction,

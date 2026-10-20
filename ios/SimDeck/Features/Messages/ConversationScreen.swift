@@ -8,6 +8,7 @@ import UIKit
 struct ConversationScreen: View {
     let conversations: [MessageConversation]
     let lines: [DeviceLineIdentity]
+    let backUnreadCount: Int
     let sendAction: (UUID, String, String) async throws -> Void
     let retryAction: (UUID) async throws -> Void
     let deleteAction: (Set<UUID>) throws -> Void
@@ -30,6 +31,7 @@ struct ConversationScreen: View {
         initialID: ConversationID,
         conversations: [MessageConversation],
         lines: [DeviceLineIdentity],
+        backUnreadCount: Int = 0,
         sendAction: @escaping (UUID, String, String) async throws -> Void = { _, _, _ in },
         retryAction: @escaping (UUID) async throws -> Void = { _ in },
         deleteAction: @escaping (Set<UUID>) throws -> Void = { _ in },
@@ -37,6 +39,7 @@ struct ConversationScreen: View {
     ) {
         self.conversations = conversations
         self.lines = lines
+        self.backUnreadCount = backUnreadCount
         self.sendAction = sendAction
         self.retryAction = retryAction
         self.deleteAction = deleteAction
@@ -254,14 +257,27 @@ struct ConversationScreen: View {
                 Button {
                     dismiss()
                 } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.title3.weight(.semibold))
-                        .frame(width: 44, height: 44)
-                        .contentShape(.circle)
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left")
+                            .font(.title3.weight(.semibold))
+
+                        if backUnreadCount > 0 {
+                            Text(backUnreadCount, format: .number)
+                                .font(.subheadline.weight(.semibold))
+                                .monospacedDigit()
+                        }
+                    }
+                    .padding(.horizontal, backUnreadCount > 0 ? 12 : 0)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .glassEffect(.regular.interactive(), in: Circle())
-                .accessibilityLabel("Back")
+                .glassEffect(.regular.interactive(), in: Capsule())
+                .accessibilityLabel(
+                    backUnreadCount > 0
+                        ? Text("Back, \(backUnreadCount) unread")
+                        : Text("Back")
+                )
 
                 Spacer()
 
@@ -270,7 +286,7 @@ struct ConversationScreen: View {
                     .accessibilityHidden(true)
             }
         }
-        .frame(height: dynamicTypeSize.isAccessibilitySize ? 104 : 78)
+        .frame(height: dynamicTypeSize.isAccessibilitySize ? 108 : 86)
         .padding(.horizontal, 16)
         .background(Color(uiColor: .systemBackground))
     }

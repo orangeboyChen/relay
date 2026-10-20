@@ -38,7 +38,7 @@ struct ConversationHeader: View {
             VStack(spacing: 2) {
                 MessageContactAvatar(
                     contactName: conversation.contactName,
-                    diameter: 50
+                    diameter: 56
                 )
                 .overlay(alignment: .bottomTrailing) {
                     SIMBadge(snapshot: linePresentation.snapshot, size: 10)

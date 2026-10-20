@@ -5,19 +5,24 @@ struct CallsTabScreen: View {
     @Bindable var model: AppModel
 
     @State private var dialerPresentation: DialerPresentation?
+    @State private var historyEditMode: EditMode = .inactive
 
     var body: some View {
         CallHistoryScreen(
             state: model.callHistory,
             lines: model.devices,
             referenceDate: .now,
-            callStarter: model.callCoordinator
+            callStarter: model.callCoordinator,
+            editMode: $historyEditMode,
+            onDelete: model.deleteCallHistoryRecords(withIDs:)
         ) { lineID in
             model.lastSuccessfulDialLineID = lineID
         }
         .safeAreaInset(edge: .bottom) {
-            DialerLauncherButton(isEnabled: model.devices.contains(where: \.isOnline)) {
-                dialerPresentation = .manual()
+            if !historyEditMode.isEditing {
+                DialerLauncherButton(isEnabled: model.devices.contains(where: \.isOnline)) {
+                    dialerPresentation = .manual()
+                }
             }
         }
         .sheet(item: $dialerPresentation) { presentation in

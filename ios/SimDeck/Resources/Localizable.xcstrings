@@ -870,6 +870,16 @@
     "Delete SIM" : {
 
     },
+    "Delete Selected Calls?" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除所选通话记录？"
+          }
+        }
+      }
+    },
     "Delete all account and server data?" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -2808,6 +2818,16 @@
     "The call command could not be completed." : {
 
     },
+    "The call history could not be saved." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法保存通话记录。"
+          }
+        }
+      }
+    },
     "The code expires after ten minutes and can pair only one modem." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -3170,6 +3190,16 @@
     },
     "Unable to Call" : {
 
+    },
+    "Unable to Delete Calls" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法删除通话记录"
+          }
+        }
+      }
     },
     "Unavailable" : {
       "localizations" : {

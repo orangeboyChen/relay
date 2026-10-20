@@ -5,11 +5,15 @@ struct CallHistoryScreen: View {
     let lines: [DeviceLineIdentity]
     let referenceDate: Date
     let callStarter: any CallStarting
+    @Binding var editMode: EditMode
+    let onDelete: (Set<UUID>) throws -> Void
     let onStarted: (UUID) -> Void
 
     @State private var startingRecordID: UUID?
     @State private var presentedError: CallHistoryPresentedError?
     @State private var selectedDetail: CallDetailSelection?
+    @State private var selectedRecordIDs: Set<UUID> = []
+    @State private var isDeleteConfirmationPresented = false
 
     var body: some View {
         Group {
@@ -23,46 +27,41 @@ struct CallHistoryScreen: View {
                     description: Text("Calls made through sim-deck appear here.")
                 )
             case .loaded(let records):
-                List(records) { record in
-                    let linePresentation = record.linePresentation(in: lines)
-                    HStack(spacing: 0) {
-                        Button {
-                            startCall(from: record)
-                        } label: {
-                            CallHistoryRow(
-                                record: record,
-                                linePresentation: linePresentation,
-                                referenceDate: referenceDate
-                            )
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(startingRecordID != nil)
-                        .accessibilityHint("Calls this number using the displayed SIM")
-
-                        if startingRecordID == record.id {
-                            ProgressView()
-                                .frame(width: 44, height: 44)
-                        } else {
-                            Button {
+                List(selection: $selectedRecordIDs) {
+                    ForEach(records) { record in
+                        let linePresentation = record.linePresentation(in: lines)
+                        CallHistoryRecordRow(
+                            record: record,
+                            linePresentation: linePresentation,
+                            referenceDate: referenceDate,
+                            isEditing: editMode.isEditing,
+                            isStarting: startingRecordID == record.id,
+                            isInteractionDisabled: startingRecordID != nil,
+                            onCall: { startCall(from: record) },
+                            onDetails: {
                                 selectedDetail = CallDetailSelection(
                                     record: record,
                                     linePresentation: linePresentation
                                 )
-                            } label: {
-                                Image(systemName: "info.circle")
-                                    .font(.title3)
-                                    .foregroundStyle(.blue)
                             }
-                            .buttonStyle(.plain)
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
-                            .accessibilityLabel("Call details")
+                        )
+                        .tag(record.id)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                deleteRecords(withIDs: [record.id])
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
                         }
                     }
                 }
                 .listStyle(.plain)
+                .onChange(of: records.map(\.id)) { _, recordIDs in
+                    selectedRecordIDs.formIntersection(recordIDs)
+                    if records.isEmpty {
+                        editMode = .inactive
+                    }
+                }
             case .failed:
                 ContentUnavailableView(
                     "Calls Unavailable",
@@ -71,7 +70,30 @@ struct CallHistoryScreen: View {
                 )
             }
         }
+        .environment(\.editMode, $editMode)
         .navigationTitle("Calls")
+        .onChange(of: editMode) { _, newMode in
+            if !newMode.isEditing {
+                selectedRecordIDs.removeAll()
+            }
+        }
+        .toolbar {
+            if case .loaded(let records) = state, !records.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    EditButton()
+                }
+            }
+            if editMode.isEditing {
+                ToolbarItem(placement: .bottomBar) {
+                    Button(role: .destructive) {
+                        isDeleteConfirmationPresented = true
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                    .disabled(selectedRecordIDs.isEmpty)
+                }
+            }
+        }
         .navigationDestination(isPresented: detailIsPresented) {
             if let selectedDetail {
                 CallDetailScreen(
@@ -82,10 +104,20 @@ struct CallHistoryScreen: View {
         }
         .alert(item: $presentedError) { error in
             Alert(
-                title: Text("Unable to Call"),
+                title: Text(error.title),
                 message: Text(error.message),
                 dismissButton: .default(Text("OK"))
             )
+        }
+        .confirmationDialog(
+            "Delete Selected Calls?",
+            isPresented: $isDeleteConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                deleteRecords(withIDs: selectedRecordIDs)
+            }
+            Button("Cancel", role: .cancel) {}
         }
     }
 
@@ -115,6 +147,21 @@ struct CallHistoryScreen: View {
                 startingRecordID = nil
                 presentedError = CallHistoryPresentedError(message: "Could not start the call.")
             }
+        }
+    }
+
+    private func deleteRecords(withIDs recordIDs: Set<UUID>) {
+        do {
+            try onDelete(recordIDs)
+            selectedRecordIDs.subtract(recordIDs)
+            if selectedRecordIDs.isEmpty {
+                editMode = .inactive
+            }
+        } catch {
+            presentedError = CallHistoryPresentedError(
+                title: "Unable to Delete Calls",
+                message: "The call history could not be saved."
+            )
         }
     }
 }
@@ -158,12 +205,66 @@ enum CallHistoryDialPlanError: Error, Equatable {
 
 private struct CallHistoryPresentedError: Identifiable {
     let id = UUID()
+    var title: LocalizedStringResource = "Unable to Call"
     let message: LocalizedStringResource
 }
 
 private struct CallDetailSelection {
     let record: CallRecord
     let linePresentation: LineHistoryPresentation
+}
+
+private struct CallHistoryRecordRow: View {
+    let record: CallRecord
+    let linePresentation: LineHistoryPresentation
+    let referenceDate: Date
+    let isEditing: Bool
+    let isStarting: Bool
+    let isInteractionDisabled: Bool
+    let onCall: () -> Void
+    let onDetails: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if isEditing {
+                CallHistoryRow(
+                    record: record,
+                    linePresentation: linePresentation,
+                    referenceDate: referenceDate
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            } else {
+                Button(action: onCall) {
+                    CallHistoryRow(
+                        record: record,
+                        linePresentation: linePresentation,
+                        referenceDate: referenceDate
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isInteractionDisabled)
+                .accessibilityHint("Calls this number using the displayed SIM")
+
+                if isStarting {
+                    ProgressView()
+                        .frame(width: 44, height: 44)
+                } else {
+                    Button(action: onDetails) {
+                        Image(systemName: "info.circle")
+                            .font(.title3)
+                            .foregroundStyle(.blue)
+                    }
+                    .buttonStyle(.plain)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+                    .accessibilityLabel("Call details")
+                }
+            }
+        }
+    }
 }
 
 private struct CallHistoryRow: View {
@@ -250,6 +351,8 @@ struct DurationText: View {
                 transport: PreviewCallTransport(),
                 integratesWithSystem: false
             ),
+            editMode: .constant(.inactive),
+            onDelete: { _ in },
             onStarted: { _ in }
         )
     }
@@ -265,6 +368,8 @@ struct DurationText: View {
                 transport: PreviewCallTransport(),
                 integratesWithSystem: false
             ),
+            editMode: .constant(.inactive),
+            onDelete: { _ in },
             onStarted: { _ in }
         )
     }
@@ -280,6 +385,8 @@ struct DurationText: View {
                 transport: PreviewCallTransport(),
                 integratesWithSystem: false
             ),
+            editMode: .constant(.inactive),
+            onDelete: { _ in },
             onStarted: { _ in }
         )
     }
@@ -295,6 +402,8 @@ struct DurationText: View {
                 transport: PreviewCallTransport(),
                 integratesWithSystem: false
             ),
+            editMode: .constant(.inactive),
+            onDelete: { _ in },
             onStarted: { _ in }
         )
     }
@@ -312,6 +421,8 @@ struct DurationText: View {
                 transport: PreviewCallTransport(),
                 integratesWithSystem: false
             ),
+            editMode: .constant(.inactive),
+            onDelete: { _ in },
             onStarted: { _ in }
         )
     }

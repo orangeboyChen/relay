@@ -691,6 +691,22 @@ final class AppModel {
         messages = .loaded([])
     }
 
+    func deleteCallHistoryRecords(withIDs recordIDs: Set<UUID>) throws {
+        guard !recordIDs.isEmpty,
+              case .loaded(let records) = callHistory else {
+            return
+        }
+        let retainedRecords = records.filter { !recordIDs.contains($0.id) }
+        guard retainedRecords.count != records.count else { return }
+        if let recoveredVaultKey {
+            try callHistoryStore.save(retainedRecords, using: recoveredVaultKey)
+        }
+        callHistory = .loaded(retainedRecords)
+        Self.logger.info(
+            "Deleted \(records.count - retainedRecords.count, privacy: .public) local call history record(s)"
+        )
+    }
+
     private func registerInstallationIfNeeded() async throws {
         guard installationTrust == nil, let installationIdentity else { return }
         installationTrust = try await serverConnection.registerAppInstallation(

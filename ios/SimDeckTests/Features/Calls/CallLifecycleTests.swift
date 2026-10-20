@@ -153,6 +153,49 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertEqual(restored[0].result, .answered)
     }
 
+    func testDeletingSelectedCallHistoryUpdatesMemoryAndEncryptedStorage() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let callHistoryStore = EncryptedCallHistoryStore(
+            fileURL: directory.appending(path: "calls.bin"),
+            now: { Date(timeIntervalSince1970: 10_000) }
+        )
+        let vaultKey = VaultKey.random()
+        let first = CallRecord(
+            id: UUID(),
+            lineID: UUID(),
+            remoteNumber: "13800000000",
+            contactName: nil,
+            direction: .outgoing,
+            result: .answered,
+            startedAt: Date(timeIntervalSince1970: 9_000),
+            endedAt: Date(timeIntervalSince1970: 9_100)
+        )
+        let second = CallRecord(
+            id: UUID(),
+            lineID: UUID(),
+            remoteNumber: "13500000000",
+            contactName: nil,
+            direction: .incoming,
+            result: .missed,
+            startedAt: Date(timeIntervalSince1970: 9_500),
+            endedAt: Date(timeIntervalSince1970: 9_500)
+        )
+        try callHistoryStore.save([first, second], using: vaultKey)
+        let model = AppModel(
+            installationBootstrapper: CallHistoryInstallationBootstrapper(vaultKey: vaultKey),
+            callHistoryStore: callHistoryStore,
+            remoteDeviceRefreshEnabled: false
+        )
+        model.bootstrapInstallation()
+
+        try model.deleteCallHistoryRecords(withIDs: [first.id])
+
+        XCTAssertEqual(model.callHistory, .loaded([second]))
+        XCTAssertEqual(try callHistoryStore.load(using: vaultKey), [second])
+    }
+
     func testUnansweredIncomingCallIsRecordedAsMissed() async throws {
         let transport = RecordingCallTransport()
         let coordinator = CallKitCoordinator(

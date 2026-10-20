@@ -240,7 +240,7 @@ private struct LinePickerRow: View {
         Picker(title, selection: $selection) {
             Text("Automatic").tag(UUID?.none)
             ForEach(lines) { line in
-                Text("SIM \(line.numericID) · \(line.displayName)").tag(Optional(line.id))
+                Text(line.displayName).tag(Optional(line.id))
             }
         }
     }

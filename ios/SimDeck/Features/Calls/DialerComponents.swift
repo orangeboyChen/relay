@@ -8,6 +8,7 @@ import UIKit
 struct LinePicker: View {
     let lines: [DeviceLineIdentity]
     @Binding var selection: UUID?
+    var isCompact = false
 
     var body: some View {
         if let selectedLine = lines.first(where: { $0.id == selection }) {
@@ -27,20 +28,31 @@ struct LinePicker: View {
                     }
                 }
             } label: {
-                HStack(spacing: 8) {
-                    SIMBadge(line: selectedLine, size: 22)
-                    Text(selectedLine.displayName)
-                        .font(.body)
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.tertiary)
+                if isCompact {
+                    HStack(spacing: 5) {
+                        SIMBadge(line: selectedLine, size: 22)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(minWidth: 44, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+                } else {
+                    HStack(spacing: 8) {
+                        SIMBadge(line: selectedLine, size: 22)
+                        Text(selectedLine.displayName)
+                            .font(.body)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 44)
+                    .frame(minWidth: 198, alignment: .leading)
+                    .contentShape(Capsule())
+                    .glassEffect(.regular.interactive(), in: Capsule())
                 }
-                .padding(.horizontal, 12)
-                .frame(minHeight: 44)
-                .frame(minWidth: 198, alignment: .leading)
-                .contentShape(Capsule())
-                .glassEffect(.regular.interactive(), in: Capsule())
             }
             .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .buttonStyle(.plain)

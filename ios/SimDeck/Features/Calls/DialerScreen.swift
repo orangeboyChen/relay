@@ -82,7 +82,11 @@ struct DialerScreen: View {
         .padding(.bottom, 8)
         .safeAreaInset(edge: .top, spacing: 0) {
             HStack {
-                LinePicker(lines: onlineLines, selection: $selectedLineID)
+                LinePicker(
+                    lines: onlineLines,
+                    selection: $selectedLineID,
+                    isCompact: number.isEmpty
+                )
                 Spacer()
                 if !number.isEmpty {
                     Button {

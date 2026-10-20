@@ -254,9 +254,6 @@ struct MessageBubble: View {
                 retryAction: retryAction,
                 deleteAction: deleteAction
             )
-        } preview: {
-            MessageContextPreview(message: message, bubbleColor: bubbleColor)
-                .clipShape(bubbleShape)
         }
     }
 
@@ -327,26 +324,6 @@ struct MessageBubble: View {
         case .delivered: "Delivered"
         case .failed: "Failed"
         }
-    }
-}
-
-private struct MessageContextPreview: View {
-    let message: MessageItem
-    let bubbleColor: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let attachment = message.attachment {
-                MessageImage(attachment: attachment)
-            }
-            if !message.body.isEmpty {
-                Text(message.body)
-                    .foregroundStyle(message.direction == .sent ? .white : .primary)
-            }
-        }
-        .padding(.horizontal, 13)
-        .padding(.vertical, 9)
-        .background(bubbleColor)
     }
 }
 

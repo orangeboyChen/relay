@@ -54,7 +54,7 @@ struct ConversationRow: View {
         .padding(.vertical, 6)
         .overlay(alignment: .leading) {
             unreadIndicator
-                .offset(x: -15)
+                .offset(x: -10)
         }
         .accessibilityElement(children: .combine)
     }
@@ -146,10 +146,13 @@ struct MessageContactAvatar: View {
                         .padding(8)
                 }
             } else {
-                Image(systemName: "person.crop.circle.fill")
-                    .resizable()
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(.white, Color(uiColor: .systemGray3))
+                ZStack {
+                    Circle()
+                        .fill(Color(uiColor: .systemGray3))
+                    Image(systemName: "person.fill")
+                        .font(.system(size: diameter * 0.42, weight: .medium))
+                        .foregroundStyle(.white)
+                }
             }
         }
         .frame(width: diameter, height: diameter)

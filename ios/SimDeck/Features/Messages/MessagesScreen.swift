@@ -117,7 +117,7 @@ struct MessagesScreen: View {
                         )
                     }
                     .listRowInsets(
-                        EdgeInsets(top: 0, leading: 26, bottom: 0, trailing: 8)
+                        EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 4)
                     )
                     .alignmentGuide(.listRowSeparatorLeading) { dimensions in
                         dimensions[.leading] + 57

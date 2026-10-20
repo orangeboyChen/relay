@@ -9,7 +9,7 @@ import UIKit
 enum MessageSwipeInteraction {
     static let replyThreshold: CGFloat = 52
     static let maximumReplyOffset: CGFloat = 68
-    static let maximumTimestampOffset: CGFloat = 112
+    static let maximumTimestampOffset: CGFloat = 72
 
     static func offset(horizontal: CGFloat, vertical: CGFloat) -> CGFloat {
         guard abs(horizontal) > abs(vertical) else { return 0 }
@@ -32,7 +32,7 @@ struct MessageTimestampRevealState: Equatable {
     private(set) var offset: CGFloat = 0
 
     var progress: CGFloat {
-        min(max(-offset / 36, 0), 1)
+        min(max(-offset / 28, 0), 1)
     }
 
     mutating func update(horizontal: CGFloat, vertical: CGFloat) {

@@ -53,10 +53,10 @@ struct MessageComposer: View {
                     Image(systemName: "plus")
                         .font(.system(size: 18, weight: .semibold))
                         .frame(width: 36, height: 36)
-                        .background(.quaternary, in: Circle())
                         .frame(width: 44, height: 44, alignment: .bottom)
                 }
-                .buttonStyle(PressFeedbackButtonStyle())
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
                 .disabled(!isTextEntryEnabled)
                 .accessibilityLabel("Add image")
 
@@ -77,16 +77,11 @@ struct MessageComposer: View {
                     .accessibilityLabel("Send message")
                 }
                 .frame(minHeight: 36)
-                .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
-                .overlay {
-                    Capsule()
-                        .stroke(Color(uiColor: .separator), lineWidth: 0.5)
-                }
+                .glassEffect(.regular, in: Capsule())
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
         }
-        .background(.bar)
         .animation(reduceMotion ? nil : .snappy, value: replyPreview)
     }
 

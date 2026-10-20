@@ -99,10 +99,7 @@ struct MessagesScreen: View {
                     NavigationLink {
                         ConversationScreen(
                             initialID: conversation.id,
-                            conversations: conversations.filter {
-                                $0.lineID == conversation.lineID
-                                    && $0.remoteNumber == conversation.remoteNumber
-                            },
+                            conversations: conversation.lineAlternatives(in: conversations),
                             lines: lines,
                             sendAction: sendAction,
                             retryAction: retryAction,

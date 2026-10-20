@@ -186,6 +186,36 @@ final class AppMessageFlowTests: XCTestCase {
         XCTAssertEqual(transport.synchronizedLineIDs, [[firstLine.id, secondLine.id]])
     }
 
+    func testConversationAlternativesIncludeTheSameRecipientAcrossSIMs() {
+        let first = MessageConversation(
+            lineID: firstLine.id,
+            remoteNumber: "+86 135 0000 0000",
+            contactName: "Alex",
+            unreadCount: 0,
+            messages: []
+        )
+        let second = MessageConversation(
+            lineID: secondLine.id,
+            remoteNumber: "+8613500000000",
+            contactName: "Alex",
+            unreadCount: 0,
+            messages: []
+        )
+        let unrelated = MessageConversation(
+            lineID: secondLine.id,
+            remoteNumber: "13800000000",
+            contactName: nil,
+            unreadCount: 0,
+            messages: []
+        )
+
+        XCTAssertEqual(
+            first.lineAlternatives(in: [first, unrelated, second]).map(\.id),
+            [first.id, second.id]
+        )
+        XCTAssertNotEqual(first.id, second.id)
+    }
+
     func testHistoricalConversationKeepsItsSIMIdentityAfterLineRemoval() throws {
         let conversation = MessageConversation(
             lineID: firstLine.id,

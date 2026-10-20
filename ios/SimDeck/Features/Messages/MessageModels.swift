@@ -51,6 +51,13 @@ struct MessageConversation: Identifiable, Equatable, Sendable, Codable {
         )
     }
 
+    func lineAlternatives(in conversations: [MessageConversation]) -> [MessageConversation] {
+        let normalizedRemoteNumber = DialString.normalized(remoteNumber)
+        return conversations.filter {
+            DialString.normalized($0.remoteNumber) == normalizedRemoteNumber
+        }
+    }
+
     func matches(_ query: String) -> Bool {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedQuery.isEmpty else { return true }

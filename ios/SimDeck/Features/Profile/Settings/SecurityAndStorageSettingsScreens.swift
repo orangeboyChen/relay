@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import SwiftUI
 
 struct SecuritySettingsScreen: View {
@@ -135,6 +139,10 @@ struct AboutScreen: View {
             }
             Section {
                 LabeledContent("App Version", value: version)
+            }
+            Section("Source Code") {
+                Link("View Source Code", destination: URL(string: "https://github.com/orangeboyChen/relay-ios")!)
+                Text("The Sim Deck iOS source code is licensed under MPL 2.0.")
             }
             Section("Third-Party Software") {
                 NavigationLink("WebRTC License") {

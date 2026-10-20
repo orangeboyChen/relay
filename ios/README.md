@@ -26,3 +26,16 @@ bundle exec fastlane ios beta version:0.2.0 changelog:"Describe this beta"
 Passing `version:` first updates the marketing version with Fastlane's `increment_version_number`; without it, the lane keeps the current marketing version and only advances the build number.
 
 References: [Fastlane beta deployment](https://docs.fastlane.tools/getting-started/ios/beta-deployment/), [App Store Connect API key](https://docs.fastlane.tools/app-store-connect-api/), and [increment_build_number](https://docs.fastlane.tools/actions/increment_build_number/).
+
+## License
+
+Copyright (C) 2026 orangeboyChen.
+
+Original Sim Deck iOS source code and resources in this repository are licensed
+under the Mozilla Public License 2.0 (`MPL-2.0`). See [LICENSE](LICENSE). The
+bundled WebRTC framework retains its own license, reproduced in
+[`SimDeck/Resources/WebRTC-License.txt`](SimDeck/Resources/WebRTC-License.txt).
+
+When distributing a compiled app, provide recipients with access to the
+corresponding MPL-covered source code for that build. The app's About screen
+links to this repository; release builds should identify their source revision.

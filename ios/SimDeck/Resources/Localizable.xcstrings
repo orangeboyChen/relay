@@ -3424,6 +3424,36 @@
         }
       }
     },
+    "Source Code" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "源代码"
+          }
+        }
+      }
+    },
+    "The Sim Deck iOS source code is licensed under MPL 2.0." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sim Deck iOS 源代码采用 MPL 2.0 许可。"
+          }
+        }
+      }
+    },
+    "View Source Code" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看源代码"
+          }
+        }
+      }
+    },
     "·" : {
       "localizations" : {
         "zh-Hans" : {

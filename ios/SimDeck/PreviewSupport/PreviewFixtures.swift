@@ -146,6 +146,15 @@ enum PreviewFixtures {
         )
     ]
 
+    static let activeCall = ActiveCallSession(
+        id: UUID(uuidString: "30000000-0000-0000-0000-000000000099")!,
+        lineID: devices[0].id,
+        remoteNumber: "13500000000",
+        displayName: nil,
+        status: .active(connectedAt: now.addingTimeInterval(-6)),
+        isMuted: false
+    )
+
     static let conversations = [
         MessageConversation(
             lineID: devices[0].id,

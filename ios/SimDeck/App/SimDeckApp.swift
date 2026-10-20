@@ -67,7 +67,10 @@ struct SimDeckApp: App {
             arguments: ProcessInfo.processInfo.arguments,
             environment: ProcessInfo.processInfo.environment
         )
-        if ProcessInfo.processInfo.arguments.contains("--preview-onboarding") {
+        if ProcessInfo.processInfo.arguments.contains("--preview-active-call") {
+            _model = State(initialValue: .preview(activeCall: PreviewFixtures.activeCall))
+            shouldStartLiveServices = false
+        } else if ProcessInfo.processInfo.arguments.contains("--preview-onboarding") {
             _model = State(initialValue: .preview(onboardingCompleted: false))
             shouldStartLiveServices = false
         } else if ProcessInfo.processInfo.arguments.contains("--preview-profile") {
@@ -129,6 +132,7 @@ enum LiveServiceLaunchPolicy {
         "--preview-onboarding",
         "--preview-profile",
         "--preview-fixtures",
+        "--preview-active-call",
     ]
 
     static func shouldStart(arguments: [String], environment: [String: String]) -> Bool {

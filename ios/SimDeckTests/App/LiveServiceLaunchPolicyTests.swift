@@ -20,6 +20,13 @@ final class LiveServiceLaunchPolicyTests: XCTestCase {
         ))
     }
 
+    func testDisablesLiveServicesForActiveCallPreview() {
+        XCTAssertFalse(LiveServiceLaunchPolicy.shouldStart(
+            arguments: ["SimDeck", "--preview-active-call"],
+            environment: [:]
+        ))
+    }
+
     func testEnablesLiveServicesForNormalDebugLaunch() {
         XCTAssertTrue(LiveServiceLaunchPolicy.shouldStart(
             arguments: ["SimDeck"],

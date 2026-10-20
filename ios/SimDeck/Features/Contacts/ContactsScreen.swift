@@ -249,7 +249,7 @@ private struct ContactRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            ContactAvatar(contact: contact)
+            ContactAvatar(contact: contact, size: 46)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(contact.displayName)
@@ -266,7 +266,7 @@ private struct ContactRow: View {
                 }
             }
         }
-        .frame(minHeight: 48)
+        .frame(minHeight: 64)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(contact.displayName)
         .accessibilityValue(

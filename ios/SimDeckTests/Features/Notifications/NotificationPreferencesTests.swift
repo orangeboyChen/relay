@@ -6,7 +6,7 @@ import XCTest
 @testable import SimDeck
 
 final class NotificationPreferencesTests: XCTestCase {
-    func testDefaultsEnableMessageAndCallNotificationsButHidePreview() {
+    func testDefaultsEnableMessageCallNotificationsAndPreview() {
         let defaults = UserDefaults(suiteName: "NotificationPreferencesTests.defaults")!
         defaults.removePersistentDomain(forName: "NotificationPreferencesTests.defaults")
 
@@ -14,7 +14,7 @@ final class NotificationPreferencesTests: XCTestCase {
 
         XCTAssertTrue(preferences.messageNotifications)
         XCTAssertTrue(preferences.incomingCallNotifications)
-        XCTAssertFalse(preferences.showMessagePreview)
+        XCTAssertTrue(preferences.showMessagePreview)
     }
 
     func testPreferencesRoundTripThroughUserDefaults() {

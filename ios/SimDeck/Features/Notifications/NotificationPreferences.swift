@@ -33,7 +33,7 @@ struct NotificationPreferences: Equatable, Sendable {
     init(defaults: UserDefaults = sharedDefaults) {
         messageNotifications = defaults.object(forKey: Self.messageNotificationsKey) as? Bool ?? true
         incomingCallNotifications = defaults.object(forKey: Self.incomingCallNotificationsKey) as? Bool ?? true
-        showMessagePreview = defaults.object(forKey: Self.showMessagePreviewKey) as? Bool ?? false
+        showMessagePreview = defaults.object(forKey: Self.showMessagePreviewKey) as? Bool ?? true
     }
 
     func save(to defaults: UserDefaults = sharedDefaults) {

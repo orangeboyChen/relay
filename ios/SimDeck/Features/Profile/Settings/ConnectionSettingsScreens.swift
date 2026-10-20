@@ -249,7 +249,7 @@ private struct LinePickerRow: View {
 struct NotificationSettingsScreen: View {
     @AppStorage(NotificationPreferences.messageNotificationsKey, store: NotificationPreferences.sharedDefaults) private var messageNotifications = true
     @AppStorage(NotificationPreferences.incomingCallNotificationsKey, store: NotificationPreferences.sharedDefaults) private var incomingCallNotifications = true
-    @AppStorage(NotificationPreferences.showMessagePreviewKey, store: NotificationPreferences.sharedDefaults) private var showMessagePreview = false
+    @AppStorage(NotificationPreferences.showMessagePreviewKey, store: NotificationPreferences.sharedDefaults) private var showMessagePreview = true
 
     var body: some View {
         Form {

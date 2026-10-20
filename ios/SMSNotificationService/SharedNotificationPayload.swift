@@ -81,7 +81,8 @@ enum NotificationPayloadDecoder {
         payload.installationID == identity.id,
         !payload.remoteNumber.isEmpty,
         !payload.body.isEmpty else { return nil }
-        let showPreview = (UserDefaults(suiteName: group) ?? .standard).bool(forKey: previewKey)
+        let defaults = UserDefaults(suiteName: group) ?? .standard
+        let showPreview = defaults.object(forKey: previewKey) as? Bool ?? true
         return (payload, showPreview)
     }
 

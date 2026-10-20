@@ -363,12 +363,13 @@ private struct CallHistoryRecordRow: View {
                             .glassEffect(.regular.interactive(), in: Circle())
                     }
                     .buttonStyle(.plain)
-                    .frame(width: 50, height: 50)
+                    .frame(width: 58, height: 50)
                     .accessibilityLabel("Call details")
                 }
             }
         }
         .frame(minHeight: 76)
+        .offset(y: 3)
     }
 }
 
@@ -378,7 +379,7 @@ private struct CallHistoryRow: View {
     let referenceDate: Date
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 9) {
             CallHistoryAvatar(record: record)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -466,7 +467,7 @@ private struct CallHistoryAvatar: View {
                     .foregroundStyle(.white)
             }
         }
-        .frame(width: 50, height: 50)
+        .frame(width: 46, height: 46)
         .accessibilityHidden(true)
     }
 

@@ -71,10 +71,11 @@ func (remote *fakeRemote) Complete(_ context.Context, deviceID string, credentia
 }
 
 type fakeCalls struct {
-	state      call.State
-	operations []string
-	error      error
-	sequence   *[]string
+	state        call.State
+	operations   []string
+	error        error
+	hangupErrors []error
+	sequence     *[]string
 }
 
 func (calls *fakeCalls) Dial(_ context.Context, value string) error {
@@ -112,6 +113,11 @@ func (calls *fakeCalls) Hangup(context.Context) error {
 	calls.operations = append(calls.operations, "hangup")
 	if calls.sequence != nil {
 		*calls.sequence = append(*calls.sequence, "hangup")
+	}
+	if len(calls.hangupErrors) > 0 {
+		err := calls.hangupErrors[0]
+		calls.hangupErrors = calls.hangupErrors[1:]
+		return err
 	}
 	return calls.error
 }
@@ -545,6 +551,24 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(runtime.expireCallLease()).To(Succeed())
 
 		Expect(calls.operations).To(Equal([]string{"hangup"}))
+		Expect(media.stopped).To(Equal([]string{"call-1"}))
+		Expect(events.unregistered).To(Equal("call-1"))
+		Expect(runtime.activeCallLease).To(BeNil())
+	})
+
+	It("retries a transient modem hangup failure before releasing an expired call", func() {
+		currentTime := time.Date(2026, 10, 20, 6, 0, 0, 0, time.UTC)
+		runtime.now = func() time.Time { return currentTime }
+		runtime.activeCallLease = &callLease{
+			callID: "call-1", senderInstallationID: testInstallationID,
+			duration: defaultCallLease, expiresAt: currentTime,
+		}
+		calls.state = call.StateActive
+		calls.hangupErrors = []error{errors.New("modem busy"), nil}
+
+		Expect(runtime.expireCallLease()).To(Succeed())
+
+		Expect(calls.operations).To(Equal([]string{"hangup", "hangup"}))
 		Expect(media.stopped).To(Equal([]string{"call-1"}))
 		Expect(events.unregistered).To(Equal("call-1"))
 		Expect(runtime.activeCallLease).To(BeNil())

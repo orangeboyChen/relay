@@ -27,11 +27,12 @@ import (
 )
 
 const (
-	protocolVersion    = 1
-	keyBytes           = 32
-	nonceBytes         = 12
-	defaultCallLease   = 30 * time.Second
-	callCleanupTimeout = 5 * time.Second
+	protocolVersion     = 1
+	keyBytes            = 32
+	nonceBytes          = 12
+	defaultCallLease    = 30 * time.Second
+	callCleanupTimeout  = 5 * time.Second
+	callCleanupAttempts = 3
 )
 
 // Envelope is one opaque command leased from the server.
@@ -476,12 +477,26 @@ func (runtime *Runtime) releaseActiveCall(reason string) error {
 	if lease == nil {
 		return nil
 	}
-	runtime.activeCallLease = nil
 	cleanupContext, cancel := context.WithTimeout(context.Background(), callCleanupTimeout)
 	defer cancel()
-	hangupError := runtime.calls.Hangup(cleanupContext)
+	var hangupError error
+	for attempt := 1; attempt <= callCleanupAttempts; attempt++ {
+		hangupError = runtime.calls.Hangup(cleanupContext)
+		if hangupError == nil {
+			break
+		}
+		runtime.logger.Warn(
+			"orphaned call hangup attempt failed",
+			"call_id", lease.callID,
+			"reason", reason,
+			"attempt", attempt,
+			"max_attempts", callCleanupAttempts,
+			"error", hangupError,
+		)
+	}
 	mediaError := runtime.media.Stop(lease.callID)
 	runtime.events.Unregister(lease.callID)
+	runtime.activeCallLease = nil
 	if hangupError == nil && mediaError == nil {
 		runtime.logger.Info("orphaned call released", "call_id", lease.callID, "reason", reason)
 		return nil

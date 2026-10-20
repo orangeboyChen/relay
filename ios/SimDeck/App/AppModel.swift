@@ -1063,5 +1063,6 @@ enum KeyRecoveryState: Equatable, Sendable {
 enum AppTab: Hashable {
     case calls
     case messages
+    case contacts
     case profile
 }

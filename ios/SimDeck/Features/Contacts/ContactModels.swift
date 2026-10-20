@@ -13,7 +13,8 @@ struct ContactPhoneNumber: Identifiable, Equatable, Sendable {
     let value: String
 
     var displayValue: String {
-        PhoneNumberDisplayFormatter.string(from: value)
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? PhoneNumberDisplayFormatter.string(from: value) : trimmed
     }
 }
 

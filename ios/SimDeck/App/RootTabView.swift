@@ -47,6 +47,14 @@ struct RootTabView: View {
                 .tag(AppTab.messages)
 
                 NavigationStack {
+                    ContactsScreen(model: model)
+                }
+                .tabItem {
+                    Label("Contacts", systemImage: "person.2.fill")
+                }
+                .tag(AppTab.contacts)
+
+                NavigationStack {
                     ProfileScreen(model: model)
                 }
                 .tabItem {
@@ -102,6 +110,10 @@ private struct PlaceholderScreen: View {
 #Preview("Messages - Dark") {
     RootTabView(model: .preview(selectedTab: .messages))
         .preferredColorScheme(.dark)
+}
+
+#Preview("Contacts") {
+    RootTabView(model: .preview(selectedTab: .contacts))
 }
 
 #Preview("Me - Accessibility Text") {

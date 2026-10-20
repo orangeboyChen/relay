@@ -4,6 +4,22 @@
     "" : {
 
     },
+    "%@ · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ · %2$@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ · %2$@"
+          }
+        }
+      }
+    },
     "%lld bars" : {
       "localizations" : {
         "zh-Hans" : {
@@ -31,6 +47,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "4 格信号中的 %lld 格"
+          }
+        }
+      }
+    },
+    "%lld phone numbers" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个电话号码"
           }
         }
       }
@@ -234,6 +260,16 @@
         }
       }
     },
+    "Allow contact access in Settings to browse your iOS contacts in Sim Deck." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请在“设置”中允许访问通讯录，以便在 Sim Deck 中浏览您的 iOS 联系人。"
+          }
+        }
+      }
+    },
     "An online SIM is required." : {
 
     },
@@ -372,6 +408,16 @@
         }
       }
     },
+    "Call %@ with Sim Deck" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 Sim Deck 呼叫 %@"
+          }
+        }
+      }
+    },
     "Call Control Failed" : {
 
     },
@@ -495,6 +541,16 @@
         }
       }
     },
+    "Choose a phone number" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择电话号码"
+          }
+        }
+      }
+    },
     "Choose the SIM that places each call." : {
       "localizations" : {
         "zh-Hans" : {
@@ -521,6 +577,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "关闭"
+          }
+        }
+      }
+    },
+    "Company" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "公司"
           }
         }
       }
@@ -622,6 +688,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "联系人"
+          }
+        }
+      }
+    },
+    "Contacts Access Is Off" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通讯录访问已关闭"
+          }
+        }
+      }
+    },
+    "Contacts Unavailable" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通讯录不可用"
+          }
+        }
+      }
+    },
+    "Contacts saved in iOS appear here." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存在 iOS 中的联系人会显示在这里。"
           }
         }
       }
@@ -1324,6 +1420,16 @@
         }
       }
     },
+    "Loading Contacts…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在载入联系人…"
+          }
+        }
+      }
+    },
     "Loading calls" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1601,6 +1707,16 @@
         }
       }
     },
+    "No Contacts" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有联系人"
+          }
+        }
+      }
+    },
     "No Devices" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1681,6 +1797,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有在线 SIM"
+          }
+        }
+      }
+    },
+    "No phone number" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有电话号码"
           }
         }
       }
@@ -1797,6 +1923,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "仅当 UUID 和指纹与 Linux 设备一致时才允许连接。"
+          }
+        }
+      }
+    },
+    "Open Settings" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开设置"
           }
         }
       }
@@ -2292,6 +2428,16 @@
         }
       }
     },
+    "Search Contacts" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索联系人"
+          }
+        }
+      }
+    },
     "Search messages" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2475,6 +2621,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "信号不可用"
+          }
+        }
+      }
+    },
+    "Sim Deck could not read your contacts." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sim Deck 无法读取您的通讯录。"
+          }
+        }
+      }
+    },
+    "Sim Deck reads your contacts to show names and let you call or message them. Contacts stay managed by iOS." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sim Deck 会读取通讯录，以显示联系人姓名并供您拨号或发送短信。联系人仍由 iOS 管理。"
           }
         }
       }

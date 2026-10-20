@@ -3,6 +3,16 @@ import XCTest
 
 @MainActor
 final class ContactListModelTests: XCTestCase {
+    func testPhoneNumberPreservesNativeContactFormatting() {
+        let number = ContactPhoneNumber(
+            id: "formatted",
+            label: "mobile",
+            value: "+86 (400) 627 2273"
+        )
+
+        XCTAssertEqual(number.displayValue, "+86 (400) 627 2273")
+    }
+
     func testDirectorySortsSectionsAndKeepsNumberedContactsLast() {
         let contacts = [
             contact(id: "3", givenName: "13500000000"),

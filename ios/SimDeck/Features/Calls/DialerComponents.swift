@@ -168,7 +168,7 @@ struct DialPad: View {
     var body: some View {
         LazyVGrid(
             columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 3),
-            spacing: 8
+            spacing: 18
         ) {
             ForEach(keys, id: \.self) { key in
                 DialPadKey(content: key) { press in

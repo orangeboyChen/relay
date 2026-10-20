@@ -74,7 +74,7 @@ struct DialerScreen: View {
                 }
                 .frame(width: 80, height: 80)
             }
-            .padding(.top, 44)
+            .padding(.top, 14)
 
             Spacer(minLength: 10)
         }

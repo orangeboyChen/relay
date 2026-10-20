@@ -324,6 +324,31 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertEqual(coordinator.activeCall?.status, .ringing)
     }
 
+    func testProviderResetClearsTheVisibleCallAndResetsTransportResources() async {
+        let transport = RecordingCallTransport()
+        let callID = UUID()
+        let coordinator = CallKitCoordinator(
+            transport: transport,
+            integratesWithSystem: false,
+            initialCall: ActiveCallSession(
+                id: callID,
+                lineID: UUID(),
+                remoteNumber: "10086",
+                displayName: nil,
+                status: .active(connectedAt: .now),
+                isMuted: false
+            )
+        )
+
+        coordinator.providerDidReset(CXProvider(configuration: CXProviderConfiguration()))
+        for _ in 0..<100 where transport.resetCount == 0 {
+            await Task.yield()
+        }
+
+        XCTAssertNil(coordinator.activeCall)
+        XCTAssertEqual(transport.resetCount, 1)
+    }
+
     private func makeCoordinator(callID: UUID) -> CallKitCoordinator {
         let call = ActiveCallSession(
             id: callID,
@@ -485,6 +510,7 @@ private final class RecordingCallTransport: CallTransport {
     private(set) var registeredIncomingCalls: [IncomingCallRegistration] = []
     private(set) var discardedIncomingCallIDs: [UUID] = []
     private(set) var answeredIncomingCallIDs: [UUID] = []
+    private(set) var resetCount = 0
 
     init(
         startError: Error? = nil,
@@ -547,7 +573,9 @@ private final class RecordingCallTransport: CallTransport {
 
     func audioSessionDidActivate(_ audioSession: AVAudioSession) async {}
     func audioSessionDidDeactivate(_ audioSession: AVAudioSession) async {}
-    func reset() async {}
+    func reset() async {
+        resetCount += 1
+    }
 }
 
 @MainActor

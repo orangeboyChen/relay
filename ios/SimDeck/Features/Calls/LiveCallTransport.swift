@@ -37,6 +37,7 @@ final class InstallationCommandSigner {
 
 @MainActor
 final class LiveCallTransport: CallTransport, CallLineRouting {
+    private static let callLeaseSeconds = 30
     private static let logger = Logger(
         subsystem: "com.nowcent.simdeck",
         category: "LiveCallTransport"
@@ -51,7 +52,9 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
     private let makeMediaSession: @MainActor () throws -> any CallMediaSession
     private let makeRelayMediaSession: @MainActor ([CallTURNCredentials]) throws -> any CallMediaSession
     private let waitBeforePollingAgain: () async throws -> Void
+    private let waitBeforeCallLeaseRenewal: () async throws -> Void
     private let automaticallyPollEvents: Bool
+    private let automaticallyRenewCallLease: Bool
     private let eventStreamOpener: (any EncryptedEventStreamOpening)?
     private let commandSigner: InstallationCommandSigner
     private var eventHandler: (@MainActor (CallTransportEvent) -> Void)?
@@ -61,6 +64,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
     private var activeAudioSession: AVAudioSession?
     private var eventCursor: Int64 = 0
     private var eventTask: Task<Void, Never>?
+    private var callLeaseTasks: [UUID: Task<Void, Never>] = [:]
     private var activeEventStream: (any EncryptedEventStream)?
     private var lineRoutes: [UUID: DeviceLineIdentity] = [:]
 
@@ -81,7 +85,11 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
         waitBeforePollingAgain: @escaping () async throws -> Void = {
             try await Task.sleep(for: .milliseconds(500))
         },
+        waitBeforeCallLeaseRenewal: @escaping () async throws -> Void = {
+            try await Task.sleep(for: .seconds(10))
+        },
         automaticallyPollEvents: Bool = true,
+        automaticallyRenewCallLease: Bool? = nil,
         eventStreamOpener: (any EncryptedEventStreamOpening)? = nil
     ) {
         self.api = api
@@ -91,7 +99,9 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
         self.makeMediaSession = makeMediaSession
         self.makeRelayMediaSession = makeRelayMediaSession
         self.waitBeforePollingAgain = waitBeforePollingAgain
+        self.waitBeforeCallLeaseRenewal = waitBeforeCallLeaseRenewal
         self.automaticallyPollEvents = automaticallyPollEvents
+        self.automaticallyRenewCallLease = automaticallyRenewCallLease ?? automaticallyPollEvents
         self.eventStreamOpener = eventStreamOpener ?? (api as? any EncryptedEventStreamOpening)
         self.commandSigner = commandSigner
     }
@@ -136,6 +146,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
     }
 
     func discardIncomingCall(callID: UUID) {
+        stopCallLeaseRenewal(callID: callID)
         mediaSessions.removeValue(forKey: callID)?.close()
         callLines.removeValue(forKey: callID)
         callEvents.removeValue(forKey: callID)
@@ -182,6 +193,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
                 hasConnected: false
             )
             installMediaSession(mediaSession, for: callID)
+            startCallLeaseRenewal(callID: callID)
             if automaticallyPollEvents {
                 startEventLoopIfNeeded()
             }
@@ -217,6 +229,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
             }
             try await mediaSession.applyAnswer(answer)
             installMediaSession(mediaSession, for: callID)
+            startCallLeaseRenewal(callID: callID)
         } catch {
             mediaSession.close()
             if remoteCallAnswered {
@@ -237,6 +250,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
     func endCall(callID: UUID) async throws {
         guard let lineID = callLines[callID] else { throw LiveCallTransportError.invalidResponse }
         defer {
+            stopCallLeaseRenewal(callID: callID)
             mediaSessions.removeValue(forKey: callID)?.close()
             callLines.removeValue(forKey: callID)
             callEvents.removeValue(forKey: callID)
@@ -279,10 +293,15 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
     }
 
     func reset() async {
+        let remoteCalls = callLines.map { (callID: $0.key, lineID: $0.value) }
         eventTask?.cancel()
         eventTask = nil
         activeEventStream?.close()
         activeEventStream = nil
+        for task in callLeaseTasks.values {
+            task.cancel()
+        }
+        callLeaseTasks.removeAll()
         for mediaSession in mediaSessions.values {
             mediaSession.close()
         }
@@ -290,6 +309,13 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
         activeAudioSession = nil
         callLines.removeAll()
         callEvents.removeAll()
+        for call in remoteCalls {
+            await endRemoteCallAfterLocalFailure(
+                callID: call.callID,
+                lineID: call.lineID,
+                reason: "CallKit provider reset"
+            )
+        }
     }
 
     private func installMediaSession(_ mediaSession: any CallMediaSession, for callID: UUID) {
@@ -297,6 +323,32 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
         if let activeAudioSession {
             mediaSession.audioSessionDidActivate(activeAudioSession)
         }
+    }
+
+    private func startCallLeaseRenewal(callID: UUID) {
+        guard automaticallyRenewCallLease, callLeaseTasks[callID] == nil else { return }
+        callLeaseTasks[callID] = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                do {
+                    try await waitBeforeCallLeaseRenewal()
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled, let lineID = callLines[callID] else { return }
+                do {
+                    _ = try await send(operation: "call.heartbeat", callID: callID, lineID: lineID)
+                } catch {
+                    Self.logger.error(
+                        "Active call lease renewal failed; call: \(callID.uuidString, privacy: .public), error: \(String(reflecting: error), privacy: .public)"
+                    )
+                }
+            }
+        }
+    }
+
+    private func stopCallLeaseRenewal(callID: UUID) {
+        callLeaseTasks.removeValue(forKey: callID)?.cancel()
     }
 
     private func send(
@@ -330,7 +382,10 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
             simID: target.simID,
             number: number,
             digits: digits,
-            mediaOffer: mediaOffer
+            mediaOffer: mediaOffer,
+            callLeaseSeconds: ["call.start", "call.answer"].contains(operation)
+                ? Self.callLeaseSeconds
+                : nil
         )
         let sealed: SealedCallCommand
         do {
@@ -494,6 +549,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
                 eventHandler?(.connected(callID: callID, at: envelope.occurredAt))
             case "ended":
                 let reason: CallEndReason = context.hasConnected ? .remoteEnded : .unanswered
+                stopCallLeaseRenewal(callID: callID)
                 mediaSessions.removeValue(forKey: callID)?.close()
                 callEvents.removeValue(forKey: callID)
                 callLines.removeValue(forKey: callID)
@@ -509,6 +565,13 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
 
     private func failActiveCalls() {
         let callIDs = Array(callEvents.keys)
+        let remoteCalls = callIDs.compactMap { callID in
+            callLines[callID].map { (callID: callID, lineID: $0) }
+        }
+        for task in callLeaseTasks.values {
+            task.cancel()
+        }
+        callLeaseTasks.removeAll()
         for mediaSession in mediaSessions.values {
             mediaSession.close()
         }
@@ -518,7 +581,27 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
         for callID in callIDs {
             eventHandler?(.ended(callID: callID, reason: .failed))
         }
+        Task { [weak self] in
+            guard let self else { return }
+            for call in remoteCalls {
+                await endRemoteCallAfterLocalFailure(
+                    callID: call.callID,
+                    lineID: call.lineID,
+                    reason: "event stream failed"
+                )
+            }
+        }
         eventTask = nil
+    }
+
+    private func endRemoteCallAfterLocalFailure(callID: UUID, lineID: UUID, reason: String) async {
+        do {
+            _ = try await send(operation: "call.end", callID: callID, lineID: lineID)
+        } catch {
+            Self.logger.error(
+                "Best-effort remote call cleanup failed; call: \(callID.uuidString, privacy: .public), reason: \(reason, privacy: .public), error: \(String(reflecting: error), privacy: .public)"
+            )
+        }
     }
 
     private func stopEventLoopIfIdle() {
@@ -570,6 +653,7 @@ struct CallCommandPayload: Codable, Equatable, Sendable {
     let number: String?
     let digits: String?
     let mediaOffer: String?
+    let callLeaseSeconds: Int?
 
     init(
         version: Int,
@@ -579,7 +663,8 @@ struct CallCommandPayload: Codable, Equatable, Sendable {
         simID: UUID? = nil,
         number: String? = nil,
         digits: String? = nil,
-        mediaOffer: String? = nil
+        mediaOffer: String? = nil,
+        callLeaseSeconds: Int? = nil
     ) {
         self.version = version
         self.operation = operation
@@ -589,6 +674,7 @@ struct CallCommandPayload: Codable, Equatable, Sendable {
         self.number = number
         self.digits = digits
         self.mediaOffer = mediaOffer
+        self.callLeaseSeconds = callLeaseSeconds
     }
 
     enum CodingKeys: String, CodingKey {
@@ -600,6 +686,7 @@ struct CallCommandPayload: Codable, Equatable, Sendable {
         case number
         case digits
         case mediaOffer = "media_offer"
+        case callLeaseSeconds = "call_lease_seconds"
     }
 
     func encode(to encoder: Encoder) throws {
@@ -612,6 +699,7 @@ struct CallCommandPayload: Codable, Equatable, Sendable {
         try values.encodeIfPresent(number, forKey: .number)
         try values.encodeIfPresent(digits, forKey: .digits)
         try values.encodeIfPresent(mediaOffer, forKey: .mediaOffer)
+        try values.encodeIfPresent(callLeaseSeconds, forKey: .callLeaseSeconds)
     }
 }
 

@@ -264,6 +264,7 @@ final class LiveCallTransportTests: XCTestCase {
         ])
         XCTAssertEqual(api.payloads.first?.number, "13500000000")
         XCTAssertEqual(api.payloads.first?.mediaOffer, media.offer)
+        XCTAssertEqual(api.payloads.first?.callLeaseSeconds, 30)
         XCTAssertEqual(api.payloads[3].digits, "#")
         XCTAssertEqual(media.appliedAnswers, [CallMediaSessionFake.answer])
         XCTAssertEqual(media.muteChanges, [true, false])
@@ -470,6 +471,70 @@ final class LiveCallTransportTests: XCTestCase {
         XCTAssertEqual(opener.requestedCursors, [0])
         XCTAssertEqual(stream.acknowledgedSequences, [1])
         XCTAssertTrue(stream.isClosed)
+    }
+
+    func testActiveCallRenewsItsEncryptedDeviceLeaseUntilItEnds() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let gate = CallLeaseRenewalGate()
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: api.commandSigner,
+            makeMediaSession: { CallMediaSessionFake() },
+            waitBeforePollingAgain: {},
+            waitBeforeCallLeaseRenewal: { await gate.wait() },
+            automaticallyPollEvents: false,
+            automaticallyRenewCallLease: true
+        )
+
+        try await transport.startOutgoingCall(callID: callID, number: "10086", lineID: deviceID)
+        await gate.signal()
+        for _ in 0..<100 where api.payloads.count < 2 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(api.payloads.map(\.operation), ["call.start", "call.heartbeat"])
+        XCTAssertEqual(api.payloads.last?.callID, callID.uuidString.lowercased())
+
+        try await transport.endCall(callID: callID)
+        XCTAssertEqual(api.payloads.map(\.operation), ["call.start", "call.heartbeat", "call.end"])
+    }
+
+    func testRepeatedEventStreamFailureClosesMediaAndEndsTheCallAsFailed() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let media = CallMediaSessionFake()
+        let opener = RecordingEncryptedEventStreamOpener { _ in
+            throw ServerConnectionError.eventStreamUnavailable
+        }
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: api.commandSigner,
+            makeMediaSession: { media },
+            waitBeforePollingAgain: {},
+            automaticallyRenewCallLease: false,
+            eventStreamOpener: opener
+        )
+        let ended = expectation(description: "Repeated stream failures end the active call")
+        transport.setEventHandler { event in
+            if event == .ended(callID: self.callID, reason: .failed) {
+                ended.fulfill()
+            }
+        }
+
+        try await transport.startOutgoingCall(callID: callID, number: "10086", lineID: deviceID)
+        await fulfillment(of: [ended], timeout: 1)
+        for _ in 0..<100 where api.payloads.count < 2 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(opener.requestedCursors, [0, 0, 0])
+        XCTAssertEqual(api.payloads.map(\.operation), ["call.start", "call.end"])
+        XCTAssertTrue(media.isClosed)
+        do {
+            try await transport.setHeld(true, callID: callID)
+            XCTFail("Expected failed event-stream cleanup to discard the call")
+        } catch {
+            XCTAssertEqual(error as? LiveCallTransportError, .invalidResponse)
+        }
     }
 
     func testTamperedOrWrongCallEventsAreNotAccepted() async throws {
@@ -718,6 +783,29 @@ private final class CallMediaSessionFake: CallMediaSession {
 
     func close() {
         isClosed = true
+    }
+}
+
+private actor CallLeaseRenewalGate {
+    private var permits = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        if permits > 0 {
+            permits -= 1
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func signal() {
+        guard !waiters.isEmpty else {
+            permits += 1
+            return
+        }
+        waiters.removeFirst().resume()
     }
 }
 

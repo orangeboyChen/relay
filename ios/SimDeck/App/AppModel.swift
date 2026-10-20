@@ -605,6 +605,10 @@ final class AppModel {
         try await slotSettingsTransport.update(settings, line: line)
     }
 
+    func restartSlotModem(line: DeviceLineIdentity) async throws {
+        try await slotSettingsTransport.restartModem(line: line)
+    }
+
     func removeDevice(line: DeviceLineIdentity) async throws {
         try await serverConnection.revokeDevice(deviceID: line.deviceID)
         reconcileLineHistory(using: devices)

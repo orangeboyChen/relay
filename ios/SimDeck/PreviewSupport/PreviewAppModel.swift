@@ -89,6 +89,8 @@ private final class PreviewSlotSettingsTransport: SlotSettingsTransport {
     func update(_ settings: SlotSettings, line: DeviceLineIdentity) async throws -> SlotSettings {
         settings
     }
+
+    func restartModem(line: DeviceLineIdentity) async throws {}
 }
 
 @MainActor

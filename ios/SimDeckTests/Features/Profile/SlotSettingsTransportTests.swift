@@ -72,6 +72,29 @@ final class SlotSettingsTransportTests: XCTestCase {
         XCTAssertEqual(api.payloads.first?.simID, currentSIMID)
     }
 
+    func testRestartUsesFreshAssignmentAndDoesNotRequireSettingsResult() async throws {
+        let api = try SlotSettingsAPIFake(deviceID: deviceID)
+        let currentSlotID = UUID(uuidString: "01900000-0000-7000-8000-000000000406")!
+        let currentSIMID = UUID(uuidString: "01900000-0000-7000-8000-000000000407")!
+        api.refreshedTarget = EncryptedCommandTarget(
+            deviceID: deviceID,
+            slotID: currentSlotID,
+            simID: currentSIMID,
+            publicKey: api.commandPublicKey
+        )
+        api.omitSettings = true
+
+        try await makeTransport(api: api).restartModem(line: line(commandKey: api.commandPublicKey))
+
+        let payload = try XCTUnwrap(api.payloads.first)
+        XCTAssertEqual(payload.operation, "slot.restart_modem")
+        XCTAssertEqual(payload.slotID, currentSlotID)
+        XCTAssertEqual(payload.simID, currentSIMID)
+        XCTAssertNil(payload.volteEnabled)
+        let serverVisible = String(decoding: try JSONEncoder().encode(api.requests[0]), as: UTF8.self)
+        XCTAssertFalse(serverVisible.contains("slot.restart_modem"))
+    }
+
     func testOfflineMissingIdentityTimeoutAndInvalidResultFailClosed() async throws {
         let offlineAPI = try SlotSettingsAPIFake(deviceID: deviceID)
         let offlineTransport = makeTransport(api: offlineAPI)

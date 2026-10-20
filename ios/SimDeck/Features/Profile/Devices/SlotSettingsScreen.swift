@@ -13,6 +13,7 @@ struct SlotSettingsScreen: View {
     @State private var original: SlotSettings?
     @State private var isLoading = true
     @State private var isSaving = false
+    @State private var showsVoLTERestartConfirmation = false
     @State private var errorDescription: String?
 
     var body: some View {
@@ -47,13 +48,30 @@ struct SlotSettingsScreen: View {
                 if isSaving {
                     ProgressView()
                 } else {
-                    Button("Save") { save() }
+                    Button("Save") {
+                        if settings?.volteEnabled != original?.volteEnabled {
+                            showsVoLTERestartConfirmation = true
+                        } else {
+                            save(restartModem: false)
+                        }
+                    }
                         .disabled(!canSave)
                 }
             }
         }
         .task { await loadSettings() }
         .interactiveDismissDisabled(isSaving)
+        .confirmationDialog(
+            "Restart Modem to Apply VoLTE?",
+            isPresented: $showsVoLTERestartConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Save and Restart") { save(restartModem: true) }
+            Button("Save Without Restart") { save(restartModem: false) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("VoLTE changes require a modem restart. Restarting temporarily takes this SIM offline.")
+        }
     }
 
     private var canSave: Bool {
@@ -85,13 +103,16 @@ struct SlotSettingsScreen: View {
         isLoading = false
     }
 
-    private func save() {
+    private func save(restartModem: Bool) {
         guard let settings else { return }
         Task {
             isSaving = true
             errorDescription = nil
             do {
                 _ = try await model.saveSlotSettings(settings, line: line)
+                if restartModem {
+                    try await model.restartSlotModem(line: line)
+                }
                 dismiss()
             } catch {
                 errorDescription = error.localizedDescription

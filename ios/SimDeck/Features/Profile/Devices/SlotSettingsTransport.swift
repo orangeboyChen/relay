@@ -76,6 +76,7 @@ enum SlotSettingsTransportError: LocalizedError, Equatable {
 protocol SlotSettingsTransport: AnyObject {
     func load(line: DeviceLineIdentity) async throws -> SlotSettings
     func update(_ settings: SlotSettings, line: DeviceLineIdentity) async throws -> SlotSettings
+    func restartModem(line: DeviceLineIdentity) async throws
 }
 
 @MainActor
@@ -115,15 +116,37 @@ final class LiveSlotSettingsTransport: SlotSettingsTransport {
         try await configure(settings, line: line)
     }
 
+    func restartModem(line: DeviceLineIdentity) async throws {
+        guard line.isOnline, commandSigner.identity != nil else {
+            throw SlotSettingsTransportError.unavailable
+        }
+        let target = try await api.commandTarget(for: line)
+        let result = try await execute(
+            SlotSettingsCommandPayload(
+                version: 1,
+                operation: "slot.restart_modem",
+                slotID: target.slotID,
+                simID: target.simID,
+                dataEnabled: nil,
+                airplaneModeEnabled: nil,
+                incomingCallsEnabled: nil,
+                incomingSMSEnabled: nil,
+                volteEnabled: nil
+            ),
+            target: target,
+            line: line
+        )
+        guard result.success else { throw SlotSettingsTransportError.rejected }
+    }
+
     private func configure(
         _ settings: SlotSettings?,
         line: DeviceLineIdentity
     ) async throws -> SlotSettings {
-        guard line.isOnline, let installationIdentity = commandSigner.identity else {
+        guard line.isOnline, commandSigner.identity != nil else {
             throw SlotSettingsTransportError.unavailable
         }
         let target = try await api.commandTarget(for: line)
-        let commandID = makeCommandID()
         let payload = SlotSettingsCommandPayload(
             version: 1,
             operation: "slot.configure",
@@ -135,6 +158,23 @@ final class LiveSlotSettingsTransport: SlotSettingsTransport {
             incomingSMSEnabled: settings?.incomingSMSEnabled,
             volteEnabled: settings?.volteEnabled
         )
+        let result = try await execute(payload, target: target, line: line)
+        guard result.success else { throw SlotSettingsTransportError.rejected }
+        guard let slotSettings = result.slotSettings else {
+            throw SlotSettingsTransportError.invalidResponse
+        }
+        return slotSettings
+    }
+
+    private func execute(
+        _ payload: SlotSettingsCommandPayload,
+        target: EncryptedCommandTarget,
+        line: DeviceLineIdentity
+    ) async throws -> CallCommandResult {
+        guard line.isOnline, let installationIdentity = commandSigner.identity else {
+            throw SlotSettingsTransportError.unavailable
+        }
+        let commandID = makeCommandID()
         let sealed: SealedCallCommand
         do {
             sealed = try EncryptedCallCommandCodec.seal(
@@ -168,11 +208,7 @@ final class LiveSlotSettingsTransport: SlotSettingsTransport {
                 } catch {
                     throw SlotSettingsTransportError.invalidResponse
                 }
-                guard result.success else { throw SlotSettingsTransportError.rejected }
-                guard let slotSettings = result.slotSettings else {
-                    throw SlotSettingsTransportError.invalidResponse
-                }
-                return slotSettings
+                return result
             }
             if attempt < 59 {
                 try await waitBeforePollingAgain()

@@ -75,12 +75,7 @@ struct SIMFilterMenu: View {
                 }
             }
         } label: {
-            Label(
-                "Filter by SIM",
-                systemImage: selection == nil
-                    ? "line.3.horizontal.decrease.circle"
-                    : "line.3.horizontal.decrease.circle.fill"
-            )
+            Label("Filter by SIM", systemImage: "line.3.horizontal")
         }
     }
 }

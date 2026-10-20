@@ -171,6 +171,27 @@ final class LiveMessageTransportTests: XCTestCase {
         XCTAssertEqual(api.requestedEventCursors, [0, 1])
     }
 
+    func testSynchronizeDrainsEveryFullEventPageBeforeReturning() async throws {
+        let api = try MessageCommandAPIFake(deviceID: deviceID, outcome: .success)
+        api.eventPageSize = 100
+        for _ in 0..<100 {
+            api.appendUnrelatedEvent()
+        }
+        try api.appendIncomingMessage(
+            sourceID: String(repeating: "e", count: 64),
+            remoteNumber: "13500000000",
+            body: "page two",
+            receivedAt: Date(timeIntervalSince1970: 1_792_138_170)
+        )
+        let transport = makeTransport(api: api)
+
+        let batch = try await transport.synchronize(lines: [api.line])
+
+        XCTAssertEqual(api.requestedEventCursors, [0, 100])
+        XCTAssertEqual(batch.nextSequence, 101)
+        XCTAssertEqual(batch.deliveries.map(\.body), ["page two"])
+    }
+
     func testEventAssociatedDataUsesExactMillisecondWireTimestamp() {
         let envelope = EncryptedEventEnvelope(
             id: UUID(uuidString: "01900000-0000-7000-8000-000000000211")!,
@@ -415,6 +436,7 @@ private final class MessageCommandAPIFake: EncryptedCallCommandAPI {
     var refreshedTarget: EncryptedCommandTarget?
     var verificationKeys: [UUID: Data]
     var events: [EncryptedEventEnvelope] = []
+    var eventPageSize: Int?
     private(set) var requests: [EncryptedCallCommandRequest] = []
     private(set) var payloads: [MessageCommandPayload] = []
     private(set) var requestedEventCursors: [Int64] = []
@@ -538,10 +560,11 @@ private final class MessageCommandAPIFake: EncryptedCallCommandAPI {
 
     func encryptedEvents(afterSequence: Int64) async throws -> EncryptedEventPage {
         requestedEventCursors.append(afterSequence)
-        let pageEvents = events.filter { $0.sequence > afterSequence }
+        let remaining = events.filter { $0.sequence > afterSequence }
+        let pageEvents = eventPageSize.map { Array(remaining.prefix($0)) } ?? remaining
         return EncryptedEventPage(
             events: pageEvents,
-            nextSequence: events.last?.sequence ?? afterSequence
+            nextSequence: pageEvents.last?.sequence ?? afterSequence
         )
     }
 

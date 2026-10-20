@@ -100,6 +100,7 @@ final class UserDefaultsMessageCursorStore: MessageCursorStoring {
 
 @MainActor
 final class LiveMessageTransport: MessageTransport {
+    private static let eventPageSize = 100
     private static let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "SimDeck",
         category: "EncryptedMessages"
@@ -230,116 +231,124 @@ final class LiveMessageTransport: MessageTransport {
         guard let installationIdentity = commandSigner.identity else {
             throw LiveMessageTransportError.missingInstallationIdentity
         }
-        let page = try await api.encryptedEvents(afterSequence: cursorStore.sequence)
         let linesByDevice = Dictionary(grouping: lines, by: { $0.deviceID })
         var verificationKeys: [UUID: Data] = [:]
         var deliveries: [IncomingMessageDelivery] = []
         var detectedSIMProfiles: [DetectedSIMProfile] = []
+        var nextSequence = cursorStore.sequence
 
-        for envelope in page.events where envelope.type == "message.received" {
-            guard envelope.recipientInstallationID == installationIdentity.id else {
-                continue
-            }
-            guard let candidates = linesByDevice[envelope.deviceUUID],
-                  let commandPublicKey = candidates.first?.commandPublicKey else {
-                throw LiveMessageTransportError.invalidResponse
-            }
-            let verificationKey: Data
-            if let cached = verificationKeys[envelope.deviceUUID] {
-                verificationKey = cached
-            } else {
-                verificationKey = try await api.eventVerificationKey(
-                    deviceID: envelope.deviceUUID
-                )
-                verificationKeys[envelope.deviceUUID] = verificationKey
-            }
-            let payload: IncomingMessagePayload
-            do {
-                payload = try EncryptedMessageEventCodec.open(
-                    envelope,
-                    installationIdentity: installationIdentity,
-                    deviceCommandPublicKey: commandPublicKey,
-                    deviceVerificationKey: verificationKey
-                )
-            } catch {
-                Self.logEventFailure(envelope, stage: "authenticate-or-decrypt", error: error)
-                throw error
-            }
-            let matchingLines: [DeviceLineIdentity]
-            if let payloadSlotID = payload.slotID {
-                matchingLines = candidates.filter { $0.slotID == payloadSlotID }
-            } else if let payloadSIMID = payload.simID {
-                matchingLines = candidates.filter { $0.simID == payloadSIMID }
-            } else {
-                matchingLines = candidates.count == 1 ? candidates : []
-            }
-            guard matchingLines.count == 1 else {
-                throw LiveMessageTransportError.invalidResponse
-            }
-            deliveries.append(
-                IncomingMessageDelivery(
-                    id: envelope.id,
-                    sourceID: payload.messageID,
-                    lineID: matchingLines[0].id,
-                    remoteNumber: payload.remoteNumber,
-                    body: payload.body,
-                    receivedAt: payload.receivedAt
-                )
-            )
-        }
-        for envelope in page.events where envelope.type == "sim.profile" {
-            guard envelope.recipientInstallationID == installationIdentity.id else {
-                continue
-            }
-            guard let candidates = linesByDevice[envelope.deviceUUID],
-                  let commandPublicKey = candidates.first?.commandPublicKey else {
-                throw LiveMessageTransportError.invalidResponse
-            }
-            let verificationKey: Data
-            if let cached = verificationKeys[envelope.deviceUUID] {
-                verificationKey = cached
-            } else {
-                verificationKey = try await api.eventVerificationKey(
-                    deviceID: envelope.deviceUUID
-                )
-                verificationKeys[envelope.deviceUUID] = verificationKey
-            }
-            let payload: IncomingSIMProfilePayload
-            do {
-                payload = try EncryptedSIMProfileEventCodec.open(
-                    envelope,
-                    installationIdentity: installationIdentity,
-                    deviceCommandPublicKey: commandPublicKey,
-                    deviceVerificationKey: verificationKey
-                )
-            } catch {
-                Self.logEventFailure(envelope, stage: "authenticate-or-decrypt", error: error)
-                throw error
-            }
-            let matchingLines = candidates.filter { line in
-                if let slotID = payload.slotID, line.slotID != slotID {
-                    return false
+        while true {
+            let page = try await api.encryptedEvents(afterSequence: nextSequence)
+            for envelope in page.events where envelope.type == "message.received" {
+                guard envelope.recipientInstallationID == installationIdentity.id else {
+                    continue
                 }
-                if let simID = payload.simID, line.simID != simID {
-                    return false
+                guard let candidates = linesByDevice[envelope.deviceUUID],
+                    let commandPublicKey = candidates.first?.commandPublicKey
+                else {
+                    throw LiveMessageTransportError.invalidResponse
                 }
-                return payload.slotID != nil || payload.simID != nil || candidates.count == 1
-            }
-            guard matchingLines.count == 1 else {
-                throw LiveMessageTransportError.invalidResponse
-            }
-            detectedSIMProfiles.append(
-                DetectedSIMProfile(
-                    lineID: matchingLines[0].id,
-                    lineName: payload.lineName,
-                    phoneNumber: payload.phoneNumber
+                let verificationKey: Data
+                if let cached = verificationKeys[envelope.deviceUUID] {
+                    verificationKey = cached
+                } else {
+                    verificationKey = try await api.eventVerificationKey(
+                        deviceID: envelope.deviceUUID
+                    )
+                    verificationKeys[envelope.deviceUUID] = verificationKey
+                }
+                let payload: IncomingMessagePayload
+                do {
+                    payload = try EncryptedMessageEventCodec.open(
+                        envelope,
+                        installationIdentity: installationIdentity,
+                        deviceCommandPublicKey: commandPublicKey,
+                        deviceVerificationKey: verificationKey
+                    )
+                } catch {
+                    Self.logEventFailure(envelope, stage: "authenticate-or-decrypt", error: error)
+                    throw error
+                }
+                let matchingLines: [DeviceLineIdentity]
+                if let payloadSlotID = payload.slotID {
+                    matchingLines = candidates.filter { $0.slotID == payloadSlotID }
+                } else if let payloadSIMID = payload.simID {
+                    matchingLines = candidates.filter { $0.simID == payloadSIMID }
+                } else {
+                    matchingLines = candidates.count == 1 ? candidates : []
+                }
+                guard matchingLines.count == 1 else {
+                    throw LiveMessageTransportError.invalidResponse
+                }
+                deliveries.append(
+                    IncomingMessageDelivery(
+                        id: envelope.id,
+                        sourceID: payload.messageID,
+                        lineID: matchingLines[0].id,
+                        remoteNumber: payload.remoteNumber,
+                        body: payload.body,
+                        receivedAt: payload.receivedAt
+                    )
                 )
-            )
+            }
+            for envelope in page.events where envelope.type == "sim.profile" {
+                guard envelope.recipientInstallationID == installationIdentity.id else {
+                    continue
+                }
+                guard let candidates = linesByDevice[envelope.deviceUUID],
+                    let commandPublicKey = candidates.first?.commandPublicKey
+                else {
+                    throw LiveMessageTransportError.invalidResponse
+                }
+                let verificationKey: Data
+                if let cached = verificationKeys[envelope.deviceUUID] {
+                    verificationKey = cached
+                } else {
+                    verificationKey = try await api.eventVerificationKey(
+                        deviceID: envelope.deviceUUID
+                    )
+                    verificationKeys[envelope.deviceUUID] = verificationKey
+                }
+                let payload: IncomingSIMProfilePayload
+                do {
+                    payload = try EncryptedSIMProfileEventCodec.open(
+                        envelope,
+                        installationIdentity: installationIdentity,
+                        deviceCommandPublicKey: commandPublicKey,
+                        deviceVerificationKey: verificationKey
+                    )
+                } catch {
+                    Self.logEventFailure(envelope, stage: "authenticate-or-decrypt", error: error)
+                    throw error
+                }
+                let matchingLines = candidates.filter { line in
+                    if let slotID = payload.slotID, line.slotID != slotID {
+                        return false
+                    }
+                    if let simID = payload.simID, line.simID != simID {
+                        return false
+                    }
+                    return payload.slotID != nil || payload.simID != nil || candidates.count == 1
+                }
+                guard matchingLines.count == 1 else {
+                    throw LiveMessageTransportError.invalidResponse
+                }
+                detectedSIMProfiles.append(
+                    DetectedSIMProfile(
+                        lineID: matchingLines[0].id,
+                        lineName: payload.lineName,
+                        phoneNumber: payload.phoneNumber
+                    )
+                )
+            }
+            guard page.nextSequence > nextSequence else { break }
+            nextSequence = page.nextSequence
+            if page.events.count < Self.eventPageSize { break }
         }
         return MessageSyncBatch(
             deliveries: deliveries,
             detectedSIMProfiles: detectedSIMProfiles,
-            nextSequence: page.nextSequence
+            nextSequence: nextSequence
         )
     }
 

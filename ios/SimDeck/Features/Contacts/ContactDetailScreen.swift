@@ -7,7 +7,6 @@ import SwiftUI
 struct ContactDetailScreen: View {
     let contact: ContactRecord
     let lines: [DeviceLineIdentity]
-    let defaultCallLineID: UUID?
     let defaultMessageLineID: UUID?
     let callAction: (String) async -> Void
     let sendAction: (UUID, String, String) async throws -> Void
@@ -16,34 +15,33 @@ struct ContactDetailScreen: View {
     @State private var messageRecipient: ContactPhoneNumber?
 
     var body: some View {
-        ZStack {
-            PhoneDetailBackdrop()
-                .ignoresSafeArea()
+        ScrollView {
+            VStack(spacing: 0) {
+                contactHeader
 
-            ScrollView {
-                VStack(spacing: 18) {
-                    contactHeader
+                if !contact.phoneNumbers.isEmpty {
                     communicationActions
+                        .padding(.top, 22)
 
-                    if !contact.phoneNumbers.isEmpty {
-                        phoneNumbersCard
-                    }
-
-                    if !contact.organizationName.isEmpty,
-                       contact.organizationName != contact.displayName {
-                        informationCard
-                    }
+                    phoneNumbersCard
+                        .padding(.top, 30)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 120)
+
+                if !contact.organizationName.isEmpty,
+                   contact.organizationName != contact.displayName {
+                    informationCard
+                        .padding(.top, 16)
+                }
             }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 16)
+            .padding(.top, 28)
+            .padding(.bottom, 120)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationTitle("")
+        .background(Color(uiColor: .systemGroupedBackground))
+        .navigationTitle(contact.displayName)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.hidden, for: .navigationBar)
-        .preferredColorScheme(.dark)
         .confirmationDialog(
             "Choose a phone number",
             isPresented: Binding(
@@ -72,28 +70,11 @@ struct ContactDetailScreen: View {
     }
 
     private var contactHeader: some View {
-        VStack(spacing: 10) {
-            ContactAvatar(contact: contact, size: 240)
-                .overlay {
-                    Circle()
-                        .stroke(.white.opacity(0.25), lineWidth: 1)
-                }
-                .shadow(color: .black.opacity(0.08), radius: 20, y: 10)
+        VStack(spacing: 14) {
+            ContactAvatar(contact: contact, size: 128)
+                .shadow(color: .black.opacity(0.05), radius: 8, y: 4)
 
             VStack(spacing: 4) {
-                if let preferredCallLine {
-                    HStack(spacing: 6) {
-                        Text("Default:")
-                        SIMBadge(line: preferredCallLine, size: 16)
-                        Text(preferredCallLine.displayName)
-                            .lineLimit(1)
-                        Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.semibold))
-                    }
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                }
-
                 Text(contact.displayName)
                     .font(.title.bold())
                     .multilineTextAlignment(.center)
@@ -107,11 +88,10 @@ struct ContactDetailScreen: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 18)
     }
 
     private var communicationActions: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 44) {
             ContactActionButton(
                 title: "Message",
                 systemImage: "message.fill",
@@ -126,16 +106,6 @@ struct ContactDetailScreen: View {
             ) {
                 choosePhoneNumber(for: .call)
             }
-            ContactActionButton(
-                title: "Video",
-                systemImage: "video.fill",
-                isEnabled: false
-            ) {}
-            ContactActionButton(
-                title: "Mail",
-                systemImage: "envelope.fill",
-                isEnabled: false
-            ) {}
         }
         .frame(maxWidth: .infinity)
     }
@@ -152,16 +122,16 @@ struct ContactDetailScreen: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(phoneNumber.label)
                                 .font(.subheadline)
-                                .foregroundStyle(.white.opacity(0.72))
+                                .foregroundStyle(.secondary)
                             Text(phoneNumber.displayValue)
                                 .font(.body)
-                                .foregroundStyle(.white)
+                                .foregroundStyle(.primary)
                         }
 
                         Spacer(minLength: 8)
 
                         Image(systemName: "phone.fill")
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.tint)
                             .frame(width: 44, height: 44)
                     }
                     .contentShape(Rectangle())
@@ -177,39 +147,36 @@ struct ContactDetailScreen: View {
                         Label("Call", systemImage: "phone.fill")
                     }
                 }
-                .padding(.leading, 16)
-                .padding(.trailing, 8)
-                .padding(.vertical, 8)
+                .padding(.leading, 20)
+                .padding(.trailing, 10)
+                .padding(.vertical, 7)
 
                 if index < contact.phoneNumbers.count - 1 {
                     Divider()
-                        .padding(.leading, 16)
+                        .padding(.leading, 20)
                 }
             }
         }
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .background(
+            Color(uiColor: .secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+        )
     }
 
     private var informationCard: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Company")
                 .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.72))
+                .foregroundStyle(.secondary)
             Text(contact.organizationName)
                 .font(.body)
-                .foregroundStyle(.white)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-    }
-
-    private var preferredCallLine: DeviceLineIdentity? {
-        if let defaultCallLineID,
-           let line = lines.first(where: { $0.id == defaultCallLineID && $0.isOnline }) {
-            return line
-        }
-        return lines.first(where: \.isOnline)
+        .padding(20)
+        .background(
+            Color(uiColor: .secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+        )
     }
 
     private var preferredMessageLineID: UUID? {
@@ -263,13 +230,13 @@ private struct ContactActionButton: View {
             VStack(spacing: 6) {
                 Image(systemName: systemImage)
                     .font(.title2)
-                    .foregroundStyle(.white.opacity(isEnabled ? 1 : 0.42))
-                    .frame(width: 58, height: 58)
+                    .foregroundStyle(isEnabled ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                    .frame(width: 56, height: 56)
                     .glassEffect(.regular.interactive(), in: Circle())
                 Text(title)
                     .font(.caption)
             }
-            .frame(maxWidth: .infinity)
+            .frame(width: 74)
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
@@ -283,7 +250,6 @@ private struct ContactActionButton: View {
         ContactDetailScreen(
             contact: PreviewContactFixtures.contacts[0],
             lines: PreviewFixtures.devices,
-            defaultCallLineID: PreviewFixtures.devices[0].id,
             defaultMessageLineID: PreviewFixtures.devices[0].id,
             callAction: { _ in },
             sendAction: { _, _, _ in }
@@ -296,7 +262,6 @@ private struct ContactActionButton: View {
         ContactDetailScreen(
             contact: PreviewContactFixtures.contacts[1],
             lines: PreviewFixtures.devices,
-            defaultCallLineID: nil,
             defaultMessageLineID: nil,
             callAction: { _ in },
             sendAction: { _, _, _ in }

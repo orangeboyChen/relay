@@ -289,6 +289,12 @@ var _ = Describe("Modem session", func() {
 		Eventually(received).Should(Receive(WithTransform(func(message sms.ReceivedMessage) string { return message.Text }, Equal("你好"))))
 	})
 
+	It("selects combined SMS storage and requests stored-message notifications", func() {
+		Expect(initializationCommands).To(ContainElement(`AT+CPMS="MT","MT","MT"`))
+		Expect(initializationCommands).To(ContainElement("AT+CNMI=2,1,0,1,0"))
+		Expect(initializationCommands).NotTo(ContainElement("AT+CNMI=2,2,0,1,0"))
+	})
+
 	It("restores automatic operator selection when the modem is deregistered", func() {
 		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
 		DeferCleanup(func() {
@@ -493,6 +499,48 @@ var _ = Describe("Modem session", func() {
 		Eventually(result).Should(Receive(MatchError(context.Canceled)))
 	})
 
+	It("polls combined storage so a missed SMS notification is recovered", func() {
+		received := make(chan sms.ReceivedMessage, 1)
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(_ context.Context, message sms.ReceivedMessage) error {
+			received <- message
+			return nil
+		}))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+		session.messagePollInterval = 5 * time.Millisecond
+		commands := make(chan string, 8)
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			first := true
+			for {
+				command, err := reader.ReadString('\r')
+				if err != nil {
+					return
+				}
+				select {
+				case commands <- strings.TrimSuffix(command, "\r"):
+				default:
+				}
+				if first {
+					first = false
+					_, _ = modemTransport.Write([]byte("+CMGL: 4,0,,23\r\n" + testDeliverPDU + "\r\nOK\r\n"))
+				} else {
+					_, _ = modemTransport.Write([]byte("OK\r\n"))
+				}
+			}
+		}()
+		ctx, cancel := context.WithCancel(context.Background())
+		result := make(chan error, 1)
+		go func() { result <- session.Run(ctx) }()
+
+		Eventually(commands).Should(Receive(Equal("AT+CMGL=4")))
+		Eventually(received, 2*time.Second).Should(Receive(WithTransform(func(message sms.ReceivedMessage) string { return message.Text }, Equal("你好"))))
+		cancel()
+		Eventually(result).Should(Receive(MatchError(context.Canceled)))
+	})
+
 	It("surfaces a terminal pending SMS delivery failure", func() {
 		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error {
 			return errors.New("encrypted outbox failed")
@@ -617,7 +665,7 @@ var _ = Describe("Modem session", func() {
 
 		err := session.Initialize(context.Background())
 
-		Expect(err).To(MatchError("modem rejected SMS history import: ERROR"))
+		Expect(err).To(MatchError("import SMS history: modem rejected stored SMS scan: ERROR"))
 	})
 
 	It("returns a history sink failure instead of silently losing the message", func() {

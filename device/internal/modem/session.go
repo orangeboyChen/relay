@@ -21,7 +21,8 @@ var initializationCommands = []string{
 	"AT+CMEE=2",
 	"AT+CFUN=1",
 	"AT+CMGF=0",
-	"AT+CNMI=2,2,0,1,0",
+	`AT+CPMS="MT","MT","MT"`,
+	"AT+CNMI=2,1,0,1,0",
 	"AT+CLIP=1",
 	"AT+CCWA=1,1",
 }
@@ -103,6 +104,8 @@ const defaultCallPollInterval = time.Second
 
 const defaultMessageRetryInterval = time.Minute
 
+const defaultMessagePollInterval = time.Minute
+
 const simReadinessAttempts = 3
 
 const simReadinessRetryDelay = 100 * time.Millisecond
@@ -133,6 +136,7 @@ type Session struct {
 	timeout              time.Duration
 	callPollInterval     time.Duration
 	messageRetryInterval time.Duration
+	messagePollInterval  time.Duration
 	references           map[byte]string
 	pendingMessageID     string
 	deliveryReportSink   DeliveryReportSink
@@ -164,6 +168,7 @@ func NewSession(client *at.Client, inbox *sms.Inbox, sink MessageSink, logger *s
 		timeout:              timeout,
 		callPollInterval:     defaultCallPollInterval,
 		messageRetryInterval: defaultMessageRetryInterval,
+		messagePollInterval:  defaultMessagePollInterval,
 		references:           make(map[byte]string),
 	}, nil
 }
@@ -392,19 +397,33 @@ func (session *Session) Initialize(ctx context.Context) error {
 		return err
 	}
 
-	response, err = session.send(ctx, "AT+CMGL=4")
+	if err := session.importStoredSMS(ctx); err != nil {
+		return fmt.Errorf("import SMS history: %w", err)
+	}
+	return session.RetryPendingSMS(ctx)
+}
+
+func (session *Session) importStoredSMS(ctx context.Context) error {
+	response, err := session.send(ctx, "AT+CMGL=4")
 	if err != nil {
 		return err
 	}
 	if !response.OK() {
-		return fmt.Errorf("modem rejected SMS history import: %s", response.Terminal)
+		return fmt.Errorf("modem rejected stored SMS scan: %s", response.Terminal)
 	}
 	pdus, extractionError := historyPDUs(response.Lines)
-	_, importError := session.inbox.ImportPDUs(pdus)
-	if extractionError != nil || importError != nil {
-		session.logger.Warn("some modem SMS history entries were skipped", "error", errors.Join(extractionError, importError))
+	messages, importError := session.inbox.ImportPDUs(pdus)
+	if len(pdus) > 0 || len(messages) > 0 {
+		session.logger.Info(
+			"stored SMS scan completed",
+			"stored_entries", len(pdus),
+			"new_complete_messages", len(messages),
+		)
 	}
-	return session.RetryPendingSMS(ctx)
+	if extractionError != nil || importError != nil {
+		session.logger.Warn("some stored SMS entries were skipped", "error", errors.Join(extractionError, importError))
+	}
+	return nil
 }
 
 func (session *Session) ensureAutomaticOperatorSelection(ctx context.Context) error {
@@ -525,6 +544,8 @@ func (session *Session) Run(ctx context.Context) error {
 	defer callPoll.Stop()
 	messageRetry := time.NewTicker(session.messageRetryInterval)
 	defer messageRetry.Stop()
+	messagePoll := time.NewTicker(session.messagePollInterval)
+	defer messagePoll.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -540,6 +561,14 @@ func (session *Session) Run(ctx context.Context) error {
 				session.logger.Warn("call state refresh deferred", "error", err)
 			}
 		case <-messageRetry.C:
+			if err := session.RetryPendingSMS(ctx); err != nil {
+				return err
+			}
+		case <-messagePoll.C:
+			if err := session.importStoredSMS(ctx); err != nil {
+				session.logger.Warn("stored SMS scan deferred", "error", err)
+				continue
+			}
 			if err := session.RetryPendingSMS(ctx); err != nil {
 				return err
 			}
@@ -606,6 +635,7 @@ func parseMessageReference(lines []string) (byte, bool) {
 func (session *Session) handleURC(ctx context.Context, urc string) error {
 	switch {
 	case strings.HasPrefix(urc, "+CMT:"):
+		session.logger.Info("direct SMS notification received")
 		_, encoded, ok := strings.Cut(urc, "\n")
 		if !ok || strings.TrimSpace(encoded) == "" {
 			session.logger.Warn("discarded malformed direct SMS notification")
@@ -621,6 +651,7 @@ func (session *Session) handleURC(ctx context.Context, urc string) error {
 			return fmt.Errorf("store direct SMS: %w", err)
 		}
 		if !created {
+			session.logger.Info("direct SMS segment deduplicated")
 			return nil
 		}
 		if err := session.sink.ReceiveSMS(ctx, received); err != nil {
@@ -633,6 +664,7 @@ func (session *Session) handleURC(ctx context.Context, urc string) error {
 		if err := session.inbox.Acknowledge(received.ID); err != nil {
 			return fmt.Errorf("acknowledge direct SMS: %w", err)
 		}
+		session.logger.Info("incoming SMS delivered securely", "source", "direct")
 	case strings.HasPrefix(urc, "+CMTI:"):
 		// Some EC20 firmware stores the message and emits +CMTI even when
 		// direct delivery was requested. Read the stored PDU before deleting it
@@ -642,6 +674,7 @@ func (session *Session) handleURC(ctx context.Context, urc string) error {
 			session.logger.Warn("discarded malformed stored SMS notification", "urc", urc)
 			return nil
 		}
+		session.logger.Info("stored SMS notification received", "index", index)
 		response, err := session.send(ctx, fmt.Sprintf("AT+CMGR=%d", index))
 		if err != nil {
 			return fmt.Errorf("read stored SMS %d: %w", index, err)
@@ -679,6 +712,7 @@ func (session *Session) handleURC(ctx context.Context, urc string) error {
 			}
 		}
 		if !shouldDelete {
+			session.logger.Info("stored SMS segment retained", "index", index, "complete", false)
 			return nil
 		}
 		if response, err := session.send(ctx, fmt.Sprintf("AT+CMGD=%d", index)); err != nil || !response.OK() {
@@ -687,6 +721,8 @@ func (session *Session) handleURC(ctx context.Context, urc string) error {
 			} else {
 				session.logger.Warn("modem rejected stored SMS deletion", "index", index, "terminal", response.Terminal)
 			}
+		} else {
+			session.logger.Info("stored SMS removed after durable import", "index", index)
 		}
 	case strings.HasPrefix(urc, "+CDS:"):
 		_, encoded, ok := strings.Cut(urc, "\n")

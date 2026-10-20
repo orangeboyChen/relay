@@ -166,6 +166,74 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testCorruptMessageHistoryDoesNotBlockCallHistoryOrKeyRecovery() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let messageURL = directory.appending(path: "messages.bin")
+        try Data("not encrypted history".utf8).write(to: messageURL)
+        let messageStore = EncryptedMessageHistoryStore(fileURL: messageURL)
+        let callStore = EncryptedCallHistoryStore(fileURL: directory.appending(path: "calls.bin"))
+        let vaultKey = VaultKey.random()
+        let record = Self.callRecord()
+        try callStore.save([record], using: vaultKey)
+        let model = AppModel(
+            installationBootstrapper: AppModelInstallationBootstrapper(
+                identity: .generate(),
+                vaultKey: vaultKey
+            ),
+            messageHistoryStore: messageStore,
+            callHistoryStore: callStore,
+            remoteDeviceRefreshEnabled: false
+        )
+
+        model.bootstrapInstallation()
+
+        XCTAssertEqual(model.keyRecoveryState, .available)
+        XCTAssertEqual(model.messages, .failed)
+        XCTAssertEqual(model.callHistory, .loaded([record]))
+    }
+
+    @MainActor
+    func testCorruptCallHistoryDoesNotBlockMessageHistoryOrKeyRecovery() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let callURL = directory.appending(path: "calls.bin")
+        try Data("not encrypted history".utf8).write(to: callURL)
+        let callStore = EncryptedCallHistoryStore(fileURL: callURL)
+        let messageStore = EncryptedMessageHistoryStore(
+            fileURL: directory.appending(path: "messages.bin")
+        )
+        let vaultKey = VaultKey.random()
+        let conversation = MessageConversation(
+            lineID: UUID(),
+            remoteNumber: "13500000000",
+            contactName: nil,
+            unreadCount: 0,
+            messages: []
+        )
+        try messageStore.save([conversation], using: vaultKey)
+        let model = AppModel(
+            installationBootstrapper: AppModelInstallationBootstrapper(
+                identity: .generate(),
+                vaultKey: vaultKey
+            ),
+            messageHistoryStore: messageStore,
+            callHistoryStore: callStore,
+            remoteDeviceRefreshEnabled: false
+        )
+
+        model.bootstrapInstallation()
+
+        XCTAssertEqual(model.keyRecoveryState, .available)
+        XCTAssertEqual(model.messages, .loaded([conversation]))
+        XCTAssertEqual(model.callHistory, .failed)
+    }
+
+    @MainActor
     func testSavesEncryptedDeviceMetadataAndReloadsProfile() async throws {
         let deviceID = UUID(uuidString: "01900000-0000-7000-8000-000000000008")!
         let identity = InstallationIdentity.generate()
@@ -356,6 +424,19 @@ final class AppModelTests: XCTestCase {
             phoneNumber: "",
             isOnline: true,
             commandPublicKey: nil
+        )
+    }
+
+    private static func callRecord() -> CallRecord {
+        CallRecord(
+            id: UUID(),
+            lineID: UUID(),
+            remoteNumber: "13800000000",
+            contactName: nil,
+            direction: .incoming,
+            result: .missed,
+            startedAt: .now,
+            endedAt: .now
         )
     }
 }

@@ -146,9 +146,7 @@ final class AppModel {
             pendingInstallationRevocationIDs = result.pendingRevocationIDs
             keyRecoveryState = result.recoveredVaultKey == nil ? .approvalRequired : .available
             if let recoveredVaultKey {
-                messages = .loaded(try messageHistoryStore.load(using: recoveredVaultKey))
-                callHistory = .loaded(try callHistoryStore.load(using: recoveredVaultKey))
-                reconcileLineHistory(using: devices)
+                restoreLocalHistory(using: recoveredVaultKey)
             }
         } catch {
             keyRecoveryState = .unavailable
@@ -726,6 +724,22 @@ final class AppModel {
     private func persistMessageHistoryIfAvailable() {
         guard let recoveredVaultKey else { return }
         try? messageHistoryStore.save(loadedConversations, using: recoveredVaultKey)
+    }
+
+    private func restoreLocalHistory(using vaultKey: VaultKey) {
+        do {
+            messages = .loaded(try messageHistoryStore.load(using: vaultKey))
+        } catch {
+            messages = .failed
+            Self.logger.error("Restoring encrypted message history failed: \(String(reflecting: error), privacy: .public)")
+        }
+        do {
+            callHistory = .loaded(try callHistoryStore.load(using: vaultKey))
+        } catch {
+            callHistory = .failed
+            Self.logger.error("Restoring encrypted call history failed: \(String(reflecting: error), privacy: .public)")
+        }
+        reconcileLineHistory(using: devices)
     }
 
     private func upsertOutgoingMessage(

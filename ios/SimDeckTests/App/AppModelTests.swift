@@ -131,7 +131,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.devices.map(\.id), [deviceID])
         XCTAssertNotNil(sessionStore.storedValue)
 
-        try model.signOutFromServer()
+        try await model.signOutFromServer()
 
         XCTAssertEqual(connection.state, .disconnected)
         XCTAssertTrue(model.devices.isEmpty)
@@ -267,6 +267,41 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.callHistory, .loaded([]))
         XCTAssertFalse(FileManager.default.fileExists(atPath: messageURL.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: callURL.path))
+        XCTAssertFalse(connection.isSignedIn)
+    }
+
+    @MainActor
+    func testRevokingCurrentSessionUnregistersPushTokensAndClearsNotificationKeys() async throws {
+        let identity = InstallationIdentity.generate()
+        let network = AppModelPushLogoutNetwork()
+        let defaults = UserDefaults(suiteName: "AppModelPushLogoutTests.\(UUID().uuidString)")!
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let sharedDefaults = NotificationPreferences.sharedDefaults
+        sharedDefaults.set(Data(repeating: 9, count: 32), forKey: NotificationSharedState.deviceKeysKey)
+        defer { sharedDefaults.removeObject(forKey: NotificationSharedState.deviceKeysKey) }
+        let connection = ServerConnectionManager(
+            network: network,
+            sessionStore: AppModelSessionStore(value: Self.activeSession),
+            defaults: defaults
+        )
+        let model = AppModel(
+            serverConnection: connection,
+            installationBootstrapper: AppModelInstallationBootstrapper(identity: identity),
+            remoteDeviceRefreshEnabled: false
+        )
+        model.bootstrapInstallation()
+
+        try await model.revokeCurrentSession()
+
+        XCTAssertEqual(
+            network.requests.map { ($0.httpMethod ?? "") + " " + ($0.url?.path ?? "") },
+            [
+                "DELETE /v1/app-installations/\(identity.id.uuidString.lowercased())/push-tokens/voip",
+                "DELETE /v1/app-installations/\(identity.id.uuidString.lowercased())/push-tokens/alert",
+                "POST /v1/auth/logout",
+            ]
+        )
+        XCTAssertNil(sharedDefaults.data(forKey: NotificationSharedState.deviceKeysKey))
         XCTAssertFalse(connection.isSignedIn)
     }
 
@@ -509,6 +544,26 @@ private final class AppModelLogoutNetwork: ServerNetworking {
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         XCTAssertEqual(request.httpMethod, "POST")
         XCTAssertEqual(request.url?.path, "/v1/auth/logout")
+        return (
+            Data(),
+            HTTPURLResponse(
+                url: request.url!,
+                statusCode: 204,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+        )
+    }
+}
+
+private final class AppModelPushLogoutNetwork: ServerNetworking, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedRequests: [URLRequest] = []
+
+    var requests: [URLRequest] { lock.withLock { storedRequests } }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        lock.withLock { storedRequests.append(request) }
         return (
             Data(),
             HTTPURLResponse(

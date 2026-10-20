@@ -125,6 +125,24 @@ final class VoIPPushCoordinatorTests: XCTestCase {
         XCTAssertEqual(registrar.deletions.count, 2)
         XCTAssertEqual(registrar.registrations.count, 1)
     }
+
+    func testStoppingDeletesTheCurrentToken() async throws {
+        let registrar = RecordingPushTokenRegistrar()
+        let installationID = UUID()
+        let coordinator = VoIPPushCoordinator(
+            tokenRegistrar: registrar,
+            environment: .sandbox,
+            incomingPushHandler: { _ in }
+        )
+        coordinator.configure(installationID: installationID)
+
+        try await coordinator.stop()
+
+        XCTAssertEqual(
+            registrar.deletions,
+            [.init(kind: .voip, environment: .sandbox, installationID: installationID)]
+        )
+    }
 }
 
 @MainActor

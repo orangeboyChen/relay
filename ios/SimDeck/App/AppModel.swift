@@ -199,6 +199,9 @@ final class AppModel {
         reconcileLineHistory(using: devices)
         callCoordinator.updateLineRoutes(devices)
         messageTransport.updateLineRoutes(devices)
+        if voipPushCoordinator != nil || alertPushCoordinator != nil {
+            startVoIPPushes()
+        }
         try? await voipPushCoordinator?.uploadPendingToken()
         try? await alertPushCoordinator?.uploadPendingToken()
     }
@@ -569,7 +572,8 @@ final class AppModel {
         managedSIMs.removeAll { $0.id == sim.id }
     }
 
-    func signOutFromServer() throws {
+    func signOutFromServer() async throws {
+        await stopPushNotifications()
         try serverConnection.signOut()
         reconcileLineHistory(using: devices)
         devices = []
@@ -578,13 +582,68 @@ final class AppModel {
     }
 
     func revokeCurrentSession() async throws {
-        try await serverConnection.revokeCurrentSession()
+        await stopPushNotifications()
+        do {
+            try await serverConnection.revokeCurrentSession()
+        } catch {
+            if voipPushCoordinator != nil || alertPushCoordinator != nil {
+                startVoIPPushes()
+            }
+            throw error
+        }
         devices = []
         managedSIMs = []
         messages = .loaded([])
         callHistory = .loaded([])
         installationTrust = nil
         try deleteEncryptedHistory()
+    }
+
+    private func stopPushNotifications() async {
+        guard let installationID else {
+            clearNotificationDecryptionState()
+            return
+        }
+        if let voipPushCoordinator {
+            do {
+                try await voipPushCoordinator.stop()
+            } catch {
+                Self.logger.error("Unable to unregister VoIP push token during sign out: \(String(reflecting: error), privacy: .public)")
+            }
+        } else {
+            do {
+                try await serverConnection.unregisterPushToken(
+                    kind: .voip,
+                    environment: Self.pushEnvironment,
+                    installationID: installationID
+                )
+            } catch {
+                Self.logger.error("Unable to unregister inactive VoIP push token during sign out: \(String(reflecting: error), privacy: .public)")
+            }
+        }
+        if let alertPushCoordinator {
+            do {
+                try await alertPushCoordinator.stop()
+            } catch {
+                Self.logger.error("Unable to unregister alert push token during sign out: \(String(reflecting: error), privacy: .public)")
+            }
+        } else {
+            do {
+                try await serverConnection.unregisterPushToken(
+                    kind: .alert,
+                    environment: Self.pushEnvironment,
+                    installationID: installationID
+                )
+            } catch {
+                Self.logger.error("Unable to unregister inactive alert push token during sign out: \(String(reflecting: error), privacy: .public)")
+            }
+        }
+        clearNotificationDecryptionState()
+    }
+
+    private func clearNotificationDecryptionState() {
+        NotificationSharedState.clearDeviceKeys()
+        NotificationOTPStore.clear()
     }
 
     func clearLocalMessageCache() throws {

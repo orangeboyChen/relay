@@ -84,6 +84,26 @@ final class AlertPushCoordinatorTests: XCTestCase {
         XCTAssertEqual(registrar.deletions.count, 2)
         XCTAssertEqual(registrar.registrations.count, 1)
     }
+
+    func testStoppingDeletesTokenAndAllowsRestart() async throws {
+        let registrar = AlertPushTokenRegistrar()
+        let installationID = UUID()
+        var registrationRequests = 0
+        let coordinator = AlertPushCoordinator(
+            tokenRegistrar: registrar,
+            environment: .sandbox,
+            requestRemoteNotificationRegistration: { registrationRequests += 1 }
+        )
+        coordinator.configure(installationID: installationID)
+        try await coordinator.setEnabled(true)
+
+        try await coordinator.stop()
+        coordinator.start(installationID: installationID)
+        try await Task.sleep(for: .milliseconds(50))
+
+        XCTAssertEqual(registrar.deletions.count, 1)
+        XCTAssertEqual(registrationRequests, 2)
+    }
 }
 
 @MainActor

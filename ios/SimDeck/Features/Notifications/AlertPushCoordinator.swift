@@ -90,7 +90,10 @@ final class AlertPushCoordinator: NSObject {
                 options: []
             )
         ])
-        Task { try? await setEnabled(NotificationPreferences().messageNotifications) }
+        Task {
+            try? await setEnabled(NotificationPreferences().messageNotifications)
+            try? await uploadPendingToken()
+        }
     }
 
     func configure(installationID: UUID) {
@@ -131,6 +134,22 @@ final class AlertPushCoordinator: NSObject {
     }
 
     func invalidateToken() async throws {
+        pendingToken = nil
+        requiresTokenDeletion = true
+        try await uploadPendingToken()
+    }
+
+    func stop() async throws {
+        if let tokenObserver {
+            NotificationCenter.default.removeObserver(tokenObserver)
+            self.tokenObserver = nil
+        }
+        if let preferenceObserver {
+            NotificationCenter.default.removeObserver(preferenceObserver)
+            self.preferenceObserver = nil
+        }
+        hasStarted = false
+        isEnabled = false
         pendingToken = nil
         requiresTokenDeletion = true
         try await uploadPendingToken()

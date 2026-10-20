@@ -25,6 +25,16 @@ enum NotificationOTPStore {
         save(Array(records.prefix(maximumRecords)))
     }
 
+    static func clear() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecAttrAccessGroup as String: accessGroup,
+        ]
+        _ = SecItemDelete(query as CFDictionary)
+    }
+
     private static func load(now: Date) -> [NotificationOTPRecord] {
         let records = (try? JSONDecoder().decode([NotificationOTPRecord].self, from: readKeychain() ?? Data())) ?? []
         return records.filter { now.timeIntervalSince($0.receivedAt) <= maximumAge }

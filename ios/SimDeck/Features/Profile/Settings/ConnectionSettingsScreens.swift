@@ -44,7 +44,7 @@ private struct ServerConnectionSection: View {
                 .disabled(isWorking)
 
                 Button("Sign Out", role: .destructive) {
-                    signOut()
+                    Task { await signOut() }
                 }
                 .disabled(isWorking)
             } else {
@@ -106,11 +106,13 @@ private struct ServerConnectionSection: View {
         }
     }
 
-    private func signOut() {
+    private func signOut() async {
+        isWorking = true
         actionResult = nil
         actionError = nil
+        defer { isWorking = false }
         do {
-            try model.signOutFromServer()
+            try await model.signOutFromServer()
         } catch {
             actionError = error.localizedDescription
         }

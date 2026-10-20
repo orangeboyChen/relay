@@ -41,7 +41,10 @@ final class VoIPPushCoordinator: NSObject {
                 }
             }
         }
-        Task { try? await setEnabled(NotificationPreferences().incomingCallNotifications) }
+        Task {
+            try? await setEnabled(NotificationPreferences().incomingCallNotifications)
+            try? await uploadPendingToken()
+        }
     }
 
     func setEnabled(_ enabled: Bool) async throws {
@@ -93,6 +96,19 @@ final class VoIPPushCoordinator: NSObject {
     }
 
     func invalidateToken() async throws {
+        pendingToken = nil
+        requiresTokenDeletion = true
+        try await uploadPendingToken()
+    }
+
+    func stop() async throws {
+        if let preferenceObserver {
+            NotificationCenter.default.removeObserver(preferenceObserver)
+            self.preferenceObserver = nil
+        }
+        registry?.desiredPushTypes = []
+        registry = nil
+        isEnabled = false
         pendingToken = nil
         requiresTokenDeletion = true
         try await uploadPendingToken()

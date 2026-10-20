@@ -15,4 +15,8 @@ enum NotificationSharedState {
         guard let data = try? JSONEncoder().encode(encoded) else { return }
         defaults.set(data, forKey: deviceKeysKey)
     }
+
+    static func clearDeviceKeys(defaults: UserDefaults = NotificationPreferences.sharedDefaults) {
+        defaults.removeObject(forKey: deviceKeysKey)
+    }
 }

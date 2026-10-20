@@ -139,7 +139,7 @@ enum ContactNameFormatting {
     static func displayName(givenName: String, familyName: String) -> String {
         let givenName = givenName.trimmingCharacters(in: .whitespacesAndNewlines)
         let familyName = familyName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if containsHanCharacters(givenName) || containsHanCharacters(familyName) {
+        if usesHanNameOrder(givenName: givenName, familyName: familyName) {
             return familyName + givenName
         }
         return [givenName, familyName]
@@ -153,7 +153,7 @@ enum ContactNameFormatting {
         familyName: String
     ) -> String {
         let source: String
-        if containsHanCharacters(givenName) || containsHanCharacters(familyName) {
+        if usesHanNameOrder(givenName: givenName, familyName: familyName) {
             source = familyName + givenName
         } else {
             source = displayName
@@ -168,6 +168,22 @@ enum ContactNameFormatting {
         value.unicodeScalars.contains { scalar in
             switch scalar.value {
             case 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xF900...0xFAFF:
+                true
+            default:
+                false
+            }
+        }
+    }
+
+    private static func usesHanNameOrder(givenName: String, familyName: String) -> Bool {
+        let fullName = givenName + familyName
+        return containsHanCharacters(fullName) && !containsLatinCharacters(fullName)
+    }
+
+    private static func containsLatinCharacters(_ value: String) -> Bool {
+        value.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x0041...0x005A, 0x0061...0x007A, 0x00C0...0x024F:
                 true
             default:
                 false

@@ -45,6 +45,17 @@ final class ContactListModelTests: XCTestCase {
         XCTAssertEqual(sections.flatMap(\.contacts).map(\.id), ["alpha", "li", "zhang"])
     }
 
+    func testMixedScriptNameKeepsLatinGivenNameFirstAndSortsUnderLatinLetter() {
+        let apple = contact(
+            id: "apple",
+            givenName: "Apple",
+            familyName: "(中国大陆)"
+        )
+
+        XCTAssertEqual(apple.displayName, "Apple (中国大陆)")
+        XCTAssertEqual(ContactDirectory.sections(for: [apple]).map(\.title), ["A"])
+    }
+
     func testContactNameIndexMatchesChineseCountryCodeAndNativeFormatting() {
         let index = ContactNameIndex(
             contacts: [

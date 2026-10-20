@@ -141,7 +141,28 @@ struct MessageBubble: View {
             .offset(x: horizontalOffset)
         }
         .contentShape(.rect)
-        .simultaneousGesture(horizontalSwipeGesture)
+        .gesture(
+            MessageHorizontalSwipeGesture(
+                onChanged: { horizontal, vertical in
+                    horizontalOffset = MessageSwipeInteraction.offset(
+                        horizontal: horizontal,
+                        vertical: vertical
+                    )
+                },
+                onEnded: { horizontal, vertical in
+                    let shouldReply = MessageSwipeInteraction.shouldReply(
+                        horizontal: horizontal,
+                        vertical: vertical
+                    )
+                    withAnimation(reduceMotion ? nil : .snappy) {
+                        horizontalOffset = 0
+                    }
+                    if shouldReply {
+                        replyAction()
+                    }
+                }
+            )
+        )
         .accessibilityAction(named: Text("Reply")) {
             replyAction()
         }
@@ -173,28 +194,6 @@ struct MessageBubble: View {
             .opacity(timestampProgress)
             .accessibilityHidden(true)
         }
-    }
-
-    private var horizontalSwipeGesture: some Gesture {
-        DragGesture(minimumDistance: 12)
-            .onChanged { value in
-                horizontalOffset = MessageSwipeInteraction.offset(
-                    horizontal: value.translation.width,
-                    vertical: value.translation.height
-                )
-            }
-            .onEnded { value in
-                let shouldReply = MessageSwipeInteraction.shouldReply(
-                    horizontal: value.translation.width,
-                    vertical: value.translation.height
-                )
-                withAnimation(reduceMotion ? nil : .snappy) {
-                    horizontalOffset = 0
-                }
-                if shouldReply {
-                    replyAction()
-                }
-            }
     }
 
     private var replyProgress: CGFloat {

@@ -34,4 +34,16 @@ final class MessageSwipeInteractionTests: XCTestCase {
         XCTAssertFalse(MessageSwipeInteraction.shouldReply(horizontal: -80, vertical: 0))
         XCTAssertFalse(MessageSwipeInteraction.shouldReply(horizontal: 80, vertical: 90))
     }
+
+    func testGestureBeginsOnlyForHorizontalVelocity() {
+        XCTAssertTrue(
+            MessageSwipeInteraction.shouldBegin(horizontalVelocity: 80, verticalVelocity: 20)
+        )
+        XCTAssertFalse(
+            MessageSwipeInteraction.shouldBegin(horizontalVelocity: 20, verticalVelocity: 80)
+        )
+        XCTAssertFalse(
+            MessageSwipeInteraction.shouldBegin(horizontalVelocity: 40, verticalVelocity: 40)
+        )
+    }
 }

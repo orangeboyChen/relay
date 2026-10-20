@@ -49,7 +49,8 @@ struct ConversationHeader: View {
                     contactNameLabel
                         .font(.footnote.weight(.semibold))
                         .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
+                        .frame(minHeight: 28)
+                        .glassEffect(.regular.interactive(), in: Capsule())
                 }
             }
             .frame(maxWidth: 230)

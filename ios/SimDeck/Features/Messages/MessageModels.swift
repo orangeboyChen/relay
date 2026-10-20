@@ -94,6 +94,10 @@ struct MessageItem: Identifiable, Equatable, Sendable, Codable {
         self.sentAt = sentAt
         self.status = status
     }
+
+    var displaysDeliveryStatus: Bool {
+        direction == .sent
+    }
 }
 
 struct MessageImageAttachment: Identifiable, Equatable, Sendable, Codable {

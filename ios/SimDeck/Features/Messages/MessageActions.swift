@@ -72,8 +72,10 @@ struct MessageDetailsScreen: View {
                     LabeledContent("Time") {
                         Text(message.sentAt, format: .dateTime.year().month().day().hour().minute())
                     }
-                    LabeledContent("Status") {
-                        Text(deliveryStatus)
+                    if message.displaysDeliveryStatus {
+                        LabeledContent("Status") {
+                            Text(deliveryStatus)
+                        }
                     }
                 }
 

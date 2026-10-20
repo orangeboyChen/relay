@@ -256,7 +256,7 @@ struct MessageBubble: View {
 
     @ViewBuilder
     private var deliveryStatusView: some View {
-        if message.direction == .sent, message.status == .failed {
+        if message.displaysDeliveryStatus, message.status == .failed {
             Button(action: retryAction) {
                 HStack(spacing: 2) {
                     Image(systemName: "exclamationmark.circle.fill")
@@ -272,7 +272,7 @@ struct MessageBubble: View {
             .accessibilityLabel("Not Delivered")
             .accessibilityHint("Double-tap to try sending this message again.")
             .transition(.opacity.combined(with: .scale(scale: 0.96)))
-        } else {
+        } else if message.displaysDeliveryStatus {
             Text(deliveryStatus)
                 .transition(.opacity)
         }

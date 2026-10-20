@@ -225,6 +225,32 @@ var _ = Describe("Incoming call runtime", func() {
 		Expect(remote.notifications).To(HaveLen(1))
 	})
 
+	It("rechecks owner policy before retrying a pending notification", func() {
+		remote.uploadError = errors.New("server unavailable")
+		runtime.acceptSnapshot(call.Snapshot{State: call.StateRinging, IncomingNumber: "13500000000"})
+		Expect(runtime.deliverPending(context.Background())).To(MatchError(ContainSubstring("upload incoming call")))
+		Expect(runtime.pending).NotTo(BeNil())
+
+		policy.settings.IncomingCallsEnabled = false
+		Expect(runtime.deliverPending(context.Background())).To(Succeed())
+
+		Expect(calls.count).To(Equal(1))
+		Expect(runtime.pending).To(BeNil())
+		Expect(events.callID).To(BeEmpty())
+	})
+
+	It("keeps a disabled pending call when local rejection fails", func() {
+		policy.settings.IncomingCallsEnabled = false
+		calls.err = errors.New("modem unavailable")
+		runtime.acceptSnapshot(call.Snapshot{State: call.StateWaiting, IncomingNumber: "13500000000"})
+
+		Expect(runtime.deliverPending(context.Background())).To(MatchError(ContainSubstring("reject disabled incoming call")))
+
+		Expect(calls.count).To(Equal(1))
+		Expect(runtime.pending).NotTo(BeNil())
+		Expect(remote.notifications).To(BeEmpty())
+	})
+
 	It("validates construction dependencies", func() {
 		_, err := NewRuntime(nil, state, snapshots, events, calls, policy)
 		Expect(err).To(HaveOccurred())

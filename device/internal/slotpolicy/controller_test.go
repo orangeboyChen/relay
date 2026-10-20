@@ -98,6 +98,55 @@ var _ = Describe("Slot policy controller", func() {
 		Expect(statError).To(MatchError(os.ErrNotExist))
 	})
 
+	It("does not rewrite state or touch the modem for an unchanged policy", func() {
+		controller, err := NewController(directory, commander, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		enabled := true
+
+		settings, err := controller.Configure(context.Background(), Update{
+			DataEnabled:          &enabled,
+			IncomingCallsEnabled: &enabled,
+			IncomingSMSEnabled:   &enabled,
+		})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(settings).To(Equal(controller.Current()))
+		Expect(commander.commands).To(BeEmpty())
+		_, statError := os.Stat(filepath.Join(directory, "slot-policy.json"))
+		Expect(statError).To(MatchError(os.ErrNotExist))
+	})
+
+	It("surfaces a modem terminal rejection without changing the saved policy", func() {
+		controller, err := NewController(directory, commander, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		commander.response = at.Response{Terminal: "ERROR"}
+		disabled := false
+
+		settings, err := controller.Configure(context.Background(), Update{DataEnabled: &disabled})
+
+		Expect(err).To(MatchError("modem rejected slot policy command AT+CGATT=0: ERROR"))
+		Expect(settings.DataEnabled).To(BeTrue())
+		Expect(controller.Current().DataEnabled).To(BeTrue())
+	})
+
+	It("persists data preference changes while airplane mode keeps the radio disabled", func() {
+		controller, err := NewController(directory, commander, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		enabled, disabled := true, false
+		_, err = controller.Configure(context.Background(), Update{AirplaneModeEnabled: &enabled})
+		Expect(err).NotTo(HaveOccurred())
+		commander.commands = nil
+
+		settings, err := controller.Configure(context.Background(), Update{DataEnabled: &disabled})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(settings.DataEnabled).To(BeFalse())
+		Expect(commander.commands).To(BeEmpty())
+		reloaded, err := NewController(directory, commander, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(reloaded.Current()).To(Equal(settings))
+	})
+
 	It("validates constructor dependencies and stored state", func() {
 		_, err := NewController("relative", commander, time.Second)
 		Expect(err).To(HaveOccurred())
@@ -106,5 +155,10 @@ var _ = Describe("Slot policy controller", func() {
 		Expect(os.WriteFile(filepath.Join(directory, "slot-policy.json"), []byte(`{"version":99}`), 0o600)).To(Succeed())
 		_, err = NewController(directory, commander, time.Second)
 		Expect(err).To(MatchError("persisted slot policy is invalid"))
+
+		filePath := filepath.Join(GinkgoT().TempDir(), "not-a-directory")
+		Expect(os.WriteFile(filePath, []byte("occupied"), 0o600)).To(Succeed())
+		_, err = NewController(filePath, commander, time.Second)
+		Expect(err).To(MatchError(ContainSubstring("create slot policy directory")))
 	})
 })

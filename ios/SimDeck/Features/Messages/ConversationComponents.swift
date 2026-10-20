@@ -12,7 +12,53 @@ struct ConversationHeader: View {
     let usesAccessibilityLayout: Bool
     @Binding var selectedID: ConversationID
 
+    @ViewBuilder
     var body: some View {
+        if usesAccessibilityLayout {
+            lineMenu {
+                VStack(spacing: 2) {
+                    MessageContactAvatar(
+                        contactName: conversation.contactName,
+                        diameter: 48
+                    )
+                    contactNameLabel
+                        .font(.subheadline.weight(.semibold))
+                    HStack(spacing: 3) {
+                        SIMBadge(snapshot: linePresentation.snapshot, size: 12)
+                        Text(linePresentation.displayName)
+                            .lineLimit(1)
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: 270)
+                .padding(.vertical, 4)
+            }
+        } else {
+            VStack(spacing: 2) {
+                MessageContactAvatar(
+                    contactName: conversation.contactName,
+                    diameter: 50
+                )
+                .overlay(alignment: .bottomTrailing) {
+                    SIMBadge(snapshot: linePresentation.snapshot, size: 10)
+                        .offset(x: 3, y: 2)
+                }
+
+                lineMenu {
+                    contactNameLabel
+                        .font(.footnote.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                }
+            }
+            .frame(maxWidth: 230)
+        }
+    }
+
+    private func lineMenu<Label: View>(
+        @ViewBuilder label: () -> Label
+    ) -> some View {
         Menu {
             ForEach(alternatives) { alternative in
                 let alternativeLine = alternative.linePresentation(in: lines)
@@ -21,43 +67,8 @@ struct ConversationHeader: View {
                 }
             }
         } label: {
-            Group {
-                if usesAccessibilityLayout {
-                    VStack(spacing: 2) {
-                        MessageContactAvatar(
-                            contactName: conversation.contactName,
-                            diameter: 48
-                        )
-                        contactNameLabel
-                            .font(.subheadline.weight(.semibold))
-                        HStack(spacing: 3) {
-                            SIMBadge(snapshot: linePresentation.snapshot, size: 12)
-                            Text(linePresentation.displayName)
-                                .lineLimit(1)
-                        }
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: 270)
-                    .padding(.vertical, 4)
-                } else {
-                    VStack(spacing: 1) {
-                        MessageContactAvatar(
-                            contactName: conversation.contactName,
-                            diameter: 42
-                        )
-                        .overlay(alignment: .bottomTrailing) {
-                            SIMBadge(snapshot: linePresentation.snapshot, size: 10)
-                                .offset(x: 3, y: 2)
-                        }
-
-                        contactNameLabel
-                            .font(.caption2.weight(.medium))
-                    }
-                    .frame(maxWidth: 210)
-                }
-            }
-            .contentShape(.rect)
+            label()
+                .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(
@@ -143,7 +154,7 @@ struct MessageBubble: View {
 
             HStack {
                 if message.direction == .sent {
-                    Spacer(minLength: 48)
+                    Spacer(minLength: 84)
                 }
 
                 VStack(alignment: message.direction == .sent ? .trailing : .leading, spacing: 2) {
@@ -152,7 +163,7 @@ struct MessageBubble: View {
                 }
 
                 if message.direction == .received {
-                    Spacer(minLength: 48)
+                    Spacer(minLength: 84)
                 }
             }
             .offset(x: messageOffset)

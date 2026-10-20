@@ -86,7 +86,7 @@ struct ConversationScreen: View {
                         .id(message.id)
                     }
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 16)
                 .padding(.vertical, 8)
                 .id(selectedID)
                 .transition(.opacity)
@@ -111,23 +111,7 @@ struct ConversationScreen: View {
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if dynamicTypeSize.isAccessibilitySize {
-                ConversationHeader(
-                    conversation: conversation,
-                    linePresentation: linePresentation,
-                    alternatives: conversations,
-                    lines: lines,
-                    usesAccessibilityLayout: true,
-                    selectedID: animatedSelectedID
-                )
-                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
-                .background(Color(uiColor: .systemBackground))
-                .overlay(alignment: .bottom) {
-                    Divider()
-                }
-            }
+            conversationNavigationHeader
         }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 0) {
@@ -168,22 +152,7 @@ struct ConversationScreen: View {
                 )
             }
         }
-        .navigationTitle(dynamicTypeSize.isAccessibilitySize ? "" : conversation.displayName)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                if !dynamicTypeSize.isAccessibilitySize {
-                    ConversationHeader(
-                        conversation: conversation,
-                        linePresentation: linePresentation,
-                        alternatives: conversations,
-                        lines: lines,
-                        usesAccessibilityLayout: false,
-                        selectedID: animatedSelectedID
-                    )
-                }
-            }
-        }
+        .toolbar(.hidden, for: .navigationBar)
         .onAppear {
             markReadAction(selectedID)
         }
@@ -267,6 +236,43 @@ struct ConversationScreen: View {
                 }
             }
         )
+    }
+
+    private var conversationNavigationHeader: some View {
+        ZStack {
+            ConversationHeader(
+                conversation: conversation,
+                linePresentation: linePresentation,
+                alternatives: conversations,
+                lines: lines,
+                usesAccessibilityLayout: dynamicTypeSize.isAccessibilitySize,
+                selectedID: animatedSelectedID
+            )
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+
+            HStack {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.title3.weight(.semibold))
+                        .frame(width: 44, height: 44)
+                        .contentShape(.circle)
+                }
+                .buttonStyle(.plain)
+                .glassEffect(.regular.interactive(), in: Circle())
+                .accessibilityLabel("Back")
+
+                Spacer()
+
+                Color.clear
+                    .frame(width: 44, height: 44)
+                    .accessibilityHidden(true)
+            }
+        }
+        .frame(height: dynamicTypeSize.isAccessibilitySize ? 104 : 78)
+        .padding(.horizontal, 16)
+        .background(Color(uiColor: .systemBackground))
     }
 
     private var motionAnimation: Animation? {

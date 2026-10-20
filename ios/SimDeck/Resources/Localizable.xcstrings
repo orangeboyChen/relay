@@ -378,6 +378,16 @@
         }
       }
     },
+    "Audio messages are unavailable" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂不支持语音消息"
+          }
+        }
+      }
+    },
     "Authenticate & Delete" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -3120,11 +3130,22 @@
       }
     },
     "Text Message" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "短信"
+          }
+        }
+      }
+    },
+    "Text Message · SMS" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "短信 · SMS"
           }
         }
       }

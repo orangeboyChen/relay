@@ -233,11 +233,8 @@ struct DurationText: View {
     let seconds: TimeInterval
 
     var body: some View {
-        let totalSeconds = max(0, Int(seconds.rounded(.down)))
-        let minutes = totalSeconds / 60
-        let remainingSeconds = totalSeconds % 60
-
-        Text("\(minutes) min \(remainingSeconds) sec")
+        Text(verbatim: CallDurationFormatter.string(elapsed: seconds))
+            .monospacedDigit()
     }
 }
 

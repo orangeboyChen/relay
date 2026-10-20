@@ -37,7 +37,7 @@ var _ = Describe("Linux PCM endpoints", func() {
 		Expect(playback.written.String()).To(Equal("played"))
 		Expect(commands).To(Equal([]recordedAudioCommand{
 			{executable: "arecord", arguments: expectedALSAArguments("hw:2,0")},
-			{executable: "aplay", arguments: expectedALSAArguments("hw:2,1")},
+			{executable: "aplay", arguments: expectedALSAArguments("plughw:2,1")},
 		}))
 		Expect(capture.started).To(BeTrue())
 		Expect(playback.started).To(BeTrue())
@@ -46,6 +46,15 @@ var _ = Describe("Linux PCM endpoints", func() {
 		Expect(capture.stopCount).To(Equal(1))
 		Expect(playback.stopCount).To(Equal(1))
 	})
+
+	DescribeTable("selects an ALSA playback endpoint that accepts mono PCM",
+		func(configured string, expected string) {
+			Expect(alsaPlaybackDevice(configured)).To(Equal(expected))
+		},
+		Entry("hardware device", "hw:0,0", "plughw:0,0"),
+		Entry("existing plug device", "plughw:0,0", "plughw:0,0"),
+		Entry("named PCM", "default", "default"),
+	)
 
 	It("validates ALSA device names before starting processes", func() {
 		factoryCalled := false

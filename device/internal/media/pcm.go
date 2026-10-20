@@ -103,7 +103,7 @@ func openALSAEndpoint(ctx context.Context, captureDevice string, playbackDevice 
 		return nil, fmt.Errorf("start ALSA capture: %w", err)
 	}
 
-	playback := factory(ctx, "aplay", arguments(playbackDevice)...)
+	playback := factory(ctx, "aplay", arguments(alsaPlaybackDevice(playbackDevice))...)
 	sink, err := playback.StdinPipe()
 	if err != nil {
 		_ = source.Close()
@@ -128,6 +128,15 @@ func openALSAEndpoint(ctx context.Context, captureDevice string, playbackDevice 
 			return nil
 		},
 	}, nil
+}
+
+// alsaPlaybackDevice enables ALSA format conversion for hardware endpoints.
+// Quectel UAC capture is mono, while playback may expose only two channels.
+func alsaPlaybackDevice(device string) string {
+	if strings.HasPrefix(device, "hw:") {
+		return "plughw:" + strings.TrimPrefix(device, "hw:")
+	}
+	return device
 }
 
 // OpenRawPCMEndpoint opens a modem-provided full-duplex PCM character device.

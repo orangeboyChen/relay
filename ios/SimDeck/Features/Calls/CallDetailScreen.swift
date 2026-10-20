@@ -2,7 +2,7 @@ import SwiftUI
 
 struct CallDetailScreen: View {
     let record: CallRecord
-    let line: DeviceLineIdentity
+    let linePresentation: LineHistoryPresentation
 
     var body: some View {
         Form {
@@ -12,8 +12,10 @@ struct CallDetailScreen: View {
             }
 
             Section("Line") {
-                LabeledContent("Local number", value: line.displayName)
-                LabeledContent("SIM ID", value: line.numericID.formatted(.number.grouping(.never)))
+                LabeledContent("Local number", value: linePresentation.displayName)
+                LabeledContent("SIM ID") {
+                    SIMBadge(snapshot: linePresentation.snapshot)
+                }
             }
 
             Section("Call") {
@@ -61,7 +63,9 @@ struct CallDetailScreen: View {
     NavigationStack {
         CallDetailScreen(
             record: PreviewFixtures.calls[0],
-            line: PreviewFixtures.devices[0]
+            linePresentation: PreviewFixtures.calls[0].linePresentation(
+                in: PreviewFixtures.devices
+            )
         )
     }
 }

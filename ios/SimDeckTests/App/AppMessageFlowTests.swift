@@ -40,6 +40,10 @@ final class AppMessageFlowTests: XCTestCase {
         XCTAssertEqual(pending.status, .sending)
         XCTAssertEqual(pending.body, "hello")
         XCTAssertEqual(model.conversations.first?.remoteNumber, "+8613500000000")
+        XCTAssertEqual(
+            model.conversations.first?.lineSnapshot,
+            LineHistorySnapshot(line: firstLine)
+        )
 
         transport.finishSuspendedSend()
         let messageID = try await sendTask.value
@@ -175,7 +179,68 @@ final class AppMessageFlowTests: XCTestCase {
         XCTAssertEqual(Set(model.conversations.map(\.lineID)), [firstLine.id, secondLine.id])
         XCTAssertEqual(model.conversations.flatMap(\.messages).count, 2)
         XCTAssertEqual(model.conversations.map(\.unreadCount), [1, 1])
+        XCTAssertEqual(
+            Set(model.conversations.compactMap(\.lineSnapshot?.numericID)),
+            Set([1, 2])
+        )
         XCTAssertEqual(transport.synchronizedLineIDs, [[firstLine.id, secondLine.id]])
+    }
+
+    func testHistoricalConversationKeepsItsSIMIdentityAfterLineRemoval() throws {
+        let conversation = MessageConversation(
+            lineID: firstLine.id,
+            remoteNumber: "10086",
+            contactName: nil,
+            unreadCount: 0,
+            messages: []
+        )
+        let model = makeModel(
+            transport: MessageTransportFake(),
+            devices: [firstLine],
+            messages: .loaded([conversation])
+        )
+
+        model.devices = []
+
+        let retained = try XCTUnwrap(model.conversations.first)
+        XCTAssertEqual(retained.lineSnapshot, LineHistorySnapshot(line: firstLine))
+        XCTAssertEqual(retained.linePresentation(in: []).snapshot?.numericID, 1)
+        XCTAssertFalse(retained.linePresentation(in: []).isAvailable)
+    }
+
+    func testRetryRejectsRemovedLineBeforeTransport() async throws {
+        let failedMessage = MessageItem(
+            id: UUID(),
+            direction: .sent,
+            body: "retry",
+            attachment: nil,
+            sentAt: Date(timeIntervalSince1970: 100),
+            status: .failed
+        )
+        let conversation = MessageConversation(
+            lineID: firstLine.id,
+            lineSnapshot: LineHistorySnapshot(line: firstLine),
+            remoteNumber: "10086",
+            contactName: nil,
+            unreadCount: 0,
+            messages: [failedMessage]
+        )
+        let transport = MessageTransportFake()
+        let model = makeModel(
+            transport: transport,
+            devices: [],
+            messages: .loaded([conversation])
+        )
+
+        do {
+            try await model.retryMessage(id: failedMessage.id)
+            XCTFail("Expected removed line rejection")
+        } catch {
+            XCTAssertEqual(error as? ServerConnectionError, .deviceUnavailable)
+        }
+
+        XCTAssertTrue(transport.sent.isEmpty)
+        XCTAssertEqual(model.messageItems.first?.status, .failed)
     }
 
     func testForegroundRefreshSynchronizesMessagesWhenPushIsUnavailable() async {
@@ -211,6 +276,7 @@ final class AppMessageFlowTests: XCTestCase {
     private func makeModel(
         transport: MessageTransportFake,
         devices: [DeviceLineIdentity]? = nil,
+        messages: MessageListState = .loaded([]),
         remoteDeviceRefreshEnabled: Bool = true
     ) -> AppModel {
         let defaults = UserDefaults(suiteName: "AppMessageFlowTests.\(UUID().uuidString)")!
@@ -222,7 +288,7 @@ final class AppMessageFlowTests: XCTestCase {
         )
         return AppModel(
             devices: devices ?? [firstLine, secondLine],
-            messages: .loaded([]),
+            messages: messages,
             serverConnection: connection,
             messageTransport: transport,
             remoteDeviceRefreshEnabled: remoteDeviceRefreshEnabled

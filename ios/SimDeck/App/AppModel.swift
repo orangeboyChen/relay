@@ -120,6 +120,7 @@ final class AppModel {
             commandSigner: resolvedCommandSigner
         )
         self.remoteDeviceRefreshEnabled = remoteDeviceRefreshEnabled
+        reconcileLineHistory(using: devices)
         self.callCoordinator.updateLineRoutes(devices)
         self.messageTransport.updateLineRoutes(devices)
     }
@@ -140,6 +141,7 @@ final class AppModel {
             keyRecoveryState = result.recoveredVaultKey == nil ? .approvalRequired : .available
             if let recoveredVaultKey {
                 messages = .loaded(try messageHistoryStore.load(using: recoveredVaultKey))
+                reconcileLineHistory(using: devices)
             }
         } catch {
             keyRecoveryState = .unavailable
@@ -148,6 +150,7 @@ final class AppModel {
 
     func refreshDevices() async {
         guard remoteDeviceRefreshEnabled else { return }
+        reconcileLineHistory(using: devices)
         guard serverConnection.isSignedIn else {
             devices = []
             managedSIMs = []
@@ -156,6 +159,7 @@ final class AppModel {
         do {
             try await registerInstallationIfNeeded()
             devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
+            reconcileLineHistory(using: devices)
             callCoordinator.updateLineRoutes(devices)
             messageTransport.updateLineRoutes(devices)
             try? await voipPushCoordinator?.uploadPendingToken()
@@ -187,6 +191,7 @@ final class AppModel {
     private func completeServerSignIn() async throws {
         try await registerInstallationIfNeeded()
         devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
+        reconcileLineHistory(using: devices)
         callCoordinator.updateLineRoutes(devices)
         messageTransport.updateLineRoutes(devices)
         try? await voipPushCoordinator?.uploadPendingToken()
@@ -278,6 +283,7 @@ final class AppModel {
 
     func testServerConnection() async throws {
         devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
+        reconcileLineHistory(using: devices)
     }
 
     func refreshMessages() async {
@@ -350,6 +356,11 @@ final class AppModel {
               let message = conversation.messages.first(where: { $0.id == id }),
               message.direction == .sent else {
             throw ServerConnectionError.invalidResponse
+        }
+        guard devices.contains(where: {
+            $0.id == conversation.lineID && $0.isOnline
+        }) else {
+            throw ServerConnectionError.deviceUnavailable
         }
         updateMessageStatus(id: id, status: .sending)
         do {
@@ -474,6 +485,7 @@ final class AppModel {
             )
         }
         devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
+        reconcileLineHistory(using: devices)
         callCoordinator.updateLineRoutes(devices)
         messageTransport.updateLineRoutes(devices)
     }
@@ -490,6 +502,7 @@ final class AppModel {
         )
         try await serverConnection.updateDeviceProfile(deviceID: line.deviceID, profileCiphertext: ciphertext)
         devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
+        reconcileLineHistory(using: devices)
         callCoordinator.updateLineRoutes(devices)
         messageTransport.updateLineRoutes(devices)
     }
@@ -507,6 +520,7 @@ final class AppModel {
         try await serverConnection.updateSIMProfile(simID: simID, profileCiphertext: ciphertext)
         try await serverConnection.updateSIMNumericID(simID: simID, numericID: numericID)
         devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
+        reconcileLineHistory(using: devices)
         callCoordinator.updateLineRoutes(devices)
         messageTransport.updateLineRoutes(devices)
     }
@@ -521,6 +535,7 @@ final class AppModel {
 
     func removeDevice(line: DeviceLineIdentity) async throws {
         try await serverConnection.revokeDevice(deviceID: line.deviceID)
+        reconcileLineHistory(using: devices)
         let removedLineIDs = Set(
             devices.lazy.filter { $0.deviceID == line.deviceID }.map(\.id)
         )
@@ -551,6 +566,7 @@ final class AppModel {
 
     func signOutFromServer() throws {
         try serverConnection.signOut()
+        reconcileLineHistory(using: devices)
         devices = []
         managedSIMs = []
         installationTrust = nil
@@ -641,6 +657,9 @@ final class AppModel {
                 conversations.append(
                     MessageConversation(
                         lineID: delivery.lineID,
+                        lineSnapshot: devices.first(where: { $0.id == delivery.lineID }).map(
+                            LineHistorySnapshot.init(line:)
+                        ),
                         remoteNumber: delivery.remoteNumber,
                         contactName: nil,
                         unreadCount: 1,
@@ -660,6 +679,7 @@ final class AppModel {
             }
         }
         messages = .loaded(sortedConversations(conversations))
+        reconcileLineHistory(using: devices)
     }
 
     private func applyDetectedSIMProfiles(_ profiles: [DetectedSIMProfile]) async throws {
@@ -691,6 +711,7 @@ final class AppModel {
         }
         guard changed else { return }
         devices = try await serverConnection.loadDevices(profileKey: recoveredVaultKey)
+        reconcileLineHistory(using: devices)
         callCoordinator.updateLineRoutes(devices)
         messageTransport.updateLineRoutes(devices)
     }
@@ -723,6 +744,9 @@ final class AppModel {
             conversations.append(
                 MessageConversation(
                     lineID: lineID,
+                    lineSnapshot: devices.first(where: { $0.id == lineID }).map(
+                        LineHistorySnapshot.init(line:)
+                    ),
                     remoteNumber: remoteNumber,
                     contactName: nil,
                     unreadCount: 0,
@@ -731,6 +755,7 @@ final class AppModel {
             )
         }
         messages = .loaded(sortedConversations(conversations))
+        reconcileLineHistory(using: devices)
     }
 
     private func updateMessageStatus(id: UUID, status: MessageDeliveryStatus) {
@@ -755,6 +780,45 @@ final class AppModel {
     ) -> [MessageConversation] {
         conversations.sorted {
             ($0.lastMessage?.sentAt ?? .distantPast) > ($1.lastMessage?.sentAt ?? .distantPast)
+        }
+    }
+
+    private func reconcileLineHistory(using lines: [DeviceLineIdentity]) {
+        let linesByID = Dictionary(uniqueKeysWithValues: lines.map { ($0.id, $0) })
+        var didChangeMessages = false
+        if case .loaded(var conversations) = messages {
+            for index in conversations.indices {
+                guard let line = linesByID[conversations[index].lineID] else {
+                    continue
+                }
+                let snapshot = LineHistorySnapshot(line: line)
+                guard conversations[index].lineSnapshot != snapshot else { continue }
+                conversations[index].lineSnapshot = snapshot
+                didChangeMessages = true
+            }
+            if didChangeMessages {
+                messages = .loaded(conversations)
+            }
+        }
+
+        if case .loaded(var records) = callHistory {
+            var didChangeCalls = false
+            for index in records.indices {
+                guard let line = linesByID[records[index].lineID] else {
+                    continue
+                }
+                let snapshot = LineHistorySnapshot(line: line)
+                guard records[index].lineSnapshot != snapshot else { continue }
+                records[index].lineSnapshot = snapshot
+                didChangeCalls = true
+            }
+            if didChangeCalls {
+                callHistory = .loaded(records)
+            }
+        }
+
+        if didChangeMessages {
+            persistMessageHistoryIfAvailable()
         }
     }
 

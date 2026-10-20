@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct SIMBadge: View {
-    let number: Int
+    let number: Int?
     let accessibilityLabel: Text
     private let baseSide: CGFloat
 
@@ -25,10 +25,32 @@ struct SIMBadge: View {
         baseSide = size
     }
 
+    init(snapshot: LineHistorySnapshot?, size: CGFloat = 18) {
+        number = snapshot?.numericID
+        if let snapshot {
+            if !snapshot.phoneNumber.isEmpty {
+                accessibilityLabel = Text("SIM \(snapshot.numericID), local number \(snapshot.phoneNumber)")
+            } else if !snapshot.lineName.isEmpty {
+                accessibilityLabel = Text("SIM \(snapshot.numericID), line \(snapshot.lineName)")
+            } else {
+                accessibilityLabel = Text("SIM \(snapshot.numericID)")
+            }
+        } else {
+            accessibilityLabel = Text("Unavailable SIM")
+        }
+        baseSide = size
+    }
+
     var body: some View {
         let badgeSide = min(baseSide * scale, baseSide + 4)
 
-        Text(number, format: .number.grouping(.never))
+        Group {
+            if let number {
+                Text(number, format: .number.grouping(.never))
+            } else {
+                Text("?")
+            }
+        }
             .font(.caption2.weight(.semibold).monospacedDigit())
             .foregroundStyle(.white)
             .lineLimit(1)

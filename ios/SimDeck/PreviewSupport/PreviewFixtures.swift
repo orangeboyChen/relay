@@ -110,6 +110,7 @@ enum PreviewFixtures {
         CallRecord(
             id: UUID(uuidString: "10000000-0000-0000-0000-000000000001")!,
             lineID: devices[0].id,
+            lineSnapshot: LineHistorySnapshot(line: devices[0]),
             remoteNumber: "13800000000",
             contactName: "China Mobile",
             direction: .incoming,
@@ -120,6 +121,7 @@ enum PreviewFixtures {
         CallRecord(
             id: UUID(uuidString: "10000000-0000-0000-0000-000000000002")!,
             lineID: devices[1].id,
+            lineSnapshot: LineHistorySnapshot(line: devices[1]),
             remoteNumber: "13500000000",
             contactName: nil,
             direction: .incoming,
@@ -130,6 +132,7 @@ enum PreviewFixtures {
         CallRecord(
             id: UUID(uuidString: "10000000-0000-0000-0000-000000000003")!,
             lineID: devices[0].id,
+            lineSnapshot: LineHistorySnapshot(line: devices[0]),
             remoteNumber: "13800000000",
             contactName: "Service Desk",
             direction: .outgoing,
@@ -142,6 +145,7 @@ enum PreviewFixtures {
     static let conversations = [
         MessageConversation(
             lineID: devices[0].id,
+            lineSnapshot: LineHistorySnapshot(line: devices[0]),
             remoteNumber: "13800000000",
             contactName: "Alex",
             unreadCount: 2,
@@ -177,6 +181,7 @@ enum PreviewFixtures {
         ),
         MessageConversation(
             lineID: devices[1].id,
+            lineSnapshot: LineHistorySnapshot(line: devices[1]),
             remoteNumber: "13800000000",
             contactName: "Alex",
             unreadCount: 0,

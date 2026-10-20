@@ -27,7 +27,7 @@ struct SIMFilterMenu: View {
 
 struct ConversationRow: View {
     let conversation: MessageConversation
-    let line: DeviceLineIdentity
+    let linePresentation: LineHistoryPresentation
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -104,7 +104,7 @@ struct ConversationRow: View {
 
     private var previewRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: 7) {
-            SIMBadge(line: line)
+            SIMBadge(snapshot: linePresentation.snapshot)
 
             Text(summary)
                 .font(.subheadline)
@@ -170,7 +170,7 @@ struct MessageContactAvatar: View {
         ForEach(PreviewFixtures.conversations) { conversation in
             ConversationRow(
                 conversation: conversation,
-                line: PreviewFixtures.devices.first { $0.id == conversation.lineID }!
+                linePresentation: conversation.linePresentation(in: PreviewFixtures.devices)
             )
         }
     }
@@ -182,7 +182,7 @@ struct MessageContactAvatar: View {
         ForEach(PreviewFixtures.conversations) { conversation in
             ConversationRow(
                 conversation: conversation,
-                line: PreviewFixtures.devices.first { $0.id == conversation.lineID }!
+                linePresentation: conversation.linePresentation(in: PreviewFixtures.devices)
             )
         }
     }

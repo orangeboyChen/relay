@@ -50,6 +50,22 @@ final class EncryptedMessageHistoryStoreTests: XCTestCase {
         }
     }
 
+    func testLegacyHistoryWithoutLineSnapshotStillDecodes() throws {
+        let conversation = MessageConversation(
+            lineID: UUID(),
+            remoteNumber: "13500000000",
+            contactName: nil,
+            unreadCount: 0,
+            messages: []
+        )
+
+        let encoded = try JSONEncoder().encode([conversation])
+        let decoded = try JSONDecoder().decode([MessageConversation].self, from: encoded)
+
+        XCTAssertEqual(decoded, [conversation])
+        XCTAssertNil(decoded[0].lineSnapshot)
+    }
+
     func testDeleteRemovesEncryptedHistoryWithoutAffectingAnEmptyStore() throws {
         let fileURL = FileManager.default.temporaryDirectory.appending(path: "messages-\(UUID()).bin")
         defer { try? FileManager.default.removeItem(at: fileURL) }

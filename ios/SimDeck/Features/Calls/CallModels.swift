@@ -3,12 +3,35 @@ import Foundation
 struct CallRecord: Identifiable, Equatable, Sendable {
     let id: UUID
     let lineID: UUID
+    var lineSnapshot: LineHistorySnapshot?
     let remoteNumber: String
     let contactName: String?
     let direction: CallDirection
     let result: CallResult
     let startedAt: Date
     let endedAt: Date?
+
+    init(
+        id: UUID,
+        lineID: UUID,
+        lineSnapshot: LineHistorySnapshot? = nil,
+        remoteNumber: String,
+        contactName: String?,
+        direction: CallDirection,
+        result: CallResult,
+        startedAt: Date,
+        endedAt: Date?
+    ) {
+        self.id = id
+        self.lineID = lineID
+        self.lineSnapshot = lineSnapshot
+        self.remoteNumber = remoteNumber
+        self.contactName = contactName
+        self.direction = direction
+        self.result = result
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+    }
 
     var displayName: String {
         guard let contactName, !contactName.isEmpty else {
@@ -20,6 +43,13 @@ struct CallRecord: Identifiable, Equatable, Sendable {
     var duration: TimeInterval? {
         guard let endedAt else { return nil }
         return max(0, endedAt.timeIntervalSince(startedAt))
+    }
+
+    func linePresentation(in lines: [DeviceLineIdentity]) -> LineHistoryPresentation {
+        LineHistoryPresentation(
+            line: lines.first(where: { $0.id == lineID }),
+            snapshot: lineSnapshot
+        )
     }
 }
 

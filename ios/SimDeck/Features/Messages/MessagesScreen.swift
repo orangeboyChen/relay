@@ -96,29 +96,30 @@ struct MessagesScreen: View {
                 ContentUnavailableView.search(text: searchText)
             } else {
                 List(filtered) { conversation in
-                    if let line = lines.first(where: { $0.id == conversation.lineID }) {
-                        NavigationLink {
-                            ConversationScreen(
-                                initialID: conversation.id,
-                                conversations: conversations.filter {
-                                    $0.lineID == conversation.lineID
-                                        && $0.remoteNumber == conversation.remoteNumber
-                                },
-                                lines: lines,
-                                sendAction: sendAction,
-                                retryAction: retryAction,
-                                deleteAction: deleteAction,
-                                markReadAction: markReadAction
-                            )
-                        } label: {
-                            ConversationRow(conversation: conversation, line: line)
-                        }
-                        .listRowInsets(
-                            EdgeInsets(top: 0, leading: 26, bottom: 0, trailing: 8)
+                    NavigationLink {
+                        ConversationScreen(
+                            initialID: conversation.id,
+                            conversations: conversations.filter {
+                                $0.lineID == conversation.lineID
+                                    && $0.remoteNumber == conversation.remoteNumber
+                            },
+                            lines: lines,
+                            sendAction: sendAction,
+                            retryAction: retryAction,
+                            deleteAction: deleteAction,
+                            markReadAction: markReadAction
                         )
-                        .alignmentGuide(.listRowSeparatorLeading) { dimensions in
-                            dimensions[.leading] + 57
-                        }
+                    } label: {
+                        ConversationRow(
+                            conversation: conversation,
+                            linePresentation: conversation.linePresentation(in: lines)
+                        )
+                    }
+                    .listRowInsets(
+                        EdgeInsets(top: 0, leading: 26, bottom: 0, trailing: 8)
+                    )
+                    .alignmentGuide(.listRowSeparatorLeading) { dimensions in
+                        dimensions[.leading] + 57
                     }
                 }
                 .listStyle(.plain)
@@ -175,5 +176,14 @@ private struct MessageComposition: Identifiable {
         MessagesScreen(state: .loaded(PreviewFixtures.conversations), lines: PreviewFixtures.devices)
     }
     .environment(\.locale, Locale(identifier: "zh-Hans"))
+}
+
+#Preview("Messages - Removed SIM") {
+    NavigationStack {
+        MessagesScreen(
+            state: .loaded([PreviewFixtures.conversations[0]]),
+            lines: []
+        )
+    }
 }
 #endif

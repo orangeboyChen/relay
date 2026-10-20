@@ -142,3 +142,49 @@ struct DeviceLineIdentity: Identifiable, Equatable, Sendable {
         return "\(radioStatus.technology.displayName), \(radioStatus.signalAccessibilityDescription)"
     }
 }
+
+struct LineHistorySnapshot: Codable, Equatable, Sendable {
+    let numericID: Int
+    let lineName: String
+    let phoneNumber: String
+
+    init(numericID: Int, lineName: String, phoneNumber: String) {
+        self.numericID = numericID
+        self.lineName = lineName
+        self.phoneNumber = phoneNumber
+    }
+
+    init(line: DeviceLineIdentity) {
+        self.init(
+            numericID: line.numericID,
+            lineName: line.lineName,
+            phoneNumber: line.phoneNumber
+        )
+    }
+
+    var displayName: String {
+        if !phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return phoneNumber
+        }
+        if !lineName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return lineName
+        }
+        return "SIM \(numericID)"
+    }
+}
+
+struct LineHistoryPresentation: Equatable, Sendable {
+    let snapshot: LineHistorySnapshot?
+    let isAvailable: Bool
+    let isOnline: Bool
+
+    init(line: DeviceLineIdentity?, snapshot: LineHistorySnapshot?) {
+        self.snapshot = line.map(LineHistorySnapshot.init(line:)) ?? snapshot
+        isAvailable = line != nil
+        isOnline = line?.isOnline == true
+    }
+
+    var displayName: String {
+        snapshot?.displayName ?? String(localized: "Unavailable")
+    }
+}

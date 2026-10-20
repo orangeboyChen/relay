@@ -46,7 +46,8 @@ struct ConversationScreen: View {
                     ForEach(conversation.messages) { message in
                         MessageBubble(
                             message: message,
-                            line: line,
+                            lineSnapshot: linePresentation.snapshot,
+                            canRetry: currentLine?.isOnline == true,
                             openAttachment: {
                                 guard let attachment = message.attachment else { return }
                                 activeSheet = .attachment(attachment)
@@ -100,7 +101,7 @@ struct ConversationScreen: View {
             if dynamicTypeSize.isAccessibilitySize {
                 ConversationHeader(
                     conversation: conversation,
-                    line: line,
+                    linePresentation: linePresentation,
                     alternatives: conversations,
                     lines: lines,
                     usesAccessibilityLayout: true,
@@ -117,6 +118,15 @@ struct ConversationScreen: View {
         }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 0) {
+                if currentLine == nil {
+                    Label("This SIM is no longer available.", systemImage: "simcard")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(.bar)
+                }
                 if let errorMessage {
                     Label(errorMessage, systemImage: "exclamationmark.circle.fill")
                         .font(.footnote)
@@ -128,8 +138,8 @@ struct ConversationScreen: View {
                 }
                 MessageComposer(
                     draft: $draft,
-                    isTextEntryEnabled: line.isOnline && !isSending,
-                    canSend: line.isOnline
+                    isTextEntryEnabled: currentLine?.isOnline == true && !isSending,
+                    canSend: currentLine?.isOnline == true
                         && !isSending
                         && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                     replyPreview: replyTarget.map(messagePreview),
@@ -152,7 +162,7 @@ struct ConversationScreen: View {
                 if !dynamicTypeSize.isAccessibilitySize {
                     ConversationHeader(
                         conversation: conversation,
-                        line: line,
+                        linePresentation: linePresentation,
                         alternatives: conversations,
                         lines: lines,
                         usesAccessibilityLayout: false,
@@ -171,12 +181,15 @@ struct ConversationScreen: View {
             case let .forward(message):
                 NewMessageScreen(
                     lines: lines,
-                    selectedLineID: line.id,
+                    selectedLineID: currentLine?.id,
                     message: message.body,
                     sendAction: sendAction
                 )
             case let .details(message):
-                MessageDetailsScreen(message: message, line: line)
+                MessageDetailsScreen(
+                    message: message,
+                    linePresentation: linePresentation
+                )
             }
         }
         .alert(
@@ -213,8 +226,12 @@ struct ConversationScreen: View {
         conversations.first(where: { $0.id == selectedID }) ?? conversations[0]
     }
 
-    private var line: DeviceLineIdentity {
-        lines.first(where: { $0.id == conversation.lineID }) ?? lines[0]
+    private var currentLine: DeviceLineIdentity? {
+        lines.first(where: { $0.id == conversation.lineID })
+    }
+
+    private var linePresentation: LineHistoryPresentation {
+        conversation.linePresentation(in: lines)
     }
 
     private var deletionConfirmationIsPresented: Binding<Bool> {
@@ -251,11 +268,12 @@ struct ConversationScreen: View {
     }
 
     private func send() {
-        guard line.isOnline,
+        guard let currentLine,
+              currentLine.isOnline,
               !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !isSending else { return }
         let body = draft
-        let lineID = line.id
+        let lineID = currentLine.id
         let remoteNumber = conversation.remoteNumber
         errorMessage = nil
         isSending = true
@@ -275,6 +293,14 @@ struct ConversationScreen: View {
 
     private func retry(_ message: MessageItem) {
         guard message.status == .failed else { return }
+        guard let currentLine else {
+            errorMessage = String(localized: "This SIM is no longer available.")
+            return
+        }
+        guard currentLine.isOnline else {
+            errorMessage = String(localized: "This SIM is offline.")
+            return
+        }
         errorMessage = nil
         Task {
             do {
@@ -350,5 +376,15 @@ private enum ConversationSheet: Identifiable {
         )
     }
     .environment(\.locale, Locale(identifier: "zh-Hans"))
+}
+
+#Preview("Conversation - Removed SIM") {
+    NavigationStack {
+        ConversationScreen(
+            initialID: PreviewFixtures.conversations[0].id,
+            conversations: [PreviewFixtures.conversations[0]],
+            lines: []
+        )
+    }
 }
 #endif

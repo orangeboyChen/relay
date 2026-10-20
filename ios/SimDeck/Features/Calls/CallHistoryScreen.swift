@@ -24,38 +24,40 @@ struct CallHistoryScreen: View {
                 )
             case .loaded(let records):
                 List(records) { record in
-                    if let line = lines.first(where: { $0.id == record.lineID }) {
-                        HStack(spacing: 0) {
+                    let linePresentation = record.linePresentation(in: lines)
+                    HStack(spacing: 0) {
+                        Button {
+                            startCall(from: record)
+                        } label: {
+                            CallHistoryRow(
+                                record: record,
+                                linePresentation: linePresentation,
+                                referenceDate: referenceDate
+                            )
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(startingRecordID != nil)
+                        .accessibilityHint("Calls this number using the displayed SIM")
+
+                        if startingRecordID == record.id {
+                            ProgressView()
+                                .frame(width: 44, height: 44)
+                        } else {
                             Button {
-                                startCall(from: record)
-                            } label: {
-                                CallHistoryRow(
+                                selectedDetail = CallDetailSelection(
                                     record: record,
-                                    line: line,
-                                    referenceDate: referenceDate
+                                    linePresentation: linePresentation
                                 )
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .contentShape(Rectangle())
+                            } label: {
+                                Image(systemName: "info.circle")
+                                    .font(.title3)
+                                    .foregroundStyle(.blue)
+                                    .frame(width: 44, height: 44)
                             }
                             .buttonStyle(.plain)
-                            .disabled(startingRecordID != nil)
-                            .accessibilityHint("Calls this number using the displayed SIM")
-
-                            if startingRecordID == record.id {
-                                ProgressView()
-                                    .frame(width: 44, height: 44)
-                            } else {
-                                Button {
-                                    selectedDetail = CallDetailSelection(record: record, line: line)
-                                } label: {
-                                    Image(systemName: "info.circle")
-                                        .font(.title3)
-                                        .foregroundStyle(.blue)
-                                        .frame(width: 44, height: 44)
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel("Call details")
-                            }
+                            .accessibilityLabel("Call details")
                         }
                     }
                 }
@@ -71,7 +73,10 @@ struct CallHistoryScreen: View {
         .navigationTitle("Calls")
         .navigationDestination(isPresented: detailIsPresented) {
             if let selectedDetail {
-                CallDetailScreen(record: selectedDetail.record, line: selectedDetail.line)
+                CallDetailScreen(
+                    record: selectedDetail.record,
+                    linePresentation: selectedDetail.linePresentation
+                )
             }
         }
         .alert(item: $presentedError) { error in
@@ -157,17 +162,17 @@ private struct CallHistoryPresentedError: Identifiable {
 
 private struct CallDetailSelection {
     let record: CallRecord
-    let line: DeviceLineIdentity
+    let linePresentation: LineHistoryPresentation
 }
 
 private struct CallHistoryRow: View {
     let record: CallRecord
-    let line: DeviceLineIdentity
+    let linePresentation: LineHistoryPresentation
     let referenceDate: Date
 
     var body: some View {
         HStack(spacing: 12) {
-            SIMBadge(line: line)
+            SIMBadge(snapshot: linePresentation.snapshot)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(record.displayName)
@@ -297,6 +302,21 @@ struct DurationText: View {
     }
     .preferredColorScheme(.dark)
     .environment(\.dynamicTypeSize, .accessibility5)
+}
+
+#Preview("Call history - Removed SIM") {
+    NavigationStack {
+        CallHistoryScreen(
+            state: .loaded([PreviewFixtures.calls[0]]),
+            lines: [],
+            referenceDate: PreviewFixtures.now,
+            callStarter: CallKitCoordinator(
+                transport: PreviewCallTransport(),
+                integratesWithSystem: false
+            ),
+            onStarted: { _ in }
+        )
+    }
 }
 
 #endif

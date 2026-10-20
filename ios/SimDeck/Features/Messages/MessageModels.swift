@@ -7,10 +7,27 @@ struct ConversationID: Hashable, Sendable {
 
 struct MessageConversation: Identifiable, Equatable, Sendable, Codable {
     let lineID: UUID
+    var lineSnapshot: LineHistorySnapshot?
     let remoteNumber: String
     let contactName: String?
     var unreadCount: Int
     var messages: [MessageItem]
+
+    init(
+        lineID: UUID,
+        lineSnapshot: LineHistorySnapshot? = nil,
+        remoteNumber: String,
+        contactName: String?,
+        unreadCount: Int,
+        messages: [MessageItem]
+    ) {
+        self.lineID = lineID
+        self.lineSnapshot = lineSnapshot
+        self.remoteNumber = remoteNumber
+        self.contactName = contactName
+        self.unreadCount = unreadCount
+        self.messages = messages
+    }
 
     var id: ConversationID {
         ConversationID(deviceUUID: lineID, remoteNumber: remoteNumber)
@@ -25,6 +42,13 @@ struct MessageConversation: Identifiable, Equatable, Sendable, Codable {
 
     var lastMessage: MessageItem? {
         messages.last
+    }
+
+    func linePresentation(in lines: [DeviceLineIdentity]) -> LineHistoryPresentation {
+        LineHistoryPresentation(
+            line: lines.first(where: { $0.id == lineID }),
+            snapshot: lineSnapshot
+        )
     }
 
     func matches(_ query: String) -> Bool {

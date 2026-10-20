@@ -58,7 +58,7 @@ struct MessageContextMenu: View {
 
 struct MessageDetailsScreen: View {
     let message: MessageItem
-    let line: DeviceLineIdentity
+    let linePresentation: LineHistoryPresentation
 
     @Environment(\.dismiss) private var dismiss
 
@@ -79,9 +79,9 @@ struct MessageDetailsScreen: View {
 
                 Section("SIM") {
                     LabeledContent("SIM ID") {
-                        SIMBadge(line: line)
+                        SIMBadge(snapshot: linePresentation.snapshot)
                     }
-                    LabeledContent("Local number", value: line.displayName)
+                    LabeledContent("Local number", value: linePresentation.displayName)
                 }
             }
             .navigationTitle("Message Details")
@@ -128,7 +128,9 @@ struct MessageDetailsScreen: View {
 #Preview("Message details") {
     MessageDetailsScreen(
         message: PreviewFixtures.conversations[0].messages[1],
-        line: PreviewFixtures.devices[0]
+        linePresentation: PreviewFixtures.conversations[0].linePresentation(
+            in: PreviewFixtures.devices
+        )
     )
 }
 #endif

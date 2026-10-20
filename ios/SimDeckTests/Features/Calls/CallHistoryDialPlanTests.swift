@@ -30,6 +30,42 @@ final class CallHistoryDialPlanTests: XCTestCase {
         }
     }
 
+    func testMissingLineKeepsHistoricalSIMPresentationButCannotBeCalled() {
+        let line = makeLine(id: UUID(), isOnline: true)
+        var record = makeRecord(lineID: line.id, remoteNumber: "10086")
+        record.lineSnapshot = LineHistorySnapshot(line: line)
+
+        let presentation = record.linePresentation(in: [])
+
+        XCTAssertEqual(presentation.snapshot?.numericID, 1)
+        XCTAssertEqual(presentation.displayName, "13500000000")
+        XCTAssertFalse(presentation.isAvailable)
+        XCTAssertThrowsError(try CallHistoryDialPlan(record: record, lines: [])) { error in
+            XCTAssertEqual(error as? CallHistoryDialPlanError, .lineUnavailable)
+        }
+    }
+
+    func testCurrentLinePresentationOverridesTheHistoricalSnapshot() {
+        var currentLine = makeLine(id: UUID(), isOnline: true)
+        currentLine.numericID = 2
+        currentLine.phoneNumber = "13800000000"
+        let staleSnapshot = LineHistorySnapshot(
+            numericID: 1,
+            lineName: "Old line",
+            phoneNumber: "13500000000"
+        )
+
+        let presentation = LineHistoryPresentation(
+            line: currentLine,
+            snapshot: staleSnapshot
+        )
+
+        XCTAssertEqual(presentation.snapshot?.numericID, 2)
+        XCTAssertEqual(presentation.displayName, "13800000000")
+        XCTAssertTrue(presentation.isAvailable)
+        XCTAssertTrue(presentation.isOnline)
+    }
+
     func testPlanRejectsAnInvalidRecordedNumber() {
         let line = makeLine(id: UUID(), isOnline: true)
         let record = makeRecord(lineID: line.id, remoteNumber: "not a number")

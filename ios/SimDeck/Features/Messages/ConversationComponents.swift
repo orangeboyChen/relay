@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ConversationHeader: View {
     let conversation: MessageConversation
-    let line: DeviceLineIdentity
+    let linePresentation: LineHistoryPresentation
     let alternatives: [MessageConversation]
     let lines: [DeviceLineIdentity]
     let usesAccessibilityLayout: Bool
@@ -11,7 +11,8 @@ struct ConversationHeader: View {
     var body: some View {
         Menu {
             ForEach(alternatives) { alternative in
-                Button("SIM \(lineFor(alternative).numericID) · \(lineFor(alternative).displayName)") {
+                let alternativeLine = alternative.linePresentation(in: lines)
+                Button(lineLabel(for: alternativeLine)) {
                     selectedID = alternative.id
                 }
             }
@@ -35,8 +36,8 @@ struct ConversationHeader: View {
                     .foregroundStyle(.primary)
 
                     HStack(spacing: 3) {
-                        SIMBadge(line: line, size: 12)
-                        Text(line.displayName)
+                        SIMBadge(snapshot: linePresentation.snapshot, size: 12)
+                        Text(linePresentation.displayName)
                             .lineLimit(1)
                     }
                     .font(.caption2)
@@ -52,12 +53,22 @@ struct ConversationHeader: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(
-            Text(verbatim: "\(conversation.displayName), SIM \(line.numericID), \(line.displayName)")
+            Text(verbatim: accessibilityLabel)
         )
     }
 
-    private func lineFor(_ conversation: MessageConversation) -> DeviceLineIdentity {
-        lines.first(where: { $0.id == conversation.lineID }) ?? line
+    private func lineLabel(for presentation: LineHistoryPresentation) -> String {
+        guard let numericID = presentation.snapshot?.numericID else {
+            return String(localized: "Unavailable SIM")
+        }
+        return String(localized: "SIM \(numericID) · \(presentation.displayName)")
+    }
+
+    private var accessibilityLabel: String {
+        guard let numericID = linePresentation.snapshot?.numericID else {
+            return "\(conversation.displayName), \(String(localized: "Unavailable SIM"))"
+        }
+        return "\(conversation.displayName), SIM \(numericID), \(linePresentation.displayName)"
     }
 
     private var adaptiveLayout: AnyLayout {
@@ -69,7 +80,8 @@ struct ConversationHeader: View {
 
 struct MessageBubble: View {
     let message: MessageItem
-    let line: DeviceLineIdentity
+    let lineSnapshot: LineHistorySnapshot?
+    let canRetry: Bool
     let openAttachment: () -> Void
     let replyAction: () -> Void
     let copyAction: () -> Void
@@ -84,7 +96,8 @@ struct MessageBubble: View {
 
     init(
         message: MessageItem,
-        line: DeviceLineIdentity,
+        lineSnapshot: LineHistorySnapshot?,
+        canRetry: Bool = true,
         openAttachment: @escaping () -> Void = {},
         replyAction: @escaping () -> Void = {},
         copyAction: @escaping () -> Void = {},
@@ -95,7 +108,8 @@ struct MessageBubble: View {
         deleteAction: @escaping () -> Void = {}
     ) {
         self.message = message
-        self.line = line
+        self.lineSnapshot = lineSnapshot
+        self.canRetry = canRetry
         self.openAttachment = openAttachment
         self.replyAction = replyAction
         self.copyAction = copyAction
@@ -214,7 +228,7 @@ struct MessageBubble: View {
                 canCopy: !message.body.isEmpty,
                 verificationCode: VerificationCodeDetector.code(in: message.body),
                 canForward: !message.body.isEmpty,
-                canRetry: message.direction == .sent && message.status == .failed,
+                canRetry: canRetry && message.direction == .sent && message.status == .failed,
                 replyAction: replyAction,
                 copyAction: copyAction,
                 copyVerificationCodeAction: copyVerificationCodeAction,
@@ -231,7 +245,7 @@ struct MessageBubble: View {
 
     private var messageMetadata: some View {
         HStack(spacing: 5) {
-            SIMBadge(line: line, size: 14)
+            SIMBadge(snapshot: lineSnapshot, size: 14)
             Text(message.sentAt, format: .dateTime.hour().minute())
             deliveryStatusView
         }
@@ -357,7 +371,9 @@ struct AttachmentPreview: View {
     VStack(spacing: 20) {
         ConversationHeader(
             conversation: PreviewFixtures.conversations[0],
-            line: PreviewFixtures.devices[0],
+            linePresentation: PreviewFixtures.conversations[0].linePresentation(
+                in: PreviewFixtures.devices
+            ),
             alternatives: PreviewFixtures.conversations,
             lines: PreviewFixtures.devices,
             usesAccessibilityLayout: false,
@@ -365,7 +381,10 @@ struct AttachmentPreview: View {
         )
 
         ForEach(PreviewFixtures.conversations[0].messages) { message in
-            MessageBubble(message: message, line: PreviewFixtures.devices[0]) {}
+            MessageBubble(
+                message: message,
+                lineSnapshot: LineHistorySnapshot(line: PreviewFixtures.devices[0])
+            ) {}
         }
     }
     .padding()
@@ -381,7 +400,7 @@ struct AttachmentPreview: View {
             sentAt: PreviewFixtures.now,
             status: .failed
         ),
-        line: PreviewFixtures.devices[0],
+        lineSnapshot: LineHistorySnapshot(line: PreviewFixtures.devices[0]),
         retryAction: {}
     )
     .padding()

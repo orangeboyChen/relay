@@ -119,6 +119,9 @@ struct RootTabView: View {
                 },
                 markReadAction: { conversationID in
                     model.markConversationRead(conversationID)
+                },
+                markUnreadAction: { conversationID in
+                    model.markConversationUnread(conversationID)
                 }
             )
         }

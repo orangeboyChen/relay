@@ -13,6 +13,7 @@ struct MessagesScreen: View {
     let retryAction: (UUID) async throws -> Void
     let deleteAction: (Set<UUID>) throws -> Void
     let markReadAction: (ConversationID) -> Void
+    let markUnreadAction: (ConversationID) -> Void
 
     @State private var searchText = ""
     @State private var selectedLineID: UUID?
@@ -21,6 +22,7 @@ struct MessagesScreen: View {
     @State private var selectedConversationIDs: Set<ConversationID> = []
     @State private var conversationsPendingDeletion: [MessageConversation] = []
     @State private var deleteErrorMessage: String?
+    @State private var selectedConversationID: ConversationID?
 
     init(
         state: MessageListState,
@@ -30,7 +32,8 @@ struct MessagesScreen: View {
         sendAction: @escaping (UUID, String, String) async throws -> Void = { _, _, _ in },
         retryAction: @escaping (UUID) async throws -> Void = { _ in },
         deleteAction: @escaping (Set<UUID>) throws -> Void = { _ in },
-        markReadAction: @escaping (ConversationID) -> Void = { _ in }
+        markReadAction: @escaping (ConversationID) -> Void = { _ in },
+        markUnreadAction: @escaping (ConversationID) -> Void = { _ in }
     ) {
         self.state = state
         self.lines = lines
@@ -40,6 +43,7 @@ struct MessagesScreen: View {
         self.retryAction = retryAction
         self.deleteAction = deleteAction
         self.markReadAction = markReadAction
+        self.markUnreadAction = markUnreadAction
     }
 
     var body: some View {
@@ -145,7 +149,7 @@ struct MessagesScreen: View {
             } else {
                 List(selection: $selectedConversationIDs) {
                     ForEach(filtered) { conversation in
-                        conversationRow(conversation, in: conversations)
+                        conversationRow(conversation)
                             .tag(conversation.id)
                             .listRowInsets(
                                 EdgeInsets(top: 0, leading: 26, bottom: 0, trailing: 8)
@@ -159,15 +163,28 @@ struct MessagesScreen: View {
                 .onChange(of: filtered.map(\.id)) { _, conversationIDs in
                     selectedConversationIDs.formIntersection(conversationIDs)
                 }
+                .navigationDestination(isPresented: selectedConversationIsPresented) {
+                    if let selectedConversationID,
+                       let conversation = conversations.first(where: {
+                           $0.id == selectedConversationID
+                       }) {
+                        ConversationScreen(
+                            initialID: conversation.id,
+                            conversations: conversation.lineAlternatives(in: conversations),
+                            lines: lines,
+                            sendAction: sendAction,
+                            retryAction: retryAction,
+                            deleteAction: deleteAction,
+                            markReadAction: markReadAction
+                        )
+                    }
+                }
             }
         }
     }
 
     @ViewBuilder
-    private func conversationRow(
-        _ conversation: MessageConversation,
-        in conversations: [MessageConversation]
-    ) -> some View {
+    private func conversationRow(_ conversation: MessageConversation) -> some View {
         if editMode.isEditing {
             ConversationRow(
                 conversation: conversation,
@@ -175,28 +192,30 @@ struct MessagesScreen: View {
             )
             .contentShape(.rect)
         } else {
-            NavigationLink {
-                ConversationScreen(
-                    initialID: conversation.id,
-                    conversations: conversation.lineAlternatives(in: conversations),
-                    lines: lines,
-                    sendAction: sendAction,
-                    retryAction: retryAction,
-                    deleteAction: deleteAction,
-                    markReadAction: markReadAction
-                )
+            Button {
+                selectedConversationID = conversation.id
             } label: {
                 ConversationRow(
                     conversation: conversation,
                     linePresentation: conversation.linePresentation(in: lines)
                 )
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
             }
+            .buttonStyle(.plain)
             .swipeActions(edge: .leading, allowsFullSwipe: true) {
                 if conversation.unreadCount > 0 {
                     Button {
                         markReadAction(conversation.id)
                     } label: {
                         Label("Read", systemImage: "message.badge.filled.fill")
+                    }
+                    .tint(.blue)
+                } else {
+                    Button {
+                        markUnreadAction(conversation.id)
+                    } label: {
+                        Label("Unread", systemImage: "message.badge.filled.fill")
                     }
                     .tint(.blue)
                 }
@@ -230,6 +249,17 @@ struct MessagesScreen: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 6)
         .background(.bar)
+    }
+
+    private var selectedConversationIsPresented: Binding<Bool> {
+        Binding(
+            get: { selectedConversationID != nil },
+            set: { isPresented in
+                if !isPresented {
+                    selectedConversationID = nil
+                }
+            }
+        )
     }
 
     private var deletionConfirmationIsPresented: Binding<Bool> {

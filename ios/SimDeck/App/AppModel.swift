@@ -457,6 +457,15 @@ final class AppModel {
         persistMessageHistoryIfAvailable()
     }
 
+    func markConversationUnread(_ id: ConversationID) {
+        guard case .loaded(var conversations) = messages,
+              let index = conversations.firstIndex(where: { $0.id == id }),
+              conversations[index].unreadCount == 0 else { return }
+        conversations[index].unreadCount = 1
+        messages = .loaded(sortedConversations(conversations))
+        persistMessageHistoryIfAvailable()
+    }
+
     func deleteMessage(id: UUID) throws {
         try deleteMessages(ids: [id])
     }

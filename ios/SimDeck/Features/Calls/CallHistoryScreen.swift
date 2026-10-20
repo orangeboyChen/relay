@@ -53,6 +53,12 @@ struct CallHistoryScreen: View {
                             }
                         )
                         .tag(record.id)
+                        .listRowInsets(
+                            EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 8)
+                        )
+                        .alignmentGuide(.listRowSeparatorLeading) { dimensions in
+                            dimensions[.leading] + 62
+                        }
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {
                                 deleteRecords(withIDs: [record.id])
@@ -79,6 +85,7 @@ struct CallHistoryScreen: View {
         }
         .environment(\.editMode, $editMode)
         .navigationTitle("Recents")
+        .navigationBarTitleDisplayMode(.large)
         .onChange(of: editMode) { _, newMode in
             if !newMode.isEditing {
                 selectedRecordIDs.removeAll()
@@ -99,7 +106,7 @@ struct CallHistoryScreen: View {
                         Text("Missed").tag(CallHistoryFilter.missed)
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 190)
+                    .frame(width: 140)
                 }
             }
         }
@@ -295,9 +302,9 @@ private struct CallHistoryRecordRow: View {
                             .font(.title3)
                             .foregroundStyle(.blue)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
                     .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
                     .accessibilityLabel("Call details")
                 }
             }

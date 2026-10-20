@@ -187,9 +187,33 @@ var _ = Describe("Cellular call controller", func() {
 			`+CLCC: 1,0,1,0,0,"10086",129`,
 			`+CLCC: 2,1,5,0,0,"10010",129`,
 		})).To(Succeed())
-		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateWaiting, Held: true, Waiting: true}))
+		Expect(controller.Snapshot()).To(Equal(Snapshot{
+			State: StateWaiting, Held: true, Waiting: true, IncomingNumber: "10010",
+		}))
 		Expect(controller.ApplyCLCC(nil)).To(Succeed())
 		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateEnded}))
+	})
+
+	It("captures the incoming number from an authoritative CLCC poll", func() {
+		controller := NewController(&fakeCommander{})
+
+		Expect(controller.ApplyCLCC([]string{
+			`+CLCC: 1,1,4,0,0,"+8613500000000",145`,
+		})).To(Succeed())
+
+		Expect(controller.Snapshot()).To(Equal(Snapshot{
+			State: StateRinging, IncomingNumber: "+8613500000000",
+		}))
+	})
+
+	It("ignores an invalid incoming number in an authoritative CLCC poll", func() {
+		controller := NewController(&fakeCommander{})
+
+		Expect(controller.ApplyCLCC([]string{
+			`+CLCC: 1,1,4,0,0,"+",145`,
+		})).To(Succeed())
+
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateRinging}))
 	})
 
 	It("ignores the non-voice sessions reported alongside an EC20F call", func() {

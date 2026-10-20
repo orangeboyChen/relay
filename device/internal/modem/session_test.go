@@ -904,15 +904,31 @@ var _ = Describe("Modem session", func() {
 		Expect(session.Calls().Snapshot()).To(Equal(call.Snapshot{State: call.StateActive, Active: true}))
 	})
 
-	It("skips idle CLCC polling and maps query failures", func() {
+	It("polls idle CLCC so an incoming call is detected when the modem omits URCs", func() {
 		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
 		DeferCleanup(func() {
 			_ = client.Close()
 			_ = modemTransport.Close()
 		})
-		Expect(session.refreshCallState(context.Background())).To(Succeed())
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			command, _ := reader.ReadString('\r')
+			Expect(command).To(Equal("AT+CLCC\r"))
+			_, _ = modemTransport.Write([]byte("+CLCC: 1,1,4,0,0,\"13500000000\",129\r\nOK\r\n"))
+		}()
 
-		session.Calls().ApplyURC("RING")
+		Expect(session.refreshCallState(context.Background())).To(Succeed())
+		Expect(session.Calls().Snapshot()).To(Equal(call.Snapshot{
+			State: call.StateRinging, IncomingNumber: "13500000000",
+		}))
+	})
+
+	It("maps CLCC query failures", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
 		go func() {
 			reader := bufio.NewReader(modemTransport)
 			_, _ = reader.ReadString('\r')

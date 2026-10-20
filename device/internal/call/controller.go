@@ -284,6 +284,10 @@ func (controller *Controller) ApplyCLCC(lines []string) error {
 		if mode != 0 {
 			continue
 		}
+		direction, err := strconv.Atoi(strings.TrimSpace(fields[1]))
+		if err != nil || (direction != 0 && direction != 1) {
+			return fmt.Errorf("malformed CLCC call direction: %s", line)
+		}
 		callCount++
 		switch status {
 		case 0:
@@ -296,6 +300,12 @@ func (controller *Controller) ApplyCLCC(lines []string) error {
 			ringing = true
 		case 5:
 			snapshot.Waiting = true
+		}
+		if direction == 1 && (status == 4 || status == 5) && len(fields) > 5 {
+			number := strings.Trim(strings.TrimSpace(fields[5]), "\"")
+			if incomingNumberValue(number) {
+				snapshot.IncomingNumber = number
+			}
 		}
 	}
 	if callCount == 0 {
@@ -321,6 +331,26 @@ func (controller *Controller) ApplyCLCC(lines []string) error {
 	}
 	controller.setSnapshot(snapshot)
 	return nil
+}
+
+func incomingNumberValue(value string) bool {
+	if value == "" {
+		return false
+	}
+	digitCount := 0
+	for index, character := range value {
+		if character == '+' {
+			if index != 0 {
+				return false
+			}
+			continue
+		}
+		if character < '0' || character > '9' {
+			return false
+		}
+		digitCount++
+	}
+	return digitCount > 0
 }
 
 func incomingNumber(urc string) (string, bool) {

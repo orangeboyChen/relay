@@ -594,10 +594,7 @@ func (session *Session) Run(ctx context.Context) error {
 }
 
 func (session *Session) refreshCallState(ctx context.Context) error {
-	state := session.calls.State()
-	if state == call.StateIdle || state == call.StateEnded {
-		return nil
-	}
+	previous := session.calls.Snapshot()
 	response, err := session.send(ctx, "AT+CLCC")
 	if err != nil {
 		return fmt.Errorf("query modem call state: %w", err)
@@ -607,6 +604,18 @@ func (session *Session) refreshCallState(ctx context.Context) error {
 	}
 	if err := session.calls.ApplyCLCC(response.Lines); err != nil {
 		return fmt.Errorf("parse modem call state: %w", err)
+	}
+	current := session.calls.Snapshot()
+	if current != previous {
+		session.logger.Info(
+			"cellular call state changed",
+			"source", "poll",
+			"state", current.State,
+			"active", current.Active,
+			"held", current.Held,
+			"waiting", current.Waiting,
+			"incoming_number_available", current.IncomingNumber != "",
+		)
 	}
 	return nil
 }

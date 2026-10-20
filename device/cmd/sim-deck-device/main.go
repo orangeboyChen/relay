@@ -488,7 +488,7 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	)
 	runContext, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go logMediaErrors(runContext, callMedia.Errors(), logger)
+	go handleMediaErrors(runContext, callMedia.Errors(), session.Calls(), logger)
 	results := make(chan error, 6)
 	go func() { results <- session.Run(runContext) }()
 	go func() { results <- commands.Run(runContext) }()
@@ -564,7 +564,11 @@ func synchronizeSIMIdentity(
 	}
 }
 
-func logMediaErrors(ctx context.Context, failures <-chan error, logger *slog.Logger) {
+type callHangupper interface {
+	Hangup(context.Context) error
+}
+
+func handleMediaErrors(ctx context.Context, failures <-chan error, calls callHangupper, logger *slog.Logger) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -574,6 +578,14 @@ func logMediaErrors(ctx context.Context, failures <-chan error, logger *slog.Log
 				return
 			}
 			logger.Error("call media stopped", "error", err)
+			cleanupContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			hangupError := calls.Hangup(cleanupContext)
+			cancel()
+			if hangupError != nil {
+				logger.Error("failed to hang up cellular call after media failure", "media_error", err, "error", hangupError)
+			} else {
+				logger.Info("cellular call hung up after media failure")
+			}
 		}
 	}
 }

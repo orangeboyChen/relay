@@ -342,6 +342,16 @@ func (*testCallCommander) Send(context.Context, string) (at.Response, error) {
 	return at.Response{Terminal: "OK"}, nil
 }
 
+type recordingCallHangupper struct {
+	called chan struct{}
+	err    error
+}
+
+func (calls *recordingCallHangupper) Hangup(context.Context) error {
+	calls.called <- struct{}{}
+	return calls.err
+}
+
 var _ = Describe("Device command runtime", func() {
 	var logger *slog.Logger
 
@@ -997,20 +1007,23 @@ var _ = Describe("Device command runtime", func() {
 		Expect(recorder.Body.String()).To(MatchJSON(`{"ready":true}`))
 	})
 
-	It("logs media failures until the device stops", func() {
+	It("hangs up the cellular call after a terminal media failure", func() {
 		var output synchronizedBuffer
 		mediaLogger := slog.New(slog.NewTextHandler(&output, nil))
 		failures := make(chan error, 1)
+		calls := &recordingCallHangupper{called: make(chan struct{}, 1)}
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 		go func() {
-			logMediaErrors(ctx, failures, mediaLogger)
+			handleMediaErrors(ctx, failures, calls, mediaLogger)
 			close(done)
 		}()
 
 		failures <- errors.New("ICE failed")
+		Eventually(calls.called).Should(Receive())
 		Eventually(output.String).Should(ContainSubstring("call media stopped"))
 		Eventually(output.String).Should(ContainSubstring("ICE failed"))
+		Eventually(output.String).Should(ContainSubstring("cellular call hung up after media failure"))
 		cancel()
 		Eventually(done).Should(BeClosed())
 	})

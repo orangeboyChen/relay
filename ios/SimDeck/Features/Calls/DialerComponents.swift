@@ -16,7 +16,14 @@ struct LinePicker: View {
                     Button {
                         selection = line.id
                     } label: {
-                        Text("SIM \(line.numericID) · \(line.displayName)")
+                        if selection == line.id {
+                            Label(
+                                "SIM \(line.numericID) · \(line.displayName)",
+                                systemImage: "checkmark"
+                            )
+                        } else {
+                            Text("SIM \(line.numericID) · \(line.displayName)")
+                        }
                     }
                 }
             } label: {
@@ -31,6 +38,7 @@ struct LinePicker: View {
                 }
                 .padding(.horizontal, 12)
                 .frame(minHeight: 44)
+                .frame(minWidth: 198, alignment: .leading)
                 .contentShape(Capsule())
                 .glassEffect(.regular.interactive(), in: Capsule())
             }
@@ -148,7 +156,7 @@ struct DialPad: View {
     var body: some View {
         LazyVGrid(
             columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 3),
-            spacing: 18
+            spacing: 8
         ) {
             ForEach(keys, id: \.self) { key in
                 DialPadKey(content: key) { press in

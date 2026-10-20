@@ -74,7 +74,7 @@ struct DialerScreen: View {
                 }
                 .frame(width: 80, height: 80)
             }
-            .padding(.top, 14)
+            .padding(.top, 44)
 
             Spacer(minLength: 10)
         }
@@ -89,17 +89,18 @@ struct DialerScreen: View {
                         unknownContactNumber = DialerUnknownContactNumber(number: number)
                     } label: {
                         Image(systemName: "person.crop.circle.badge.plus")
-                            .font(.system(size: 22, weight: .medium))
-                            .frame(width: 44, height: 44)
+                            .font(.system(size: 20, weight: .medium))
+                            .frame(width: 48, height: 48)
+                            .contentShape(Circle())
                     }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: Circle())
                     .accessibilityLabel("Add Contact")
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
             }
             .frame(height: 54)
-            .padding(.horizontal, 28)
+            .padding(.horizontal, 16)
             .background(Color(uiColor: .systemBackground))
         }
         .animation(.snappy, value: number.isEmpty)

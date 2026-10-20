@@ -61,6 +61,32 @@ final class ContactListModelTests: XCTestCase {
         XCTAssertEqual(index.name(for: "0086 135 0000 0000"), "张三")
     }
 
+    func testSectionIndexSelectsExactOrNearestAvailableSection() {
+        let availableTitles = ["A", "L", "Z", "#"]
+
+        XCTAssertEqual(
+            ContactSectionIndexResolver.targetTitle(
+                for: "L",
+                availableTitles: availableTitles
+            ),
+            "L"
+        )
+        XCTAssertEqual(
+            ContactSectionIndexResolver.targetTitle(
+                for: "M",
+                availableTitles: availableTitles
+            ),
+            "Z"
+        )
+        XCTAssertEqual(
+            ContactSectionIndexResolver.targetTitle(
+                for: "#",
+                availableTitles: availableTitles
+            ),
+            "#"
+        )
+    }
+
     func testDirectorySearchesNamesOrganizationsAndPhoneNumbers() {
         let contacts = [
             contact(

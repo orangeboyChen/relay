@@ -11,7 +11,7 @@ enum ContactAuthorizationState: Equatable, Sendable {
     case authorized
 }
 
-struct ContactPhoneNumber: Identifiable, Equatable, Sendable {
+struct ContactPhoneNumber: Identifiable, Hashable, Sendable {
     let id: String
     let label: String
     let value: String
@@ -22,7 +22,7 @@ struct ContactPhoneNumber: Identifiable, Equatable, Sendable {
     }
 }
 
-struct ContactRecord: Identifiable, Equatable, Sendable {
+struct ContactRecord: Identifiable, Hashable, Sendable {
     let id: String
     let givenName: String
     let familyName: String
@@ -109,6 +109,23 @@ enum ContactDirectory {
             .map { title in
                 ContactSection(id: title, title: title, contacts: grouped[title] ?? [])
             }
+    }
+}
+
+enum ContactSectionIndexResolver {
+    static let titles = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ").map(String.init) + ["#"]
+
+    static func targetTitle(for indexTitle: String, availableTitles: [String]) -> String? {
+        guard !availableTitles.isEmpty else { return nil }
+        if availableTitles.contains(indexTitle) {
+            return indexTitle
+        }
+        if indexTitle == "#" {
+            return availableTitles.last
+        }
+        return availableTitles.first {
+            $0 != "#" && $0.localizedStandardCompare(indexTitle) != .orderedAscending
+        } ?? availableTitles.last
     }
 }
 

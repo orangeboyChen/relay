@@ -8,6 +8,7 @@ import UIKit
 struct ContactsScreen: View {
     @Bindable var model: AppModel
     @State private var contactModel: ContactListModel
+    @State private var selectedContact: ContactRecord?
     private let startsSynchronization: Bool
 
     init(
@@ -75,34 +76,54 @@ struct ContactsScreen: View {
                 ContentUnavailableView.search(text: contactModel.searchText)
             }
         } else {
-            List {
-                ForEach(sections) { section in
-                    Section(section.title) {
-                        ForEach(section.contacts) { contact in
-                            NavigationLink {
-                                ContactDetailScreen(
-                                    contact: contact,
-                                    lines: model.devices,
-                                    defaultMessageLineID: model.defaultMessageLineID,
-                                    callAction: { number in
-                                        await model.handleExternalDial(number: number)
-                                    },
-                                    sendAction: { lineID, number, body in
-                                        try await model.sendMessage(
-                                            lineID: lineID,
-                                            remoteNumber: number,
-                                            body: body
-                                        )
-                                    }
+            ScrollViewReader { proxy in
+                List {
+                    ForEach(sections) { section in
+                        Section(section.title) {
+                            ForEach(section.contacts) { contact in
+                                Button {
+                                    selectedContact = contact
+                                } label: {
+                                    ContactRow(contact: contact)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .listRowInsets(
+                                    EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 34)
                                 )
-                            } label: {
-                                ContactRow(contact: contact)
                             }
+                        }
+                        .id(section.id)
+                    }
+                }
+                .overlay(alignment: .trailing) {
+                    if contactModel.searchText.isEmpty {
+                        ContactSectionIndex(
+                            availableTitles: sections.map(\.title)
+                        ) { title in
+                            proxy.scrollTo(title, anchor: .top)
                         }
                     }
                 }
+                .navigationDestination(item: $selectedContact) { contact in
+                    ContactDetailScreen(
+                        contact: contact,
+                        lines: model.devices,
+                        defaultMessageLineID: model.defaultMessageLineID,
+                        callAction: { number in
+                            await model.handleExternalDial(number: number)
+                        },
+                        sendAction: { lineID, number, body in
+                            try await model.sendMessage(
+                                lineID: lineID,
+                                remoteNumber: number,
+                                body: body
+                            )
+                        }
+                    )
+                }
+                .listStyle(.plain)
             }
-            .listStyle(.plain)
         }
     }
 
@@ -148,6 +169,58 @@ struct ContactsScreen: View {
             }
             .buttonStyle(.bordered)
         }
+    }
+}
+
+private struct ContactSectionIndex: View {
+    let availableTitles: [String]
+    let onSelect: (String) -> Void
+
+    @State private var activeIndex: Int?
+
+    var body: some View {
+        GeometryReader { proxy in
+            VStack(spacing: 0) {
+                ForEach(Array(ContactSectionIndexResolver.titles.enumerated()), id: \.offset) { index, title in
+                    Text(title)
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.tint)
+                        .frame(maxHeight: .infinity)
+                        .opacity(activeIndex == nil || activeIndex == index ? 1 : 0.7)
+                }
+            }
+            .frame(width: 28)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                    .onChanged { value in
+                        selectIndex(for: value.location.y, height: proxy.size.height)
+                    }
+                    .onEnded { _ in
+                        activeIndex = nil
+                    }
+            )
+        }
+        .frame(width: 28)
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Contact index")
+        .accessibilityHint("Drag vertically to jump between contact sections.")
+    }
+
+    private func selectIndex(for locationY: CGFloat, height: CGFloat) {
+        let titles = ContactSectionIndexResolver.titles
+        guard height > 0, !titles.isEmpty else { return }
+        let fraction = min(max(locationY / height, 0), 0.999_999)
+        let index = min(Int(fraction * CGFloat(titles.count)), titles.count - 1)
+        guard index != activeIndex else { return }
+        activeIndex = index
+        guard let target = ContactSectionIndexResolver.targetTitle(
+            for: titles[index],
+            availableTitles: availableTitles
+        ) else { return }
+        UISelectionFeedbackGenerator().selectionChanged()
+        onSelect(target)
     }
 }
 

@@ -146,7 +146,7 @@ struct MessageContactAvatar: View {
                 Image(systemName: "person.crop.circle.fill")
                     .resizable()
                     .symbolRenderingMode(.palette)
-                    .foregroundStyle(.white, Color(uiColor: .systemBlue).opacity(0.62))
+                    .foregroundStyle(.white, defaultAvatarBackground)
             }
         }
         .frame(width: diameter, height: diameter)
@@ -161,6 +161,17 @@ struct MessageContactAvatar: View {
         let nameParts = contactName.split(whereSeparator: { $0.isWhitespace })
         let initials = nameParts.prefix(2).compactMap(\.first)
         return initials.isEmpty ? nil : String(initials).uppercased()
+    }
+
+    private var defaultAvatarBackground: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color(uiColor: .systemBlue).opacity(0.30),
+                Color(uiColor: .systemBlue).opacity(0.58),
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
     }
 }
 

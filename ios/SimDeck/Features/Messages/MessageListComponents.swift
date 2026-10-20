@@ -51,12 +51,27 @@ struct SIMFilterMenu: View {
 
     var body: some View {
         Menu {
-            Button("All SIMs") {
+            Button {
                 selection = nil
+            } label: {
+                if selection == nil {
+                    Label("All SIMs", systemImage: "checkmark")
+                } else {
+                    Text("All SIMs")
+                }
             }
             ForEach(lines) { line in
-                Button("SIM \(line.numericID) · \(line.displayName)") {
+                Button {
                     selection = line.id
+                } label: {
+                    if selection == line.id {
+                        Label(
+                            "SIM \(line.numericID) · \(line.displayName)",
+                            systemImage: "checkmark"
+                        )
+                    } else {
+                        Text("SIM \(line.numericID) · \(line.displayName)")
+                    }
                 }
             }
         } label: {
@@ -74,6 +89,7 @@ struct ConversationRow: View {
     let conversation: MessageConversation
     let linePresentation: LineHistoryPresentation
     var isMuted = false
+    var isEditing = false
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -133,6 +149,11 @@ struct ConversationRow: View {
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Alerts hidden")
             }
+
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
         }
     }
 
@@ -159,7 +180,7 @@ struct ConversationRow: View {
             Text(summary)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-                .lineLimit(2)
+                .lineLimit(isEditing ? 1 : 2)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -195,7 +216,16 @@ struct MessageContactAvatar: View {
             } else {
                 ZStack {
                     Circle()
-                        .fill(Color(uiColor: .systemGray3))
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.69, green: 0.79, blue: 0.95),
+                                    Color(red: 0.42, green: 0.53, blue: 0.79),
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
                     Image(systemName: "person.fill")
                         .font(.system(size: diameter * 0.42, weight: .medium))
                         .foregroundStyle(.white)

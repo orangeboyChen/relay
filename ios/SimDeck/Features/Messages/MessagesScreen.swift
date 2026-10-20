@@ -200,7 +200,8 @@ struct MessagesScreen: View {
             ConversationRow(
                 conversation: conversation,
                 linePresentation: conversation.linePresentation(in: lines),
-                isMuted: mutedConversationIDs.contains(conversation.id)
+                isMuted: mutedConversationIDs.contains(conversation.id),
+                isEditing: true
             )
             .contentShape(.rect)
         } else {
@@ -210,7 +211,8 @@ struct MessagesScreen: View {
                 ConversationRow(
                     conversation: conversation,
                     linePresentation: conversation.linePresentation(in: lines),
-                    isMuted: mutedConversationIDs.contains(conversation.id)
+                    isMuted: mutedConversationIDs.contains(conversation.id),
+                    isEditing: false
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(.rect)
@@ -221,35 +223,36 @@ struct MessagesScreen: View {
                     Button {
                         markReadAction(conversation.id)
                     } label: {
-                        Label("Read", systemImage: "message.badge.filled.fill")
+                        Image(systemName: "message.badge.filled.fill")
                     }
                     .tint(.blue)
+                    .accessibilityLabel("Read")
                 } else {
                     Button {
                         markUnreadAction(conversation.id)
                     } label: {
-                        Label("Unread", systemImage: "message.badge.filled.fill")
+                        Image(systemName: "message.badge.filled.fill")
                     }
                     .tint(.blue)
+                    .accessibilityLabel("Unread")
                 }
             }
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                 Button(role: .destructive) {
                     conversationsPendingDeletion = [conversation]
                 } label: {
-                    Label("Delete", systemImage: "trash")
+                    Image(systemName: "trash")
                 }
+                .accessibilityLabel("Delete")
 
                 let isMuted = mutedConversationIDs.contains(conversation.id)
                 Button {
                     setConversationMuted(!isMuted, id: conversation.id)
                 } label: {
-                    Label(
-                        isMuted ? "Show Alerts" : "Hide Alerts",
-                        systemImage: isMuted ? "bell.fill" : "bell.slash.fill"
-                    )
+                    Image(systemName: isMuted ? "bell.fill" : "bell.slash.fill")
                 }
                 .tint(.purple)
+                .accessibilityLabel(isMuted ? "Show Alerts" : "Hide Alerts")
             }
         }
     }

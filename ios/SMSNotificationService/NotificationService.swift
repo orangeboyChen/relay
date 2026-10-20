@@ -5,48 +5,84 @@
 //  Created by orangeboy Chen on 2026/10/19.
 //
 
+import Intents
+import OSLog
 import UserNotifications
 
 class NotificationService: UNNotificationServiceExtension {
-
-    var contentHandler: ((UNNotificationContent) -> Void)?
-    var bestAttemptContent: UNMutableNotificationContent?
+    private let logger = Logger(subsystem: "com.nowcent.simdeck", category: "SMSNotificationService")
+    private let communicationBuilder = CommunicationNotificationContentBuilder()
+    private let deliveryLock = NSLock()
+    private var contentHandler: ((UNNotificationContent) -> Void)?
+    private var bestAttemptContent: UNMutableNotificationContent?
 
     override func didReceive(_ request: UNNotificationRequest, withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void) {
         self.contentHandler = contentHandler
         bestAttemptContent = (request.content.mutableCopy() as? UNMutableNotificationContent)
         
-        guard let bestAttemptContent else { return contentHandler(request.content) }
+        guard let bestAttemptContent else { return deliver(request.content) }
         guard let (payload, showPreview) = NotificationPayloadDecoder.open(userInfo: request.content.userInfo) else {
-            return contentHandler(bestAttemptContent)
+            logger.error("Unable to authenticate or decrypt incoming SMS notification")
+            return deliver(bestAttemptContent)
         }
-        bestAttemptContent.title = payload.remoteNumber
-        bestAttemptContent.subtitle = "SIM \(payload.numericID)"
-        bestAttemptContent.body = showPreview
+        let visibleBody = showPreview
             ? payload.body
             : NSLocalizedString("New message", bundle: .main, comment: "Generic SMS notification body")
-        if let code = VerificationCodeDetector.explicitCode(in: payload.body) {
+        bestAttemptContent.title = payload.remoteNumber
+        bestAttemptContent.body = visibleBody
+        let conversationIdentifier = "\(payload.deviceUUID.uuidString.lowercased()):\(payload.remoteNumber)"
+        let intent = communicationBuilder.makeIntent(
+            remoteNumber: payload.remoteNumber,
+            messageBody: visibleBody,
+            conversationIdentifier: conversationIdentifier
+        )
+        let verificationCode = VerificationCodeDetector.explicitCode(in: payload.body)
+        if let verificationCode {
             NotificationOTPStore.append(
-                code: code,
+                code: verificationCode,
                 remoteNumber: payload.remoteNumber,
                 numericID: payload.numericID
             )
-            var userInfo = bestAttemptContent.userInfo
-            userInfo[NotificationPayloadDecoder.otpKey] = code
-            bestAttemptContent.userInfo = userInfo
-            bestAttemptContent.categoryIdentifier = "simdeck.sms.otp"
         }
-        contentHandler(bestAttemptContent)
+
+        let interaction = INInteraction(intent: intent, response: nil)
+        interaction.direction = .incoming
+        interaction.donate { [weak self] error in
+            guard let self else { return }
+            if let error {
+                logger.error("Unable to donate incoming SMS interaction: \(error.localizedDescription, privacy: .public)")
+            }
+            let communicationContent = communicationBuilder.update(
+                bestAttemptContent,
+                using: intent,
+                remoteNumber: payload.remoteNumber,
+                numericID: payload.numericID,
+                conversationIdentifier: conversationIdentifier
+            )
+            if let verificationCode {
+                var userInfo = communicationContent.userInfo
+                userInfo[NotificationPayloadDecoder.otpKey] = verificationCode
+                communicationContent.userInfo = userInfo
+                communicationContent.categoryIdentifier = "simdeck.sms.otp"
+            }
+            self.bestAttemptContent = communicationContent
+            deliver(communicationContent)
+        }
     }
     
     override func serviceExtensionTimeWillExpire() {
-        // Called just before the extension will be terminated by the system.
-        // Use this as an opportunity to deliver your "best attempt" at modified content, otherwise the original push payload will be used.
-        if let contentHandler = contentHandler, let bestAttemptContent =  bestAttemptContent {
-            contentHandler(bestAttemptContent)
-        }
+        guard let bestAttemptContent else { return }
+        deliver(bestAttemptContent)
     }
 
+    private func deliver(_ content: UNNotificationContent) {
+        deliveryLock.lock()
+        let contentHandler = self.contentHandler
+        self.contentHandler = nil
+        deliveryLock.unlock()
+        guard let contentHandler else { return }
+        contentHandler(content)
+    }
 }
 
 private enum VerificationCodeDetector {

@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		200000000000000000000001 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 200000000000000000000002 /* WebRTC */; };
+		300000000000000000000001 /* SimDeck/Core/Notifications/CommunicationNotification.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000002 /* SimDeck/Core/Notifications/CommunicationNotification.swift */; };
 		6483377B30858A3600B91620 /* SMSNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 6483377430858A3600B91620 /* SMSNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		64833A4E3085B93F00B91620 /* AuthenticationServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 64833A4D3085B93F00B91620 /* AuthenticationServices.framework */; };
 		64833A593085B93F00B91620 /* SimDeckAutoFill.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 64833A4B3085B93F00B91620 /* SimDeckAutoFill.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -55,6 +56,7 @@
 /* Begin PBXFileReference section */
 		100000000000000000000001 /* SimDeck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SimDeck.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		100000000000000000000002 /* SimDeckTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SimDeckTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		300000000000000000000002 /* SimDeck/Core/Notifications/CommunicationNotification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimDeck/Core/Notifications/CommunicationNotification.swift; sourceTree = SOURCE_ROOT; };
 		6483377430858A3600B91620 /* SMSNotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SMSNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		64833A4B3085B93F00B91620 /* SimDeckAutoFill.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SimDeckAutoFill.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		64833A4D3085B93F00B91620 /* AuthenticationServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AuthenticationServices.framework; path = System/Library/Frameworks/AuthenticationServices.framework; sourceTree = SDKROOT; };
@@ -351,6 +353,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				300000000000000000000001 /* SimDeck/Core/Notifications/CommunicationNotification.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -603,6 +606,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = SMSNotificationService/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = SMSNotificationService;
+				INFOPLIST_KEY_NSContactsUsageDescription = "Sim Deck uses your contacts on this iPhone to show sender names and avatars in message notifications.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -653,6 +657,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = SMSNotificationService/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = SMSNotificationService;
+				INFOPLIST_KEY_NSContactsUsageDescription = "Sim Deck uses your contacts on this iPhone to show sender names and avatars in message notifications.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (

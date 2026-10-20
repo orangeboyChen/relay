@@ -213,6 +213,45 @@ final class ServerEventStreamTests: XCTestCase {
         XCTAssertTrue(second.didClose)
     }
 
+    func testLateOldConnectionDoesNotReplaceReopenedStream() async {
+        let firstOpening = expectation(description: "first connection opening")
+        let secondOpened = expectation(description: "second connection opened")
+        let staleClosed = expectation(description: "stale connection closed")
+        let stale = MonitorEventStream(pages: [], onClose: { staleClosed.fulfill() })
+        let current = MonitorEventStream(pages: [])
+        var pendingOpen: CheckedContinuation<any EncryptedEventStream, Never>?
+        var attempts = 0
+        let opener = MonitorEventStreamOpener { _ in
+            attempts += 1
+            if attempts == 1 {
+                return await withCheckedContinuation { continuation in
+                    pendingOpen = continuation
+                    firstOpening.fulfill()
+                }
+            }
+            secondOpened.fulfill()
+            return current
+        }
+        let monitor = MessageEventMonitor(
+            opener: opener,
+            currentSequence: { 41 },
+            synchronizeThrough: { _ in true }
+        )
+
+        monitor.start()
+        await fulfillment(of: [firstOpening], timeout: 1)
+        monitor.networkPathDidChange(isAvailable: false)
+        monitor.networkPathDidChange(isAvailable: true)
+        await fulfillment(of: [secondOpened], timeout: 1)
+        pendingOpen?.resume(returning: stale)
+        await fulfillment(of: [staleClosed], timeout: 1)
+
+        XCTAssertFalse(current.didClose)
+        XCTAssertTrue(monitor.isRunning)
+        monitor.stop()
+        XCTAssertTrue(current.didClose)
+    }
+
     private func isolatedDefaults() -> UserDefaults {
         let suiteName = "ServerEventStreamTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -288,15 +327,18 @@ private final class MonitorEventStreamOpener: EncryptedEventStreamOpening {
 private final class MonitorEventStream: EncryptedEventStream {
     private var pages: [EncryptedEventPage]
     private let onAcknowledge: (Int64) -> Void
+    private let onClose: () -> Void
     private(set) var acknowledgedSequences: [Int64] = []
     private(set) var didClose = false
 
     init(
         pages: [EncryptedEventPage],
-        onAcknowledge: @escaping (Int64) -> Void = { _ in }
+        onAcknowledge: @escaping (Int64) -> Void = { _ in },
+        onClose: @escaping () -> Void = {}
     ) {
         self.pages = pages
         self.onAcknowledge = onAcknowledge
+        self.onClose = onClose
     }
 
     func receive() async throws -> EncryptedEventPage {
@@ -314,6 +356,7 @@ private final class MonitorEventStream: EncryptedEventStream {
 
     func close() {
         didClose = true
+        onClose()
     }
 }
 

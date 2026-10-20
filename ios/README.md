@@ -31,6 +31,9 @@ References: [Fastlane beta deployment](https://docs.fastlane.tools/getting-start
 
 Copyright (C) 2026 orangeboyChen.
 
+For the project's statement about independently modified versions, warranty,
+and liability, see [Legal notice](LEGAL.md).
+
 Original Sim Deck iOS source code and resources in this repository are licensed
 under the Mozilla Public License 2.0 (`MPL-2.0`). See [LICENSE](LICENSE). The
 bundled WebRTC framework retains its own license, reproduced in

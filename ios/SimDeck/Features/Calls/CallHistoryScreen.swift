@@ -21,6 +21,7 @@ struct CallHistoryScreen: View {
     @State private var selectedRecordIDs: Set<UUID> = []
     @State private var isDeleteConfirmationPresented = false
     @State private var filter: CallHistoryFilter = .all
+    @State private var selectedLineID: UUID?
 
     var body: some View {
         Group {
@@ -99,6 +100,9 @@ struct CallHistoryScreen: View {
                             editMode = editMode.isEditing ? .inactive : .active
                         }
                     }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.large)
                 }
                 ToolbarItem(placement: .principal) {
                     Picker("Call filter", selection: $filter) {
@@ -107,6 +111,38 @@ struct CallHistoryScreen: View {
                     }
                     .pickerStyle(.segmented)
                     .frame(width: 140)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button {
+                            selectedLineID = nil
+                        } label: {
+                            if selectedLineID == nil {
+                                Label("All SIMs", systemImage: "checkmark")
+                            } else {
+                                Text("All SIMs")
+                            }
+                        }
+
+                        ForEach(lines) { line in
+                            Button {
+                                selectedLineID = line.id
+                            } label: {
+                                if selectedLineID == line.id {
+                                    Label(line.displayName, systemImage: "checkmark")
+                                } else {
+                                    Text(line.displayName)
+                                }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "line.3.horizontal")
+                            .font(.body.weight(.semibold))
+                    }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
+                    .controlSize(.large)
+                    .accessibilityLabel("Filter calls by SIM")
                 }
             }
         }
@@ -163,7 +199,7 @@ struct CallHistoryScreen: View {
     }
 
     private func filtered(_ records: [CallRecord]) -> [CallRecord] {
-        filter.records(from: records)
+        filter.records(from: records, lineID: selectedLineID)
     }
 
     private var detailIsPresented: Binding<Bool> {
@@ -295,20 +331,22 @@ private struct CallHistoryRecordRow: View {
 
                 if isStarting {
                     ProgressView()
-                        .frame(width: 44, height: 44)
+                        .frame(width: 50, height: 50)
                 } else {
                     Button(action: onDetails) {
                         Image(systemName: "info.circle")
-                            .font(.title3)
+                            .font(.system(size: 21, weight: .regular))
                             .foregroundStyle(.blue)
+                            .frame(width: 44, height: 44)
+                            .glassEffect(.regular.interactive(), in: Circle())
                     }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
-                    .frame(width: 44, height: 44)
+                    .buttonStyle(.plain)
+                    .frame(width: 50, height: 50)
                     .accessibilityLabel("Call details")
                 }
             }
         }
+        .frame(minHeight: 76)
     }
 }
 
@@ -374,6 +412,12 @@ enum CallHistoryFilter: Equatable {
         case .missed:
             records.filter { $0.result == .missed }
         }
+    }
+
+    func records(from records: [CallRecord], lineID: UUID?) -> [CallRecord] {
+        let matchingResult = self.records(from: records)
+        guard let lineID else { return matchingResult }
+        return matchingResult.filter { $0.lineID == lineID }
     }
 }
 

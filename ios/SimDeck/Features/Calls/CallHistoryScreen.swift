@@ -138,6 +138,8 @@ struct CallHistoryScreen: View {
                     } label: {
                         Image(systemName: "line.3.horizontal")
                             .font(.body.weight(.semibold))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
                     }
                     .buttonStyle(.glass)
                     .buttonBorderShape(.circle)

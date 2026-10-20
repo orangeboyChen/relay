@@ -483,6 +483,86 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(registrar.callID).To(Equal("call-1"))
 		Expect(registrar.sharedSecret).To(Equal(sharedSecret))
 		Expect(registrar.unregistered).To(BeEmpty())
+		Expect(runtime.activeCallLease).To(BeNil())
+	})
+
+	It("renews an active call lease only through an authenticated encrypted heartbeat", func() {
+		currentTime := time.Date(2026, 10, 20, 6, 0, 0, 0, time.UTC)
+		runtime.now = func() time.Time { return currentTime }
+		start, _ := sealCommand(state, senderKey, commandID, Payload{
+			Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086", MediaOffer: "offer-sdp",
+			CallLeaseSeconds: int(defaultCallLease / time.Second),
+		})
+
+		Expect(runtime.process(context.Background(), start)).To(Succeed())
+		Expect(runtime.activeCallLease).NotTo(BeNil())
+		Expect(runtime.activeCallLease.callID).To(Equal("call-1"))
+		Expect(runtime.activeCallLease.senderInstallationID).To(Equal(testInstallationID))
+		Expect(runtime.activeCallLease.duration).To(Equal(defaultCallLease))
+		Expect(runtime.activeCallLease.expiresAt).To(Equal(currentTime.Add(defaultCallLease)))
+
+		currentTime = currentTime.Add(20 * time.Second)
+		heartbeat, sharedSecret := sealCommand(
+			state,
+			senderKey,
+			"01900000-0000-7000-8000-000000000011",
+			Payload{Version: 1, Operation: "call.heartbeat", CallID: "call-1"},
+		)
+		Expect(runtime.process(context.Background(), heartbeat)).To(Succeed())
+
+		Expect(openResult(sharedSecret, heartbeat, remote.result).Success).To(BeTrue())
+		Expect(runtime.activeCallLease.expiresAt).To(Equal(currentTime.Add(defaultCallLease)))
+		Expect(calls.operations).To(Equal([]string{"dial:10086"}))
+	})
+
+	It("rejects a heartbeat that does not match the active encrypted call", func() {
+		runtime.activeCallLease = &callLease{
+			callID: "call-1", senderInstallationID: testInstallationID,
+			duration: defaultCallLease, expiresAt: time.Now().Add(defaultCallLease),
+		}
+		heartbeat, sharedSecret := sealCommand(state, senderKey, commandID, Payload{
+			Version: 1, Operation: "call.heartbeat", CallID: "call-2",
+		})
+
+		Expect(runtime.process(context.Background(), heartbeat)).To(Succeed())
+
+		result := openResult(sharedSecret, heartbeat, remote.result)
+		Expect(result.Success).To(BeFalse())
+		Expect(result.ErrorCode).To(Equal("invalid_command"))
+		Expect(runtime.activeCallLease.callID).To(Equal("call-1"))
+	})
+
+	It("hangs up and releases media when the active call lease expires", func() {
+		currentTime := time.Date(2026, 10, 20, 6, 0, 0, 0, time.UTC)
+		runtime.now = func() time.Time { return currentTime }
+		runtime.activeCallLease = &callLease{
+			callID: "call-1", senderInstallationID: testInstallationID,
+			duration: defaultCallLease, expiresAt: currentTime.Add(defaultCallLease),
+		}
+		calls.state = call.StateActive
+		currentTime = currentTime.Add(defaultCallLease)
+
+		Expect(runtime.expireCallLease()).To(Succeed())
+
+		Expect(calls.operations).To(Equal([]string{"hangup"}))
+		Expect(media.stopped).To(Equal([]string{"call-1"}))
+		Expect(events.unregistered).To(Equal("call-1"))
+		Expect(runtime.activeCallLease).To(BeNil())
+	})
+
+	It("hangs up an active leased call when the server command loop fails", func() {
+		runtime.activeCallLease = &callLease{
+			callID: "call-1", senderInstallationID: testInstallationID,
+			duration: defaultCallLease, expiresAt: time.Now().Add(defaultCallLease),
+		}
+		calls.state = call.StateActive
+		remote.claimError = errors.New("server unavailable")
+
+		Expect(runtime.Run(context.Background())).To(MatchError(ContainSubstring("server unavailable")))
+
+		Expect(calls.operations).To(Equal([]string{"hangup"}))
+		Expect(media.stopped).To(Equal([]string{"call-1"}))
+		Expect(events.unregistered).To(Equal("call-1"))
 	})
 
 	It("unregisters the call secret when dialing fails", func() {
@@ -517,6 +597,7 @@ var _ = Describe("Encrypted command runtime", func() {
 			{Version: 1, Operation: "call.start", CallID: "call-1"},
 			{Version: 1, Operation: "call.start", CallID: "call-1", Number: "10086"},
 			{Version: 1, Operation: "call.answer", MediaOffer: "offer-sdp"},
+			{Version: 1, Operation: "call.heartbeat"},
 			{Version: 1, Operation: "call.reject"},
 			{Version: 1, Operation: "call.hold"},
 			{Version: 1, Operation: "call.resume"},

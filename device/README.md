@@ -227,8 +227,12 @@ result.
 
 The agent decrypts a command locally and maps `call.start`, `call.end`,
 `call.hold`, `call.resume`, `call.swap`, and `call.dtmf` to the modem's serialized
-AT controller. Results are encrypted back to the initiating iPhone before they
-leave the container. An upgraded version-one state volume keeps its UUID,
+AT controller. While a call is active, the initiating iPhone renews an encrypted
+`call.heartbeat` lease every 10 seconds. If renewals stop, the agent releases the
+media session and sends `ATH` after 30 seconds. A command-loop failure also
+releases the call immediately, so an app termination or server outage cannot
+leave a cellular call connected indefinitely. Results are encrypted back to the
+initiating iPhone before they leave the container. An upgraded version-one state volume keeps its UUID,
 Ed25519 identity, credential, and SIM ID while generating and registering one
 new X25519 command key.
 

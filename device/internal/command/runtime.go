@@ -27,9 +27,11 @@ import (
 )
 
 const (
-	protocolVersion = 1
-	keyBytes        = 32
-	nonceBytes      = 12
+	protocolVersion    = 1
+	keyBytes           = 32
+	nonceBytes         = 12
+	defaultCallLease   = 30 * time.Second
+	callCleanupTimeout = 5 * time.Second
 )
 
 // Envelope is one opaque command leased from the server.
@@ -63,6 +65,7 @@ type Payload struct {
 	Body                 string `json:"body,omitempty"`
 	Digits               string `json:"digits,omitempty"`
 	MediaOffer           string `json:"media_offer,omitempty"`
+	CallLeaseSeconds     int    `json:"call_lease_seconds,omitempty"`
 	DataEnabled          *bool  `json:"data_enabled,omitempty"`
 	AirplaneModeEnabled  *bool  `json:"airplane_mode_enabled,omitempty"`
 	IncomingCallsEnabled *bool  `json:"incoming_calls_enabled,omitempty"`
@@ -134,17 +137,25 @@ type Dependencies struct {
 
 // Runtime polls, decrypts, executes, and acknowledges commands for one modem.
 type Runtime struct {
-	remote       Remote
-	identity     identity.State
-	calls        Calls
-	pollInterval time.Duration
-	random       io.Reader
-	events       CallEventRegistrar
-	media        CallMedia
-	messages     Messages
-	slotSettings SlotSettings
-	now          func() time.Time
-	logger       *slog.Logger
+	remote          Remote
+	identity        identity.State
+	calls           Calls
+	pollInterval    time.Duration
+	random          io.Reader
+	events          CallEventRegistrar
+	media           CallMedia
+	messages        Messages
+	slotSettings    SlotSettings
+	now             func() time.Time
+	logger          *slog.Logger
+	activeCallLease *callLease
+}
+
+type callLease struct {
+	callID               string
+	senderInstallationID string
+	duration             time.Duration
+	expiresAt            time.Time
 }
 
 // NewRuntime creates a command runtime with a bounded idle polling interval.
@@ -168,17 +179,32 @@ func NewRuntime(remote Remote, state identity.State, calls Calls, pollInterval t
 }
 
 // Run processes commands until cancellation or a server transport failure.
-func (runtime *Runtime) Run(ctx context.Context) error {
+func (runtime *Runtime) Run(ctx context.Context) (runError error) {
+	defer func() {
+		if err := runtime.releaseActiveCall("command runtime stopped"); err != nil {
+			runError = errors.Join(runError, err)
+		}
+	}()
 	for {
+		if err := runtime.expireCallLease(); err != nil {
+			return err
+		}
 		envelope, err := runtime.remote.Claim(ctx, runtime.identity.DeviceUUID, runtime.identity.Credential)
 		if err != nil {
 			return fmt.Errorf("claim encrypted device command: %w", err)
 		}
 		if envelope == nil {
+			wait := runtime.pollInterval
+			if runtime.activeCallLease != nil {
+				remaining := runtime.activeCallLease.expiresAt.Sub(runtime.now())
+				if remaining < wait {
+					wait = max(remaining, 0)
+				}
+			}
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(runtime.pollInterval):
+			case <-time.After(wait):
 				continue
 			}
 		}
@@ -216,7 +242,7 @@ func (runtime *Runtime) process(ctx context.Context, envelope Envelope) error {
 			return fmt.Errorf("register call events for command %s: %w", envelope.ID, err)
 		}
 	}
-	execution, executionError := runtime.execute(ctx, payload)
+	execution, executionError := runtime.execute(ctx, payload, envelope.SenderInstallationID)
 	if executionError != nil {
 		if registered {
 			runtime.events.Unregister(payload.CallID)
@@ -245,6 +271,7 @@ func (runtime *Runtime) process(ctx context.Context, envelope Envelope) error {
 		result.CallState = runtime.calls.State()
 		result.MediaAnswer = execution.mediaAnswer
 		result.SlotSettings = execution.slotSettings
+		runtime.updateCallLease(payload, envelope.SenderInstallationID)
 	}
 	encrypted, err := sealResult(runtime.random, sharedSecret, envelope, result)
 	if err != nil {
@@ -271,7 +298,7 @@ type executionResult struct {
 	slotSettings *slotpolicy.Settings
 }
 
-func (runtime *Runtime) execute(ctx context.Context, payload Payload) (executionResult, error) {
+func (runtime *Runtime) execute(ctx context.Context, payload Payload, senderInstallationID string) (executionResult, error) {
 	if payload.Version != protocolVersion {
 		return executionResult{}, errInvalidCommand
 	}
@@ -302,7 +329,7 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload) (execution
 	case "call.start":
 		if strings.TrimSpace(payload.CallID) == "" ||
 			strings.TrimSpace(payload.Number) == "" ||
-			strings.TrimSpace(payload.MediaOffer) == "" {
+			strings.TrimSpace(payload.MediaOffer) == "" || !validCallLeaseSeconds(payload.CallLeaseSeconds) {
 			return executionResult{}, errInvalidCommand
 		}
 		if err := runtime.calls.Dial(ctx, payload.Number); err != nil {
@@ -318,7 +345,8 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload) (execution
 		}
 		return executionResult{mediaAnswer: answer}, nil
 	case "call.answer":
-		if strings.TrimSpace(payload.CallID) == "" || strings.TrimSpace(payload.MediaOffer) == "" {
+		if strings.TrimSpace(payload.CallID) == "" || strings.TrimSpace(payload.MediaOffer) == "" ||
+			!validCallLeaseSeconds(payload.CallLeaseSeconds) {
 			return executionResult{}, errInvalidCommand
 		}
 		answer, err := runtime.media.Negotiate(ctx, payload.CallID, payload.MediaOffer)
@@ -338,6 +366,13 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload) (execution
 			return executionResult{}, err
 		}
 		return executionResult{mediaAnswer: answer}, nil
+	case "call.heartbeat":
+		if strings.TrimSpace(payload.CallID) == "" || runtime.activeCallLease == nil ||
+			runtime.activeCallLease.callID != payload.CallID ||
+			runtime.activeCallLease.senderInstallationID != senderInstallationID {
+			return executionResult{}, errInvalidCommand
+		}
+		return executionResult{}, nil
 	case "call.reject":
 		if strings.TrimSpace(payload.CallID) == "" {
 			return executionResult{}, errInvalidCommand
@@ -388,6 +423,70 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload) (execution
 	default:
 		return executionResult{}, errInvalidCommand
 	}
+}
+
+func (runtime *Runtime) updateCallLease(payload Payload, senderInstallationID string) {
+	switch payload.Operation {
+	case "call.start", "call.answer":
+		if payload.CallLeaseSeconds == 0 {
+			return
+		}
+		duration := time.Duration(payload.CallLeaseSeconds) * time.Second
+		runtime.activeCallLease = &callLease{
+			callID: payload.CallID, senderInstallationID: senderInstallationID,
+			duration: duration, expiresAt: runtime.now().Add(duration),
+		}
+	case "call.heartbeat", "call.hold", "call.resume", "call.swap", "call.dtmf":
+		if runtime.activeCallLease != nil && runtime.activeCallLease.callID == payload.CallID &&
+			runtime.activeCallLease.senderInstallationID == senderInstallationID {
+			runtime.activeCallLease.expiresAt = runtime.now().Add(runtime.activeCallLease.duration)
+		}
+	case "call.reject", "call.end":
+		if runtime.activeCallLease != nil && runtime.activeCallLease.callID == payload.CallID {
+			runtime.activeCallLease = nil
+		}
+	}
+}
+
+func validCallLeaseSeconds(seconds int) bool {
+	return seconds == 0 || (seconds >= int(defaultCallLease/time.Second) && seconds <= 120)
+}
+
+func (runtime *Runtime) expireCallLease() error {
+	if runtime.activeCallLease == nil {
+		return nil
+	}
+	if state := runtime.calls.State(); state == call.StateIdle || state == call.StateEnded {
+		runtime.activeCallLease = nil
+		return nil
+	}
+	if runtime.now().Before(runtime.activeCallLease.expiresAt) {
+		return nil
+	}
+	runtime.logger.Warn(
+		"active call lease expired; releasing modem call",
+		"call_id", runtime.activeCallLease.callID,
+		"sender_installation_id", runtime.activeCallLease.senderInstallationID,
+	)
+	return runtime.releaseActiveCall("active call lease expired")
+}
+
+func (runtime *Runtime) releaseActiveCall(reason string) error {
+	lease := runtime.activeCallLease
+	if lease == nil {
+		return nil
+	}
+	runtime.activeCallLease = nil
+	cleanupContext, cancel := context.WithTimeout(context.Background(), callCleanupTimeout)
+	defer cancel()
+	hangupError := runtime.calls.Hangup(cleanupContext)
+	mediaError := runtime.media.Stop(lease.callID)
+	runtime.events.Unregister(lease.callID)
+	if hangupError == nil && mediaError == nil {
+		runtime.logger.Info("orphaned call released", "call_id", lease.callID, "reason", reason)
+		return nil
+	}
+	return fmt.Errorf("release orphaned call %s: %w", lease.callID, errors.Join(hangupError, mediaError))
 }
 
 func (runtime *Runtime) targetMatches(payload Payload) bool {

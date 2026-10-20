@@ -189,7 +189,7 @@ private struct ContactSectionIndex: View {
 
             VStack(spacing: 0) {
                 Color.clear
-                    .frame(height: max(centeredTop - 86, 0))
+                    .frame(height: max(centeredTop - 4, 0))
                     .accessibilityHidden(true)
 
                 VStack(spacing: 0) {
@@ -201,7 +201,8 @@ private struct ContactSectionIndex: View {
                             .opacity(activeIndex == nil || activeIndex == index ? 1 : 0.7)
                     }
                 }
-                .frame(width: 44, height: trackHeight)
+                .frame(width: 18, height: trackHeight)
+                .frame(width: 44, alignment: .trailing)
                 .contentShape(Rectangle())
                 .highPriorityGesture(
                     DragGesture(minimumDistance: 0, coordinateSpace: .local)

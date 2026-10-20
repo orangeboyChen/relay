@@ -166,7 +166,7 @@ enum PreviewFixtures {
                 MessageItem(
                     id: UUID(uuidString: "20000000-0000-0000-0000-000000000001")!,
                     direction: .received,
-                    body: "Are you free for dinner?",
+                    body: "Menu: https://example.com · +86 135 0000 0000",
                     attachment: nil,
                     sentAt: now.addingTimeInterval(-600),
                     status: .delivered

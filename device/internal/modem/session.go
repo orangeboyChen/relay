@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,13 +58,13 @@ func ReadEquipmentIdentity(ctx context.Context, client *at.Client, timeout time.
 	return "", errors.New("modem did not return a valid equipment identity")
 }
 
-// ReadSIMSlotIndexes returns every physical slot index exposed by the modem.
+// ReadSIMSlotIndexes confirms the single physical slot exposed by EC20/EC25 modems.
 func ReadSIMSlotIndexes(ctx context.Context, client *at.Client, timeout time.Duration) ([]int, error) {
 	if client == nil || timeout <= 0 {
 		return nil, errors.New("AT client and positive timeout are required")
 	}
 	commandContext, cancel := context.WithTimeout(ctx, timeout)
-	response, err := client.Send(commandContext, "AT+QSIMSTAT")
+	response, err := client.Send(commandContext, "AT+QSIMSTAT?")
 	cancel()
 	if err != nil {
 		return nil, err
@@ -73,28 +72,10 @@ func ReadSIMSlotIndexes(ctx context.Context, client *at.Client, timeout time.Dur
 	if !response.OK() {
 		return nil, ErrSIMSlotUnsupported
 	}
-	indexes := make([]int, 0)
-	seen := make(map[int]struct{})
-	for _, line := range response.Lines {
-		parts := strings.Split(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "+QSIMSTAT:")), ",")
-		if len(parts) != 2 {
-			continue
-		}
-		index, indexErr := strconv.Atoi(strings.TrimSpace(parts[0]))
-		state, stateErr := strconv.Atoi(strings.TrimSpace(parts[1]))
-		if indexErr != nil || stateErr != nil || index < 1 || index > 32 || (state != 0 && state != 1) {
-			continue
-		}
-		if _, exists := seen[index]; !exists {
-			seen[index] = struct{}{}
-			indexes = append(indexes, index)
-		}
-	}
-	if len(indexes) == 0 {
+	if _, ok := parseSIMInsertionStatus(response.Lines); !ok {
 		return nil, ErrSIMSlotUnsupported
 	}
-	sort.Ints(indexes)
-	return indexes, nil
+	return []int{1}, nil
 }
 
 // ErrMessageDeliveryDeferred keeps a durable SMS pending without stopping unrelated modem services.
@@ -305,15 +286,22 @@ func validDialNumber(value string) bool {
 // ReadSIMSlotStatus reads physical slot presence when the modem exposes QSIMSTAT.
 // Unsupported modems return ErrSIMSlotUnsupported instead of guessing a slot.
 func (session *Session) ReadSIMSlotStatus(ctx context.Context) ([]SIMSlotStatus, error) {
-	response, err := session.send(ctx, "AT+QSIMSTAT")
+	response, err := session.send(ctx, "AT+QSIMSTAT?")
 	if err != nil {
 		return nil, err
 	}
 	if !response.OK() {
 		return nil, ErrSIMSlotUnsupported
 	}
-	statuses := make([]SIMSlotStatus, 0)
-	for _, line := range response.Lines {
+	present, ok := parseSIMInsertionStatus(response.Lines)
+	if !ok {
+		return nil, ErrSIMSlotUnsupported
+	}
+	return []SIMSlotStatus{{Index: 1, Present: present}}, nil
+}
+
+func parseSIMInsertionStatus(lines []string) (bool, bool) {
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "+QSIMSTAT:") {
 			continue
@@ -322,17 +310,14 @@ func (session *Session) ReadSIMSlotStatus(ctx context.Context) ([]SIMSlotStatus,
 		if len(parts) != 2 {
 			continue
 		}
-		index, indexErr := strconv.Atoi(strings.TrimSpace(parts[0]))
-		state, stateErr := strconv.Atoi(strings.TrimSpace(parts[1]))
-		if indexErr != nil || stateErr != nil || index < 1 || index > 32 || (state != 0 && state != 1) {
+		enabled, enabledErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+		inserted, insertedErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if enabledErr != nil || insertedErr != nil || (enabled != 0 && enabled != 1) || (inserted != 0 && inserted != 1) {
 			continue
 		}
-		statuses = append(statuses, SIMSlotStatus{Index: index, Present: state == 1})
+		return inserted == 1, true
 	}
-	if len(statuses) == 0 {
-		return nil, ErrSIMSlotUnsupported
-	}
-	return statuses, nil
+	return false, false
 }
 
 func allDigits(value string) bool {

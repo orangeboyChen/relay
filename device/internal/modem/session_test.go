@@ -81,46 +81,62 @@ var _ = Describe("Modem session", func() {
 		Expect(err).To(MatchError("modem did not return a valid equipment identity"))
 	})
 
-	It("reads every exposed physical slot index", func() {
+	It("confirms the EC20/EC25 single physical slot from QSIMSTAT", func() {
 		clientTransport, modemTransport := net.Pipe()
 		client := at.NewClient(clientTransport)
 		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
 		go func() {
-			_, _ = bufio.NewReader(modemTransport).ReadString('\r')
-			_, _ = modemTransport.Write([]byte("+QSIMSTAT: 2,0\r\n+QSIMSTAT: 1,1\r\nOK\r\n"))
+			command, _ := bufio.NewReader(modemTransport).ReadString('\r')
+			Expect(strings.TrimSuffix(command, "\r")).To(Equal("AT+QSIMSTAT?"))
+			_, _ = modemTransport.Write([]byte("+QSIMSTAT: 1,1\r\nOK\r\n"))
 		}()
 
 		indexes, err := ReadSIMSlotIndexes(context.Background(), client, time.Second)
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(indexes).To(Equal([]int{1, 2}))
+		Expect(indexes).To(Equal([]int{1}))
 	})
 
-	It("rejects slot status responses without valid indexes", func() {
+	It("recognizes the physical slot even when insertion reporting is disabled", func() {
 		clientTransport, modemTransport := net.Pipe()
 		client := at.NewClient(clientTransport)
 		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
 		go func() {
 			_, _ = bufio.NewReader(modemTransport).ReadString('\r')
-			_, _ = modemTransport.Write([]byte("+QSIMSTAT: bad,1\r\n+QSIMSTAT: 0,1\r\nOK\r\n"))
+			_, _ = modemTransport.Write([]byte("+QSIMSTAT: 0,0\r\nOK\r\n"))
+		}()
+
+		indexes, err := ReadSIMSlotIndexes(context.Background(), client, time.Second)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(indexes).To(Equal([]int{1}))
+	})
+
+	It("rejects slot status responses without valid QSIMSTAT fields", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := at.NewClient(clientTransport)
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		go func() {
+			_, _ = bufio.NewReader(modemTransport).ReadString('\r')
+			_, _ = modemTransport.Write([]byte("+QSIMSTAT: bad,1\r\n+QSIMSTAT: 2,1\r\nOK\r\n"))
 		}()
 
 		_, err := ReadSIMSlotIndexes(context.Background(), client, time.Second)
 		Expect(err).To(MatchError(ErrSIMSlotUnsupported))
 	})
 
-	It("reads physical SIM slot presence when QSIMSTAT is supported", func() {
+	It("reads physical SIM presence when QSIMSTAT is supported", func() {
 		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
 		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
 		go func() {
 			reader := bufio.NewReader(modemTransport)
 			command, _ := reader.ReadString('\r')
-			Expect(strings.TrimSuffix(command, "\r")).To(Equal("AT+QSIMSTAT"))
-			_, _ = modemTransport.Write([]byte("+QSIMSTAT: 1,1\r\n+QSIMSTAT: 2,0\r\nOK\r\n"))
+			Expect(strings.TrimSuffix(command, "\r")).To(Equal("AT+QSIMSTAT?"))
+			_, _ = modemTransport.Write([]byte("+QSIMSTAT: 1,1\r\nOK\r\n"))
 		}()
 		statuses, err := session.ReadSIMSlotStatus(context.Background())
 		Expect(err).NotTo(HaveOccurred())
-		Expect(statuses).To(Equal([]SIMSlotStatus{{Index: 1, Present: true}, {Index: 2, Present: false}}))
+		Expect(statuses).To(Equal([]SIMSlotStatus{{Index: 1, Present: true}}))
 	})
 
 	It("fails safely when the modem does not expose slot status", func() {
@@ -139,7 +155,7 @@ var _ = Describe("Modem session", func() {
 		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
 		go func() {
 			_, _ = bufio.NewReader(modemTransport).ReadString('\r')
-			_, _ = modemTransport.Write([]byte("+QSIMSTAT: bad,1\r\n+QSIMSTAT: 0,1\r\nOK\r\n"))
+			_, _ = modemTransport.Write([]byte("+QSIMSTAT: bad,1\r\n+QSIMSTAT: 0,2\r\nOK\r\n"))
 		}()
 		_, err := session.ReadSIMSlotStatus(context.Background())
 		Expect(err).To(MatchError(ErrSIMSlotUnsupported))

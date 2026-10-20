@@ -62,7 +62,7 @@ struct DialerScreen: View {
 
                 Spacer()
 
-                CallButton(isCalling: isCalling, isEnabled: validationReason == nil) {
+                CallButton(isCalling: isCalling, isEnabled: selectedLine != nil) {
                     startCall()
                 }
 
@@ -125,18 +125,15 @@ struct DialerScreen: View {
     @ViewBuilder
     private var contactMatchContent: some View {
         if let exactMatch {
-            HStack(spacing: 8) {
-                Image(systemName: "person.crop.circle")
+            HStack(spacing: 6) {
                 Text(exactMatch.contact.displayName)
                 Text(exactMatch.phoneNumber.label)
+                    .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
             }
-            .font(.subheadline)
+            .font(.body)
             .lineLimit(1)
-            .frame(minHeight: 44)
-            .padding(.horizontal, 12)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .frame(maxWidth: .infinity, minHeight: 44)
         } else if let firstMatch = partialMatches.first {
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
@@ -205,6 +202,7 @@ struct DialerScreen: View {
 #Preview("Dialer") {
     DialerScreen(
         lines: PreviewFixtures.devices,
+        contacts: PreviewContactFixtures.contacts,
         initialLineID: PreviewFixtures.devices[0].id,
         callStarter: CallKitCoordinator(
             transport: PreviewCallTransport(),
@@ -234,7 +232,8 @@ struct DialerScreen: View {
 #Preview("Dialer - Prefilled External Call") {
     DialerScreen(
         lines: PreviewFixtures.devices,
-        initialLineID: nil,
+        contacts: PreviewContactFixtures.contacts,
+        initialLineID: PreviewFixtures.devices[0].id,
         initialNumber: "13500000000",
         callStarter: CallKitCoordinator(
             transport: PreviewCallTransport(),

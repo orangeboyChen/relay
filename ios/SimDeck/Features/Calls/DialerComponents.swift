@@ -101,8 +101,9 @@ private struct DialerNumberTextField: UIViewRepresentable {
     }
 
     func updateUIView(_ field: UITextField, context: Context) {
-        if field.text != text {
-            field.text = text
+        let formattedText = PhoneNumberDisplayFormatter.string(from: text)
+        if field.text != formattedText {
+            field.text = formattedText
         }
     }
 
@@ -114,7 +115,7 @@ private struct DialerNumberTextField: UIViewRepresentable {
         }
 
         @objc func textDidChange(_ field: UITextField) {
-            textBinding.wrappedValue = field.text ?? ""
+            textBinding.wrappedValue = DialString.normalized(field.text ?? "")
         }
     }
 }

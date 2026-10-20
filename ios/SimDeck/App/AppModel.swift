@@ -121,6 +121,9 @@ final class AppModel {
         )
         self.remoteDeviceRefreshEnabled = remoteDeviceRefreshEnabled
         reconcileLineHistory(using: devices)
+        self.callCoordinator.setHistoryHandler { [weak self] record in
+            self?.appendCompletedCall(record)
+        }
         self.callCoordinator.updateLineRoutes(devices)
         self.messageTransport.updateLineRoutes(devices)
     }
@@ -820,6 +823,23 @@ final class AppModel {
         if didChangeMessages {
             persistMessageHistoryIfAvailable()
         }
+    }
+
+    private func appendCompletedCall(_ completed: CallRecord) {
+        var record = completed
+        record.lineSnapshot = devices.first(where: { $0.id == completed.lineID }).map(
+            LineHistorySnapshot.init(line:)
+        ) ?? completed.lineSnapshot
+
+        var records: [CallRecord]
+        if case .loaded(let existing) = callHistory {
+            records = existing.filter { $0.id != record.id }
+        } else {
+            records = []
+        }
+        records.append(record)
+        records.sort { $0.startedAt > $1.startedAt }
+        callHistory = .loaded(records)
     }
 
     private func processIncomingCallPush(_ data: Data) async throws {

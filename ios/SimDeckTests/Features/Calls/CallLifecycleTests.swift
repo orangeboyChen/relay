@@ -69,6 +69,140 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertNil(coordinator.activeCall)
     }
 
+    func testCompletedOutgoingCallIsAddedToAppHistory() async throws {
+        let transport = RecordingCallTransport()
+        let coordinator = CallKitCoordinator(
+            transport: transport,
+            integratesWithSystem: false,
+            now: { Date(timeIntervalSince1970: 3_125) }
+        )
+        let line = DeviceLineIdentity(
+            id: UUID(),
+            numericID: 2,
+            deviceName: "Test modem",
+            lineName: "Primary",
+            phoneNumber: "13500000000",
+            isOnline: true
+        )
+        let model = AppModel(
+            devices: [line],
+            callCoordinator: coordinator,
+            remoteDeviceRefreshEnabled: false
+        )
+
+        try await coordinator.startCall(to: "10086", using: line.id)
+        try await coordinator.endCall()
+
+        guard case .loaded(let records) = model.callHistory else {
+            return XCTFail("Expected loaded call history")
+        }
+        let record = try XCTUnwrap(records.first)
+        XCTAssertEqual(record.lineID, line.id)
+        XCTAssertEqual(record.lineSnapshot, LineHistorySnapshot(line: line))
+        XCTAssertEqual(record.remoteNumber, "10086")
+        XCTAssertEqual(record.direction, .outgoing)
+        XCTAssertEqual(record.result, .answered)
+        XCTAssertEqual(record.startedAt, transport.connectedAt)
+        XCTAssertEqual(record.endedAt, Date(timeIntervalSince1970: 3_125))
+        XCTAssertEqual(record.duration, 125)
+    }
+
+    func testUnansweredIncomingCallIsRecordedAsMissed() async throws {
+        let transport = RecordingCallTransport()
+        let coordinator = CallKitCoordinator(
+            transport: transport,
+            integratesWithSystem: false,
+            now: { Date(timeIntervalSince1970: 4_010) }
+        )
+        var records: [CallRecord] = []
+        coordinator.setHistoryHandler { records.append($0) }
+        let call = makeIncomingCall(contactName: "Home")
+
+        try await coordinator.reportIncomingCall(call)
+        coordinator.handleTransportEvent(.ended(callID: call.callID, reason: .unanswered))
+
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records[0].direction, .incoming)
+        XCTAssertEqual(records[0].result, .missed)
+        XCTAssertEqual(records[0].contactName, "Home")
+        XCTAssertEqual(records[0].startedAt, Date(timeIntervalSince1970: 4_010))
+        XCTAssertEqual(records[0].endedAt, Date(timeIntervalSince1970: 4_010))
+    }
+
+    func testDeclinedIncomingCallIsRecordedAsRejected() async throws {
+        let transport = RecordingCallTransport()
+        let coordinator = CallKitCoordinator(
+            transport: transport,
+            integratesWithSystem: false,
+            now: { Date(timeIntervalSince1970: 5_000) }
+        )
+        var records: [CallRecord] = []
+        coordinator.setHistoryHandler { records.append($0) }
+        let call = makeIncomingCall(contactName: nil)
+
+        try await coordinator.reportIncomingCall(call)
+        try await coordinator.endCall()
+
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records[0].direction, .incoming)
+        XCTAssertEqual(records[0].result, .rejected)
+    }
+
+    func testAnsweredIncomingCallIsRecordedOnceAsAnswered() async throws {
+        let transport = RecordingCallTransport()
+        let coordinator = CallKitCoordinator(
+            transport: transport,
+            incomingCallClaimer: RecordingIncomingCallClaimer(won: true),
+            integratesWithSystem: false,
+            now: { Date(timeIntervalSince1970: 5_125) }
+        )
+        var records: [CallRecord] = []
+        coordinator.setHistoryHandler { records.append($0) }
+        let call = makeIncomingCall(contactName: "Home")
+
+        try await coordinator.reportIncomingCall(call)
+        let answered = try await coordinator.answerIncomingCall(callID: call.callID)
+        XCTAssertTrue(answered)
+        coordinator.handleTransportEvent(
+            .connected(callID: call.callID, at: Date(timeIntervalSince1970: 5_000))
+        )
+        coordinator.handleTransportEvent(.ended(callID: call.callID, reason: .remoteEnded))
+        coordinator.handleTransportEvent(.ended(callID: call.callID, reason: .remoteEnded))
+
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records[0].direction, .incoming)
+        XCTAssertEqual(records[0].result, .answered)
+        XCTAssertEqual(records[0].startedAt, Date(timeIntervalSince1970: 5_000))
+        XCTAssertEqual(records[0].endedAt, Date(timeIntervalSince1970: 5_125))
+    }
+
+    func testFailedOutgoingCallIsRecordedAfterFailureIsDismissed() async {
+        let coordinator = CallKitCoordinator(
+            transport: RecordingCallTransport(startError: TestCallError.failed),
+            integratesWithSystem: false,
+            now: { Date(timeIntervalSince1970: 6_000) }
+        )
+        var records: [CallRecord] = []
+        coordinator.setHistoryHandler { records.append($0) }
+
+        do {
+            try await coordinator.startCall(to: "10086", using: UUID())
+            XCTFail("Expected startCall to throw")
+        } catch {
+            XCTAssertEqual(error as? TestCallError, .failed)
+        }
+        XCTAssertTrue(records.isEmpty)
+
+        coordinator.dismissCallStartFailure()
+        coordinator.dismissCallStartFailure()
+
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records[0].direction, .outgoing)
+        XCTAssertEqual(records[0].result, .failed)
+        XCTAssertEqual(records[0].startedAt, Date(timeIntervalSince1970: 6_000))
+        XCTAssertEqual(records[0].endedAt, Date(timeIntervalSince1970: 6_000))
+    }
+
     func testEndFailureDoesNotRestoreTheVisibleCall() async {
         let transport = RecordingCallTransport(endError: TestCallError.failed)
         let callID = UUID()

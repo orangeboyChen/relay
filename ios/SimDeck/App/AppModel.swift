@@ -268,7 +268,6 @@ final class AppModel {
         let number = DialString.normalized(rawNumber)
         guard DialString.isValid(number) else { return }
 
-        selectedTab = .calls
         let lineSelection = requiredLineID.map(ExternalDialLineSelection.preferred) ?? .automatic
         let request = ExternalDialRequest(number: number, lineSelection: lineSelection)
         pendingExternalDialRequest = nil
@@ -290,12 +289,14 @@ final class AppModel {
                 lastSuccessfulDialLineID = line.id
             } catch {
                 callCoordinator.dismissCallStartFailure()
+                selectedTab = .keypad
                 pendingExternalDialRequest = ExternalDialRequest(
                     number: number,
                     lineSelection: .preferred(line.id)
                 )
             }
         case .selectionRequired, .unavailable:
+            selectedTab = .keypad
             pendingExternalDialRequest = request
         }
     }
@@ -1156,4 +1157,5 @@ enum AppTab: Hashable {
     case messages
     case contacts
     case profile
+    case keypad
 }

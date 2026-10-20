@@ -59,6 +59,7 @@ final class ExternalDialRoutingTests: XCTestCase {
 
         XCTAssertTrue(transport.startedCalls.isEmpty)
         XCTAssertEqual(model.pendingExternalDialRequest?.number, "10086")
+        XCTAssertEqual(model.selectedTab, .keypad)
     }
 
     func testExternalDialPresentsDialerWhenNoLineIsOnline() async {
@@ -73,6 +74,7 @@ final class ExternalDialRoutingTests: XCTestCase {
 
         XCTAssertTrue(transport.startedCalls.isEmpty)
         XCTAssertEqual(model.pendingExternalDialRequest?.number, "10086")
+        XCTAssertEqual(model.selectedTab, .keypad)
     }
 
     func testExternalDialFailureFallsBackToPrefilledDialer() async {
@@ -88,6 +90,7 @@ final class ExternalDialRoutingTests: XCTestCase {
         XCTAssertEqual(transport.startedCalls.count, 1)
         XCTAssertEqual(model.pendingExternalDialRequest?.number, "10086")
         XCTAssertNil(model.callCoordinator.activeCall)
+        XCTAssertEqual(model.selectedTab, .keypad)
     }
 
     func testInvalidExternalNumberIsIgnored() async {

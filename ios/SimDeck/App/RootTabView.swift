@@ -10,62 +10,7 @@ struct RootTabView: View {
 
     var body: some View {
         ZStack {
-            TabView(selection: $model.selectedTab) {
-                NavigationStack {
-                    CallsTabScreen(model: model)
-                }
-                .tabItem {
-                    Label("Calls", systemImage: "phone.fill")
-                }
-                .tag(AppTab.calls)
-
-                NavigationStack {
-                    MessagesScreen(
-                        state: model.messages,
-                        lines: model.devices,
-                        defaultLineID: model.defaultMessageLineID,
-                        refreshAction: {
-                            await model.refreshMessages()
-                        },
-                        sendAction: { lineID, remoteNumber, body in
-                            try await model.sendMessage(
-                                lineID: lineID,
-                                remoteNumber: remoteNumber,
-                                body: body
-                            )
-                        },
-                        retryAction: { messageID in
-                            try await model.retryMessage(id: messageID)
-                        },
-                        deleteAction: { messageID in
-                            try model.deleteMessage(id: messageID)
-                        },
-                        markReadAction: { conversationID in
-                            model.markConversationRead(conversationID)
-                        }
-                    )
-                }
-                .tabItem {
-                    Label("Messages", systemImage: "message.fill")
-                }
-                .tag(AppTab.messages)
-
-                NavigationStack {
-                    ContactsScreen(model: model)
-                }
-                .tabItem {
-                    Label("Contacts", systemImage: "person.2.fill")
-                }
-                .tag(AppTab.contacts)
-
-                NavigationStack {
-                    ProfileScreen(model: model)
-                }
-                .tabItem {
-                    Label("Me", systemImage: "person.crop.circle.fill")
-                }
-                .tag(AppTab.profile)
-            }
+            tabs
 
             if model.callCoordinator.activeCall != nil {
                 InCallScreen(
@@ -88,6 +33,94 @@ struct RootTabView: View {
             Task {
                 await model.handleDefaultCallingRequest(request)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var tabs: some View {
+        if #available(iOS 27.0, *) {
+            TabView(selection: $model.selectedTab) {
+                standardTabs
+
+                Tab(
+                    "Keypad",
+                    systemImage: "circle.grid.3x3.fill",
+                    value: AppTab.keypad,
+                    role: .prominent
+                ) {
+                    keypadContent
+                }
+            }
+            .tabViewStyle(.tabBarOnly)
+        } else {
+            TabView(selection: $model.selectedTab) {
+                standardTabs
+
+                Tab("Keypad", systemImage: "circle.grid.3x3.fill", value: AppTab.keypad) {
+                    keypadContent
+                }
+            }
+            .tabViewStyle(.tabBarOnly)
+        }
+    }
+
+    @TabContentBuilder<AppTab>
+    private var standardTabs: some TabContent<AppTab> {
+        Tab("Calls", systemImage: "phone.fill", value: AppTab.calls) {
+            NavigationStack {
+                CallsTabScreen(model: model)
+            }
+        }
+
+        Tab("Messages", systemImage: "message.fill", value: AppTab.messages) {
+            messagesContent
+        }
+
+        Tab("Contacts", systemImage: "person.2.fill", value: AppTab.contacts) {
+            NavigationStack {
+                ContactsScreen(model: model)
+            }
+        }
+
+        Tab("Me", systemImage: "person.crop.circle.fill", value: AppTab.profile) {
+            NavigationStack {
+                ProfileScreen(model: model)
+            }
+        }
+    }
+
+    private var messagesContent: some View {
+        NavigationStack {
+            MessagesScreen(
+                state: model.messages,
+                lines: model.devices,
+                defaultLineID: model.defaultMessageLineID,
+                refreshAction: {
+                    await model.refreshMessages()
+                },
+                sendAction: { lineID, remoteNumber, body in
+                    try await model.sendMessage(
+                        lineID: lineID,
+                        remoteNumber: remoteNumber,
+                        body: body
+                    )
+                },
+                retryAction: { messageID in
+                    try await model.retryMessage(id: messageID)
+                },
+                deleteAction: { messageID in
+                    try model.deleteMessage(id: messageID)
+                },
+                markReadAction: { conversationID in
+                    model.markConversationRead(conversationID)
+                }
+            )
+        }
+    }
+
+    private var keypadContent: some View {
+        NavigationStack {
+            KeypadTabScreen(model: model)
         }
     }
 }
@@ -123,5 +156,9 @@ private struct PlaceholderScreen: View {
 #Preview("Me - Accessibility Text") {
     RootTabView(model: .preview(selectedTab: .profile))
         .environment(\.dynamicTypeSize, .accessibility5)
+}
+
+#Preview("Keypad") {
+    RootTabView(model: .preview(selectedTab: .keypad))
 }
 #endif

@@ -33,7 +33,7 @@ struct LinePicker: View {
                 }
                 .padding(.horizontal, 12)
                 .frame(minHeight: 36)
-                .background(.quaternary, in: Capsule())
+                .glassEffect(.regular.interactive(), in: Capsule())
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)
@@ -57,7 +57,7 @@ struct LinePicker: View {
                     .foregroundStyle(.primary)
                     .padding(.horizontal, 12)
                     .frame(minHeight: 36)
-                    .background(.quaternary, in: Capsule())
+                    .glassEffect(.regular.interactive(), in: Capsule())
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
@@ -233,7 +233,7 @@ private struct DialPadKey: View {
                     .accessibilityHidden(true)
             }
             .frame(width: min(scaledSize, 82), height: min(scaledSize, 82))
-            .background(Color(uiColor: .systemGray5), in: Circle())
+            .glassEffect(.regular.interactive(), in: Circle())
             .contentShape(Circle())
         }
         .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
@@ -282,9 +282,10 @@ struct CallButton: View {
             }
             .frame(width: 72, height: 72)
             .foregroundStyle(.white)
-            .background(.green, in: Circle())
         }
-        .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
+        .buttonStyle(.glassProminent)
+        .buttonBorderShape(.circle)
+        .tint(.green)
         .disabled(!isEnabled || isCalling)
         .animation(.easeInOut(duration: 0.15), value: isCalling)
         .accessibilityLabel("Call")

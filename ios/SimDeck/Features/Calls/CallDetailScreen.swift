@@ -30,7 +30,7 @@ struct CallDetailScreen: View {
                     numberCard
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 16)
                 .padding(.bottom, 120)
             }
         }
@@ -56,7 +56,7 @@ struct CallDetailScreen: View {
     }
 
     private var header: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 33) {
             ZStack {
                 Circle()
                     .fill(.ultraThinMaterial)
@@ -104,11 +104,11 @@ struct CallDetailScreen: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 18)
+        .padding(.top, 33)
     }
 
     private var actionButtons: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 13) {
             detailAction(title: "Message", symbol: "message.fill") {
                 activeSheet = .message
             }
@@ -117,6 +117,7 @@ struct CallDetailScreen: View {
             detailAction(title: "Mail", symbol: "envelope.fill", isEnabled: false) {}
         }
         .frame(maxWidth: .infinity)
+        .padding(.bottom, 3)
         .tint(.white)
     }
 
@@ -130,7 +131,7 @@ struct CallDetailScreen: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
-            .padding(.bottom, 12)
+            .padding(.bottom, 20)
 
             Divider()
 
@@ -150,7 +151,10 @@ struct CallDetailScreen: View {
             }
             .padding(.top, 12)
         }
-        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 95, alignment: .top)
+        .padding(.horizontal, 16)
+        .padding(.top, 18)
+        .padding(.bottom, 15)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
     }
 
@@ -179,7 +183,7 @@ struct CallDetailScreen: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
-            .frame(minHeight: 44)
+            .frame(minHeight: 49)
             .padding(.horizontal, 16)
             .contentShape(Rectangle())
             .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
@@ -194,20 +198,17 @@ struct CallDetailScreen: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            VStack(spacing: 6) {
-                Image(systemName: symbol)
-                    .font(.title2)
-                    .foregroundStyle(.white.opacity(isEnabled ? 1 : 0.42))
-                    .frame(width: 58, height: 58)
-                    .glassEffect(.regular.interactive(), in: Circle())
-                Text(title)
-                    .font(.caption)
-            }
-            .frame(maxWidth: .infinity)
+            Image(systemName: symbol)
+                .font(.title2)
+                .foregroundStyle(.white.opacity(isEnabled ? 1 : 0.42))
+                .frame(width: 65, height: 65)
+                .glassEffect(.regular.interactive(), in: Circle())
+            .frame(width: 66)
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.48)
+        .accessibilityLabel(title)
     }
 
     private var preferredMessageLineID: UUID? {

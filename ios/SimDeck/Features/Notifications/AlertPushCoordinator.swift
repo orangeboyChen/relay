@@ -1,38 +1,78 @@
 import Foundation
+import OSLog
 import UIKit
 import UserNotifications
 
+extension Notification.Name {
+    static let simDeckMessageNotificationPreferenceChanged = Notification.Name(
+        "sim-deck.message-notification-preference-changed"
+    )
+}
+
 @MainActor
 final class AlertPushCoordinator: NSObject {
+    private let logger = Logger(subsystem: "com.nowcent.simdeck", category: "AlertPushCoordinator")
     private let tokenRegistrar: any PushTokenRegistering
     private let environment: PushEnvironment
+    private let requestRemoteNotificationRegistration: @MainActor () async -> Void
     private var installationID: UUID?
     private var pendingToken: Data?
     private var requiresTokenDeletion = false
-    private var observer: NSObjectProtocol?
+    private var tokenObserver: NSObjectProtocol?
+    private var preferenceObserver: NSObjectProtocol?
     private let onNotificationActivity: @MainActor () async -> Void
     private var hasStarted = false
+    private var isEnabled: Bool?
+
     init(
         tokenRegistrar: any PushTokenRegistering,
         environment: PushEnvironment,
+        requestRemoteNotificationRegistration: @escaping @MainActor () async -> Void = {
+            let center = UNUserNotificationCenter.current()
+            let granted = (try? await center.requestAuthorization(options: [.alert, .badge, .sound])) ?? false
+            guard granted else { return }
+            UIApplication.shared.registerForRemoteNotifications()
+        },
         onNotificationActivity: @escaping @MainActor () async -> Void = {}
     ) {
         self.tokenRegistrar = tokenRegistrar
         self.environment = environment
+        self.requestRemoteNotificationRegistration = requestRemoteNotificationRegistration
         self.onNotificationActivity = onNotificationActivity
     }
 
     func start(installationID: UUID) {
-        self.installationID = installationID
+        configure(installationID: installationID)
         guard !hasStarted else { return }
         hasStarted = true
-        observer = NotificationCenter.default.addObserver(
+        tokenObserver = NotificationCenter.default.addObserver(
             forName: .simDeckAPNsToken, object: nil, queue: .main
         ) { [weak self] notification in
             guard let token = notification.object as? Data else { return }
             Task { @MainActor [weak self] in
-                self?.pendingToken = token
-                try? await self?.uploadPendingToken()
+                do {
+                    try await self?.receiveToken(token)
+                } catch {
+                    self?.logger.error(
+                        "Unable to register alert push token: \(error.localizedDescription, privacy: .public)"
+                    )
+                }
+            }
+        }
+        preferenceObserver = NotificationCenter.default.addObserver(
+            forName: .simDeckMessageNotificationPreferenceChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let enabled = notification.object as? Bool else { return }
+            Task { @MainActor [weak self] in
+                do {
+                    try await self?.setEnabled(enabled)
+                } catch {
+                    self?.logger.error(
+                        "Unable to update alert push preference: \(error.localizedDescription, privacy: .public)"
+                    )
+                }
             }
         }
         let center = UNUserNotificationCenter.current()
@@ -50,10 +90,29 @@ final class AlertPushCoordinator: NSObject {
                 options: []
             )
         ])
-        center.requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
-            guard granted else { return }
-            DispatchQueue.main.async { UIApplication.shared.registerForRemoteNotifications() }
+        Task { try? await setEnabled(NotificationPreferences().messageNotifications) }
+    }
+
+    func configure(installationID: UUID) {
+        self.installationID = installationID
+    }
+
+    func setEnabled(_ enabled: Bool) async throws {
+        guard isEnabled != enabled else { return }
+        isEnabled = enabled
+        guard enabled else {
+            pendingToken = nil
+            requiresTokenDeletion = true
+            try await uploadPendingToken()
+            return
         }
+        await requestRemoteNotificationRegistration()
+    }
+
+    func receiveToken(_ token: Data) async throws {
+        guard isEnabled == true else { return }
+        pendingToken = token
+        try await uploadPendingToken()
     }
 
     func uploadPendingToken() async throws {

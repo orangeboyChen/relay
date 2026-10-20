@@ -247,7 +247,16 @@ struct NotificationSettingsScreen: View {
 
     var body: some View {
         Form {
-            Toggle("Message notifications", isOn: $messageNotifications)
+            Toggle("Message notifications", isOn: Binding(
+                get: { messageNotifications },
+                set: { value in
+                    messageNotifications = value
+                    NotificationCenter.default.post(
+                        name: .simDeckMessageNotificationPreferenceChanged,
+                        object: value
+                    )
+                }
+            ))
             Toggle("Incoming call notifications", isOn: Binding(
                 get: { incomingCallNotifications },
                 set: { value in

@@ -21,38 +21,42 @@ struct ConversationHeader: View {
                 }
             }
         } label: {
-            adaptiveLayout {
-                MessageContactAvatar(
-                    contactName: conversation.contactName,
-                    diameter: usesAccessibilityLayout ? 48 : 30
-                )
-
-                VStack(alignment: usesAccessibilityLayout ? .center : .leading, spacing: 1) {
-                    HStack(spacing: 3) {
-                        Text(conversation.displayName)
-                            .lineLimit(1)
-
-                        Image(systemName: "chevron.down")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.tertiary)
+            Group {
+                if usesAccessibilityLayout {
+                    VStack(spacing: 2) {
+                        MessageContactAvatar(
+                            contactName: conversation.contactName,
+                            diameter: 48
+                        )
+                        contactNameLabel
+                            .font(.subheadline.weight(.semibold))
+                        HStack(spacing: 3) {
+                            SIMBadge(snapshot: linePresentation.snapshot, size: 12)
+                            Text(linePresentation.displayName)
+                                .lineLimit(1)
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                     }
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
+                    .frame(maxWidth: 270)
+                    .padding(.vertical, 4)
+                } else {
+                    VStack(spacing: 1) {
+                        MessageContactAvatar(
+                            contactName: conversation.contactName,
+                            diameter: 28
+                        )
+                        .overlay(alignment: .bottomTrailing) {
+                            SIMBadge(snapshot: linePresentation.snapshot, size: 10)
+                                .offset(x: 3, y: 2)
+                        }
 
-                    HStack(spacing: 3) {
-                        SIMBadge(snapshot: linePresentation.snapshot, size: 12)
-                        Text(linePresentation.displayName)
-                            .lineLimit(1)
+                        contactNameLabel
+                            .font(.caption2.weight(.medium))
                     }
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: 190)
                 }
             }
-            .frame(
-                maxWidth: usesAccessibilityLayout ? 270 : 240,
-                alignment: usesAccessibilityLayout ? .center : .leading
-            )
-            .padding(.vertical, usesAccessibilityLayout ? 4 : 2)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -75,10 +79,16 @@ struct ConversationHeader: View {
         return "\(conversation.displayName), SIM \(numericID), \(linePresentation.displayName)"
     }
 
-    private var adaptiveLayout: AnyLayout {
-        usesAccessibilityLayout
-            ? AnyLayout(VStackLayout(spacing: 2))
-            : AnyLayout(HStackLayout(spacing: 8))
+    private var contactNameLabel: some View {
+        HStack(spacing: 2) {
+            Text(conversation.displayName)
+                .lineLimit(1)
+
+            Image(systemName: "chevron.down")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .foregroundStyle(.primary)
     }
 }
 

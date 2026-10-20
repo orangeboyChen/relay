@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/orangeboyChen/mars-rs.git",
       "state" : {
-        "revision" : "bd37c8fe9395d7b8650722aa5f7fc4cd7257228d",
-        "version" : "0.1.0-alpha.3"
+        "revision" : "7b07ce593c50504944d26a2de078eeca0f7a6d52",
+        "version" : "0.1.0-alpha.4"
       }
     },
     {

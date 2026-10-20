@@ -54,8 +54,8 @@ final class ServerNetworkDiagnostics {
 
         let httpResult = httpProbe(url.absoluteString, 5_000)
         let httpSummary: String
-        if case let .http(errorCode, rtt, statusCode) = httpResult {
-            httpSummary = "errorCode=\(errorCode) statusCode=\(statusCode) rtt=\(rtt)ms"
+        if httpResult.probe == .http {
+            httpSummary = "errorCode=\(httpResult.errorCode) statusCode=\(httpResult.statusCode) rtt=\(httpResult.rtt)ms"
         } else {
             httpSummary = "unavailable"
         }
@@ -83,7 +83,7 @@ final class ServerNetworkDiagnostics {
         case .dns:
             return probeDNS(host: query.host)
         default:
-            return .nothing
+            return .nothing()
         }
     }
 

@@ -17,7 +17,7 @@ final class ServerNetworkDiagnosticsTests: XCTestCase {
                     XCTAssertEqual(query.host, "deck.example.test")
                     return .dns(errorCode: 0, rtt: 12, addresses: ["192.0.2.1"])
                 default:
-                    return .nothing
+                    return .nothing()
                 }
             }, httpProbe: { urlString, timeout in
                 XCTAssertEqual(urlString, url.absoluteString)

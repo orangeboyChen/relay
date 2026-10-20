@@ -15,21 +15,27 @@ struct CallDetailScreen: View {
     @State private var isMessagePresented = false
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 18) {
-                header
-                actionButtons
-                callHistoryCard
-                numberCard
+        ZStack {
+            CallDetailBackdrop()
+                .ignoresSafeArea()
+
+            ScrollView {
+                VStack(spacing: 18) {
+                    header
+                    actionButtons
+                    callHistoryCard
+                    numberCard
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 120)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 20)
-            .padding(.bottom, 36)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(background)
-        .navigationTitle(record.displayName)
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .preferredColorScheme(.dark)
         .sheet(isPresented: $isMessagePresented) {
             NewMessageScreen(
                 lines: lines,
@@ -41,7 +47,7 @@ struct CallDetailScreen: View {
     }
 
     private var header: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
             ZStack {
                 Circle()
                     .fill(.ultraThinMaterial)
@@ -50,39 +56,59 @@ struct CallDetailScreen: View {
                     }
                 if let initials {
                     Text(initials)
-                        .font(.system(size: 64, weight: .medium, design: .rounded))
+                        .font(.system(size: 84, weight: .medium, design: .rounded))
                 } else {
                     Image(systemName: "person.fill")
-                        .font(.system(size: 86))
+                        .font(.system(size: 112))
                 }
             }
             .foregroundStyle(.white)
-            .frame(width: 184, height: 184)
+            .frame(width: 240, height: 240)
+            .shadow(color: .black.opacity(0.08), radius: 20, y: 10)
 
             VStack(spacing: 4) {
-                Text(record.displayName)
-                    .font(.title.bold())
-                    .multilineTextAlignment(.center)
                 HStack(spacing: 6) {
+                    Text("SIM Line:")
                     SIMBadge(snapshot: linePresentation.snapshot, size: 16)
                     Text(linePresentation.displayName)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2.weight(.semibold))
                 }
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+
+                Text(record.displayName)
+                    .font(.title.bold())
+                    .multilineTextAlignment(.center)
+
+                if record.contactName != nil {
+                    Text(record.remoteNumber)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let lineSubtitle {
+                    Text(lineSubtitle)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                }
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 24)
+        .padding(.top, 18)
     }
 
     private var actionButtons: some View {
-        HStack(spacing: 18) {
+        HStack(spacing: 12) {
             detailAction(title: "Message", symbol: "message.fill") {
                 isMessagePresented = true
             }
             detailAction(title: "Call", symbol: "phone.fill", action: callAction)
+            detailAction(title: "Video", symbol: "video.fill", isEnabled: false) {}
+            detailAction(title: "Mail", symbol: "envelope.fill", isEnabled: false) {}
         }
         .frame(maxWidth: .infinity)
+        .tint(.white)
     }
 
     private var callHistoryCard: some View {
@@ -91,6 +117,9 @@ struct CallDetailScreen: View {
                 Text("Call History")
                     .font(.headline)
                 Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
             }
             .padding(.bottom, 12)
 
@@ -113,7 +142,7 @@ struct CallDetailScreen: View {
             .padding(.top, 12)
         }
         .padding(16)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
     }
 
     private var numberCard: some View {
@@ -126,26 +155,30 @@ struct CallDetailScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
     }
 
     private func detailAction(
         title: LocalizedStringKey,
         symbol: String,
+        isEnabled: Bool = true,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             VStack(spacing: 6) {
                 Image(systemName: symbol)
                     .font(.title2)
-                    .frame(width: 64, height: 64)
+                    .foregroundStyle(.white.opacity(isEnabled ? 1 : 0.42))
+                    .frame(width: 58, height: 58)
                     .glassEffect(.regular.interactive(), in: Circle())
                 Text(title)
                     .font(.caption)
             }
-            .frame(minWidth: 82)
+            .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.48)
     }
 
     private var preferredMessageLineID: UUID? {
@@ -167,6 +200,16 @@ struct CallDetailScreen: View {
         return components.prefix(2).compactMap(\.first).map(String.init).joined().uppercased()
     }
 
+    private var lineSubtitle: String? {
+        guard let lineName = linePresentation.snapshot?.lineName
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !lineName.isEmpty,
+            lineName != linePresentation.displayName else {
+            return nil
+        }
+        return lineName
+    }
+
     private var callKind: LocalizedStringResource {
         switch record.result {
         case .missed: "Missed Call"
@@ -177,14 +220,20 @@ struct CallDetailScreen: View {
         }
     }
 
-    private var background: LinearGradient {
+}
+
+private struct CallDetailBackdrop: View {
+    var body: some View {
         LinearGradient(
-            colors: record.contactName == nil
-                ? [.indigo.opacity(0.45), Color(uiColor: .systemGroupedBackground)]
-                : [Color(uiColor: .systemGroupedBackground), Color(uiColor: .systemGroupedBackground)],
+            colors: [
+                Color(red: 0.48, green: 0.52, blue: 0.68),
+                Color(red: 0.29, green: 0.25, blue: 0.48),
+                Color(red: 0.13, green: 0.07, blue: 0.28),
+            ],
             startPoint: .top,
             endPoint: .bottom
         )
+        .overlay(.ultraThinMaterial.opacity(0.12))
     }
 }
 
@@ -194,6 +243,21 @@ struct CallDetailScreen: View {
         CallDetailScreen(
             record: PreviewFixtures.calls[0],
             linePresentation: PreviewFixtures.calls[0].linePresentation(
+                in: PreviewFixtures.devices
+            ),
+            lines: PreviewFixtures.devices,
+            defaultMessageLineID: PreviewFixtures.devices.first?.id,
+            callAction: {},
+            sendAction: { _, _, _ in }
+        )
+    }
+}
+
+#Preview("Unknown caller detail") {
+    NavigationStack {
+        CallDetailScreen(
+            record: PreviewFixtures.calls[1],
+            linePresentation: PreviewFixtures.calls[1].linePresentation(
                 in: PreviewFixtures.devices
             ),
             lines: PreviewFixtures.devices,

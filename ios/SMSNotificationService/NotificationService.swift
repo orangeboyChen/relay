@@ -30,7 +30,12 @@ class NotificationService: UNNotificationServiceExtension {
             : NSLocalizedString("New message", bundle: .main, comment: "Generic SMS notification body")
         bestAttemptContent.title = payload.remoteNumber
         bestAttemptContent.body = visibleBody
-        let conversationIdentifier = "\(payload.deviceUUID.uuidString.lowercased()):\(payload.remoteNumber)"
+        let conversationIdentifier = MessageNotificationConversationIdentifier.make(
+            simID: payload.simID,
+            slotID: payload.slotID,
+            deviceUUID: payload.deviceUUID,
+            remoteNumber: payload.remoteNumber
+        )
         let intent = communicationBuilder.makeIntent(
             remoteNumber: payload.remoteNumber,
             messageBody: visibleBody,

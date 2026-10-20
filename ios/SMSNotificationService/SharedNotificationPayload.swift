@@ -33,6 +33,8 @@ struct NotificationEventEnvelope: Decodable {
 struct NotificationMessagePayload: Decodable {
     let version: Int
     let deviceUUID: UUID
+    let slotID: UUID?
+    let simID: UUID?
     let numericID: Int
     let remoteNumber: String
     let body: String
@@ -41,6 +43,8 @@ struct NotificationMessagePayload: Decodable {
     enum CodingKeys: String, CodingKey {
         case version, numericID = "numeric_id", remoteNumber = "remote_number", body
         case deviceUUID = "device_uuid"
+        case slotID = "slot_id"
+        case simID = "sim_id"
         case installationID = "installation_id"
     }
 }

@@ -656,6 +656,58 @@ final class ServerConnectionManagerTests: XCTestCase {
         XCTAssertTrue(String(decoding: try XCTUnwrap(store.value), as: UTF8.self).contains("fresh-access"))
     }
 
+    func testConcurrentExpiredRequestsShareOneRefresh() async throws {
+        let store = MemoryServerSessionStore(
+            value: Data(Self.sessionJSON(
+                accessToken: "expired-access",
+                refreshToken: "refresh-one",
+                accessExpiresAt: "2020-01-01T00:00:00Z",
+                refreshExpiresAt: "2099-01-01T00:00:00Z"
+            ).utf8)
+        )
+        let refreshGate = AsyncRequestGate()
+        let refreshStarted = expectation(description: "Refresh request started")
+        let network = ScriptedServerNetwork { request in
+            switch (request.httpMethod, request.url?.path) {
+            case ("POST", "/v1/auth/refresh"):
+                refreshStarted.fulfill()
+                await refreshGate.wait()
+                return Self.response(
+                    status: 200,
+                    body: Self.sessionJSON(accessToken: "fresh-access", refreshToken: "refresh-two")
+                )
+            case ("GET", "/v1/devices"):
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fresh-access")
+                return Self.response(status: 200, body: "{\"devices\":[]}")
+            default:
+                XCTFail("Unexpected request: \(request.url?.absoluteString ?? "")")
+                return Self.response(status: 500, body: "{}")
+            }
+        }
+        let defaults = isolatedDefaults()
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+
+        let firstRequest = Task { try await manager.loadDevices() }
+        await fulfillment(of: [refreshStarted], timeout: 1)
+        let secondRequest = Task { try await manager.loadDevices() }
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        await refreshGate.open()
+
+        _ = try await firstRequest.value
+        _ = try await secondRequest.value
+        XCTAssertEqual(
+            network.requests.filter { $0.url?.path == "/v1/auth/refresh" }.count,
+            1
+        )
+        XCTAssertEqual(
+            network.requests.filter { $0.url?.path == "/v1/devices" }.count,
+            2
+        )
+    }
+
     func testInvalidAddressFailsBeforeSendingCredentials() async {
         let network = ScriptedServerNetwork { _ in
             XCTFail("Invalid addresses must not reach the network")
@@ -1052,15 +1104,36 @@ final class ServerConnectionManagerTests: XCTestCase {
 @MainActor
 private final class ScriptedServerNetwork: ServerNetworking {
     private(set) var requests: [URLRequest] = []
-    private let handler: (URLRequest) throws -> (Data, HTTPURLResponse)
+    private let handler: (URLRequest) async throws -> (Data, HTTPURLResponse)
 
-    init(handler: @escaping (URLRequest) throws -> (Data, HTTPURLResponse)) {
+    init(handler: @escaping (URLRequest) async throws -> (Data, HTTPURLResponse)) {
         self.handler = handler
     }
 
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         requests.append(request)
-        return try handler(request)
+        return try await handler(request)
+    }
+}
+
+private actor AsyncRequestGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func open() {
+        isOpen = true
+        let pending = waiters
+        waiters.removeAll()
+        for waiter in pending {
+            waiter.resume()
+        }
     }
 }
 

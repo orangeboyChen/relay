@@ -394,6 +394,7 @@ final class ServerConnectionManager {
     @ObservationIgnored private let webSocketFactory: any ServerWebSocketCreating
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var session: ServerSession?
+    @ObservationIgnored private var refreshTask: Task<ServerSession, Error>?
     @ObservationIgnored private var deviceIdentityKeys: [UUID: Data] = [:]
 
     private static let addressKey = "sim-deck.server-address.v1"
@@ -1161,6 +1162,23 @@ final class ServerConnectionManager {
     }
 
     private func refresh(baseURL: URL, session: ServerSession) async throws -> ServerSession {
+        if let currentSession = self.session,
+           currentSession.refreshToken != session.refreshToken,
+           currentSession.accessExpiresAt > Date().addingTimeInterval(15) {
+            return currentSession
+        }
+        if let refreshTask {
+            return try await refreshTask.value
+        }
+        let task = Task { @MainActor in
+            try await performRefresh(baseURL: baseURL, session: session)
+        }
+        refreshTask = task
+        defer { refreshTask = nil }
+        return try await task.value
+    }
+
+    private func performRefresh(baseURL: URL, session: ServerSession) async throws -> ServerSession {
         guard session.refreshExpiresAt > .now else {
             throw ServerConnectionError.authenticationRequired
         }

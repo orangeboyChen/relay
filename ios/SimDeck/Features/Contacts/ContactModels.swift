@@ -114,6 +114,10 @@ enum ContactDirectory {
 
 enum ContactSectionIndexResolver {
     static let titles = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ").map(String.init) + ["#"]
+    static let visibleItemHeight: CGFloat = 12
+    static var visibleTrackHeight: CGFloat {
+        CGFloat(titles.count) * visibleItemHeight
+    }
 
     static func index(at locationY: CGFloat, height: CGFloat, itemCount: Int) -> Int? {
         guard height > 0, itemCount > 0 else { return nil }

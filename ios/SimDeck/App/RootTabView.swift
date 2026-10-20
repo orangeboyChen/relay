@@ -42,7 +42,6 @@ struct RootTabView: View {
             TabView(selection: $model.selectedTab) {
                 standardTabs
 
-                #if compiler(>=6.4)
                 Tab(
                     "Keypad",
                     systemImage: "circle.grid.3x3.fill",
@@ -51,11 +50,6 @@ struct RootTabView: View {
                 ) {
                     keypadContent
                 }
-                #else
-                Tab("Keypad", systemImage: "circle.grid.3x3.fill", value: AppTab.keypad) {
-                    keypadContent
-                }
-                #endif
             }
             .tabViewStyle(.tabBarOnly)
         } else {

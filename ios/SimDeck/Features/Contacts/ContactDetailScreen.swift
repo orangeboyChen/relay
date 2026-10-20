@@ -16,7 +16,7 @@ struct ContactDetailScreen: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 20) {
+            VStack(spacing: 18) {
                 contactHeader
                 communicationActions
 
@@ -29,9 +29,11 @@ struct ContactDetailScreen: View {
                     informationCard
                 }
             }
-            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 20)
             .padding(.bottom, 32)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle(contact.displayName)
         .navigationBarTitleDisplayMode(.inline)
@@ -64,7 +66,7 @@ struct ContactDetailScreen: View {
 
     private var contactHeader: some View {
         VStack(spacing: 12) {
-            ContactAvatar(contact: contact, size: 124)
+            ContactAvatar(contact: contact, size: 128)
 
             VStack(spacing: 4) {
                 Text(contact.displayName)
@@ -79,11 +81,12 @@ struct ContactDetailScreen: View {
                 }
             }
         }
-        .padding(.top, 14)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 24)
     }
 
     private var communicationActions: some View {
-        HStack(spacing: 28) {
+        HStack(spacing: 18) {
             ContactActionButton(title: "Message", systemImage: "message.fill") {
                 choosePhoneNumber(for: .message)
             }
@@ -91,6 +94,7 @@ struct ContactDetailScreen: View {
                 choosePhoneNumber(for: .call)
             }
         }
+        .frame(maxWidth: .infinity)
         .disabled(contact.phoneNumbers.isEmpty)
     }
 
@@ -197,12 +201,12 @@ private struct ContactActionButton: View {
                 Image(systemName: systemImage)
                     .font(.title2)
                     .foregroundStyle(.tint)
-                    .frame(width: 58, height: 58)
-                    .background(.thinMaterial, in: Circle())
+                    .frame(width: 64, height: 64)
+                    .glassEffect(.regular.interactive(), in: Circle())
                 Text(title)
                     .font(.caption)
             }
-            .frame(minWidth: 72)
+            .frame(minWidth: 82)
         }
         .buttonStyle(.plain)
     }

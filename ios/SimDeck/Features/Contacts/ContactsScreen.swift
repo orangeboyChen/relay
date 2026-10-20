@@ -85,6 +85,7 @@ struct ContactsScreen: View {
                                     selectedContact = contact
                                 } label: {
                                     ContactRow(contact: contact)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
                                         .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
@@ -180,29 +181,38 @@ private struct ContactSectionIndex: View {
 
     var body: some View {
         GeometryReader { proxy in
-            VStack(spacing: 0) {
-                ForEach(Array(ContactSectionIndexResolver.titles.enumerated()), id: \.offset) { index, title in
-                    Text(title)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.tint)
-                        .frame(maxHeight: .infinity)
-                        .opacity(activeIndex == nil || activeIndex == index ? 1 : 0.7)
+            VStack {
+                Spacer(minLength: 0)
+
+                VStack(spacing: 0) {
+                    ForEach(Array(ContactSectionIndexResolver.titles.enumerated()), id: \.offset) { index, title in
+                        Text(title)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.tint)
+                            .frame(height: ContactSectionIndexResolver.visibleItemHeight)
+                            .opacity(activeIndex == nil || activeIndex == index ? 1 : 0.7)
+                    }
                 }
+                .frame(width: 44, height: ContactSectionIndexResolver.visibleTrackHeight)
+                .contentShape(Rectangle())
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                        .onChanged { value in
+                            selectIndex(
+                                for: value.location.y,
+                                height: ContactSectionIndexResolver.visibleTrackHeight
+                            )
+                        }
+                        .onEnded { _ in
+                            activeIndex = nil
+                        }
+                )
+
+                Spacer(minLength: 0)
             }
-            .frame(width: 44)
-            .contentShape(Rectangle())
-            .highPriorityGesture(
-                DragGesture(minimumDistance: 0, coordinateSpace: .local)
-                    .onChanged { value in
-                        selectIndex(for: value.location.y, height: proxy.size.height)
-                    }
-                    .onEnded { _ in
-                        activeIndex = nil
-                    }
-            )
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
         .frame(width: 44)
-        .padding(.vertical, 8)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Contact index")
         .accessibilityHint("Drag vertically to jump between contact sections.")

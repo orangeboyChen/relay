@@ -327,7 +327,6 @@ final class CallLifecycleTests: XCTestCase {
         let callID = UUID()
         let coordinator = CallKitCoordinator(
             transport: transport,
-            provider: RecordingSystemCallProvider(),
             integratesWithSystem: true,
             initialCall: ActiveCallSession(
                 id: callID,
@@ -376,7 +375,6 @@ final class CallLifecycleTests: XCTestCase {
         let controller = RecordingSystemCallController()
         let coordinator = CallKitCoordinator(
             transport: transport,
-            provider: RecordingSystemCallProvider(),
             controller: controller,
             integratesWithSystem: true
         )

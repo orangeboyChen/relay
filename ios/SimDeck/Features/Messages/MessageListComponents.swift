@@ -61,7 +61,6 @@ struct ConversationRow: View {
             Circle()
                 .fill(.blue)
                 .frame(width: 8, height: 8)
-                .padding(.top, 21)
                 .accessibilityLabel("\(conversation.unreadCount) unread messages")
         }
     }

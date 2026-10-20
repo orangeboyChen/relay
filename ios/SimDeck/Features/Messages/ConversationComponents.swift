@@ -242,8 +242,9 @@ struct MessageBubble: View {
                 .accessibilityLabel("Preview image")
             }
             if !message.body.isEmpty {
-                Text(message.body)
+                Text(MessageLinkDetector.attributedString(from: message.body))
                     .foregroundStyle(message.direction == .sent ? .white : .primary)
+                    .tint(message.direction == .sent ? .white : .blue)
             }
         }
         .padding(.horizontal, 13)

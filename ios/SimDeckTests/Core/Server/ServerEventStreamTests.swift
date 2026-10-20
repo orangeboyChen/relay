@@ -172,6 +172,47 @@ final class ServerEventStreamTests: XCTestCase {
         XCTAssertEqual(stream.acknowledgedSequences, [42])
     }
 
+    func testNetworkSwitchClosesOldStreamAndResumesFromPersistedCursor() async {
+        let firstAcknowledged = expectation(description: "first event acknowledged")
+        let secondOpened = expectation(description: "stream reopened on new path")
+        let first = MonitorEventStream(
+            pages: [Self.eventPage(sequence: 42)],
+            onAcknowledge: { _ in firstAcknowledged.fulfill() }
+        )
+        let second = MonitorEventStream(pages: [])
+        let opener = MonitorEventStreamOpener { sequence in
+            if sequence == 42 {
+                secondOpened.fulfill()
+                return second
+            }
+            XCTAssertEqual(sequence, 41)
+            return first
+        }
+        var cursor: Int64 = 41
+        let monitor = MessageEventMonitor(
+            opener: opener,
+            currentSequence: { cursor },
+            synchronizeThrough: { sequence in
+                cursor = sequence
+                return true
+            }
+        )
+
+        monitor.start()
+        await fulfillment(of: [firstAcknowledged], timeout: 1)
+        monitor.networkPathDidChange(isAvailable: false)
+        XCTAssertTrue(first.didClose)
+        XCTAssertFalse(monitor.isRunning)
+        XCTAssertEqual(opener.openedSequences, [41])
+
+        monitor.networkPathDidChange(isAvailable: true)
+        await fulfillment(of: [secondOpened], timeout: 1)
+        monitor.stop()
+
+        XCTAssertEqual(opener.openedSequences, [41, 42])
+        XCTAssertTrue(second.didClose)
+    }
+
     private func isolatedDefaults() -> UserDefaults {
         let suiteName = "ServerEventStreamTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

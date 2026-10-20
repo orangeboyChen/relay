@@ -58,6 +58,7 @@ final class AppModel {
     @ObservationIgnored private var messageEventMonitor: MessageEventMonitor?
     @ObservationIgnored private var contactNameIndex = ContactNameIndex()
     @ObservationIgnored private var contactUpdatesTask: Task<Void, Never>?
+    @ObservationIgnored private var networkPathObserver: NetworkPathObserver?
 
     var canEditDeviceProfiles: Bool { recoveredVaultKey != nil }
 
@@ -333,6 +334,15 @@ final class AppModel {
     func startMessageRealtimeUpdates() {
         guard serverConnection.isSignedIn else { return }
         messageEventMonitor?.start()
+    }
+
+    func startNetworkPathObservation() {
+        guard networkPathObserver == nil else { return }
+        let observer = NetworkPathObserver { [weak self] isAvailable in
+            self?.messageEventMonitor?.networkPathDidChange(isAvailable: isAvailable)
+        }
+        networkPathObserver = observer
+        observer.start()
     }
 
     func stopMessageRealtimeUpdates() {

@@ -168,6 +168,8 @@ final class MessageEventMonitor {
     private let waitBeforeReconnect: () async throws -> Void
     private var task: Task<Void, Never>?
     private var activeStream: (any EncryptedEventStream)?
+    private var wantsUpdates = false
+    private var networkIsAvailable = true
 
     init(
         opener: any EncryptedEventStreamOpening,
@@ -186,6 +188,8 @@ final class MessageEventMonitor {
     var isRunning: Bool { task != nil }
 
     func start() {
+        wantsUpdates = true
+        guard networkIsAvailable else { return }
         guard task == nil else { return }
         task = Task { [weak self] in
             await self?.run()
@@ -193,6 +197,20 @@ final class MessageEventMonitor {
     }
 
     func stop() {
+        wantsUpdates = false
+        cancelActiveStream()
+    }
+
+    func networkPathDidChange(isAvailable: Bool) {
+        networkIsAvailable = isAvailable
+        guard wantsUpdates else { return }
+        cancelActiveStream()
+        if isAvailable {
+            start()
+        }
+    }
+
+    private func cancelActiveStream() {
         task?.cancel()
         task = nil
         activeStream?.close()

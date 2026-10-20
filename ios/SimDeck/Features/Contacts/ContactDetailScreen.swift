@@ -24,7 +24,7 @@ struct ContactDetailScreen: View {
                         .padding(.top, 22)
 
                     phoneNumbersCard
-                        .padding(.top, 30)
+                        .padding(.top, 23)
                 }
 
                 if !contact.organizationName.isEmpty,
@@ -35,7 +35,7 @@ struct ContactDetailScreen: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 16)
-            .padding(.top, 28)
+            .padding(.top, 12)
             .padding(.bottom, 120)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -91,7 +91,7 @@ struct ContactDetailScreen: View {
     }
 
     private var communicationActions: some View {
-        HStack(spacing: 44) {
+        HStack(spacing: 27) {
             ContactActionButton(
                 title: "Message",
                 systemImage: "message.fill",

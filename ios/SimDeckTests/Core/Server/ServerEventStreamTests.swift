@@ -76,6 +76,98 @@ final class ServerEventStreamTests: XCTestCase {
         }
     }
 
+    func testMessageMonitorSynchronizesBeforeAcknowledgingAndStartsOnlyOnce() async {
+        let synchronized = expectation(description: "message history synchronized")
+        let acknowledged = expectation(description: "event cursor acknowledged")
+        let stream = MonitorEventStream(
+            pages: [Self.eventPage(sequence: 42)],
+            onAcknowledge: { sequence in
+                XCTAssertEqual(sequence, 42)
+                acknowledged.fulfill()
+            }
+        )
+        let opener = MonitorEventStreamOpener { sequence in
+            XCTAssertEqual(sequence, 41)
+            return stream
+        }
+        var cursor: Int64 = 41
+        let monitor = MessageEventMonitor(
+            opener: opener,
+            currentSequence: { cursor },
+            synchronizeThrough: { requiredSequence in
+                XCTAssertEqual(requiredSequence, 42)
+                cursor = requiredSequence
+                synchronized.fulfill()
+                return true
+            }
+        )
+
+        monitor.start()
+        monitor.start()
+        await fulfillment(of: [synchronized, acknowledged], timeout: 1)
+        monitor.stop()
+
+        XCTAssertEqual(opener.openedSequences, [41])
+        XCTAssertEqual(stream.acknowledgedSequences, [42])
+        XCTAssertTrue(stream.didClose)
+        XCTAssertFalse(monitor.isRunning)
+    }
+
+    func testMessageMonitorDoesNotAcknowledgeUnpersistedEvents() async {
+        let reconnectAttempted = expectation(description: "reconnect attempted")
+        let stream = MonitorEventStream(pages: [Self.eventPage(sequence: 42)])
+        let opener = MonitorEventStreamOpener { _ in stream }
+        let monitor = MessageEventMonitor(
+            opener: opener,
+            currentSequence: { 41 },
+            synchronizeThrough: { _ in false },
+            waitBeforeReconnect: {
+                reconnectAttempted.fulfill()
+                throw CancellationError()
+            }
+        )
+
+        monitor.start()
+        await fulfillment(of: [reconnectAttempted], timeout: 1)
+        monitor.stop()
+
+        XCTAssertTrue(stream.acknowledgedSequences.isEmpty)
+        XCTAssertTrue(stream.didClose)
+    }
+
+    func testMessageMonitorReconnectsWhenTheSocketReportsCancellation() async {
+        let acknowledged = expectation(description: "reconnected stream acknowledged")
+        let stream = MonitorEventStream(
+            pages: [Self.eventPage(sequence: 42)],
+            onAcknowledge: { _ in acknowledged.fulfill() }
+        )
+        var attempt = 0
+        let opener = MonitorEventStreamOpener { _ in
+            attempt += 1
+            if attempt == 1 {
+                throw CancellationError()
+            }
+            return stream
+        }
+        var cursor: Int64 = 41
+        let monitor = MessageEventMonitor(
+            opener: opener,
+            currentSequence: { cursor },
+            synchronizeThrough: { requiredSequence in
+                cursor = requiredSequence
+                return true
+            },
+            waitBeforeReconnect: {}
+        )
+
+        monitor.start()
+        await fulfillment(of: [acknowledged], timeout: 1)
+        monitor.stop()
+
+        XCTAssertEqual(opener.openedSequences, [41, 41])
+        XCTAssertEqual(stream.acknowledgedSequences, [42])
+    }
+
     private func isolatedDefaults() -> UserDefaults {
         let suiteName = "ServerEventStreamTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -102,6 +194,25 @@ final class ServerEventStreamTests: XCTestCase {
         """
     }
 
+    private static func eventPage(sequence: Int64) -> EncryptedEventPage {
+        EncryptedEventPage(
+            events: [
+                EncryptedEventEnvelope(
+                    id: UUID(uuidString: "01900000-0000-7000-8000-000000000011")!,
+                    sequence: sequence,
+                    type: "message.received",
+                    deviceUUID: UUID(uuidString: "01900000-0000-7000-8000-000000000001")!,
+                    occurredAt: Date(timeIntervalSince1970: 1_792_109_000),
+                    keyEpoch: 1,
+                    nonce: Data(repeating: 1, count: 12),
+                    ciphertext: Data(repeating: 2, count: 17),
+                    signature: Data(repeating: 3, count: 64)
+                ),
+            ],
+            nextSequence: sequence
+        )
+    }
+
     private static let sessionData = Data(
         #"{"access_token":"access","refresh_token":"refresh","access_expires_at":"2098-01-01T00:00:00Z","refresh_expires_at":"2099-01-01T00:00:00Z"}"#.utf8
     )
@@ -111,6 +222,54 @@ final class ServerEventStreamTests: XCTestCase {
         decoder.dateDecodingStrategy = .iso8601
         return decoder
     }()
+}
+
+@MainActor
+private final class MonitorEventStreamOpener: EncryptedEventStreamOpening {
+    private let handler: @MainActor (Int64) async throws -> any EncryptedEventStream
+    private(set) var openedSequences: [Int64] = []
+
+    init(handler: @escaping @MainActor (Int64) async throws -> any EncryptedEventStream) {
+        self.handler = handler
+    }
+
+    func openEncryptedEventStream(afterSequence: Int64) async throws -> any EncryptedEventStream {
+        openedSequences.append(afterSequence)
+        return try await handler(afterSequence)
+    }
+}
+
+@MainActor
+private final class MonitorEventStream: EncryptedEventStream {
+    private var pages: [EncryptedEventPage]
+    private let onAcknowledge: (Int64) -> Void
+    private(set) var acknowledgedSequences: [Int64] = []
+    private(set) var didClose = false
+
+    init(
+        pages: [EncryptedEventPage],
+        onAcknowledge: @escaping (Int64) -> Void = { _ in }
+    ) {
+        self.pages = pages
+        self.onAcknowledge = onAcknowledge
+    }
+
+    func receive() async throws -> EncryptedEventPage {
+        if !pages.isEmpty {
+            return pages.removeFirst()
+        }
+        try await Task.sleep(for: .seconds(60))
+        throw CancellationError()
+    }
+
+    func acknowledge(sequence: Int64) async throws {
+        acknowledgedSequences.append(sequence)
+        onAcknowledge(sequence)
+    }
+
+    func close() {
+        didClose = true
+    }
 }
 
 @MainActor

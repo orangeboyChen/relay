@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 enum ServerWebSocketMessage: Equatable, Sendable {
     case data(Data)
@@ -147,6 +148,90 @@ final class ServerEncryptedEventStream: EncryptedEventStream {
 
     func close() {
         connection.cancel()
+    }
+}
+
+@MainActor
+final class MessageEventMonitor {
+    private static let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "SimDeck",
+        category: "MessageEventMonitor"
+    )
+
+    private let opener: any EncryptedEventStreamOpening
+    private let currentSequence: () -> Int64
+    private let synchronizeThrough: (Int64) async -> Bool
+    private let waitBeforeReconnect: () async throws -> Void
+    private var task: Task<Void, Never>?
+    private var activeStream: (any EncryptedEventStream)?
+
+    init(
+        opener: any EncryptedEventStreamOpening,
+        currentSequence: @escaping () -> Int64,
+        synchronizeThrough: @escaping (Int64) async -> Bool,
+        waitBeforeReconnect: @escaping () async throws -> Void = {
+            try await Task.sleep(for: .seconds(2))
+        }
+    ) {
+        self.opener = opener
+        self.currentSequence = currentSequence
+        self.synchronizeThrough = synchronizeThrough
+        self.waitBeforeReconnect = waitBeforeReconnect
+    }
+
+    var isRunning: Bool { task != nil }
+
+    func start() {
+        guard task == nil else { return }
+        task = Task { [weak self] in
+            await self?.run()
+        }
+    }
+
+    func stop() {
+        task?.cancel()
+        task = nil
+        activeStream?.close()
+        activeStream = nil
+    }
+
+    private func run() async {
+        while !Task.isCancelled {
+            do {
+                let sequence = currentSequence()
+                Self.logger.info("Opening encrypted message event stream after sequence \(sequence, privacy: .public)")
+                let stream = try await opener.openEncryptedEventStream(afterSequence: sequence)
+                activeStream = stream
+                defer {
+                    stream.close()
+                    if activeStream === stream {
+                        activeStream = nil
+                    }
+                }
+
+                while !Task.isCancelled {
+                    let page = try await stream.receive()
+                    let synchronized = await synchronizeThrough(page.nextSequence)
+                    guard synchronized else {
+                        throw ServerConnectionError.eventStreamUnavailable
+                    }
+                    try await stream.acknowledge(sequence: page.nextSequence)
+                    Self.logger.debug(
+                        "Acknowledged encrypted message events through sequence \(page.nextSequence, privacy: .public)"
+                    )
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                Self.logger.error(
+                    "Encrypted message event stream disconnected: \(String(reflecting: error), privacy: .public)"
+                )
+                do {
+                    try await waitBeforeReconnect()
+                } catch {
+                    return
+                }
+            }
+        }
     }
 }
 

@@ -101,11 +101,17 @@ struct SimDeckApp: App {
                     model.startVoIPPushes()
                     await model.refreshDevices()
                     await model.refreshMessages()
+                    model.startMessageRealtimeUpdates()
                 }
                 .onChange(of: scenePhase) { _, phase in
-                    guard phase == .active, shouldStartLiveServices else { return }
-                    Task {
-                        await model.refreshForegroundState()
+                    guard shouldStartLiveServices else { return }
+                    if phase == .active {
+                        Task {
+                            await model.refreshForegroundState()
+                            model.startMessageRealtimeUpdates()
+                        }
+                    } else {
+                        model.stopMessageRealtimeUpdates()
                     }
                 }
         }

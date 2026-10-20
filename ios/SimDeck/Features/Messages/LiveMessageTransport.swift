@@ -58,6 +58,7 @@ struct DetectedSIMProfile: Equatable, Sendable {
 
 @MainActor
 protocol MessageTransport: AnyObject {
+    var currentSequence: Int64 { get }
     func send(messageID: UUID, lineID: UUID, remoteNumber: String, body: String) async throws
     func synchronize(lines: [DeviceLineIdentity]) async throws -> MessageSyncBatch
     func acknowledge(sequence: Int64)
@@ -65,6 +66,7 @@ protocol MessageTransport: AnyObject {
 }
 
 extension MessageTransport {
+    var currentSequence: Int64 { 0 }
     func updateLineRoutes(_ lines: [DeviceLineIdentity]) {}
     func acknowledge(sequence: Int64) {}
 }
@@ -114,6 +116,8 @@ final class LiveMessageTransport: MessageTransport {
     private let makeSenderKey: () -> Curve25519.KeyAgreement.PrivateKey
     private let waitBeforePollingAgain: () async throws -> Void
     private var lineRoutes: [UUID: DeviceLineIdentity] = [:]
+
+    var currentSequence: Int64 { cursorStore.sequence }
 
     init(
         api: any EncryptedCallCommandAPI,

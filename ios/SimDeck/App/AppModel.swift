@@ -50,6 +50,7 @@ final class AppModel {
     @ObservationIgnored private let messageHistoryStore: EncryptedMessageHistoryStore
     @ObservationIgnored private let callHistoryStore: EncryptedCallHistoryStore
     @ObservationIgnored private let remoteDeviceRefreshEnabled: Bool
+    @ObservationIgnored private var messageEventMonitor: MessageEventMonitor?
 
     var canEditDeviceProfiles: Bool { recoveredVaultKey != nil }
 
@@ -123,12 +124,22 @@ final class AppModel {
             commandSigner: resolvedCommandSigner
         )
         self.remoteDeviceRefreshEnabled = remoteDeviceRefreshEnabled
+        self.messageEventMonitor = nil
         reconcileLineHistory(using: devices)
         self.callCoordinator.setHistoryHandler { [weak self] record in
             self?.appendCompletedCall(record)
         }
         self.callCoordinator.updateLineRoutes(devices)
         self.messageTransport.updateLineRoutes(devices)
+        self.messageEventMonitor = MessageEventMonitor(
+            opener: resolvedServerConnection,
+            currentSequence: { [weak self] in
+                self?.messageTransport.currentSequence ?? 0
+            },
+            synchronizeThrough: { [weak self] requiredSequence in
+                await self?.synchronizeMessages(through: requiredSequence) ?? false
+            }
+        )
     }
 
     func completeOnboarding() {
@@ -204,6 +215,7 @@ final class AppModel {
         }
         try? await voipPushCoordinator?.uploadPendingToken()
         try? await alertPushCoordinator?.uploadPendingToken()
+        startMessageRealtimeUpdates()
     }
 
     func registerPasskey() async throws {
@@ -297,13 +309,7 @@ final class AppModel {
     func refreshMessages() async {
         guard serverConnection.isSignedIn else { return }
         do {
-            let batch = try await messageTransport.synchronize(lines: devices)
-            mergeIncomingMessages(batch.deliveries)
-            try await applyDetectedSIMProfiles(batch.detectedSIMProfiles)
-            if let recoveredVaultKey {
-                try messageHistoryStore.save(loadedConversations, using: recoveredVaultKey)
-            }
-            messageTransport.acknowledge(sequence: batch.nextSequence)
+            try await synchronizeMessages()
         } catch {
             Self.logger.error("Message and SIM profile synchronization failed: \(String(reflecting: error), privacy: .public)")
             serverConnection.markRequestFailed(error)
@@ -312,6 +318,15 @@ final class AppModel {
             }
             messages = .failed
         }
+    }
+
+    func startMessageRealtimeUpdates() {
+        guard serverConnection.isSignedIn else { return }
+        messageEventMonitor?.start()
+    }
+
+    func stopMessageRealtimeUpdates() {
+        messageEventMonitor?.stop()
     }
 
     func refreshForegroundState() async {
@@ -573,6 +588,7 @@ final class AppModel {
     }
 
     func signOutFromServer() async throws {
+        stopMessageRealtimeUpdates()
         await stopPushNotifications()
         try serverConnection.signOut()
         reconcileLineHistory(using: devices)
@@ -582,6 +598,7 @@ final class AppModel {
     }
 
     func revokeCurrentSession() async throws {
+        stopMessageRealtimeUpdates()
         await stopPushNotifications()
         do {
             try await serverConnection.revokeCurrentSession()
@@ -644,6 +661,29 @@ final class AppModel {
     private func clearNotificationDecryptionState() {
         NotificationSharedState.clearDeviceKeys()
         NotificationOTPStore.clear()
+    }
+
+    private func synchronizeMessages(through requiredSequence: Int64? = nil) async -> Bool {
+        do {
+            try await synchronizeMessages()
+            return requiredSequence.map { messageTransport.currentSequence >= $0 } ?? true
+        } catch {
+            Self.logger.error(
+                "Realtime message synchronization failed: \(String(reflecting: error), privacy: .public)"
+            )
+            serverConnection.markRequestFailed(error)
+            return false
+        }
+    }
+
+    private func synchronizeMessages() async throws {
+        let batch = try await messageTransport.synchronize(lines: devices)
+        mergeIncomingMessages(batch.deliveries)
+        try await applyDetectedSIMProfiles(batch.detectedSIMProfiles)
+        if let recoveredVaultKey {
+            try messageHistoryStore.save(loadedConversations, using: recoveredVaultKey)
+        }
+        messageTransport.acknowledge(sequence: batch.nextSequence)
     }
 
     func clearLocalMessageCache() throws {

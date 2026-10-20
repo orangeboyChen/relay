@@ -56,13 +56,15 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
 
         if let provider {
             self.provider = provider
-        } else {
+        } else if integratesWithSystem {
             let configuration = CXProviderConfiguration()
             configuration.supportsVideo = false
             configuration.maximumCallsPerCallGroup = 2
             configuration.maximumCallGroups = 1
             configuration.supportedHandleTypes = [.phoneNumber]
             self.provider = CXProvider(configuration: configuration)
+        } else {
+            self.provider = DisabledSystemCallProvider()
         }
 
         super.init()

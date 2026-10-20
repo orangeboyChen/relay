@@ -76,13 +76,15 @@ struct SIMFilterMenu: View {
                 }
             }
         } label: {
-            Label("Filter by SIM", systemImage: "line.3.horizontal")
-                .labelStyle(.iconOnly)
+            Image(systemName: "line.3.horizontal")
+                .font(.body.weight(.semibold))
                 .frame(width: 44, height: 44)
-                .contentShape(.rect)
+                .contentShape(Circle())
         }
-        .frame(width: 44, height: 44)
-        .contentShape(.rect)
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
+        .controlSize(.large)
+        .accessibilityLabel("Filter by SIM")
     }
 }
 

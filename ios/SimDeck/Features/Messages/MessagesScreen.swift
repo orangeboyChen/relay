@@ -263,15 +263,26 @@ struct MessagesScreen: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             Spacer()
-            Button("Delete", role: .destructive) {
+            Button(role: .destructive) {
                 guard case .loaded(let conversations) = state else { return }
                 conversationsPendingDeletion = conversations.filter {
                     selectedConversationIDs.contains($0.id)
                 }
+            } label: {
+                Label("Delete", systemImage: "trash")
+                    .fontWeight(.semibold)
+                    .foregroundStyle(
+                        selectedConversationIDs.isEmpty
+                            ? AnyShapeStyle(.secondary)
+                            : AnyShapeStyle(.red)
+                    )
+                    .frame(minHeight: 44)
+                    .padding(.horizontal, 12)
+                    .contentShape(Capsule())
             }
-            .fontWeight(.semibold)
+            .buttonStyle(.glass)
+            .buttonBorderShape(.capsule)
             .disabled(selectedConversationIDs.isEmpty)
-            .frame(minHeight: 44)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 6)

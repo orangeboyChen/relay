@@ -412,7 +412,7 @@ private struct CallHistoryRow: View {
     }
 
     private var directionSymbol: String {
-        record.direction == .incoming ? "phone.arrow.down.left" : "phone.arrow.up.right"
+        record.direction == .incoming ? "arrow.down.left" : "arrow.up.right"
     }
 
     private var dateFormat: Date.FormatStyle {

@@ -88,6 +88,16 @@ def validate_archive_metadata(archive_path, version, build_number)
   entitlements = CFPropertyList.native_types(CFPropertyList::List.new(data: entitlements_data).value)
   autofill_key = "com.apple.developer.authentication-services.autofill-credential-provider"
   UI.user_error!("Archived app is missing the AutoFill credential provider entitlement") unless entitlements[autofill_key] == true
+
+  communication_key = "com.apple.developer.usernotifications.communication"
+  if entitlements[communication_key] == true
+    required_activity_types = %w[INSendMessageIntent INStartCallIntent]
+    activity_types = Array(app_info["NSUserActivityTypes"])
+    missing_activity_types = required_activity_types - activity_types
+    unless missing_activity_types.empty?
+      UI.user_error!("Archive is missing communication activity types: #{missing_activity_types.join(", ")}")
+    end
+  end
 end
 
 def attach_webrtc_symbols(archive_path)

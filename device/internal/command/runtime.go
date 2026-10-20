@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"sim-deck-device/internal/call"
 	"sim-deck-device/internal/identity"
 	"sim-deck-device/internal/incomingcall"
@@ -221,15 +223,23 @@ func (runtime *Runtime) process(ctx context.Context, envelope Envelope) error {
 		}
 		result.ErrorCode = commandErrorCode(executionError)
 		result.CallState = runtime.calls.State()
-		runtime.logger.Error(
-			"device command execution failed",
+		logArguments := []any{
 			"command_id", envelope.ID,
 			"operation", payload.Operation,
 			"call_id", payload.CallID,
 			"message_id", payload.MessageID,
 			"error_code", result.ErrorCode,
 			"error", executionError,
-		)
+		}
+		if errors.Is(executionError, errWrongSlot) {
+			logArguments = append(logArguments,
+				"received_slot_id", payload.SlotID,
+				"expected_slot_id", runtime.identity.SlotID,
+				"received_sim_id", payload.SIMID,
+				"expected_sim_id", runtime.identity.SIMID,
+			)
+		}
+		runtime.logger.Error("device command execution failed", logArguments...)
 	} else {
 		result.Success = true
 		result.CallState = runtime.calls.State()
@@ -381,13 +391,22 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload) (execution
 }
 
 func (runtime *Runtime) targetMatches(payload Payload) bool {
-	if payload.SlotID != "" && payload.SlotID != runtime.identity.SlotID {
+	if payload.SlotID != "" && !sameUUID(payload.SlotID, runtime.identity.SlotID) {
 		return false
 	}
-	if payload.SIMID != "" && payload.SIMID != runtime.identity.SIMID {
+	if payload.SIMID != "" && !sameUUID(payload.SIMID, runtime.identity.SIMID) {
 		return false
 	}
 	return true
+}
+
+func sameUUID(left string, right string) bool {
+	leftUUID, leftError := uuid.Parse(left)
+	if leftError != nil {
+		return false
+	}
+	rightUUID, rightError := uuid.Parse(right)
+	return rightError == nil && leftUUID == rightUUID
 }
 
 var (

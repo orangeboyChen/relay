@@ -163,6 +163,7 @@ type fakeMessages struct {
 	destination string
 	body        string
 	reference   byte
+	preparedID  string
 	err         error
 }
 
@@ -184,6 +185,10 @@ func (messages *fakeMessages) SendSMS(_ context.Context, destination string, bod
 	messages.body = body
 	messages.reference = reference
 	return messages.err
+}
+
+func (messages *fakeMessages) PrepareMessageStatus(messageID string) {
+	messages.preparedID = messageID
 }
 
 func (media *fakeCallMedia) Negotiate(_ context.Context, callID string, offer string) (string, error) {
@@ -257,6 +262,7 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(messages.body).To(Equal(body))
 		expectedReference := sha256.Sum256([]byte(messageID))
 		Expect(messages.reference).To(Equal(expectedReference[0]))
+		Expect(messages.preparedID).To(Equal(messageID))
 		Expect(openResult(sharedSecret, envelope, remote.result).Success).To(BeTrue())
 		Expect(string(envelope.Ciphertext)).NotTo(ContainSubstring("13500000000"))
 		Expect(string(envelope.Ciphertext)).NotTo(ContainSubstring("你好"))
@@ -547,6 +553,92 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(messages.destination).To(BeEmpty())
 	})
 
+	It("matches Swift uppercase slot and SIM UUIDs canonically", func() {
+		state.SlotID = "c8fd5388-e779-45d7-8258-660c0d35c136"
+		state.SIMID = "e3ed24bb-e534-5b44-89df-a1c2097d591f"
+		var runtimeErr error
+		runtime, runtimeErr = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: events, Media: media, Messages: messages, SlotSettings: settings})
+		Expect(runtimeErr).NotTo(HaveOccurred())
+		disabled := false
+		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{
+			Version: 1, Operation: "slot.configure",
+			SlotID: strings.ToUpper(state.SlotID), SIMID: strings.ToUpper(state.SIMID),
+			DataEnabled: &disabled,
+		})
+
+		Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+
+		result := openResult(sharedSecret, envelope, remote.result)
+		Expect(result.Success).To(BeTrue())
+		Expect(result.ErrorCode).To(BeEmpty())
+		Expect(settings.update.DataEnabled).NotTo(BeNil())
+		Expect(*settings.update.DataEnabled).To(BeFalse())
+	})
+
+	It("rejects malformed slot and SIM UUID targets", func() {
+		state.SlotID = "c8fd5388-e779-45d7-8258-660c0d35c136"
+		state.SIMID = "e3ed24bb-e534-5b44-89df-a1c2097d591f"
+		var runtimeErr error
+		runtime, runtimeErr = NewRuntime(remote, state, calls, time.Millisecond, Dependencies{Events: events, Media: media, Messages: messages, SlotSettings: settings})
+		Expect(runtimeErr).NotTo(HaveOccurred())
+
+		for _, payload := range []Payload{
+			{Version: 1, Operation: "slot.configure", SlotID: "not-a-uuid"},
+			{Version: 1, Operation: "slot.configure", SIMID: "not-a-uuid"},
+		} {
+			envelope, sharedSecret := sealCommand(state, senderKey, commandID, payload)
+			Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+			Expect(openResult(sharedSecret, envelope, remote.result).ErrorCode).To(Equal("wrong_sim_slot"))
+		}
+	})
+
+	It("returns encrypted failures for rejected slot, call, and DTMF operations", func() {
+		testCases := []struct {
+			payload Payload
+			setup   func()
+		}{
+			{payload: Payload{Version: 1, Operation: "slot.configure"}, setup: func() { settings.err = errors.New("policy rejected") }},
+			{payload: Payload{Version: 1, Operation: "call.reject", CallID: "call-1"}, setup: func() { calls.error = errors.New("reject failed") }},
+			{payload: Payload{Version: 1, Operation: "call.end", CallID: "call-1"}, setup: func() { calls.error = errors.New("hangup failed") }},
+			{payload: Payload{Version: 1, Operation: "call.dtmf", CallID: "call-1", Digits: "A"}, setup: func() {}},
+			{payload: Payload{Version: 1, Operation: "call.dtmf", CallID: "call-1", Digits: "1"}, setup: func() { calls.error = errors.New("DTMF failed") }},
+		}
+
+		for _, testCase := range testCases {
+			calls.error = nil
+			settings.err = nil
+			testCase.setup()
+			envelope, sharedSecret := sealCommand(state, senderKey, commandID, testCase.payload)
+			Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+			Expect(openResult(sharedSecret, envelope, remote.result).Success).To(BeFalse())
+		}
+	})
+
+	It("rejects malformed encrypted command material", func() {
+		validEnvelope, _ := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.end", CallID: "call-1"})
+
+		wrongDevice := validEnvelope
+		wrongDevice.DeviceUUID = "01900000-0000-7000-8000-000000000099"
+		_, _, err := open(state, wrongDevice)
+		Expect(err).To(MatchError(errInvalidCommand))
+
+		invalidPrivateState := state
+		invalidPrivateState.CommandPrivateKey = []byte("short")
+		_, _, err = open(invalidPrivateState, validEnvelope)
+		Expect(err).To(HaveOccurred())
+
+		lowOrderSender := validEnvelope
+		lowOrderSender.SenderPublicKey = make([]byte, keyBytes)
+		_, _, err = open(state, lowOrderSender)
+		Expect(err).To(HaveOccurred())
+
+		corruptCiphertext := validEnvelope
+		corruptCiphertext.Ciphertext = append([]byte(nil), validEnvelope.Ciphertext...)
+		corruptCiphertext.Ciphertext[0] ^= 0xff
+		_, _, err = open(state, corruptCiphertext)
+		Expect(err).To(HaveOccurred())
+	})
+
 	It("rejects tampering before invoking the modem or acknowledging", func() {
 		envelope, _ := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.end", CallID: "call-1"})
 		envelope.Ciphertext[0] ^= 0xff
@@ -605,6 +697,14 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(messages.destination).To(Equal("10086"))
 		Expect(messages.body).To(Equal("runtime delivery"))
 		Expect(remote.commandID).To(Equal(commandID))
+	})
+
+	It("stops polling when a claimed command fails verification", func() {
+		envelope, _ := sealCommand(state, senderKey, commandID, Payload{Version: 1, Operation: "call.end", CallID: "call-1"})
+		envelope.Signature[0] ^= 0xff
+		remote.claims = []*Envelope{&envelope}
+
+		Expect(runtime.Run(context.Background())).To(MatchError(ContainSubstring("verify command")))
 	})
 
 	It("validates runtime dependencies", func() {

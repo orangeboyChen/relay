@@ -123,6 +123,48 @@ var _ = Describe("Device identity store", func() {
 		Expect(reloaded).To(Equal(updated))
 	})
 
+	It("refreshes canonical server slot and SIM assignments atomically", func() {
+		directory := GinkgoT().TempDir()
+		store := NewStore(directory, testDeviceUUID)
+		state, err := store.LoadOrCreate()
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.ConfigureSlot(state, "primary", 1)
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.PrepareDiscovery(state)
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.BindAssignment(
+			state,
+			"https://deck.example",
+			1,
+			"01900000-0000-7000-8000-000000000002",
+			"01900000-0000-7000-8000-000000000003",
+			"primary",
+			1,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		fingerprint, err := state.FingerprintSIM("8986000000000000000")
+		Expect(err).NotTo(HaveOccurred())
+
+		updated, err := store.SetServerSIMAssignment(
+			state,
+			"01900000-0000-7000-8000-000000000002",
+			fingerprint,
+			"01900000-0000-7000-8000-000000000003",
+			3,
+		)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(updated.SlotID).To(Equal("01900000-0000-7000-8000-000000000002"))
+		Expect(updated.SIMID).To(Equal("01900000-0000-7000-8000-000000000003"))
+		Expect(updated.NumericID).To(Equal(3))
+		reloaded, err := store.LoadOrCreate()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(reloaded).To(Equal(updated))
+
+		_, err = store.SetServerSIMAssignment(updated, "not-a-uuid", fingerprint, updated.SIMID, updated.NumericID)
+		Expect(errors.Is(err, ErrInvalidState)).To(BeTrue())
+	})
+
 	It("supports the staged initial SIM fingerprint and assignment workflow", func() {
 		directory := GinkgoT().TempDir()
 		store := NewStore(directory, testDeviceUUID)

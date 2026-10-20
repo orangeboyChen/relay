@@ -10,7 +10,7 @@ struct ConversationScreen: View {
     let lines: [DeviceLineIdentity]
     let sendAction: (UUID, String, String) async throws -> Void
     let retryAction: (UUID) async throws -> Void
-    let deleteAction: (UUID) throws -> Void
+    let deleteAction: (Set<UUID>) throws -> Void
     let markReadAction: (ConversationID) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -32,7 +32,7 @@ struct ConversationScreen: View {
         lines: [DeviceLineIdentity],
         sendAction: @escaping (UUID, String, String) async throws -> Void = { _, _, _ in },
         retryAction: @escaping (UUID) async throws -> Void = { _ in },
-        deleteAction: @escaping (UUID) throws -> Void = { _ in },
+        deleteAction: @escaping (Set<UUID>) throws -> Void = { _ in },
         markReadAction: @escaping (ConversationID) -> Void = { _ in }
     ) {
         self.conversations = conversations
@@ -207,7 +207,7 @@ struct ConversationScreen: View {
                 guard let messagePendingDeletion else { return }
                 let removesConversation = conversation.messages.count == 1
                 do {
-                    try deleteAction(messagePendingDeletion.id)
+                    try deleteAction([messagePendingDeletion.id])
                     withAnimation(motionAnimation) {
                         if replyTarget?.id == messagePendingDeletion.id {
                             replyTarget = nil

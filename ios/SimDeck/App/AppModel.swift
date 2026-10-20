@@ -58,8 +58,6 @@ final class AppModel {
     @ObservationIgnored private var messageEventMonitor: MessageEventMonitor?
     @ObservationIgnored private var contactNameIndex = ContactNameIndex()
     @ObservationIgnored private var contactUpdatesTask: Task<Void, Never>?
-    @ObservationIgnored private var networkPathObserver: NetworkPathObserver?
-    @ObservationIgnored private let networkDiagnostics = ServerNetworkDiagnostics()
 
     var canEditDeviceProfiles: Bool { recoveredVaultKey != nil }
 
@@ -149,13 +147,6 @@ final class AppModel {
             },
             synchronizeThrough: { [weak self] requiredSequence in
                 await self?.synchronizeMessages(through: requiredSequence) ?? false
-            },
-            onDisconnected: { [weak self] in
-                guard let self, let baseURL = self.serverConnection.authenticatedBaseURL else { return }
-                self.networkDiagnostics.diagnose(
-                    url: baseURL.appending(path: "healthz"),
-                    networkType: self.networkPathObserver?.networkType ?? 0
-                )
             }
         )
     }
@@ -344,16 +335,6 @@ final class AppModel {
         messageEventMonitor?.start()
     }
 
-    func startNetworkPathObservation() {
-        guard networkPathObserver == nil else { return }
-        let observer = NetworkPathObserver { [weak self] isAvailable in
-            self?.messageEventMonitor?.networkPathDidChange(isAvailable: isAvailable)
-            self?.callCoordinator.networkPathDidChange(isAvailable: isAvailable)
-        }
-        networkPathObserver = observer
-        observer.start()
-    }
-
     func stopMessageRealtimeUpdates() {
         messageEventMonitor?.stop()
     }
@@ -477,23 +458,26 @@ final class AppModel {
     }
 
     func deleteMessage(id: UUID) throws {
+        try deleteMessages(ids: [id])
+    }
+
+    func deleteMessages(ids: Set<UUID>) throws {
+        guard !ids.isEmpty else { return }
         let previousConversations = loadedConversations
         var conversations = previousConversations
-        guard let conversationIndex = conversations.firstIndex(where: { conversation in
-            conversation.messages.contains { $0.id == id }
-        }) else {
+        let knownMessageIDs = Set(conversations.flatMap(\.messages).map(\.id))
+        guard ids.isSubset(of: knownMessageIDs) else {
             throw ServerConnectionError.invalidResponse
         }
 
-        conversations[conversationIndex].messages.removeAll { $0.id == id }
-        if conversations[conversationIndex].messages.isEmpty {
-            conversations.remove(at: conversationIndex)
-        } else {
-            conversations[conversationIndex].unreadCount = min(
-                conversations[conversationIndex].unreadCount,
-                conversations[conversationIndex].messages.count
+        for index in conversations.indices {
+            conversations[index].messages.removeAll { ids.contains($0.id) }
+            conversations[index].unreadCount = min(
+                conversations[index].unreadCount,
+                conversations[index].messages.count
             )
         }
+        conversations.removeAll { $0.messages.isEmpty }
         messages = .loaded(sortedConversations(conversations))
 
         guard let recoveredVaultKey else { return }

@@ -172,86 +172,6 @@ final class ServerEventStreamTests: XCTestCase {
         XCTAssertEqual(stream.acknowledgedSequences, [42])
     }
 
-    func testNetworkSwitchClosesOldStreamAndResumesFromPersistedCursor() async {
-        let firstAcknowledged = expectation(description: "first event acknowledged")
-        let secondOpened = expectation(description: "stream reopened on new path")
-        let first = MonitorEventStream(
-            pages: [Self.eventPage(sequence: 42)],
-            onAcknowledge: { _ in firstAcknowledged.fulfill() }
-        )
-        let second = MonitorEventStream(pages: [])
-        let opener = MonitorEventStreamOpener { sequence in
-            if sequence == 42 {
-                secondOpened.fulfill()
-                return second
-            }
-            XCTAssertEqual(sequence, 41)
-            return first
-        }
-        var cursor: Int64 = 41
-        let monitor = MessageEventMonitor(
-            opener: opener,
-            currentSequence: { cursor },
-            synchronizeThrough: { sequence in
-                cursor = sequence
-                return true
-            }
-        )
-
-        monitor.start()
-        await fulfillment(of: [firstAcknowledged], timeout: 1)
-        monitor.networkPathDidChange(isAvailable: false)
-        XCTAssertTrue(first.didClose)
-        XCTAssertFalse(monitor.isRunning)
-        XCTAssertEqual(opener.openedSequences, [41])
-
-        monitor.networkPathDidChange(isAvailable: true)
-        await fulfillment(of: [secondOpened], timeout: 1)
-        monitor.stop()
-
-        XCTAssertEqual(opener.openedSequences, [41, 42])
-        XCTAssertTrue(second.didClose)
-    }
-
-    func testLateOldConnectionDoesNotReplaceReopenedStream() async {
-        let firstOpening = expectation(description: "first connection opening")
-        let secondOpened = expectation(description: "second connection opened")
-        let staleClosed = expectation(description: "stale connection closed")
-        let stale = MonitorEventStream(pages: [], onClose: { staleClosed.fulfill() })
-        let current = MonitorEventStream(pages: [])
-        var pendingOpen: CheckedContinuation<any EncryptedEventStream, Never>?
-        var attempts = 0
-        let opener = MonitorEventStreamOpener { _ in
-            attempts += 1
-            if attempts == 1 {
-                return await withCheckedContinuation { continuation in
-                    pendingOpen = continuation
-                    firstOpening.fulfill()
-                }
-            }
-            secondOpened.fulfill()
-            return current
-        }
-        let monitor = MessageEventMonitor(
-            opener: opener,
-            currentSequence: { 41 },
-            synchronizeThrough: { _ in true }
-        )
-
-        monitor.start()
-        await fulfillment(of: [firstOpening], timeout: 1)
-        monitor.networkPathDidChange(isAvailable: false)
-        monitor.networkPathDidChange(isAvailable: true)
-        await fulfillment(of: [secondOpened], timeout: 1)
-        pendingOpen?.resume(returning: stale)
-        await fulfillment(of: [staleClosed], timeout: 1)
-
-        XCTAssertFalse(current.didClose)
-        XCTAssertTrue(monitor.isRunning)
-        monitor.stop()
-        XCTAssertTrue(current.didClose)
-    }
-
     private func isolatedDefaults() -> UserDefaults {
         let suiteName = "ServerEventStreamTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -327,18 +247,15 @@ private final class MonitorEventStreamOpener: EncryptedEventStreamOpening {
 private final class MonitorEventStream: EncryptedEventStream {
     private var pages: [EncryptedEventPage]
     private let onAcknowledge: (Int64) -> Void
-    private let onClose: () -> Void
     private(set) var acknowledgedSequences: [Int64] = []
     private(set) var didClose = false
 
     init(
         pages: [EncryptedEventPage],
-        onAcknowledge: @escaping (Int64) -> Void = { _ in },
-        onClose: @escaping () -> Void = {}
+        onAcknowledge: @escaping (Int64) -> Void = { _ in }
     ) {
         self.pages = pages
         self.onAcknowledge = onAcknowledge
-        self.onClose = onClose
     }
 
     func receive() async throws -> EncryptedEventPage {
@@ -356,7 +273,6 @@ private final class MonitorEventStream: EncryptedEventStream {
 
     func close() {
         didClose = true
-        onClose()
     }
 }
 

@@ -278,6 +278,16 @@
         }
       }
     },
+    "All messages in the selected conversations will be removed from this iPhone." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所选对话中的所有信息都会从此 iPhone 移除。"
+          }
+        }
+      }
+    },
     "Allow" : {
       "localizations" : {
         "zh-Hans" : {
@@ -926,6 +936,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "删除账户与后台数据"
+          }
+        }
+      }
+    },
+    "Delete Conversations?" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除对话？"
           }
         }
       }
@@ -2346,6 +2366,16 @@
         }
       }
     },
+    "Read" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已读"
+          }
+        }
+      }
+    },
     "Received" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3477,6 +3507,16 @@
     },
     "Unable to Call" : {
 
+    },
+    "Unable to Delete" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法删除"
+          }
+        }
+      }
     },
     "Unable to Delete Calls" : {
       "localizations" : {

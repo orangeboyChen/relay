@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		200000000000000000000001 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 200000000000000000000002 /* WebRTC */; };
-		200000000000000000000004 /* MarsRSNet in Frameworks */ = {isa = PBXBuildFile; productRef = 200000000000000000000005 /* MarsRSNet */; };
 		6483377B30858A3600B91620 /* SMSNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 6483377430858A3600B91620 /* SMSNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		64833A4E3085B93F00B91620 /* AuthenticationServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 64833A4D3085B93F00B91620 /* AuthenticationServices.framework */; };
 		64833A593085B93F00B91620 /* SimDeckAutoFill.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 64833A4B3085B93F00B91620 /* SimDeckAutoFill.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -99,7 +98,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				200000000000000000000001 /* WebRTC in Frameworks */,
-				200000000000000000000004 /* MarsRSNet in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -185,7 +183,6 @@
 			name = SimDeck;
 			packageProductDependencies = (
 				200000000000000000000002 /* WebRTC */,
-				200000000000000000000005 /* MarsRSNet */,
 			);
 			productName = SimDeck;
 			productReference = 100000000000000000000001 /* SimDeck.app */;
@@ -295,7 +292,6 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				200000000000000000000003 /* XCRemoteSwiftPackageReference "WebRTC" */,
-				200000000000000000000006 /* XCRemoteSwiftPackageReference "mars-rs" */,
 			);
 			productRefGroup = 100000000000000000000031 /* Products */;
 			projectDirPath = "";
@@ -854,14 +850,6 @@
 				version = 154.0.0;
 			};
 		};
-		200000000000000000000006 /* XCRemoteSwiftPackageReference "mars-rs" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/orangeboyChen/mars-rs.git";
-			requirement = {
-				kind = exactVersion;
-				version = "0.1.0-alpha.4";
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -869,11 +857,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 200000000000000000000003 /* XCRemoteSwiftPackageReference "WebRTC" */;
 			productName = WebRTC;
-		};
-		200000000000000000000005 /* MarsRSNet */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 200000000000000000000006 /* XCRemoteSwiftPackageReference "mars-rs" */;
-			productName = MarsRSNet;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

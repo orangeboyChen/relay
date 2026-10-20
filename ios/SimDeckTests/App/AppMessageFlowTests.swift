@@ -109,6 +109,14 @@ final class AppMessageFlowTests: XCTestCase {
             sentAt: Date(timeIntervalSince1970: 101),
             status: .sent
         )
+        let thirdMessage = MessageItem(
+            id: UUID(),
+            direction: .received,
+            body: "another conversation",
+            attachment: nil,
+            sentAt: Date(timeIntervalSince1970: 102),
+            status: .delivered
+        )
         let conversation = MessageConversation(
             lineID: firstLine.id,
             remoteNumber: "10086",
@@ -116,7 +124,14 @@ final class AppMessageFlowTests: XCTestCase {
             unreadCount: 1,
             messages: [firstMessage, secondMessage]
         )
-        try historyStore.save([conversation], using: vaultKey)
+        let otherConversation = MessageConversation(
+            lineID: secondLine.id,
+            remoteNumber: "10010",
+            contactName: nil,
+            unreadCount: 1,
+            messages: [thirdMessage]
+        )
+        try historyStore.save([conversation, otherConversation], using: vaultKey)
         let defaults = UserDefaults(suiteName: "AppMessageDeleteTests.\(UUID().uuidString)")!
         let connection = ServerConnectionManager(
             network: MessageServerNetwork(),
@@ -135,11 +150,14 @@ final class AppMessageFlowTests: XCTestCase {
 
         try model.deleteMessage(id: firstMessage.id)
 
-        XCTAssertEqual(model.messageItems, [secondMessage])
-        XCTAssertEqual(model.conversations.first?.unreadCount, 1)
-        XCTAssertEqual(try historyStore.load(using: vaultKey).first?.messages, [secondMessage])
+        XCTAssertEqual(Set(model.messageItems.map(\.id)), [secondMessage.id, thirdMessage.id])
+        XCTAssertEqual(model.conversations.first(where: { $0.id == conversation.id })?.unreadCount, 1)
+        XCTAssertEqual(
+            try historyStore.load(using: vaultKey).first(where: { $0.id == conversation.id })?.messages,
+            [secondMessage]
+        )
 
-        try model.deleteMessage(id: secondMessage.id)
+        try model.deleteMessages(ids: [secondMessage.id, thirdMessage.id])
 
         XCTAssertTrue(model.conversations.isEmpty)
         XCTAssertTrue(try historyStore.load(using: vaultKey).isEmpty)

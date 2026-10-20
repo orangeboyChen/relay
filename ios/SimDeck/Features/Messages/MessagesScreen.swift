@@ -11,12 +11,16 @@ struct MessagesScreen: View {
     let refreshAction: () async -> Void
     let sendAction: (UUID, String, String) async throws -> Void
     let retryAction: (UUID) async throws -> Void
-    let deleteAction: (UUID) throws -> Void
+    let deleteAction: (Set<UUID>) throws -> Void
     let markReadAction: (ConversationID) -> Void
 
     @State private var searchText = ""
     @State private var selectedLineID: UUID?
     @State private var composition: MessageComposition?
+    @State private var editMode: EditMode = .inactive
+    @State private var selectedConversationIDs: Set<ConversationID> = []
+    @State private var conversationsPendingDeletion: [MessageConversation] = []
+    @State private var deleteErrorMessage: String?
 
     init(
         state: MessageListState,
@@ -25,7 +29,7 @@ struct MessagesScreen: View {
         refreshAction: @escaping () async -> Void = {},
         sendAction: @escaping (UUID, String, String) async throws -> Void = { _, _, _ in },
         retryAction: @escaping (UUID) async throws -> Void = { _ in },
-        deleteAction: @escaping (UUID) throws -> Void = { _ in },
+        deleteAction: @escaping (Set<UUID>) throws -> Void = { _ in },
         markReadAction: @escaping (ConversationID) -> Void = { _ in }
     ) {
         self.state = state
@@ -60,7 +64,10 @@ struct MessagesScreen: View {
             }
         }
         .navigationTitle("Messages")
+        .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search messages")
+        .searchToolbarBehavior(.minimize)
+        .environment(\.editMode, $editMode)
         .task {
             await refreshAction()
         }
@@ -68,16 +75,54 @@ struct MessagesScreen: View {
             await refreshAction()
         }
         .toolbar {
+            if case .loaded(let conversations) = state, !conversations.isEmpty {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(editMode.isEditing ? "Done" : "Edit") {
+                        withAnimation(.snappy) {
+                            editMode = editMode.isEditing ? .inactive : .active
+                        }
+                    }
+                }
+            }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 SIMFilterMenu(lines: lines, selection: $selectedLineID)
-                Button {
-                    composition = MessageComposition()
-                } label: {
-                    Label("New Message", systemImage: "square.and.pencil")
+                if !editMode.isEditing {
+                    Button {
+                        composition = MessageComposition()
+                    } label: {
+                        Label("New Message", systemImage: "square.and.pencil")
+                    }
+                    .disabled(!hasOnlineLine)
+                    .accessibilityHint(hasOnlineLine ? Text("") : Text("An online SIM is required."))
                 }
-                .disabled(!hasOnlineLine)
-                .accessibilityHint(hasOnlineLine ? Text("") : Text("An online SIM is required."))
             }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if editMode.isEditing {
+                messageSelectionBar
+            }
+        }
+        .onChange(of: editMode) { _, newMode in
+            if !newMode.isEditing {
+                selectedConversationIDs.removeAll()
+            }
+        }
+        .alert("Delete Conversations?", isPresented: deletionConfirmationIsPresented) {
+            Button("Delete", role: .destructive) {
+                deletePendingConversations()
+            }
+            Button("Cancel", role: .cancel) {
+                conversationsPendingDeletion = []
+            }
+        } message: {
+            Text("All messages in the selected conversations will be removed from this iPhone.")
+        }
+        .alert("Unable to Delete", isPresented: deleteErrorIsPresented) {
+            Button("OK", role: .cancel) {
+                deleteErrorMessage = nil
+            }
+        } message: {
+            Text(deleteErrorMessage ?? "")
         }
         .sheet(item: $composition) { composition in
             NewMessageScreen(
@@ -99,32 +144,125 @@ struct MessagesScreen: View {
             if filtered.isEmpty {
                 ContentUnavailableView.search(text: searchText)
             } else {
-                List(filtered) { conversation in
-                    NavigationLink {
-                        ConversationScreen(
-                            initialID: conversation.id,
-                            conversations: conversation.lineAlternatives(in: conversations),
-                            lines: lines,
-                            sendAction: sendAction,
-                            retryAction: retryAction,
-                            deleteAction: deleteAction,
-                            markReadAction: markReadAction
-                        )
-                    } label: {
-                        ConversationRow(
-                            conversation: conversation,
-                            linePresentation: conversation.linePresentation(in: lines)
-                        )
-                    }
-                    .listRowInsets(
-                        EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 4)
-                    )
-                    .alignmentGuide(.listRowSeparatorLeading) { dimensions in
-                        dimensions[.leading] + 57
+                List(selection: $selectedConversationIDs) {
+                    ForEach(filtered) { conversation in
+                        conversationRow(conversation, in: conversations)
+                            .tag(conversation.id)
+                            .listRowInsets(
+                                EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 8)
+                            )
+                            .alignmentGuide(.listRowSeparatorLeading) { dimensions in
+                                dimensions[.leading] + 57
+                            }
                     }
                 }
                 .listStyle(.plain)
+                .onChange(of: filtered.map(\.id)) { _, conversationIDs in
+                    selectedConversationIDs.formIntersection(conversationIDs)
+                }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func conversationRow(
+        _ conversation: MessageConversation,
+        in conversations: [MessageConversation]
+    ) -> some View {
+        if editMode.isEditing {
+            ConversationRow(
+                conversation: conversation,
+                linePresentation: conversation.linePresentation(in: lines)
+            )
+            .contentShape(.rect)
+        } else {
+            NavigationLink {
+                ConversationScreen(
+                    initialID: conversation.id,
+                    conversations: conversation.lineAlternatives(in: conversations),
+                    lines: lines,
+                    sendAction: sendAction,
+                    retryAction: retryAction,
+                    deleteAction: deleteAction,
+                    markReadAction: markReadAction
+                )
+            } label: {
+                ConversationRow(
+                    conversation: conversation,
+                    linePresentation: conversation.linePresentation(in: lines)
+                )
+            }
+            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                if conversation.unreadCount > 0 {
+                    Button {
+                        markReadAction(conversation.id)
+                    } label: {
+                        Label("Read", systemImage: "message.badge.filled.fill")
+                    }
+                    .tint(.blue)
+                }
+            }
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                Button(role: .destructive) {
+                    conversationsPendingDeletion = [conversation]
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+            }
+        }
+    }
+
+    private var messageSelectionBar: some View {
+        HStack {
+            Text("\(selectedConversationIDs.count) Selected")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button("Delete", role: .destructive) {
+                guard case .loaded(let conversations) = state else { return }
+                conversationsPendingDeletion = conversations.filter {
+                    selectedConversationIDs.contains($0.id)
+                }
+            }
+            .fontWeight(.semibold)
+            .disabled(selectedConversationIDs.isEmpty)
+            .frame(minHeight: 44)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 6)
+        .background(.bar)
+    }
+
+    private var deletionConfirmationIsPresented: Binding<Bool> {
+        Binding(
+            get: { !conversationsPendingDeletion.isEmpty },
+            set: { isPresented in
+                if !isPresented { conversationsPendingDeletion = [] }
+            }
+        )
+    }
+
+    private var deleteErrorIsPresented: Binding<Bool> {
+        Binding(
+            get: { deleteErrorMessage != nil },
+            set: { isPresented in
+                if !isPresented { deleteErrorMessage = nil }
+            }
+        )
+    }
+
+    private func deletePendingConversations() {
+        let messageIDs = Set(conversationsPendingDeletion.flatMap(\.messages).map(\.id))
+        do {
+            try deleteAction(messageIDs)
+            selectedConversationIDs.subtract(conversationsPendingDeletion.map(\.id))
+            conversationsPendingDeletion = []
+            if selectedConversationIDs.isEmpty {
+                editMode = .inactive
+            }
+        } catch {
+            conversationsPendingDeletion = []
+            deleteErrorMessage = error.localizedDescription
         }
     }
 

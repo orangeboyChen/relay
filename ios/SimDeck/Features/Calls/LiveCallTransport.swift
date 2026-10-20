@@ -40,7 +40,7 @@ final class InstallationCommandSigner {
 }
 
 @MainActor
-final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHandling {
+final class LiveCallTransport: CallTransport, CallLineRouting {
     private static let callLeaseSeconds = 30
     private static let logger = Logger(
         subsystem: "com.nowcent.simdeck",
@@ -68,10 +68,8 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
     private var activeAudioSession: AVAudioSession?
     private var eventCursor: Int64 = 0
     private var eventTask: Task<Void, Never>?
-    private var eventGeneration: UUID?
     private var callLeaseTasks: [UUID: Task<Void, Never>] = [:]
     private var activeEventStream: (any EncryptedEventStream)?
-    private var networkIsAvailable = true
     private var lineRoutes: [UUID: DeviceLineIdentity] = [:]
 
     init(
@@ -114,18 +112,6 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
 
     func setEventHandler(_ handler: @escaping @MainActor (CallTransportEvent) -> Void) {
         eventHandler = handler
-    }
-
-    func networkPathDidChange(isAvailable: Bool) {
-        networkIsAvailable = isAvailable
-        eventGeneration = nil
-        activeEventStream?.close()
-        activeEventStream = nil
-        eventTask?.cancel()
-        eventTask = nil
-        if isAvailable, automaticallyPollEvents, !callEvents.isEmpty {
-            startEventLoopIfNeeded()
-        }
     }
 
     func updateLineRoutes(_ lines: [DeviceLineIdentity]) {
@@ -312,7 +298,6 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
 
     func reset() async {
         let remoteCalls = callLines.map { (callID: $0.key, lineID: $0.value) }
-        eventGeneration = nil
         eventTask?.cancel()
         eventTask = nil
         activeEventStream?.close()
@@ -490,61 +475,42 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
     }
 
     private func startEventLoopIfNeeded() {
-        guard networkIsAvailable else { return }
         guard eventTask == nil else { return }
-        let generation = UUID()
-        eventGeneration = generation
         eventTask = Task { [weak self] in
-            await self?.runEventLoop(generation: generation)
+            await self?.runEventLoop()
         }
     }
 
-    private func runEventLoop(generation: UUID) async {
-        defer {
-            if eventGeneration == generation {
-                activeEventStream?.close()
-                activeEventStream = nil
-                eventGeneration = nil
-                eventTask = nil
-            }
-        }
+    private func runEventLoop() async {
         var consecutiveFailures = 0
-        while !callEvents.isEmpty && eventGeneration == generation && !Task.isCancelled {
+        while !callEvents.isEmpty && !Task.isCancelled {
             do {
                 if let eventStreamOpener {
                     let stream = try await eventStreamOpener.openEncryptedEventStream(
                         afterSequence: eventCursor
                     )
-                    guard eventGeneration == generation, !Task.isCancelled else {
-                        stream.close()
-                        return
-                    }
                     activeEventStream = stream
-                    while !callEvents.isEmpty && eventGeneration == generation && !Task.isCancelled {
+                    while !callEvents.isEmpty && !Task.isCancelled {
                         let page = try await stream.receive()
-                        guard eventGeneration == generation, !Task.isCancelled else { return }
                         for envelope in page.events {
                             process(envelope)
                         }
                         try await stream.acknowledge(sequence: page.nextSequence)
-                        guard eventGeneration == generation, !Task.isCancelled else { return }
                         eventCursor = max(eventCursor, page.nextSequence)
                         consecutiveFailures = 0
                     }
                     stream.close()
-                    if activeEventStream === stream {
-                        activeEventStream = nil
-                    }
+                    activeEventStream = nil
                 } else {
                     try await synchronizeEvents()
-                    guard eventGeneration == generation, !Task.isCancelled else { return }
                     consecutiveFailures = 0
                     try await waitBeforePollingAgain()
                 }
             } catch is CancellationError {
+                activeEventStream?.close()
+                activeEventStream = nil
                 return
             } catch {
-                guard eventGeneration == generation, !Task.isCancelled else { return }
                 activeEventStream?.close()
                 activeEventStream = nil
                 consecutiveFailures += 1
@@ -559,6 +525,9 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
                 }
             }
         }
+        activeEventStream?.close()
+        activeEventStream = nil
+        eventTask = nil
     }
 
     private func process(_ envelope: EncryptedEventEnvelope) {
@@ -641,7 +610,6 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
 
     private func stopEventLoopIfIdle() {
         guard callEvents.isEmpty else { return }
-        eventGeneration = nil
         activeEventStream?.close()
         activeEventStream = nil
         eventTask?.cancel()

@@ -103,7 +103,6 @@ struct SimDeckApp: App {
                         await model.refreshMessages()
                     }
                     guard shouldStartLiveServices else { return }
-                    model.startNetworkPathObservation()
                     model.bootstrapInstallation()
                     model.startVoIPPushes()
                     await model.refreshDevices()

@@ -1,15 +1,6 @@
 {
-  "originHash" : "bef719f2e9090eb78bdecbabce5d3d1f50c3e22bfd8f2b9ffaa422715e26576a",
+  "originHash" : "7ca243407a3b132834ec3b117a3aea85a8f743151ef868a872c8bbf8082921f6",
   "pins" : [
-    {
-      "identity" : "mars-rs",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/orangeboyChen/mars-rs.git",
-      "state" : {
-        "revision" : "7b07ce593c50504944d26a2de078eeca0f7a6d52",
-        "version" : "0.1.0-alpha.4"
-      }
-    },
     {
       "identity" : "webrtc",
       "kind" : "remoteSourceControl",

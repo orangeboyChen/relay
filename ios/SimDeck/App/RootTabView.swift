@@ -114,8 +114,8 @@ struct RootTabView: View {
                 retryAction: { messageID in
                     try await model.retryMessage(id: messageID)
                 },
-                deleteAction: { messageID in
-                    try model.deleteMessage(id: messageID)
+                deleteAction: { messageIDs in
+                    try model.deleteMessages(ids: messageIDs)
                 },
                 markReadAction: { conversationID in
                     model.markConversationRead(conversationID)

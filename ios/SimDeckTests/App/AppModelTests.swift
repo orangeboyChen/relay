@@ -234,6 +234,43 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRevokingCurrentSessionDeletesEncryptedLocalHistory() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let messageURL = directory.appending(path: "messages.bin")
+        let callURL = directory.appending(path: "calls.bin")
+        let messageStore = EncryptedMessageHistoryStore(fileURL: messageURL)
+        let callStore = EncryptedCallHistoryStore(fileURL: callURL)
+        let vaultKey = VaultKey.random()
+        try messageStore.save([], using: vaultKey)
+        try callStore.save([Self.callRecord()], using: vaultKey)
+        let defaults = UserDefaults(suiteName: "AppModelRevokeTests.\(UUID().uuidString)")!
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let connection = ServerConnectionManager(
+            network: AppModelLogoutNetwork(),
+            sessionStore: AppModelSessionStore(value: Self.activeSession),
+            defaults: defaults
+        )
+        let model = AppModel(
+            callHistory: .loaded([Self.callRecord()]),
+            messages: .loaded([]),
+            serverConnection: connection,
+            messageHistoryStore: messageStore,
+            callHistoryStore: callStore,
+            remoteDeviceRefreshEnabled: false
+        )
+
+        try await model.revokeCurrentSession()
+
+        XCTAssertEqual(model.messages, .loaded([]))
+        XCTAssertEqual(model.callHistory, .loaded([]))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: messageURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: callURL.path))
+        XCTAssertFalse(connection.isSignedIn)
+    }
+
+    @MainActor
     func testSavesEncryptedDeviceMetadataAndReloadsProfile() async throws {
         let deviceID = UUID(uuidString: "01900000-0000-7000-8000-000000000008")!
         let identity = InstallationIdentity.generate()
@@ -465,6 +502,22 @@ private final class AppModelServerNetwork: ServerNetworking {
             headerFields: nil
         )!
         return (body, response)
+    }
+}
+
+private final class AppModelLogoutNetwork: ServerNetworking {
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.url?.path, "/v1/auth/logout")
+        return (
+            Data(),
+            HTTPURLResponse(
+                url: request.url!,
+                statusCode: 204,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+        )
     }
 }
 

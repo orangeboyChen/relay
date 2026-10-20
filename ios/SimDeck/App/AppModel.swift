@@ -584,6 +584,7 @@ final class AppModel {
         messages = .loaded([])
         callHistory = .loaded([])
         installationTrust = nil
+        try deleteEncryptedHistory()
     }
 
     func clearLocalMessageCache() throws {
@@ -740,6 +741,25 @@ final class AppModel {
             Self.logger.error("Restoring encrypted call history failed: \(String(reflecting: error), privacy: .public)")
         }
         reconcileLineHistory(using: devices)
+    }
+
+    private func deleteEncryptedHistory() throws {
+        var deletionError: Error?
+        do {
+            try messageHistoryStore.delete()
+        } catch {
+            deletionError = error
+            Self.logger.error("Deleting encrypted message history failed: \(String(reflecting: error), privacy: .public)")
+        }
+        do {
+            try callHistoryStore.delete()
+        } catch {
+            deletionError = deletionError ?? error
+            Self.logger.error("Deleting encrypted call history failed: \(String(reflecting: error), privacy: .public)")
+        }
+        if let deletionError {
+            throw deletionError
+        }
     }
 
     private func upsertOutgoingMessage(

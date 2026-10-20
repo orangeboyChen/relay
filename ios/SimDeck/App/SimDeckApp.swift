@@ -59,6 +59,10 @@ struct SimDeckApp: App {
 
     init() {
 #if DEBUG
+        let liveServicesEnabled = LiveServiceLaunchPolicy.shouldStart(
+            arguments: ProcessInfo.processInfo.arguments,
+            environment: ProcessInfo.processInfo.environment
+        )
         if ProcessInfo.processInfo.arguments.contains("--preview-onboarding") {
             _model = State(initialValue: .preview(onboardingCompleted: false))
             shouldStartLiveServices = false
@@ -70,7 +74,7 @@ struct SimDeckApp: App {
             shouldStartLiveServices = false
         } else {
             _model = State(initialValue: AppModel())
-            shouldStartLiveServices = true
+            shouldStartLiveServices = liveServicesEnabled
         }
 #else
         _model = State(initialValue: AppModel())
@@ -105,5 +109,18 @@ struct SimDeckApp: App {
                     }
                 }
         }
+    }
+}
+
+enum LiveServiceLaunchPolicy {
+    private static let previewArguments: Set<String> = [
+        "--preview-onboarding",
+        "--preview-profile",
+        "--preview-fixtures",
+    ]
+
+    static func shouldStart(arguments: [String], environment: [String: String]) -> Bool {
+        guard environment["XCTestConfigurationFilePath"] == nil else { return false }
+        return previewArguments.isDisjoint(with: arguments)
     }
 }

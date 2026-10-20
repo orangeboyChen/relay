@@ -148,11 +148,10 @@ var _ = Describe("Incoming call runtime", func() {
 
 	It("clears the active context when the cellular call ends", func() {
 		Expect(runtime.process(context.Background(), call.Snapshot{State: call.StateRinging, IncomingNumber: "13500000000"})).To(Succeed())
-		callID := runtime.activeCallID
 
 		Expect(runtime.process(context.Background(), call.Snapshot{State: call.StateEnded})).To(Succeed())
 
-		Expect(events.unregistered).To(Equal([]string{callID}))
+		Expect(events.unregistered).To(BeEmpty())
 		Expect(runtime.activeCallID).To(BeEmpty())
 	})
 

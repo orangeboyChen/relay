@@ -21,7 +21,6 @@ type Remote interface {
 // EventRegistrar binds later modem transitions to the generated call secret.
 type EventRegistrar interface {
 	RegisterIncoming(string, []byte) error
-	Unregister(string)
 }
 
 // CallRejecter rejects a ringing or waiting cellular call.
@@ -98,10 +97,7 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 func (runtime *Runtime) acceptSnapshot(snapshot call.Snapshot) {
 	if snapshot.State == call.StateEnded {
 		runtime.pending = nil
-		if runtime.activeCallID != "" {
-			runtime.events.Unregister(runtime.activeCallID)
-			runtime.activeCallID = ""
-		}
+		runtime.activeCallID = ""
 		return
 	}
 	if runtime.activeCallID != "" || runtime.pending != nil ||
@@ -151,10 +147,7 @@ func (runtime *Runtime) deliverPending(ctx context.Context) error {
 
 func (runtime *Runtime) process(ctx context.Context, snapshot call.Snapshot) error {
 	if snapshot.State == call.StateEnded {
-		if runtime.activeCallID != "" {
-			runtime.events.Unregister(runtime.activeCallID)
-			runtime.activeCallID = ""
-		}
+		runtime.activeCallID = ""
 		return nil
 	}
 	if runtime.activeCallID != "" ||

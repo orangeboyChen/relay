@@ -20,29 +20,21 @@ struct LinePicker: View {
                     }
                 }
             } label: {
-                HStack(spacing: 8) {
-                    SIMBadge(line: selectedLine)
-                    Text(selectedLine.displayName)
-                        .font(.subheadline)
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                    Image(systemName: "chevron.down")
-                        .font(.caption.weight(.semibold))
+                HStack(spacing: 4) {
+                    SIMBadge(line: selectedLine, size: 22)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2.weight(.semibold))
                         .foregroundStyle(.tertiary)
                 }
-                .padding(.horizontal, 12)
-                .frame(minHeight: 36)
-                .glassEffect(.regular.interactive(), in: Capsule())
-                .contentShape(Capsule())
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(.rect)
             }
-            .buttonStyle(.plain)
-            .frame(minHeight: 44)
             .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         } else if lines.isEmpty {
-            Label("No online SIM", systemImage: "simcard")
+            Image(systemName: "simcard")
                 .foregroundStyle(.secondary)
-                .frame(minHeight: 44)
+                .frame(width: 44, height: 44)
+                .accessibilityLabel("No online SIM")
         } else {
             Menu {
                 ForEach(lines) { line in
@@ -53,15 +45,12 @@ struct LinePicker: View {
                     }
                 }
             } label: {
-                Label("Select SIM", systemImage: "simcard")
+                Image(systemName: "simcard")
                     .foregroundStyle(.primary)
-                    .padding(.horizontal, 12)
-                    .frame(minHeight: 36)
-                    .glassEffect(.regular.interactive(), in: Capsule())
-                    .contentShape(Capsule())
+                    .frame(width: 44, height: 44)
+                    .contentShape(.rect)
+                    .accessibilityLabel("Select SIM")
             }
-            .buttonStyle(.plain)
-            .frame(minHeight: 44)
         }
     }
 }

@@ -161,7 +161,7 @@ struct DialerScreen: View {
             }
             .font(.subheadline)
             .padding(.horizontal, 12)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
     }
 

@@ -20,6 +20,26 @@
         }
       }
     },
+    "%lld More Results" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "另有 %lld 个结果"
+          }
+        }
+      }
+    },
+    "%lld Selected" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已选择 %lld 项"
+          }
+        }
+      }
+    },
     "%lld bars" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -238,6 +258,16 @@
         }
       }
     },
+    "All" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全部"
+          }
+        }
+      }
+    },
     "All SIMs" : {
       "localizations" : {
         "zh-Hans" : {
@@ -295,6 +325,7 @@
       }
     },
     "Answered" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -452,6 +483,16 @@
         }
       }
     },
+    "Call History" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通话记录"
+          }
+        }
+      }
+    },
     "Call and message through your own SIM devices while your numbers and conversations remain end-to-end encrypted." : {
       "localizations" : {
         "zh-Hans" : {
@@ -464,6 +505,16 @@
     },
     "Call details" : {
 
+    },
+    "Call filter" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通话筛选"
+          }
+        }
+      }
     },
     "Calling…" : {
 
@@ -568,6 +619,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "选择电话号码"
+          }
+        }
+      }
+    },
+    "Choose contact" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择联系人"
           }
         }
       }
@@ -695,6 +756,7 @@
       }
     },
     "Contact" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1133,6 +1195,7 @@
       }
     },
     "Duration" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1176,6 +1239,7 @@
       }
     },
     "Ended" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1259,6 +1323,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "失败"
+          }
+        }
+      }
+    },
+    "Failed Call" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "呼叫失败"
           }
         }
       }
@@ -1387,11 +1461,22 @@
 
     },
     "Incoming" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "呼入"
+          }
+        }
+      }
+    },
+    "Incoming Call" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "来电"
           }
         }
       }
@@ -1713,6 +1798,16 @@
         }
       }
     },
+    "Missed Call" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未接来电"
+          }
+        }
+      }
+    },
     "Mobile Data" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1827,6 +1922,16 @@
         }
       }
     },
+    "No Missed Calls" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有未接来电"
+          }
+        }
+      }
+    },
     "No SIM Cards" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1925,6 +2030,7 @@
 
     },
     "Not available" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1945,6 +2051,7 @@
       }
     },
     "Number" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2074,11 +2181,22 @@
 
     },
     "Outgoing" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "呼出"
+          }
+        }
+      }
+    },
+    "Outgoing Call" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "去电"
           }
         }
       }
@@ -2168,6 +2286,16 @@
         }
       }
     },
+    "Phone" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "电话"
+          }
+        }
+      }
+    },
     "Phone number" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2228,6 +2356,16 @@
         }
       }
     },
+    "Recents" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最近通话"
+          }
+        }
+      }
+    },
     "Recipient" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2252,6 +2390,7 @@
 
     },
     "Rejected" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2261,7 +2400,18 @@
         }
       }
     },
+    "Rejected Call" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已拒接来电"
+          }
+        }
+      }
+    },
     "Remote" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2343,6 +2493,7 @@
       }
     },
     "Result" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2807,6 +2958,7 @@
       }
     },
     "Started" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {

@@ -41,6 +41,14 @@ struct CallAudioRoute: Identifiable, Equatable, Sendable {
         case .external: "hifispeaker.fill"
         }
     }
+
+    var controlSystemImage: String {
+        kind == .receiver ? "speaker.wave.3.fill" : systemImage
+    }
+
+    var isControlSelected: Bool {
+        kind != .receiver
+    }
 }
 
 struct CallAudioPortSnapshot: Equatable, Sendable {

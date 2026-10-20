@@ -304,21 +304,36 @@ private struct CallAudioRouteMenu: View {
 
     var body: some View {
         Menu {
-            ForEach(controller.availableRoutes) { route in
-                Button {
-                    onSelect(route)
-                } label: {
+            Picker(
+                "Audio Output",
+                selection: Binding(
+                    get: { controller.currentRoute.id },
+                    set: { routeID in
+                        guard let route = controller.availableRoutes.first(where: {
+                            $0.id == routeID
+                        }) else { return }
+                        onSelect(route)
+                    }
+                )
+            ) {
+                ForEach(controller.availableRoutes) { route in
                     Label(route.name, systemImage: route.systemImage)
+                        .tag(route.id)
+                        .disabled(!route.isSelectable)
                 }
-                .disabled(!route.isSelectable || route.id == controller.currentRoute.id)
             }
         } label: {
             VStack(spacing: 8) {
-                Image(systemName: controller.currentRoute.systemImage)
+                Image(systemName: controller.currentRoute.controlSystemImage)
                     .font(.system(size: 27, weight: .medium))
                     .frame(width: 72, height: 72)
-                    .foregroundStyle(.black)
-                    .background(.white, in: Circle())
+                    .foregroundStyle(controller.currentRoute.isControlSelected ? .black : .white)
+                    .background(
+                        controller.currentRoute.isControlSelected
+                            ? .white
+                            : .white.opacity(0.16),
+                        in: Circle()
+                    )
                     .contentTransition(
                         reduceMotion ? .identity : .symbolEffect(.replace)
                     )

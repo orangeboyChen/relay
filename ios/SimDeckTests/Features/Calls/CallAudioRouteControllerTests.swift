@@ -24,6 +24,8 @@ final class CallAudioRouteControllerTests: XCTestCase {
         XCTAssertEqual(controller.currentRoute.name, "Alex's AirPods Pro")
         XCTAssertEqual(controller.currentRoute.kind, .airPodsPro)
         XCTAssertEqual(controller.currentRoute.systemImage, "airpodspro")
+        XCTAssertEqual(controller.currentRoute.controlSystemImage, "airpodspro")
+        XCTAssertTrue(controller.currentRoute.isControlSelected)
         XCTAssertEqual(
             controller.availableRoutes.map(\.kind),
             [.receiver, .speaker, .airPodsPro, .airPodsMax]
@@ -45,6 +47,20 @@ final class CallAudioRouteControllerTests: XCTestCase {
         XCTAssertEqual(source.selectedRouteIDs, [SystemCallAudioRouteSource.speakerID])
         XCTAssertEqual(controller.currentRoute.kind, .speaker)
         XCTAssertEqual(controller.currentRoute.systemImage, "speaker.wave.3.fill")
+        XCTAssertTrue(controller.currentRoute.isControlSelected)
+    }
+
+    func testReceiverUsesSpeakerControlIconWithoutSelectedAppearance() {
+        let source = CallAudioRouteSourceFake(
+            outputs: [port("receiver", "iPhone", .builtInReceiver)],
+            inputs: [port("mic", "iPhone Microphone", .builtInMic)]
+        )
+
+        let controller = CallAudioRouteController(source: source)
+
+        XCTAssertEqual(controller.currentRoute.kind, .receiver)
+        XCTAssertEqual(controller.currentRoute.controlSystemImage, "speaker.wave.3.fill")
+        XCTAssertFalse(controller.currentRoute.isControlSelected)
     }
 
     func testMapsSupportedOutputTypesToDistinctSystemIcons() {

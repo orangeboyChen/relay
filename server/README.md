@@ -145,3 +145,12 @@ volume, so restarting the same container does not require another approval.
 The server never needs a modem IP address: the iPhone and modem both connect
 outbound to this control plane, and encrypted media is relayed through the
 configured TURN service.
+
+## License
+
+Copyright (C) 2026 orangeboyChen.
+
+Sim Deck Server is licensed under the GNU Affero General Public License
+version 3 only (`AGPL-3.0-only`). See [LICENSE](LICENSE). If you run a modified
+version for users over a network, Section 13 requires you to offer those users
+the corresponding source code.

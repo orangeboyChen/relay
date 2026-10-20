@@ -14,6 +14,8 @@ struct MessagesScreen: View {
     let deleteAction: (Set<UUID>) throws -> Void
     let markReadAction: (ConversationID) -> Void
     let markUnreadAction: (ConversationID) -> Void
+    let isMutedAction: (ConversationID) -> Bool
+    let setMutedAction: (ConversationID, Bool) -> Void
 
     @State private var searchText = ""
     @State private var selectedLineID: UUID?
@@ -23,6 +25,7 @@ struct MessagesScreen: View {
     @State private var conversationsPendingDeletion: [MessageConversation] = []
     @State private var deleteErrorMessage: String?
     @State private var selectedConversationID: ConversationID?
+    @State private var mutedConversationIDs: Set<ConversationID> = []
 
     init(
         state: MessageListState,
@@ -33,7 +36,9 @@ struct MessagesScreen: View {
         retryAction: @escaping (UUID) async throws -> Void = { _ in },
         deleteAction: @escaping (Set<UUID>) throws -> Void = { _ in },
         markReadAction: @escaping (ConversationID) -> Void = { _ in },
-        markUnreadAction: @escaping (ConversationID) -> Void = { _ in }
+        markUnreadAction: @escaping (ConversationID) -> Void = { _ in },
+        isMutedAction: @escaping (ConversationID) -> Bool = { _ in false },
+        setMutedAction: @escaping (ConversationID, Bool) -> Void = { _, _ in }
     ) {
         self.state = state
         self.lines = lines
@@ -44,6 +49,8 @@ struct MessagesScreen: View {
         self.deleteAction = deleteAction
         self.markReadAction = markReadAction
         self.markUnreadAction = markUnreadAction
+        self.isMutedAction = isMutedAction
+        self.setMutedAction = setMutedAction
     }
 
     var body: some View {
@@ -72,6 +79,7 @@ struct MessagesScreen: View {
         .environment(\.editMode, $editMode)
         .task {
             await refreshAction()
+            synchronizeMutedConversations()
         }
         .refreshable {
             await refreshAction()
@@ -188,7 +196,8 @@ struct MessagesScreen: View {
         if editMode.isEditing {
             ConversationRow(
                 conversation: conversation,
-                linePresentation: conversation.linePresentation(in: lines)
+                linePresentation: conversation.linePresentation(in: lines),
+                isMuted: mutedConversationIDs.contains(conversation.id)
             )
             .contentShape(.rect)
         } else {
@@ -197,7 +206,8 @@ struct MessagesScreen: View {
             } label: {
                 ConversationRow(
                     conversation: conversation,
-                    linePresentation: conversation.linePresentation(in: lines)
+                    linePresentation: conversation.linePresentation(in: lines),
+                    isMuted: mutedConversationIDs.contains(conversation.id)
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(.rect)
@@ -226,6 +236,17 @@ struct MessagesScreen: View {
                 } label: {
                     Label("Delete", systemImage: "trash")
                 }
+
+                let isMuted = mutedConversationIDs.contains(conversation.id)
+                Button {
+                    setConversationMuted(!isMuted, id: conversation.id)
+                } label: {
+                    Label(
+                        isMuted ? "Show Alerts" : "Hide Alerts",
+                        systemImage: isMuted ? "bell.fill" : "bell.slash.fill"
+                    )
+                }
+                .tint(.purple)
             }
         }
     }
@@ -260,6 +281,25 @@ struct MessagesScreen: View {
                 }
             }
         )
+    }
+
+    private func synchronizeMutedConversations() {
+        guard case .loaded(let conversations) = state else {
+            mutedConversationIDs = []
+            return
+        }
+        mutedConversationIDs = Set(
+            conversations.lazy.filter { isMutedAction($0.id) }.map(\.id)
+        )
+    }
+
+    private func setConversationMuted(_ isMuted: Bool, id: ConversationID) {
+        setMutedAction(id, isMuted)
+        if isMuted {
+            mutedConversationIDs.insert(id)
+        } else {
+            mutedConversationIDs.remove(id)
+        }
     }
 
     private var deletionConfirmationIsPresented: Binding<Bool> {

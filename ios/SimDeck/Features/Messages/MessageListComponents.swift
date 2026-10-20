@@ -73,6 +73,7 @@ struct SIMFilterMenu: View {
 struct ConversationRow: View {
     let conversation: MessageConversation
     let linePresentation: LineHistoryPresentation
+    var isMuted = false
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -124,6 +125,13 @@ struct ConversationRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
+            }
+
+            if isMuted {
+                Image(systemName: "bell.slash.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Alerts hidden")
             }
         }
     }

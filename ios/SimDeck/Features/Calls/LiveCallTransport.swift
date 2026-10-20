@@ -40,7 +40,7 @@ final class InstallationCommandSigner {
 }
 
 @MainActor
-final class LiveCallTransport: CallTransport, CallLineRouting {
+final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHandling {
     private static let callLeaseSeconds = 30
     private static let logger = Logger(
         subsystem: "com.nowcent.simdeck",
@@ -70,6 +70,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
     private var eventTask: Task<Void, Never>?
     private var callLeaseTasks: [UUID: Task<Void, Never>] = [:]
     private var activeEventStream: (any EncryptedEventStream)?
+    private var networkIsAvailable = true
     private var lineRoutes: [UUID: DeviceLineIdentity] = [:]
 
     init(
@@ -112,6 +113,17 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
 
     func setEventHandler(_ handler: @escaping @MainActor (CallTransportEvent) -> Void) {
         eventHandler = handler
+    }
+
+    func networkPathDidChange(isAvailable: Bool) {
+        networkIsAvailable = isAvailable
+        activeEventStream?.close()
+        activeEventStream = nil
+        eventTask?.cancel()
+        eventTask = nil
+        if isAvailable, automaticallyPollEvents, !callEvents.isEmpty {
+            startEventLoopIfNeeded()
+        }
     }
 
     func updateLineRoutes(_ lines: [DeviceLineIdentity]) {
@@ -475,6 +487,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
     }
 
     private func startEventLoopIfNeeded() {
+        guard networkIsAvailable else { return }
         guard eventTask == nil else { return }
         eventTask = Task { [weak self] in
             await self?.runEventLoop()

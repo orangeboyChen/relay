@@ -63,6 +63,11 @@ protocol CallLineRouting: AnyObject {
     func deviceID(for lineID: UUID) -> UUID
 }
 
+@MainActor
+protocol CallNetworkPathHandling: AnyObject {
+    func networkPathDidChange(isAvailable: Bool)
+}
+
 enum CallTransportError: LocalizedError {
     case notConfigured
 

@@ -340,6 +340,7 @@ final class AppModel {
         guard networkPathObserver == nil else { return }
         let observer = NetworkPathObserver { [weak self] isAvailable in
             self?.messageEventMonitor?.networkPathDidChange(isAvailable: isAvailable)
+            self?.callCoordinator.networkPathDidChange(isAvailable: isAvailable)
         }
         networkPathObserver = observer
         observer.start()

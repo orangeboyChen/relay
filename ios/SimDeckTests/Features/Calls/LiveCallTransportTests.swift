@@ -541,6 +541,49 @@ final class LiveCallTransportTests: XCTestCase {
         }
     }
 
+    func testNetworkSwitchReopensCallEventsWithoutEndingTheCall() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let media = CallMediaSessionFake()
+        let firstOpened = expectation(description: "first call event stream opened")
+        let secondOpened = expectation(description: "call event stream reopened")
+        let first = BlockingEncryptedEventStream()
+        let second = BlockingEncryptedEventStream()
+        var openCount = 0
+        let opener = RecordingEncryptedEventStreamOpener { _ in
+            openCount += 1
+            if openCount == 1 {
+                firstOpened.fulfill()
+                return first
+            }
+            secondOpened.fulfill()
+            return second
+        }
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: api.commandSigner,
+            makeMediaSession: { media },
+            automaticallyRenewCallLease: false,
+            eventStreamOpener: opener
+        )
+        var events: [CallTransportEvent] = []
+        transport.setEventHandler { events.append($0) }
+
+        try await transport.startOutgoingCall(callID: callID, number: "10086", lineID: deviceID)
+        await fulfillment(of: [firstOpened], timeout: 1)
+        transport.networkPathDidChange(isAvailable: false)
+        XCTAssertTrue(first.isClosed)
+        XCTAssertTrue(events.isEmpty)
+        XCTAssertFalse(media.isClosed)
+        XCTAssertEqual(opener.requestedCursors, [0])
+
+        transport.networkPathDidChange(isAvailable: true)
+        await fulfillment(of: [secondOpened], timeout: 1)
+        XCTAssertEqual(opener.requestedCursors, [0, 0])
+        XCTAssertTrue(events.isEmpty)
+        XCTAssertFalse(media.isClosed)
+        await transport.reset()
+    }
+
     func testTamperedOrWrongCallEventsAreNotAccepted() async throws {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
         let transport = LiveCallTransport(
@@ -744,6 +787,22 @@ private final class RecordingEncryptedEventStream: EncryptedEventStream {
     func acknowledge(sequence: Int64) async throws {
         acknowledgedSequences.append(sequence)
     }
+
+    func close() {
+        isClosed = true
+    }
+}
+
+@MainActor
+private final class BlockingEncryptedEventStream: EncryptedEventStream {
+    private(set) var isClosed = false
+
+    func receive() async throws -> EncryptedEventPage {
+        try await Task.sleep(for: .seconds(60))
+        throw CancellationError()
+    }
+
+    func acknowledge(sequence: Int64) async throws {}
 
     func close() {
         isClosed = true

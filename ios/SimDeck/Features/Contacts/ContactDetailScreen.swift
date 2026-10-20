@@ -15,28 +15,33 @@ struct ContactDetailScreen: View {
     @State private var messageRecipient: ContactPhoneNumber?
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 18) {
-                contactHeader
-                communicationActions
+        ZStack {
+            ContactDetailBackdrop()
+                .ignoresSafeArea()
 
-                if !contact.phoneNumbers.isEmpty {
-                    phoneNumbersCard
-                }
+            ScrollView {
+                VStack(spacing: 18) {
+                    contactHeader
+                    communicationActions
 
-                if !contact.organizationName.isEmpty,
-                   contact.organizationName != contact.displayName {
-                    informationCard
+                    if !contact.phoneNumbers.isEmpty {
+                        phoneNumbersCard
+                    }
+
+                    if !contact.organizationName.isEmpty,
+                       contact.organizationName != contact.displayName {
+                        informationCard
+                    }
                 }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 120)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 20)
-            .padding(.bottom, 32)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(uiColor: .systemGroupedBackground))
-        .navigationTitle(contact.displayName)
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .confirmationDialog(
             "Choose a phone number",
             isPresented: Binding(
@@ -65,10 +70,29 @@ struct ContactDetailScreen: View {
     }
 
     private var contactHeader: some View {
-        VStack(spacing: 12) {
-            ContactAvatar(contact: contact, size: 128)
+        VStack(spacing: 10) {
+            ContactAvatar(contact: contact, size: 240)
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay {
+                    Circle()
+                        .stroke(.white.opacity(0.24), lineWidth: 1)
+                }
+                .shadow(color: .black.opacity(0.08), radius: 20, y: 10)
 
             VStack(spacing: 4) {
+                if let defaultLine {
+                    HStack(spacing: 6) {
+                        Text("Default:")
+                        SIMBadge(line: defaultLine, size: 16)
+                        Text(defaultLine.displayName)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .accessibilityElement(children: .combine)
+                }
+
                 Text(contact.displayName)
                     .font(.title.bold())
                     .multilineTextAlignment(.center)
@@ -82,47 +106,67 @@ struct ContactDetailScreen: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 24)
+        .padding(.top, 18)
     }
 
     private var communicationActions: some View {
-        HStack(spacing: 18) {
-            ContactActionButton(title: "Message", systemImage: "message.fill") {
+        HStack(spacing: 12) {
+            ContactActionButton(
+                title: "Message",
+                systemImage: "message.fill",
+                isEnabled: !contact.phoneNumbers.isEmpty
+            ) {
                 choosePhoneNumber(for: .message)
             }
-            ContactActionButton(title: "Call", systemImage: "phone.fill") {
+            ContactActionButton(
+                title: "Call",
+                systemImage: "phone.fill",
+                isEnabled: !contact.phoneNumbers.isEmpty
+            ) {
                 choosePhoneNumber(for: .call)
             }
+            ContactActionButton(title: "Video", systemImage: "video.fill", isEnabled: false) {}
+            ContactActionButton(title: "Mail", systemImage: "envelope.fill", isEnabled: false) {}
         }
         .frame(maxWidth: .infinity)
-        .disabled(contact.phoneNumbers.isEmpty)
     }
 
     private var phoneNumbersCard: some View {
         VStack(spacing: 0) {
             ForEach(Array(contact.phoneNumbers.enumerated()), id: \.element.id) { index, phoneNumber in
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(phoneNumber.label)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Text(phoneNumber.displayValue)
-                            .font(.body)
-                            .foregroundStyle(.primary)
-                            .textSelection(.enabled)
+                Button {
+                    Task {
+                        await callAction(phoneNumber.value)
                     }
+                } label: {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(phoneNumber.label)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Text(phoneNumber.displayValue)
+                                .font(.body)
+                                .foregroundStyle(.primary)
+                        }
 
-                    Spacer(minLength: 8)
+                        Spacer(minLength: 8)
 
+                        Image(systemName: "phone.fill")
+                            .foregroundStyle(.tint)
+                            .frame(width: 44, height: 44)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Call \(phoneNumber.displayValue) with Sim Deck")
+                .contextMenu {
                     Button {
                         Task {
                             await callAction(phoneNumber.value)
                         }
                     } label: {
-                        Image(systemName: "phone.fill")
-                            .frame(width: 44, height: 44)
+                        Label("Call", systemImage: "phone.fill")
                     }
-                    .accessibilityLabel("Call \(phoneNumber.displayValue) with Sim Deck")
                 }
                 .padding(.leading, 16)
                 .padding(.trailing, 8)
@@ -134,7 +178,7 @@ struct ContactDetailScreen: View {
                 }
             }
         }
-        .background(.background, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
     }
 
     private var informationCard: some View {
@@ -147,7 +191,15 @@ struct ContactDetailScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(.background, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+    }
+
+    private var defaultLine: DeviceLineIdentity? {
+        if let defaultMessageLineID,
+           let line = lines.first(where: { $0.id == defaultMessageLineID }) {
+            return line
+        }
+        return lines.first(where: \.isOnline) ?? lines.first
     }
 
     private var preferredMessageLineID: UUID? {
@@ -193,6 +245,7 @@ private enum ContactCommunicationAction {
 private struct ContactActionButton: View {
     let title: LocalizedStringKey
     let systemImage: String
+    var isEnabled = true
     let action: () -> Void
 
     var body: some View {
@@ -200,15 +253,32 @@ private struct ContactActionButton: View {
             VStack(spacing: 6) {
                 Image(systemName: systemImage)
                     .font(.title2)
-                    .foregroundStyle(.tint)
-                    .frame(width: 64, height: 64)
+                    .foregroundStyle(isEnabled ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                    .frame(width: 58, height: 58)
                     .glassEffect(.regular.interactive(), in: Circle())
                 Text(title)
                     .font(.caption)
             }
-            .frame(minWidth: 82)
+            .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.48)
+    }
+}
+
+private struct ContactDetailBackdrop: View {
+    var body: some View {
+        LinearGradient(
+            colors: [
+                Color.blue.opacity(0.42),
+                Color.indigo.opacity(0.34),
+                Color(uiColor: .systemGroupedBackground).opacity(0.94),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .overlay(.ultraThinMaterial.opacity(0.28))
     }
 }
 

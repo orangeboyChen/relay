@@ -150,6 +150,9 @@ configured TURN service.
 
 Copyright (C) 2026 orangeboyChen.
 
+For the project's statement about independently modified versions, warranty,
+and liability, see [Legal notice](LEGAL.md).
+
 Sim Deck Server is licensed under the GNU Affero General Public License
 version 3 only (`AGPL-3.0-only`). See [LICENSE](LICENSE). If you run a modified
 version for users over a network, Section 13 requires you to offer those users

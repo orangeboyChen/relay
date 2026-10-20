@@ -160,7 +160,7 @@ struct MessagesScreen: View {
                         conversationRow(conversation)
                             .tag(conversation.id)
                             .listRowInsets(
-                                EdgeInsets(top: 0, leading: 26, bottom: 0, trailing: 8)
+                                EdgeInsets(top: 0, leading: 26, bottom: 0, trailing: 16)
                             )
                             .alignmentGuide(.listRowSeparatorLeading) { dimensions in
                                 dimensions[.leading] + 58
@@ -251,7 +251,7 @@ struct MessagesScreen: View {
                 } label: {
                     Image(systemName: isMuted ? "bell.fill" : "bell.slash.fill")
                 }
-                .tint(.purple)
+                .tint(.indigo)
                 .accessibilityLabel(isMuted ? "Show Alerts" : "Hide Alerts")
             }
         }

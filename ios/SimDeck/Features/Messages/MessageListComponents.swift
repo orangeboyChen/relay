@@ -26,13 +26,13 @@ struct MessageListBottomBar: View {
                     .accessibilityHidden(true)
             }
             .padding(.horizontal, 14)
-            .frame(height: 44)
+            .frame(height: 50)
             .glassEffect(.regular, in: Capsule())
 
             Button(action: composeAction) {
                 Image(systemName: "square.and.pencil")
                     .font(.system(size: 20, weight: .medium))
-                    .frame(width: 44, height: 44)
+                    .frame(width: 48, height: 48)
             }
             .buttonStyle(.glass)
             .buttonBorderShape(.circle)
@@ -40,8 +40,9 @@ struct MessageListBottomBar: View {
             .accessibilityLabel("New Message")
             .accessibilityHint(canCompose ? Text("") : Text("An online SIM is required."))
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 8)
+        .padding(.leading, 28)
+        .padding(.trailing, 15)
+        .padding(.vertical, 6)
     }
 }
 
@@ -76,7 +77,12 @@ struct SIMFilterMenu: View {
             }
         } label: {
             Label("Filter by SIM", systemImage: "line.3.horizontal")
+                .labelStyle(.iconOnly)
+                .frame(width: 44, height: 44)
+                .contentShape(.rect)
         }
+        .frame(width: 44, height: 44)
+        .contentShape(.rect)
     }
 }
 
@@ -107,7 +113,7 @@ struct ConversationRow: View {
         .padding(.vertical, 15)
         .overlay(alignment: .leading) {
             unreadIndicator
-                .offset(x: -14)
+                .offset(x: -18)
         }
         .accessibilityElement(children: .combine)
     }
@@ -117,7 +123,7 @@ struct ConversationRow: View {
         if conversation.unreadCount > 0 {
             Circle()
                 .fill(.blue)
-                .frame(width: 8, height: 8)
+                .frame(width: 10, height: 10)
                 .accessibilityLabel("\(conversation.unreadCount) unread messages")
         }
     }

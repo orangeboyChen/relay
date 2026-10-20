@@ -185,26 +185,31 @@ private struct ContactSectionIndex: View {
 
     var body: some View {
         GeometryReader { proxy in
-            VStack {
-                Spacer(minLength: 0)
+            let trackHeight = ContactSectionIndexResolver.visibleTrackHeight
+            let centeredTop = max((proxy.size.height - trackHeight) / 2, 0)
+
+            VStack(spacing: 0) {
+                Color.clear
+                    .frame(height: max(centeredTop - 86, 0))
+                    .accessibilityHidden(true)
 
                 VStack(spacing: 0) {
                     ForEach(Array(ContactSectionIndexResolver.titles.enumerated()), id: \.offset) { index, title in
                         Text(title)
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(.tint)
                             .frame(height: ContactSectionIndexResolver.visibleItemHeight)
                             .opacity(activeIndex == nil || activeIndex == index ? 1 : 0.7)
                     }
                 }
-                .frame(width: 44, height: ContactSectionIndexResolver.visibleTrackHeight)
+                .frame(width: 44, height: trackHeight)
                 .contentShape(Rectangle())
                 .highPriorityGesture(
                     DragGesture(minimumDistance: 0, coordinateSpace: .local)
                         .onChanged { value in
                             selectIndex(
                                 for: value.location.y,
-                                height: ContactSectionIndexResolver.visibleTrackHeight
+                                height: trackHeight
                             )
                         }
                         .onEnded { _ in
@@ -214,7 +219,7 @@ private struct ContactSectionIndex: View {
 
                 Spacer(minLength: 0)
             }
-            .frame(width: proxy.size.width, height: proxy.size.height)
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
         }
         .frame(width: 44)
         .accessibilityElement(children: .ignore)

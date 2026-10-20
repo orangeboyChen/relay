@@ -305,8 +305,11 @@ struct DialerDeleteButton: View {
                     .font(.system(size: 24, weight: .regular))
                     .foregroundStyle(.primary)
                     .frame(width: 56, height: 56)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(PressFeedbackButtonStyle())
+            .frame(width: 56, height: 56)
+            .contentShape(Rectangle())
             .accessibilityLabel("Delete digit")
         } else {
             Color.clear

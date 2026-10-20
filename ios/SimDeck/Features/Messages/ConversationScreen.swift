@@ -47,7 +47,7 @@ struct ConversationScreen: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 12) {
+                LazyVStack(spacing: 3) {
                     ForEach(conversation.messages) { message in
                         MessageBubble(
                             message: message,
@@ -86,10 +86,13 @@ struct ConversationScreen: View {
                         .id(message.id)
                     }
                 }
-                .padding()
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
                 .id(selectedID)
                 .transition(.opacity)
             }
+            .scrollDismissesKeyboard(.interactively)
+            .defaultScrollAnchor(.bottom)
             .onChange(of: conversation.messages.count, initial: true) {
                 scrollToBottom(using: proxy)
             }

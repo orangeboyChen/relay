@@ -44,7 +44,7 @@ struct ConversationHeader: View {
                     VStack(spacing: 1) {
                         MessageContactAvatar(
                             contactName: conversation.contactName,
-                            diameter: 28
+                            diameter: 42
                         )
                         .overlay(alignment: .bottomTrailing) {
                             SIMBadge(snapshot: linePresentation.snapshot, size: 10)
@@ -54,7 +54,7 @@ struct ConversationHeader: View {
                         contactNameLabel
                             .font(.caption2.weight(.medium))
                     }
-                    .frame(maxWidth: 190)
+                    .frame(maxWidth: 210)
                 }
             }
             .contentShape(.rect)
@@ -146,7 +146,7 @@ struct MessageBubble: View {
                     Spacer(minLength: 48)
                 }
 
-                VStack(alignment: message.direction == .sent ? .trailing : .leading, spacing: 4) {
+                VStack(alignment: message.direction == .sent ? .trailing : .leading, spacing: 2) {
                     bubbleContent
                     messageMetadata
                 }
@@ -233,7 +233,7 @@ struct MessageBubble: View {
     }
 
     private var bubbleContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             if let attachment = message.attachment {
                 Button(action: openAttachment) {
                     MessageImage(attachment: attachment)
@@ -247,8 +247,8 @@ struct MessageBubble: View {
                     .tint(message.direction == .sent ? .white : .blue)
             }
         }
-        .padding(.horizontal, 13)
-        .padding(.vertical, 9)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
         .background(bubbleColor, in: bubbleShape)
         .contentShape(.contextMenuPreview, bubbleShape)
         .contextMenu {

@@ -15,6 +15,7 @@ struct MessageComposer: View {
     let sendAction: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @FocusState private var isTextFieldFocused: Bool
 
     init(
         draft: Binding<String>,
@@ -63,6 +64,7 @@ struct MessageComposer: View {
                 HStack(alignment: .bottom, spacing: 4) {
                     TextField("Text Message", text: $draft, axis: .vertical)
                         .lineLimit(1...5)
+                        .focused($isTextFieldFocused)
                         .padding(.leading, 12)
                         .padding(.vertical, 7)
                         .disabled(!isTextEntryEnabled)
@@ -79,7 +81,7 @@ struct MessageComposer: View {
                 .frame(minHeight: 36)
                 .glassEffect(.regular, in: Capsule())
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 14)
             .padding(.vertical, 5)
         }
         .animation(reduceMotion ? nil : .snappy, value: replyPreview)

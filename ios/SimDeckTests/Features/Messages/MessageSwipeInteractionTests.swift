@@ -46,4 +46,28 @@ final class MessageSwipeInteractionTests: XCTestCase {
             MessageSwipeInteraction.shouldBegin(horizontalVelocity: 40, verticalVelocity: 40)
         )
     }
+
+    func testTimestampRevealIsVisibleOnlyDuringLeftDrag() {
+        var state = MessageTimestampRevealState()
+
+        state.update(horizontal: -72, vertical: 4)
+        XCTAssertEqual(state.offset, -72)
+        XCTAssertEqual(state.progress, 1)
+
+        state.end()
+        XCTAssertEqual(state.offset, 0)
+        XCTAssertEqual(state.progress, 0)
+    }
+
+    func testRightOrVerticalDragDoesNotRevealTimestamps() {
+        var state = MessageTimestampRevealState()
+
+        state.update(horizontal: 72, vertical: 4)
+        XCTAssertEqual(state.offset, 0)
+        XCTAssertEqual(state.progress, 0)
+
+        state.update(horizontal: -20, vertical: 40)
+        XCTAssertEqual(state.offset, 0)
+        XCTAssertEqual(state.progress, 0)
+    }
 }

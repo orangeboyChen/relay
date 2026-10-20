@@ -18,6 +18,7 @@ struct ConversationScreen: View {
     @State private var replyTarget: MessageItem?
     @State private var activeSheet: ConversationSheet?
     @State private var messagePendingDeletion: MessageItem?
+    @State private var timestampRevealState = MessageTimestampRevealState()
     @State private var isSending = false
     @State private var errorMessage: String?
 
@@ -75,7 +76,8 @@ struct ConversationScreen: View {
                             },
                             deleteAction: {
                                 messagePendingDeletion = message
-                            }
+                            },
+                            timestampRevealState: $timestampRevealState
                         )
                         .id(message.id)
                     }
@@ -94,6 +96,7 @@ struct ConversationScreen: View {
                 markReadAction(selectedID)
                 replyTarget = nil
                 messagePendingDeletion = nil
+                timestampRevealState.end()
                 scrollToBottom(using: proxy, animated: true)
             }
         }

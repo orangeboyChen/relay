@@ -24,6 +24,28 @@ enum MessageSwipeInteraction {
     }
 }
 
+struct MessageTimestampRevealState: Equatable {
+    private(set) var offset: CGFloat = 0
+
+    var progress: CGFloat {
+        min(max(-offset / 36, 0), 1)
+    }
+
+    mutating func update(horizontal: CGFloat, vertical: CGFloat) {
+        offset = min(
+            MessageSwipeInteraction.offset(
+                horizontal: horizontal,
+                vertical: vertical
+            ),
+            0
+        )
+    }
+
+    mutating func end() {
+        offset = 0
+    }
+}
+
 struct MessageHorizontalSwipeGesture: UIGestureRecognizerRepresentable {
     let onChanged: @MainActor (CGFloat, CGFloat) -> Void
     let onEnded: @MainActor (CGFloat, CGFloat) -> Void

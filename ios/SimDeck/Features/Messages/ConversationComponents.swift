@@ -92,6 +92,7 @@ struct MessageBubble: View {
     let deleteAction: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Binding private var timestampRevealState: MessageTimestampRevealState
     @State private var horizontalOffset: CGFloat = 0
 
     init(
@@ -105,7 +106,8 @@ struct MessageBubble: View {
         forwardAction: @escaping () -> Void = {},
         detailsAction: @escaping () -> Void = {},
         retryAction: @escaping () -> Void = {},
-        deleteAction: @escaping () -> Void = {}
+        deleteAction: @escaping () -> Void = {},
+        timestampRevealState: Binding<MessageTimestampRevealState> = .constant(.init())
     ) {
         self.message = message
         self.lineSnapshot = lineSnapshot
@@ -118,6 +120,7 @@ struct MessageBubble: View {
         self.detailsAction = detailsAction
         self.retryAction = retryAction
         self.deleteAction = deleteAction
+        _timestampRevealState = timestampRevealState
     }
 
     var body: some View {
@@ -138,16 +141,26 @@ struct MessageBubble: View {
                     Spacer(minLength: 48)
                 }
             }
-            .offset(x: horizontalOffset)
+            .offset(x: messageOffset)
         }
         .contentShape(.rect)
         .gesture(
             MessageHorizontalSwipeGesture(
                 onChanged: { horizontal, vertical in
-                    horizontalOffset = MessageSwipeInteraction.offset(
+                    let proposedOffset = MessageSwipeInteraction.offset(
                         horizontal: horizontal,
                         vertical: vertical
                     )
+                    if proposedOffset < 0 {
+                        horizontalOffset = 0
+                        timestampRevealState.update(
+                            horizontal: horizontal,
+                            vertical: vertical
+                        )
+                    } else {
+                        timestampRevealState.end()
+                        horizontalOffset = proposedOffset
+                    }
                 },
                 onEnded: { horizontal, vertical in
                     let shouldReply = MessageSwipeInteraction.shouldReply(
@@ -156,6 +169,7 @@ struct MessageBubble: View {
                     )
                     withAnimation(reduceMotion ? nil : .snappy) {
                         horizontalOffset = 0
+                        timestampRevealState.end()
                     }
                     if shouldReply {
                         replyAction()
@@ -185,23 +199,23 @@ struct MessageBubble: View {
 
             Text(
                 message.sentAt,
-                format: .dateTime.month(.abbreviated).day().hour().minute()
+                format: .dateTime.hour().minute()
             )
             .font(.caption2)
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
-            .opacity(timestampProgress)
+            .opacity(timestampRevealState.progress)
             .accessibilityHidden(true)
         }
     }
 
-    private var replyProgress: CGFloat {
-        min(max(horizontalOffset / MessageSwipeInteraction.replyThreshold, 0), 1)
+    private var messageOffset: CGFloat {
+        horizontalOffset > 0 ? horizontalOffset : timestampRevealState.offset
     }
 
-    private var timestampProgress: CGFloat {
-        min(max(-horizontalOffset / 36, 0), 1)
+    private var replyProgress: CGFloat {
+        min(max(horizontalOffset / MessageSwipeInteraction.replyThreshold, 0), 1)
     }
 
     private var bubbleContent: some View {
@@ -245,7 +259,6 @@ struct MessageBubble: View {
     private var messageMetadata: some View {
         HStack(spacing: 5) {
             SIMBadge(snapshot: lineSnapshot, size: 14)
-            Text(message.sentAt, format: .dateTime.hour().minute())
             deliveryStatusView
         }
         .font(.caption2)

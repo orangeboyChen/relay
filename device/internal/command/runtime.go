@@ -119,6 +119,7 @@ type CallEventRegistrar interface {
 // CallMedia negotiates and owns encrypted audio for one cellular call.
 type CallMedia interface {
 	Negotiate(context.Context, string, string) (string, error)
+	Renegotiate(context.Context, string, string) (string, error)
 	Stop(string) error
 }
 
@@ -376,6 +377,17 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload, senderInst
 			return executionResult{}, errInvalidCommand
 		}
 		return executionResult{}, nil
+	case "call.media.restart":
+		if strings.TrimSpace(payload.CallID) == "" || strings.TrimSpace(payload.MediaOffer) == "" ||
+			runtime.activeCallLease == nil || runtime.activeCallLease.callID != payload.CallID ||
+			runtime.activeCallLease.senderInstallationID != senderInstallationID {
+			return executionResult{}, errInvalidCommand
+		}
+		answer, err := runtime.media.Renegotiate(ctx, payload.CallID, payload.MediaOffer)
+		if err != nil {
+			return executionResult{}, fmt.Errorf("%w: %v", errMediaUnavailable, err)
+		}
+		return executionResult{mediaAnswer: answer}, nil
 	case "call.reject":
 		if strings.TrimSpace(payload.CallID) == "" {
 			return executionResult{}, errInvalidCommand
@@ -439,7 +451,7 @@ func (runtime *Runtime) updateCallLease(payload Payload, senderInstallationID st
 			callID: payload.CallID, senderInstallationID: senderInstallationID,
 			duration: duration, expiresAt: runtime.now().Add(duration),
 		}
-	case "call.heartbeat", "call.hold", "call.resume", "call.swap", "call.dtmf":
+	case "call.heartbeat", "call.media.restart", "call.hold", "call.resume", "call.swap", "call.dtmf":
 		if runtime.activeCallLease != nil && runtime.activeCallLease.callID == payload.CallID &&
 			runtime.activeCallLease.senderInstallationID == senderInstallationID {
 			runtime.activeCallLease.expiresAt = runtime.now().Add(runtime.activeCallLease.duration)

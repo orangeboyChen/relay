@@ -161,6 +161,7 @@ type fakeCallMedia struct {
 	offer        string
 	answer       string
 	negotiateErr error
+	restarted    bool
 	stopped      []string
 	sequence     *[]string
 }
@@ -203,6 +204,13 @@ func (media *fakeCallMedia) Negotiate(_ context.Context, callID string, offer st
 	if media.sequence != nil {
 		*media.sequence = append(*media.sequence, "negotiate")
 	}
+	return media.answer, media.negotiateErr
+}
+
+func (media *fakeCallMedia) Renegotiate(_ context.Context, callID string, offer string) (string, error) {
+	media.callID = callID
+	media.offer = offer
+	media.restarted = true
 	return media.answer, media.negotiateErr
 }
 
@@ -539,6 +547,46 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(result.Success).To(BeFalse())
 		Expect(result.ErrorCode).To(Equal("invalid_command"))
 		Expect(runtime.activeCallLease.callID).To(Equal("call-1"))
+	})
+
+	It("renegotiates encrypted call media for the active lease", func() {
+		currentTime := time.Date(2026, 10, 20, 6, 0, 0, 0, time.UTC)
+		runtime.now = func() time.Time { return currentTime }
+		runtime.activeCallLease = &callLease{
+			callID: "call-1", senderInstallationID: testInstallationID,
+			duration: defaultCallLease, expiresAt: currentTime.Add(defaultCallLease),
+		}
+		media.answer = "restart-answer"
+		restart, sharedSecret := sealCommand(state, senderKey, commandID, Payload{
+			Version: 1, Operation: "call.media.restart", CallID: "call-1", MediaOffer: "restart-offer",
+		})
+
+		Expect(runtime.process(context.Background(), restart)).To(Succeed())
+
+		result := openResult(sharedSecret, restart, remote.result)
+		Expect(result.Success).To(BeTrue())
+		Expect(result.MediaAnswer).To(Equal("restart-answer"))
+		Expect(media.restarted).To(BeTrue())
+		Expect(media.offer).To(Equal("restart-offer"))
+		Expect(runtime.activeCallLease.expiresAt).To(Equal(currentTime.Add(defaultCallLease)))
+		Expect(calls.operations).To(BeEmpty())
+	})
+
+	It("rejects media restart outside the active encrypted call lease", func() {
+		runtime.activeCallLease = &callLease{
+			callID: "call-1", senderInstallationID: testInstallationID,
+			duration: defaultCallLease, expiresAt: time.Now().Add(defaultCallLease),
+		}
+		restart, sharedSecret := sealCommand(state, senderKey, commandID, Payload{
+			Version: 1, Operation: "call.media.restart", CallID: "call-2", MediaOffer: "restart-offer",
+		})
+
+		Expect(runtime.process(context.Background(), restart)).To(Succeed())
+
+		result := openResult(sharedSecret, restart, remote.result)
+		Expect(result.Success).To(BeFalse())
+		Expect(result.ErrorCode).To(Equal("invalid_command"))
+		Expect(media.restarted).To(BeFalse())
 	})
 
 	It("hangs up and releases media when the active call lease expires", func() {

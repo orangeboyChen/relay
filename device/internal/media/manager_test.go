@@ -36,6 +36,44 @@ var _ = Describe("Call media manager", func() {
 		Expect(endpoint.closeCount).To(Equal(1))
 	})
 
+	It("restarts ICE without reopening or closing the modem audio endpoint", func() {
+		endpoint := &fakeDuplexPCM{}
+		peer := newFakeMediaPeer("initial-answer")
+		manager, err := newManager(
+			func(context.Context) (DuplexPCM, error) { return endpoint, nil },
+			func(io.Reader, io.Writer) (mediaPeer, error) { return peer, nil },
+		)
+		Expect(err).NotTo(HaveOccurred())
+		manager.iceServers = func(context.Context) ([]ICEServer, error) {
+			return []ICEServer{{URLs: []string{"turn:relay.example:55000"}, Username: "fresh", Credential: "secret"}}, nil
+		}
+		_, err = manager.Negotiate(context.Background(), "call-1", "initial-offer")
+		Expect(err).NotTo(HaveOccurred())
+		peer.answer = "restart-answer"
+
+		answer, err := manager.Renegotiate(context.Background(), "call-1", "restart-offer")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(answer).To(Equal("restart-answer"))
+		Expect(peer.restartOffer).To(Equal("restart-offer"))
+		Expect(peer.restartServers).To(Equal([]ICEServer{{URLs: []string{"turn:relay.example:55000"}, Username: "fresh", Credential: "secret"}}))
+		Expect(endpoint.CloseCount()).To(Equal(0))
+		Expect(manager.Stop("call-1")).To(Succeed())
+		Expect(endpoint.CloseCount()).To(Equal(1))
+	})
+
+	It("rejects ICE restart for an unknown call", func() {
+		manager, err := newManager(
+			func(context.Context) (DuplexPCM, error) { return &fakeDuplexPCM{}, nil },
+			func(io.Reader, io.Writer) (mediaPeer, error) { return newFakeMediaPeer("answer"), nil },
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = manager.Renegotiate(context.Background(), "call-1", "restart-offer")
+
+		Expect(err).To(MatchError("call media session does not exist"))
+	})
+
 	It("rejects invalid, duplicate, and post-close negotiations", func() {
 		manager, err := newManager(
 			func(context.Context) (DuplexPCM, error) { return &fakeDuplexPCM{}, nil },
@@ -162,13 +200,15 @@ func (endpoint *fakeDuplexPCM) CloseCount() int {
 }
 
 type fakeMediaPeer struct {
-	answer      string
-	answerError error
-	offer       string
-	errors      chan error
-	closeError  error
-	closeCount  int
-	mu          sync.Mutex
+	answer         string
+	answerError    error
+	offer          string
+	errors         chan error
+	closeError     error
+	closeCount     int
+	restartOffer   string
+	restartServers []ICEServer
+	mu             sync.Mutex
 }
 
 func newFakeMediaPeer(answer string) *fakeMediaPeer {
@@ -177,6 +217,12 @@ func newFakeMediaPeer(answer string) *fakeMediaPeer {
 
 func (peer *fakeMediaPeer) Answer(_ context.Context, offer string) (string, error) {
 	peer.offer = offer
+	return peer.answer, peer.answerError
+}
+
+func (peer *fakeMediaPeer) Restart(_ context.Context, offer string, servers []ICEServer) (string, error) {
+	peer.restartOffer = offer
+	peer.restartServers = servers
 	return peer.answer, peer.answerError
 }
 

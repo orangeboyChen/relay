@@ -36,6 +36,7 @@ type ICEServer struct {
 
 type mediaPeer interface {
 	Answer(context.Context, string) (string, error)
+	Restart(context.Context, string, []ICEServer) (string, error)
 	Errors() <-chan error
 	Close() error
 }
@@ -48,6 +49,7 @@ type activeSession struct {
 	peer      mediaPeer
 	endpoint  DuplexPCM
 	done      chan struct{}
+	negotiate sync.Mutex
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -188,6 +190,41 @@ func (manager *Manager) Negotiate(ctx context.Context, callID string, offer stri
 	manager.sessions[callID] = session
 	manager.mu.Unlock()
 	go manager.monitor(callID, session)
+	return answer, nil
+}
+
+// Renegotiate restarts ICE while preserving the call-scoped modem audio endpoint.
+func (manager *Manager) Renegotiate(ctx context.Context, callID string, offer string) (string, error) {
+	callID = strings.TrimSpace(callID)
+	if callID == "" || strings.TrimSpace(offer) == "" {
+		return "", errors.New("call id and WebRTC offer are required")
+	}
+	manager.mu.Lock()
+	if manager.closed {
+		manager.mu.Unlock()
+		return "", errors.New("media manager is closed")
+	}
+	session := manager.sessions[callID]
+	manager.mu.Unlock()
+	if session == nil {
+		return "", errors.New("call media session does not exist")
+	}
+
+	session.negotiate.Lock()
+	defer session.negotiate.Unlock()
+	select {
+	case <-session.done:
+		return "", errors.New("call media session is closed")
+	default:
+	}
+	servers, err := manager.iceServers(ctx)
+	if err != nil {
+		return "", fmt.Errorf("load WebRTC ICE servers: %w", err)
+	}
+	answer, err := session.peer.Restart(ctx, offer, servers)
+	if err != nil {
+		return "", fmt.Errorf("restart WebRTC media: %w", err)
+	}
 	return answer, nil
 }
 

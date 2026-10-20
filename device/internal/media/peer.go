@@ -16,22 +16,26 @@ import (
 )
 
 const (
-	pcmSampleRate      = 8000
-	pcmFrameDuration   = 20 * time.Millisecond
-	pcmSamplesPerFrame = pcmSampleRate / 50
-	pcmBytesPerFrame   = pcmSamplesPerFrame * 2
+	pcmSampleRate                 = 8000
+	pcmFrameDuration              = 20 * time.Millisecond
+	pcmSamplesPerFrame            = pcmSampleRate / 50
+	pcmBytesPerFrame              = pcmSamplesPerFrame * 2
+	defaultConnectionFailureGrace = 15 * time.Second
 )
 
 // Peer bridges 8 kHz mono signed PCM to a DTLS-SRTP WebRTC audio session.
 type Peer struct {
-	connection *webrtc.PeerConnection
-	track      *webrtc.TrackLocalStaticSample
-	source     io.Reader
-	sink       io.Writer
-	errors     chan error
-	done       chan struct{}
-	startOnce  sync.Once
-	closeOnce  sync.Once
+	connection   *webrtc.PeerConnection
+	track        *webrtc.TrackLocalStaticSample
+	source       io.Reader
+	sink         io.Writer
+	errors       chan error
+	done         chan struct{}
+	startOnce    sync.Once
+	closeOnce    sync.Once
+	stateMu      sync.Mutex
+	failureTimer *time.Timer
+	failureGrace time.Duration
 }
 
 // NewPeer creates one direct WebRTC peer using the mandatory 8 kHz PCMU codec.
@@ -102,12 +106,13 @@ func newPeerWithServers(source io.Reader, sink io.Writer, settings webrtc.Settin
 		return nil, fmt.Errorf("attach outgoing audio track: %w", err)
 	}
 	peer := &Peer{
-		connection: connection,
-		track:      track,
-		source:     source,
-		sink:       sink,
-		errors:     make(chan error, 4),
-		done:       make(chan struct{}),
+		connection:   connection,
+		track:        track,
+		source:       source,
+		sink:         sink,
+		errors:       make(chan error, 4),
+		done:         make(chan struct{}),
+		failureGrace: defaultConnectionFailureGrace,
 	}
 	go peer.readRTCP(sender)
 	connection.OnTrack(peer.receiveTrack)
@@ -143,6 +148,28 @@ func (peer *Peer) Answer(ctx context.Context, offer string) (string, error) {
 	return local.SDP, nil
 }
 
+// Restart refreshes relay credentials and answers an ICE-restart offer without reopening modem audio.
+func (peer *Peer) Restart(ctx context.Context, offer string, iceServers []ICEServer) (string, error) {
+	peer.cancelFailureTimer()
+	configuration := peer.connection.GetConfiguration()
+	configuration.ICEServers = nil
+	for _, server := range iceServers {
+		if len(server.URLs) == 0 || server.Username == "" || server.Credential == "" {
+			return "", errors.New("TURN ICE server credentials are incomplete")
+		}
+		configuration.ICEServers = append(configuration.ICEServers, webrtc.ICEServer{
+			URLs: server.URLs, Username: server.Username, Credential: server.Credential,
+		})
+	}
+	if len(iceServers) > 0 {
+		configuration.ICETransportPolicy = webrtc.ICETransportPolicyRelay
+	}
+	if err := peer.connection.SetConfiguration(configuration); err != nil {
+		return "", fmt.Errorf("refresh WebRTC configuration: %w", err)
+	}
+	return peer.Answer(ctx, offer)
+}
+
 // Errors reports terminal capture, playback, RTP, and RTCP failures.
 func (peer *Peer) Errors() <-chan error {
 	return peer.errors
@@ -152,6 +179,7 @@ func (peer *Peer) Errors() <-chan error {
 func (peer *Peer) Close() error {
 	var closeError error
 	peer.closeOnce.Do(func() {
+		peer.cancelFailureTimer()
 		close(peer.done)
 		closeError = peer.connection.Close()
 	})
@@ -161,13 +189,37 @@ func (peer *Peer) Close() error {
 func (peer *Peer) connectionStateChanged(state webrtc.PeerConnectionState) {
 	switch state {
 	case webrtc.PeerConnectionStateConnected:
+		peer.cancelFailureTimer()
 		peer.startOnce.Do(func() { go peer.capture() })
 	case webrtc.PeerConnectionStateFailed:
-		peer.report(errors.New("WebRTC peer connection failed"))
+		peer.scheduleFailure()
 	case webrtc.PeerConnectionStateClosed:
 		return
 	default:
 		return
+	}
+}
+
+func (peer *Peer) scheduleFailure() {
+	peer.stateMu.Lock()
+	defer peer.stateMu.Unlock()
+	if peer.failureTimer != nil {
+		return
+	}
+	peer.failureTimer = time.AfterFunc(peer.failureGrace, func() {
+		peer.stateMu.Lock()
+		peer.failureTimer = nil
+		peer.stateMu.Unlock()
+		peer.report(errors.New("WebRTC peer connection failed after ICE restart grace period"))
+	})
+}
+
+func (peer *Peer) cancelFailureTimer() {
+	peer.stateMu.Lock()
+	defer peer.stateMu.Unlock()
+	if peer.failureTimer != nil {
+		peer.failureTimer.Stop()
+		peer.failureTimer = nil
 	}
 }
 

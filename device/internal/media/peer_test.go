@@ -106,8 +106,9 @@ var _ = Describe("Pion cellular audio peer", func() {
 		Expect(err).NotTo(HaveOccurred())
 		peer.connectionStateChanged(webrtc.PeerConnectionStateConnected)
 		Eventually(peer.Errors()).Should(Receive(MatchError("capture modem PCM: capture failed")))
+		peer.failureGrace = time.Millisecond
 		peer.connectionStateChanged(webrtc.PeerConnectionStateFailed)
-		Eventually(peer.Errors()).Should(Receive(MatchError("WebRTC peer connection failed")))
+		Eventually(peer.Errors()).Should(Receive(MatchError("WebRTC peer connection failed after ICE restart grace period")))
 		Expect(peer.Close()).To(Succeed())
 		peer.report(errors.New("ignored after close"))
 	})

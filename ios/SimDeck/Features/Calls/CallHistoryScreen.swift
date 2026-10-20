@@ -160,9 +160,18 @@ struct CallHistoryScreen: View {
                     } label: {
                         Label("Delete", systemImage: "trash")
                             .fontWeight(.semibold)
+                            .foregroundStyle(
+                                selectedRecordIDs.isEmpty
+                                    ? AnyShapeStyle(.secondary)
+                                    : AnyShapeStyle(.red)
+                            )
+                            .frame(minHeight: 44)
+                            .padding(.horizontal, 12)
+                            .contentShape(Capsule())
                     }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.capsule)
                     .disabled(selectedRecordIDs.isEmpty)
-                    .frame(minHeight: 44)
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 6)

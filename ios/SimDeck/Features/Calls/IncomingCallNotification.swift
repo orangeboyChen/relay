@@ -72,6 +72,44 @@ struct OpenedIncomingCall: Equatable, Sendable {
     let payload: IncomingCallPayload
 }
 
+enum IncomingCallLineResolver {
+    static func resolve(
+        payload: IncomingCallPayload,
+        lines: [DeviceLineIdentity],
+        cachedDeviceKeys: CachedDeviceKeys?
+    ) -> DeviceLineIdentity? {
+        let matches: [DeviceLineIdentity]
+        if let slotID = payload.slotID {
+            matches = lines.filter { $0.deviceID == payload.deviceUUID && $0.slotID == slotID }
+        } else if let simID = payload.simID {
+            matches = lines.filter { $0.deviceID == payload.deviceUUID && $0.simID == simID }
+        } else {
+            matches = lines.filter { $0.deviceID == payload.deviceUUID }
+        }
+        if matches.count == 1 {
+            return matches[0]
+        }
+
+        guard let lineID = payload.slotID ?? payload.simID,
+              let cachedDeviceKeys,
+              cachedDeviceKeys.commandKey.count == 32 else {
+            return nil
+        }
+        return DeviceLineIdentity(
+            id: lineID,
+            deviceID: payload.deviceUUID,
+            slotID: payload.slotID,
+            simID: payload.simID,
+            numericID: payload.numericID,
+            deviceName: "",
+            lineName: "",
+            phoneNumber: "",
+            isOnline: true,
+            commandPublicKey: cachedDeviceKeys.commandKey
+        )
+    }
+}
+
 enum IncomingCallPushDelivery: Equatable, Sendable {
     case incoming(IncomingCallDelivery)
     case answeredElsewhere(notificationID: UUID)

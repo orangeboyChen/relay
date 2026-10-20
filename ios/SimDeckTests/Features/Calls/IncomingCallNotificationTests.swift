@@ -95,6 +95,69 @@ final class IncomingCallNotificationTests: XCTestCase {
         XCTAssertEqual(payload.simID, simID)
     }
 
+    func testResolvesColdStartLineFromSignedSlotAndCachedDeviceKeys() throws {
+        let deviceID = UUID(uuidString: "01900000-0000-7000-8000-000000000001")!
+        let slotID = UUID(uuidString: "01900000-0000-7000-8000-000000000002")!
+        let simID = UUID(uuidString: "01900000-0000-7000-8000-000000000003")!
+        let payload = try JSONDecoder().decode(
+            IncomingCallPayload.self,
+            from: Data(
+                """
+                {
+                  "version":1,
+                  "call_id":"01020304-0506-4708-890a-0b0c0d0e0f10",
+                  "device_uuid":"\(deviceID.uuidString.lowercased())",
+                  "slot_id":"\(slotID.uuidString.lowercased())",
+                  "sim_id":"\(simID.uuidString.lowercased())",
+                  "numeric_id":2,
+                  "remote_number":"+8613500000000",
+                  "state":"ringing",
+                  "call_secret":"ISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0A=",
+                  "notification_id":"11121314-1516-4718-991a-1b1c1d1e1f20"
+                }
+                """.utf8
+            )
+        )
+        let keys = CachedDeviceKeys(
+            verificationKey: Data(repeating: 1, count: 32),
+            commandKey: Data(repeating: 2, count: 32)
+        )
+
+        let line = try XCTUnwrap(
+            IncomingCallLineResolver.resolve(
+                payload: payload,
+                lines: [],
+                cachedDeviceKeys: keys
+            )
+        )
+
+        XCTAssertEqual(line.id, slotID)
+        XCTAssertEqual(line.deviceID, deviceID)
+        XCTAssertEqual(line.slotID, slotID)
+        XCTAssertEqual(line.simID, simID)
+        XCTAssertEqual(line.numericID, 2)
+        XCTAssertEqual(line.commandPublicKey, keys.commandKey)
+    }
+
+    func testNotificationSharedStateReadsOnlyCompleteCachedDeviceKeys() throws {
+        let suiteName = "IncomingCallNotificationTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let deviceID = UUID()
+        let keys = CachedDeviceKeys(
+            verificationKey: Data(repeating: 1, count: 32),
+            commandKey: Data(repeating: 2, count: 32)
+        )
+
+        NotificationSharedState.cacheDeviceKeys([deviceID: keys], defaults: defaults)
+
+        XCTAssertEqual(
+            NotificationSharedState.deviceKeys(for: deviceID, defaults: defaults)?.verificationKey,
+            keys.verificationKey
+        )
+        XCTAssertNil(NotificationSharedState.deviceKeys(for: UUID(), defaults: defaults))
+    }
+
     func testRejectsDeliveryForAnotherInstallation() {
         var otherIdentity = identity()
         otherIdentity = InstallationIdentity(

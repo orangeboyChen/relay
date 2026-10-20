@@ -1019,27 +1019,49 @@ final class AppModel {
             }
             return
         }
-        let verificationKey = try await serverConnection.eventVerificationKey(
-            deviceID: delivery.deviceUUID
-        )
+        let cachedDeviceKeys = NotificationSharedState.deviceKeys(for: delivery.deviceUUID)
+        let verificationKey = if let cachedDeviceKeys {
+            cachedDeviceKeys.verificationKey
+        } else {
+            try await serverConnection.eventVerificationKey(deviceID: delivery.deviceUUID)
+        }
         let opened = try IncomingCallNotificationCodec.open(
             data,
             installationIdentity: installationIdentity,
             deviceVerificationKey: verificationKey
         )
-        var matchingLines = resolveMatchingLines(for: opened.payload)
-        if matchingLines.count != 1 {
+        Self.logger.info(
+            "Authenticated incoming call push for device \(delivery.deviceUUID.uuidString, privacy: .public)"
+        )
+        var line = IncomingCallLineResolver.resolve(
+            payload: opened.payload,
+            lines: devices,
+            cachedDeviceKeys: cachedDeviceKeys
+        )
+        if line == nil {
             await refreshDevices()
-            matchingLines = resolveMatchingLines(for: opened.payload)
+            line = IncomingCallLineResolver.resolve(
+                payload: opened.payload,
+                lines: devices,
+                cachedDeviceKeys: NotificationSharedState.deviceKeys(
+                    for: delivery.deviceUUID
+                )
+            )
         }
-        guard matchingLines.count == 1 else {
+        guard let line else {
             throw VoIPPushError.invalidPayload
+        }
+        if !devices.contains(where: { $0.id == line.id }) {
+            callCoordinator.updateLineRoutes(devices + [line])
+            Self.logger.info(
+                "Installed cached incoming call route for line \(line.id.uuidString, privacy: .public)"
+            )
         }
         try await callCoordinator.reportIncomingCall(
             IncomingCallPresentation(
                 notificationID: opened.delivery.notificationID,
                 callID: opened.payload.callID,
-                lineID: matchingLines[0].id,
+                lineID: line.id,
                 installationID: installationIdentity.id,
                 numericID: opened.payload.numericID,
                 remoteNumber: opened.payload.remoteNumber,
@@ -1048,16 +1070,6 @@ final class AppModel {
                 deviceVerificationKey: verificationKey
             )
         )
-    }
-
-    private func resolveMatchingLines(for payload: IncomingCallPayload) -> [DeviceLineIdentity] {
-        if let slotID = payload.slotID {
-            return devices.filter { $0.deviceID == payload.deviceUUID && $0.slotID == slotID }
-        }
-        if let simID = payload.simID {
-            return devices.filter { $0.deviceID == payload.deviceUUID && $0.simID == simID }
-        }
-        return devices.filter { $0.deviceID == payload.deviceUUID }
     }
 
     private static var pushEnvironment: PushEnvironment {

@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import PushKit
 
 extension Notification.Name {
@@ -7,6 +8,7 @@ extension Notification.Name {
 
 @MainActor
 final class VoIPPushCoordinator: NSObject {
+    private let logger = Logger(subsystem: "com.nowcent.simdeck", category: "VoIPPushCoordinator")
     private let tokenRegistrar: any PushTokenRegistering
     private let environment: PushEnvironment
     private let incomingPushHandler: @MainActor (Data) async throws -> Void
@@ -42,8 +44,14 @@ final class VoIPPushCoordinator: NSObject {
             }
         }
         Task {
-            try? await setEnabled(NotificationPreferences().incomingCallNotifications)
-            try? await uploadPendingToken()
+            do {
+                try await setEnabled(NotificationPreferences().incomingCallNotifications)
+                try await uploadPendingToken()
+            } catch {
+                logger.error(
+                    "Unable to start VoIP push registration: \(String(reflecting: error), privacy: .public)"
+                )
+            }
         }
     }
 
@@ -130,7 +138,16 @@ extension VoIPPushCoordinator: @preconcurrency PKPushRegistryDelegate {
         for type: PKPushType
     ) {
         guard type == .voIP else { return }
-        Task { try? await receiveToken(pushCredentials.token) }
+        Task {
+            do {
+                try await receiveToken(pushCredentials.token)
+                logger.info("VoIP push token registered with the server")
+            } catch {
+                logger.error(
+                    "Unable to register VoIP push token: \(String(reflecting: error), privacy: .public)"
+                )
+            }
+        }
     }
 
     func pushRegistry(
@@ -145,13 +162,28 @@ extension VoIPPushCoordinator: @preconcurrency PKPushRegistryDelegate {
         }
         Task {
             defer { completion() }
-            try? await receiveIncomingPayload(payload.dictionaryPayload)
+            do {
+                try await receiveIncomingPayload(payload.dictionaryPayload)
+                logger.info("Incoming VoIP push reported to CallKit")
+            } catch {
+                logger.error(
+                    "Unable to process incoming VoIP push: \(String(reflecting: error), privacy: .public)"
+                )
+            }
         }
     }
 
     func pushRegistry(_ registry: PKPushRegistry, didInvalidatePushTokenFor type: PKPushType) {
         guard type == .voIP else { return }
-        Task { try? await invalidateToken() }
+        Task {
+            do {
+                try await invalidateToken()
+            } catch {
+                logger.error(
+                    "Unable to remove invalidated VoIP push token: \(String(reflecting: error), privacy: .public)"
+                )
+            }
+        }
     }
 }
 

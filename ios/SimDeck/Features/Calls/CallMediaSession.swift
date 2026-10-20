@@ -32,10 +32,18 @@ enum CallMediaSessionError: LocalizedError, Equatable, Sendable {
     }
 }
 
+enum CallMediaConnectivityState: Equatable, Sendable {
+    case connected
+    case disconnected
+    case failed
+}
+
 @MainActor
 protocol CallMediaSession: AnyObject {
     func makeOffer() async throws -> String
+    func makeRestartOffer(iceServers: [CallTURNCredentials]) async throws -> String
     func applyAnswer(_ answer: String) async throws
+    func setConnectivityHandler(_ handler: (@MainActor (CallMediaConnectivityState) -> Void)?)
     func setMuted(_ isMuted: Bool)
     func audioSessionDidActivate(_ audioSession: AVAudioSession)
     func audioSessionDidDeactivate(_ audioSession: AVAudioSession)
@@ -60,6 +68,7 @@ final class WebRTCCallMediaSession: NSObject, CallMediaSession {
     private var gatheringGate: ICEGatheringGate
     private var iceContinuation: CheckedContinuation<String, Error>?
     private var iceTimeoutTask: Task<Void, Never>?
+    private var connectivityHandler: (@MainActor (CallMediaConnectivityState) -> Void)?
     private var isClosed = false
 
     init(
@@ -143,8 +152,38 @@ final class WebRTCCallMediaSession: NSObject, CallMediaSession {
     }
 
     func makeOffer() async throws -> String {
+        try await makeOffer(restartingICE: false)
+    }
+
+    func makeRestartOffer(iceServers: [CallTURNCredentials]) async throws -> String {
         guard !isClosed else { throw CallMediaSessionError.closed }
-        Self.logger.info("Creating WebRTC audio offer")
+        guard iceContinuation == nil else { throw CallMediaSessionError.offerCreationFailed }
+        let configuration = peerConnection.configuration
+        configuration.iceServers = iceServers.map { server in
+            RTCIceServer(
+                urlStrings: server.urls,
+                username: server.username,
+                credential: server.credential
+            )
+        }
+        if !iceServers.isEmpty {
+            configuration.iceTransportPolicy = .relay
+        }
+        guard peerConnection.setConfiguration(configuration) else {
+            Self.logger.error("WebRTC configuration refresh failed before ICE restart")
+            throw CallMediaSessionError.offerCreationFailed
+        }
+        peerConnection.restartIce()
+        return try await makeOffer(restartingICE: true)
+    }
+
+    private func makeOffer(restartingICE: Bool) async throws -> String {
+        guard !isClosed else { throw CallMediaSessionError.closed }
+        guard iceContinuation == nil else { throw CallMediaSessionError.offerCreationFailed }
+        gatheringGate = ICEGatheringGate(
+            requiresRelayCandidate: peerConnection.configuration.iceTransportPolicy == .relay
+        )
+        Self.logger.info("Creating WebRTC audio offer; ICE restart: \(restartingICE, privacy: .public)")
 
         let constraints = RTCMediaConstraints(
             mandatoryConstraints: [
@@ -196,6 +235,12 @@ final class WebRTCCallMediaSession: NSObject, CallMediaSession {
         }
     }
 
+    func setConnectivityHandler(
+        _ handler: (@MainActor (CallMediaConnectivityState) -> Void)?
+    ) {
+        connectivityHandler = handler
+    }
+
     func applyAnswer(_ answer: String) async throws {
         guard !isClosed else { throw CallMediaSessionError.closed }
         guard answer.contains("m=audio"),
@@ -238,6 +283,7 @@ final class WebRTCCallMediaSession: NSObject, CallMediaSession {
     func close() {
         guard !isClosed else { return }
         isClosed = true
+        connectivityHandler = nil
         localAudioTrack.isEnabled = false
         failPendingOffer(with: .closed)
         peerConnection.close()
@@ -383,7 +429,26 @@ extension WebRTCCallMediaSession: RTCPeerConnectionDelegate {
     nonisolated func peerConnection(
         _ peerConnection: RTCPeerConnection,
         didChange newState: RTCIceConnectionState
-    ) {}
+    ) {
+        let state: CallMediaConnectivityState?
+        switch newState {
+        case .connected, .completed:
+            state = .connected
+        case .disconnected:
+            state = .disconnected
+        case .failed:
+            state = .failed
+        default:
+            state = nil
+        }
+        guard let state else { return }
+        Task { @MainActor [weak self] in
+            Self.logger.info(
+                "WebRTC ICE connection state changed: \(String(describing: newState), privacy: .public)"
+            )
+            self?.connectivityHandler?(state)
+        }
+    }
 
     nonisolated func peerConnection(
         _ peerConnection: RTCPeerConnection,

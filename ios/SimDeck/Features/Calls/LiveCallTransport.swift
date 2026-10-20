@@ -57,6 +57,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
     private let makeRelayMediaSession: @MainActor ([CallTURNCredentials]) throws -> any CallMediaSession
     private let waitBeforePollingAgain: () async throws -> Void
     private let waitBeforeCallLeaseRenewal: () async throws -> Void
+    private let waitBeforeMediaRestart: () async throws -> Void
     private let automaticallyPollEvents: Bool
     private let automaticallyRenewCallLease: Bool
     private let eventStreamOpener: (any EncryptedEventStreamOpening)?
@@ -69,6 +70,9 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
     private var eventCursor: Int64 = 0
     private var eventTask: Task<Void, Never>?
     private var callLeaseTasks: [UUID: Task<Void, Never>] = [:]
+    private var mediaRestartTasks: [UUID: Task<Void, Never>] = [:]
+    private var mediaRestartGenerations: [UUID: UUID] = [:]
+    private var mediaRestartsInProgress: Set<UUID> = []
     private var activeEventStream: (any EncryptedEventStream)?
     private var lineRoutes: [UUID: DeviceLineIdentity] = [:]
 
@@ -92,6 +96,9 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
         waitBeforeCallLeaseRenewal: @escaping () async throws -> Void = {
             try await Task.sleep(for: .seconds(10))
         },
+        waitBeforeMediaRestart: @escaping () async throws -> Void = {
+            try await Task.sleep(for: .seconds(2))
+        },
         automaticallyPollEvents: Bool = true,
         automaticallyRenewCallLease: Bool? = nil,
         eventStreamOpener: (any EncryptedEventStreamOpening)? = nil
@@ -104,6 +111,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
         self.makeRelayMediaSession = makeRelayMediaSession
         self.waitBeforePollingAgain = waitBeforePollingAgain
         self.waitBeforeCallLeaseRenewal = waitBeforeCallLeaseRenewal
+        self.waitBeforeMediaRestart = waitBeforeMediaRestart
         self.automaticallyPollEvents = automaticallyPollEvents
         self.automaticallyRenewCallLease = automaticallyRenewCallLease ?? automaticallyPollEvents
         self.eventStreamOpener = eventStreamOpener ?? (api as? any EncryptedEventStreamOpening)
@@ -150,6 +158,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
     }
 
     func discardIncomingCall(callID: UUID) {
+        stopMediaRestart(callID: callID)
         stopCallLeaseRenewal(callID: callID)
         mediaSessions.removeValue(forKey: callID)?.close()
         callLines.removeValue(forKey: callID)
@@ -253,6 +262,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
 
     func endCall(callID: UUID) async throws {
         guard let lineID = callLines[callID] else { throw LiveCallTransportError.invalidResponse }
+        stopMediaRestart(callID: callID)
         defer {
             stopCallLeaseRenewal(callID: callID)
             mediaSessions.removeValue(forKey: callID)?.close()
@@ -306,6 +316,12 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
             task.cancel()
         }
         callLeaseTasks.removeAll()
+        for task in mediaRestartTasks.values {
+            task.cancel()
+        }
+        mediaRestartTasks.removeAll()
+        mediaRestartGenerations.removeAll()
+        mediaRestartsInProgress.removeAll()
         for mediaSession in mediaSessions.values {
             mediaSession.close()
         }
@@ -323,10 +339,115 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
     }
 
     private func installMediaSession(_ mediaSession: any CallMediaSession, for callID: UUID) {
+        mediaSession.setConnectivityHandler { [weak self] state in
+            self?.handleMediaConnectivity(state, callID: callID)
+        }
         mediaSessions[callID] = mediaSession
         if let activeAudioSession {
             mediaSession.audioSessionDidActivate(activeAudioSession)
         }
+    }
+
+    private func handleMediaConnectivity(_ state: CallMediaConnectivityState, callID: UUID) {
+        switch state {
+        case .connected:
+            guard !mediaRestartsInProgress.contains(callID) else { return }
+            stopMediaRestart(callID: callID)
+        case .disconnected:
+            scheduleMediaRestart(callID: callID, debounce: true)
+        case .failed:
+            scheduleMediaRestart(callID: callID, debounce: false)
+        }
+    }
+
+    private func scheduleMediaRestart(callID: UUID, debounce: Bool) {
+        guard mediaSessions[callID] != nil, callLines[callID] != nil else { return }
+        if mediaRestartsInProgress.contains(callID) {
+            return
+        }
+        if mediaRestartTasks[callID] != nil {
+            guard !debounce else { return }
+            stopMediaRestart(callID: callID)
+        }
+        let generation = UUID()
+        mediaRestartGenerations[callID] = generation
+        mediaRestartTasks[callID] = Task { [weak self] in
+            guard let self else { return }
+            if debounce {
+                do {
+                    try await waitBeforeMediaRestart()
+                } catch {
+                    finishMediaRestart(callID: callID, generation: generation)
+                    return
+                }
+            }
+            guard mediaRestartGenerations[callID] == generation else { return }
+            mediaRestartsInProgress.insert(callID)
+            defer {
+                mediaRestartsInProgress.remove(callID)
+                finishMediaRestart(callID: callID, generation: generation)
+            }
+            for attempt in 1...3 {
+                guard !Task.isCancelled else { return }
+                do {
+                    try await restartMedia(callID: callID)
+                    Self.logger.info(
+                        "WebRTC ICE restart completed; call: \(callID.uuidString, privacy: .public), attempt: \(attempt, privacy: .public)"
+                    )
+                    return
+                } catch {
+                    Self.logger.error(
+                        "WebRTC ICE restart failed; call: \(callID.uuidString, privacy: .public), attempt: \(attempt, privacy: .public), error: \(String(reflecting: error), privacy: .public)"
+                    )
+                    if attempt < 3 {
+                        do {
+                            try await waitBeforeMediaRestart()
+                        } catch {
+                            return
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func restartMedia(callID: UUID) async throws {
+        try Task.checkCancellation()
+        guard let mediaSession = mediaSessions[callID], let lineID = callLines[callID] else {
+            throw LiveCallTransportError.invalidResponse
+        }
+        let credentials: [CallTURNCredentials]
+        if let provider = api as? any CallTURNCredentialProviding {
+            credentials = [try await provider.turnCredentials()]
+        } else {
+            credentials = []
+        }
+        try Task.checkCancellation()
+        let offer = try await mediaSession.makeRestartOffer(iceServers: credentials)
+        try Task.checkCancellation()
+        let exchange = try await send(
+            operation: "call.media.restart",
+            callID: callID,
+            lineID: lineID,
+            mediaOffer: offer
+        )
+        try Task.checkCancellation()
+        guard let answer = exchange.result.mediaAnswer else {
+            throw LiveCallTransportError.invalidResponse
+        }
+        try await mediaSession.applyAnswer(answer)
+    }
+
+    private func finishMediaRestart(callID: UUID, generation: UUID) {
+        guard mediaRestartGenerations[callID] == generation else { return }
+        mediaRestartTasks.removeValue(forKey: callID)
+        mediaRestartGenerations.removeValue(forKey: callID)
+    }
+
+    private func stopMediaRestart(callID: UUID) {
+        mediaRestartTasks.removeValue(forKey: callID)?.cancel()
+        mediaRestartGenerations.removeValue(forKey: callID)
+        mediaRestartsInProgress.remove(callID)
     }
 
     private func startCallLeaseRenewal(callID: UUID) {
@@ -554,6 +675,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting {
             case "ended":
                 let reason: CallEndReason = context.hasConnected ? .remoteEnded : .unanswered
                 stopCallLeaseRenewal(callID: callID)
+                stopMediaRestart(callID: callID)
                 mediaSessions.removeValue(forKey: callID)?.close()
                 callEvents.removeValue(forKey: callID)
                 callLines.removeValue(forKey: callID)

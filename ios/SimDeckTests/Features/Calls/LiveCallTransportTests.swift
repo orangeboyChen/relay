@@ -282,6 +282,139 @@ final class LiveCallTransportTests: XCTestCase {
         }
     }
 
+    func testFailedMediaConnectionRestartsICEThroughEncryptedDeviceCommand() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let media = CallMediaSessionFake()
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: api.commandSigner,
+            makeMediaSession: { media },
+            waitBeforePollingAgain: {},
+            waitBeforeMediaRestart: {},
+            automaticallyPollEvents: false
+        )
+        try await transport.startOutgoingCall(
+            callID: callID,
+            number: "13500000000",
+            lineID: deviceID
+        )
+
+        media.reportConnectivity(.failed)
+        for _ in 0..<100 where api.payloads.count < 2 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(api.payloads.map(\.operation), ["call.start", "call.media.restart"])
+        XCTAssertEqual(api.payloads.last?.mediaOffer, media.restartOffer)
+        XCTAssertEqual(media.restartOfferRequests, [[]])
+        XCTAssertEqual(media.appliedAnswers, [CallMediaSessionFake.answer, CallMediaSessionFake.answer])
+    }
+
+    func testConnectedMediaCancelsPendingDisconnectedRestart() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let media = CallMediaSessionFake()
+        let gate = CallLeaseRenewalGate()
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: api.commandSigner,
+            makeMediaSession: { media },
+            waitBeforePollingAgain: {},
+            waitBeforeMediaRestart: { await gate.wait() },
+            automaticallyPollEvents: false
+        )
+        try await transport.startOutgoingCall(
+            callID: callID,
+            number: "13500000000",
+            lineID: deviceID
+        )
+
+        media.reportConnectivity(.disconnected)
+        await Task.yield()
+        media.reportConnectivity(.connected)
+        await gate.signal()
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(api.payloads.map(\.operation), ["call.start"])
+        XCTAssertTrue(media.restartOfferRequests.isEmpty)
+    }
+
+    func testDisconnectedMediaRestartsAfterDebounce() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let media = CallMediaSessionFake()
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: api.commandSigner,
+            makeMediaSession: { media },
+            waitBeforePollingAgain: {},
+            waitBeforeMediaRestart: {},
+            automaticallyPollEvents: false
+        )
+        try await transport.startOutgoingCall(callID: callID, number: "13500000000", lineID: deviceID)
+
+        media.reportConnectivity(.disconnected)
+        for _ in 0..<100 where api.payloads.count < 2 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(api.payloads.map(\.operation), ["call.start", "call.media.restart"])
+        XCTAssertEqual(media.restartOfferRequests.count, 1)
+    }
+
+    func testDuplicateFailedMediaSignalsDoNotStartConcurrentRestarts() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let media = CallMediaSessionFake()
+        let gate = CallLeaseRenewalGate()
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: api.commandSigner,
+            makeMediaSession: { media },
+            waitBeforePollingAgain: {},
+            waitBeforeMediaRestart: { await gate.wait() },
+            automaticallyPollEvents: false
+        )
+        try await transport.startOutgoingCall(callID: callID, number: "13500000000", lineID: deviceID)
+        media.restartOfferError = CallMediaSessionError.offerCreationFailed
+
+        media.reportConnectivity(.failed)
+        media.reportConnectivity(.failed)
+        for _ in 0..<100 where media.restartOfferRequests.isEmpty {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(media.restartOfferRequests.count, 1)
+        XCTAssertEqual(api.payloads.map(\.operation), ["call.start"])
+        await gate.signal()
+        await gate.signal()
+    }
+
+    func testHangupCancelsPendingDisconnectedMediaRestart() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let media = CallMediaSessionFake()
+        let gate = CallLeaseRenewalGate()
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: api.commandSigner,
+            makeMediaSession: { media },
+            waitBeforePollingAgain: {},
+            waitBeforeMediaRestart: { await gate.wait() },
+            automaticallyPollEvents: false
+        )
+        try await transport.startOutgoingCall(callID: callID, number: "13500000000", lineID: deviceID)
+
+        media.reportConnectivity(.disconnected)
+        await Task.yield()
+        try await transport.endCall(callID: callID)
+        await gate.signal()
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(api.payloads.map(\.operation), ["call.start", "call.end"])
+        XCTAssertTrue(media.restartOfferRequests.isEmpty)
+    }
+
     func testEndFailureStillClosesLocalMediaAndEventState() async throws {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
         let media = CallMediaSessionFake()
@@ -755,15 +888,27 @@ private final class CallMediaSessionFake: CallMediaSession {
     static let answer = "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 0\r\na=rtpmap:0 PCMU/8000\r\n"
 
     let offer = "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 0\r\na=rtpmap:0 PCMU/8000\r\n"
+    let restartOffer = "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 0\r\na=ice-options:trickle\r\na=rtpmap:0 PCMU/8000\r\n"
     var applyAnswerError: Error?
+    var restartOfferError: Error?
     private(set) var appliedAnswers: [String] = []
     private(set) var muteChanges: [Bool] = []
     private(set) var activatedAudioSessions: [ObjectIdentifier] = []
     private(set) var deactivatedAudioSessions: [ObjectIdentifier] = []
     private(set) var isClosed = false
+    private(set) var restartOfferRequests: [[CallTURNCredentials]] = []
+    private var connectivityHandler: (@MainActor (CallMediaConnectivityState) -> Void)?
 
     func makeOffer() async throws -> String {
         offer
+    }
+
+    func makeRestartOffer(iceServers: [CallTURNCredentials]) async throws -> String {
+        restartOfferRequests.append(iceServers)
+        if let restartOfferError {
+            throw restartOfferError
+        }
+        return restartOffer
     }
 
     func applyAnswer(_ answer: String) async throws {
@@ -775,6 +920,16 @@ private final class CallMediaSessionFake: CallMediaSession {
 
     func setMuted(_ isMuted: Bool) {
         muteChanges.append(isMuted)
+    }
+
+    func setConnectivityHandler(
+        _ handler: (@MainActor (CallMediaConnectivityState) -> Void)?
+    ) {
+        connectivityHandler = handler
+    }
+
+    func reportConnectivity(_ state: CallMediaConnectivityState) {
+        connectivityHandler?(state)
     }
 
     func audioSessionDidActivate(_ audioSession: AVAudioSession) {
@@ -932,7 +1087,7 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
             success: outcome != .modemRejected,
             errorCode: outcome == .modemRejected ? "modem_rejected" : nil,
             callState: "dialing",
-            mediaAnswer: ["call.start", "call.answer"].contains(payload.operation) && !omitMediaAnswer
+            mediaAnswer: ["call.start", "call.answer", "call.media.restart"].contains(payload.operation) && !omitMediaAnswer
                 ? CallMediaSessionFake.answer
                 : nil
         )

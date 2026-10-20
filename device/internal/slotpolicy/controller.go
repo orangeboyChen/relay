@@ -126,6 +126,13 @@ func (controller *Controller) Configure(ctx context.Context, update Update) (Set
 	return next, nil
 }
 
+// RestartModem performs the full modem reset required after changing IMS configuration.
+func (controller *Controller) RestartModem(ctx context.Context) error {
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	return controller.send(ctx, "AT+CFUN=1,1")
+}
+
 func (controller *Controller) applyVoLTE(ctx context.Context, enabled bool) error {
 	value := "0"
 	if enabled {

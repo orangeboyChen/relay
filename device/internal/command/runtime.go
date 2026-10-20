@@ -127,6 +127,7 @@ type CallMedia interface {
 type SlotSettings interface {
 	Current() slotpolicy.Settings
 	Configure(context.Context, slotpolicy.Update) (slotpolicy.Settings, error)
+	RestartModem(context.Context) error
 }
 
 // Dependencies contains the endpoint capabilities used by the command runtime.
@@ -321,6 +322,11 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload, senderInst
 			return executionResult{}, err
 		}
 		return executionResult{slotSettings: &settings}, nil
+	case "slot.restart_modem":
+		if err := runtime.slotSettings.RestartModem(ctx); err != nil {
+			return executionResult{}, err
+		}
+		return executionResult{}, nil
 	case "message.send":
 		if !identity.ValidDeviceUUID(payload.MessageID) || strings.TrimSpace(payload.Number) == "" || strings.TrimSpace(payload.Body) == "" {
 			return executionResult{}, errInvalidCommand

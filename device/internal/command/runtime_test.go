@@ -175,9 +175,10 @@ type fakeMessages struct {
 }
 
 type fakeSlotSettings struct {
-	settings slotpolicy.Settings
-	update   slotpolicy.Update
-	err      error
+	settings  slotpolicy.Settings
+	update    slotpolicy.Update
+	err       error
+	restarted bool
 }
 
 func (settings *fakeSlotSettings) Current() slotpolicy.Settings { return settings.settings }
@@ -185,6 +186,11 @@ func (settings *fakeSlotSettings) Current() slotpolicy.Settings { return setting
 func (settings *fakeSlotSettings) Configure(_ context.Context, update slotpolicy.Update) (slotpolicy.Settings, error) {
 	settings.update = update
 	return settings.settings, settings.err
+}
+
+func (settings *fakeSlotSettings) RestartModem(context.Context) error {
+	settings.restarted = true
+	return settings.err
 }
 
 func (messages *fakeMessages) SendSMS(_ context.Context, destination string, body string, reference byte) error {
@@ -328,6 +334,19 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(*settings.update.VoLTEEnabled).To(BeTrue())
 		Expect(string(envelope.Ciphertext)).NotTo(ContainSubstring("slot.configure"))
 		Expect(string(remote.result.Ciphertext)).NotTo(ContainSubstring("slot_settings"))
+	})
+
+	It("restarts the modem only through an encrypted slot command", func() {
+		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{
+			Version: 1, Operation: "slot.restart_modem",
+		})
+
+		Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+
+		result := openResult(sharedSecret, envelope, remote.result)
+		Expect(result.Success).To(BeTrue())
+		Expect(settings.restarted).To(BeTrue())
+		Expect(string(envelope.Ciphertext)).NotTo(ContainSubstring("slot.restart_modem"))
 	})
 
 	DescribeTable("executes supported call operations from authenticated plaintext",

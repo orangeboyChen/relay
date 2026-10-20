@@ -77,6 +77,15 @@ var _ = Describe("Slot policy controller", func() {
 		Expect(reloaded.Current().VoLTEEnabled).To(BeTrue())
 	})
 
+	It("restarts the modem explicitly after an IMS setting change", func() {
+		controller, err := NewController(directory, commander, time.Second)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(controller.RestartModem(context.Background())).To(Succeed())
+
+		Expect(commander.commands).To(Equal([]string{"AT+CFUN=1,1"}))
+	})
+
 	It("keeps the previous VoLTE preference when IMS is unsupported", func() {
 		controller, err := NewController(directory, commander, time.Second)
 		Expect(err).NotTo(HaveOccurred())

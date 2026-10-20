@@ -194,6 +194,7 @@ func (policy *fakeSlotPolicy) Configure(_ context.Context, update slotpolicy.Upd
 	}
 	return policy.settings, nil
 }
+func (policy *fakeSlotPolicy) RestartModem(context.Context) error { return nil }
 
 func (publisher *fakeMessageEventPublisher) Publish(_ context.Context, message sms.ReceivedMessage) error {
 	publisher.messages = append(publisher.messages, message)
@@ -202,6 +203,10 @@ func (publisher *fakeMessageEventPublisher) Publish(_ context.Context, message s
 
 func (*fakeCallMediaRuntime) Negotiate(context.Context, string, string) (string, error) {
 	return "answer-sdp", nil
+}
+
+func (*fakeCallMediaRuntime) Renegotiate(context.Context, string, string) (string, error) {
+	return "restart-answer-sdp", nil
 }
 
 func (*fakeCallMediaRuntime) Stop(string) error { return nil }

@@ -165,6 +165,7 @@ final class MessageEventMonitor {
     private let opener: any EncryptedEventStreamOpening
     private let currentSequence: () -> Int64
     private let synchronizeThrough: (Int64) async -> Bool
+    private let onDisconnected: () -> Void
     private let waitBeforeReconnect: () async throws -> Void
     private var task: Task<Void, Never>?
     private var activeStream: (any EncryptedEventStream)?
@@ -175,6 +176,7 @@ final class MessageEventMonitor {
         opener: any EncryptedEventStreamOpening,
         currentSequence: @escaping () -> Int64,
         synchronizeThrough: @escaping (Int64) async -> Bool,
+        onDisconnected: @escaping () -> Void = {},
         waitBeforeReconnect: @escaping () async throws -> Void = {
             try await Task.sleep(for: .seconds(2))
         }
@@ -182,6 +184,7 @@ final class MessageEventMonitor {
         self.opener = opener
         self.currentSequence = currentSequence
         self.synchronizeThrough = synchronizeThrough
+        self.onDisconnected = onDisconnected
         self.waitBeforeReconnect = waitBeforeReconnect
     }
 
@@ -247,6 +250,7 @@ final class MessageEventMonitor {
                 Self.logger.error(
                     "Encrypted message event stream disconnected: \(String(reflecting: error), privacy: .public)"
                 )
+                onDisconnected()
                 do {
                     try await waitBeforeReconnect()
                 } catch {

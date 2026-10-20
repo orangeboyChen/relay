@@ -8,6 +8,7 @@ final class NetworkPathObserver {
     private let onChange: @MainActor (Bool) -> Void
     private var hasReceivedPath = false
     private var isRunning = false
+    private(set) var networkType: Int32 = 0
 
     init(onChange: @escaping @MainActor (Bool) -> Void) {
         self.onChange = onChange
@@ -26,6 +27,15 @@ final class NetworkPathObserver {
 
     private func handle(_ path: NWPath) {
         let isAvailable = path.status == .satisfied
+        networkType = if !isAvailable {
+            0
+        } else if path.usesInterfaceType(.wifi) {
+            1
+        } else if path.usesInterfaceType(.cellular) {
+            2
+        } else {
+            3
+        }
         if !hasReceivedPath {
             hasReceivedPath = true
             // The first satisfied path is a baseline, not a connection change.

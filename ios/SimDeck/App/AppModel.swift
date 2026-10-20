@@ -59,6 +59,7 @@ final class AppModel {
     @ObservationIgnored private var contactNameIndex = ContactNameIndex()
     @ObservationIgnored private var contactUpdatesTask: Task<Void, Never>?
     @ObservationIgnored private var networkPathObserver: NetworkPathObserver?
+    @ObservationIgnored private let networkDiagnostics = ServerNetworkDiagnostics()
 
     var canEditDeviceProfiles: Bool { recoveredVaultKey != nil }
 
@@ -148,6 +149,13 @@ final class AppModel {
             },
             synchronizeThrough: { [weak self] requiredSequence in
                 await self?.synchronizeMessages(through: requiredSequence) ?? false
+            },
+            onDisconnected: { [weak self] in
+                guard let self, let baseURL = self.serverConnection.authenticatedBaseURL else { return }
+                self.networkDiagnostics.diagnose(
+                    url: baseURL.appending(path: "healthz"),
+                    networkType: self.networkPathObserver?.networkType ?? 0
+                )
             }
         )
     }

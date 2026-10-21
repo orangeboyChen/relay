@@ -9,9 +9,7 @@ struct ProfileScreen: View {
 
     var body: some View {
         List {
-            AccountSummarySection(connection: model.serverConnection)
             SIMCardsSection(lines: model.devices)
-            SecuritySummarySection(keyRecoveryState: model.keyRecoveryState)
 
             Section {
                 NavigationLink {
@@ -36,20 +34,6 @@ struct ProfileScreen: View {
             await model.refreshDevices()
         }
         .scrollEdgeEffectStyle(.soft, for: .all)
-    }
-}
-
-private struct AccountSummarySection: View {
-    let connection: ServerConnectionManager
-
-    var body: some View {
-        Section("Account") {
-            AdaptiveProfileStatusRow("Owner") {
-                Text("admin")
-                    .foregroundStyle(.secondary)
-            }
-            ServerConnectionStatusRow("Server", state: connection.state)
-        }
     }
 }
 
@@ -171,53 +155,6 @@ private struct SIMRadioStatusSummary: View {
     }
 }
 
-private struct SecuritySummarySection: View {
-    let keyRecoveryState: KeyRecoveryState
-
-    var body: some View {
-        Section("Security") {
-            AdaptiveProfileStatusRow("End-to-end encryption") {
-                ProfileStatusValue(
-                    title: "Active",
-                    systemImage: "lock.shield.fill",
-                    color: .green
-                )
-            }
-            AdaptiveProfileStatusRow("iCloud Keychain recovery") {
-                KeyRecoveryStatusLabel(state: keyRecoveryState)
-            }
-        }
-    }
-}
-
-private struct AdaptiveProfileStatusRow<Content: View>: View {
-    let title: LocalizedStringKey
-    @ViewBuilder let content: Content
-
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
-    init(_ title: LocalizedStringKey, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.content = content()
-    }
-
-    var body: some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(title)
-                content
-            }
-            .padding(.vertical, 4)
-        } else {
-            HStack(spacing: 12) {
-                Text(title)
-                Spacer(minLength: 12)
-                content
-                    .fixedSize(horizontal: true, vertical: false)
-            }
-        }
-    }
-}
 
 struct KeyRecoveryStatusLabel: View {
     let state: KeyRecoveryState

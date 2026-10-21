@@ -32,7 +32,7 @@ struct CallHistoryScreen: View {
                 ProgressView("Loading calls")
             case .loaded(let records) where filtered(records).isEmpty:
                 ContentUnavailableView(
-                    filter == .missed ? "No Missed Calls" : "No Calls",
+                    emptyStateTitle,
                     systemImage: "phone",
                     description: Text("Calls made through sim-deck appear here.")
                 )
@@ -123,69 +123,24 @@ struct CallHistoryScreen: View {
                 if !editMode.isEditing {
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
-                            Button {
-                                filter = .all
-                            } label: {
-                                if filter == .all {
-                                    Label("All", systemImage: "checkmark")
-                                } else {
-                                    Text("All")
-                                }
+                            Picker("Call filter", selection: $filter) {
+                                Text("Calls").tag(CallHistoryFilter.all)
+                                Text("Missed").tag(CallHistoryFilter.missed)
+                                Text("Unknown Callers").tag(CallHistoryFilter.unknownCallers)
                             }
-                            Button {
-                                filter = .missed
-                            } label: {
-                                if filter == .missed {
-                                    Label("Missed", systemImage: "checkmark")
-                                } else {
-                                    Text("Missed")
-                                }
-                            }
+                            .pickerStyle(.inline)
 
-                            Divider()
-
-                            Button {
-                                selectedLineID = nil
-                            } label: {
-                                if selectedLineID == nil {
-                                    Label("All SIMs", systemImage: "checkmark")
-                                } else {
-                                    Text("All SIMs")
+                            Picker("SIM", selection: $selectedLineID) {
+                                Text("All SIMs").tag(UUID?.none)
+                                ForEach(lines) { line in
+                                    Text(line.displayName).tag(Optional(line.id))
                                 }
                             }
-
-                            ForEach(lines) { line in
-                                Button {
-                                    selectedLineID = line.id
-                                } label: {
-                                    if selectedLineID == line.id {
-                                        Label(line.displayName, systemImage: "checkmark")
-                                    } else {
-                                        Text(line.displayName)
-                                    }
-                                }
-                            }
+                            .pickerStyle(.menu)
                         } label: {
-                            ZStack(alignment: .topTrailing) {
-                                Image(systemName: "line.3.horizontal.decrease")
-                                    .font(.body.weight(.semibold))
-                                    .frame(width: 44, height: 44)
-                                    .contentShape(Circle())
-
-                                if activeFilterCount > 0 {
-                                    Text(activeFilterCount, format: .number)
-                                        .font(.caption2.weight(.bold))
-                                        .foregroundStyle(.white)
-                                        .frame(minWidth: 20, minHeight: 20)
-                                        .background(.blue, in: Circle())
-                                        .offset(x: 4, y: -4)
-                                }
-                            }
+                            Label("Call filter", systemImage: "line.3.horizontal.decrease")
+                                .labelStyle(.iconOnly)
                         }
-                        .buttonStyle(.glass)
-                        .buttonBorderShape(.circle)
-                        .controlSize(.large)
-                        .accessibilityLabel("Filter calls by SIM")
                     }
                 }
             }
@@ -268,11 +223,18 @@ struct CallHistoryScreen: View {
     }
 
     private func filtered(_ records: [CallRecord]) -> [CallRecord] {
-        filter.records(from: records, lineID: selectedLineID)
+        filter.records(from: records, lineID: selectedLineID, contacts: contacts)
     }
 
-    private var activeFilterCount: Int {
-        (filter == .missed ? 1 : 0) + (selectedLineID == nil ? 0 : 1)
+    private var emptyStateTitle: LocalizedStringKey {
+        switch filter {
+        case .all:
+            "No Calls"
+        case .missed:
+            "No Missed Calls"
+        case .unknownCallers:
+            "No Unknown Callers"
+        }
     }
 
     private var selectedEntryCount: Int {
@@ -605,21 +567,32 @@ private struct CallHistoryTimestamp: View {
     }
 }
 
-enum CallHistoryFilter: Equatable {
+enum CallHistoryFilter: Hashable {
     case all
     case missed
+    case unknownCallers
 
-    func records(from records: [CallRecord]) -> [CallRecord] {
+    func records(
+        from records: [CallRecord],
+        contacts: [ContactRecord] = []
+    ) -> [CallRecord] {
         switch self {
         case .all:
-            records
+            return records
         case .missed:
-            records.filter { $0.result == .missed }
+            return records.filter { $0.result == .missed }
+        case .unknownCallers:
+            let contactIndex = ContactRecordIndex(contacts: contacts)
+            return records.filter { contactIndex.contact(for: $0.remoteNumber) == nil }
         }
     }
 
-    func records(from records: [CallRecord], lineID: UUID?) -> [CallRecord] {
-        let matchingResult = self.records(from: records)
+    func records(
+        from records: [CallRecord],
+        lineID: UUID?,
+        contacts: [ContactRecord] = []
+    ) -> [CallRecord] {
+        let matchingResult = self.records(from: records, contacts: contacts)
         guard let lineID else { return matchingResult }
         return matchingResult.filter { $0.lineID == lineID }
     }

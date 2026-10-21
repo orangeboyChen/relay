@@ -1962,6 +1962,16 @@
         }
       }
     },
+    "No Unknown Callers" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有未知来电"
+          }
+        }
+      }
+    },
     "No SIM Cards" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3627,6 +3637,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未知"
+          }
+        }
+      }
+    },
+    "Unknown Callers" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未知来电"
           }
         }
       }

@@ -41,6 +41,36 @@ final class CallHistoryFilterTests: XCTestCase {
         )
     }
 
+    func testUnknownCallersFilterUsesCurrentContactsAndSelectedSIM() {
+        let firstLineID = UUID()
+        let secondLineID = UUID()
+        let knownNumber = "13500000000"
+        let records = [
+            record(lineID: firstLineID, number: knownNumber),
+            record(lineID: firstLineID, number: "13800000000"),
+            record(lineID: secondLineID, number: "13900000000"),
+        ]
+        let contact = ContactRecord(
+            id: "known-contact",
+            givenName: "Known",
+            familyName: "Caller",
+            organizationName: "",
+            phoneNumbers: [
+                ContactPhoneNumber(id: "mobile", label: "mobile", value: "+86 \(knownNumber)"),
+            ],
+            thumbnailImageData: nil
+        )
+
+        XCTAssertEqual(
+            CallHistoryFilter.unknownCallers.records(
+                from: records,
+                lineID: firstLineID,
+                contacts: [contact]
+            ),
+            [records[1]]
+        )
+    }
+
     func testEntriesGroupAdjacentMatchingCallsFromTheSameDay() {
         let calendar = Calendar(identifier: .gregorian)
         let lineID = UUID()

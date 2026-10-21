@@ -1,4 +1,5 @@
 /.env
+/e2e.local.env
 /coverage.out
 /secrets/*
 !/secrets/.gitignore

@@ -302,7 +302,7 @@
 			packageReferences = (
 				200000000000000000000003 /* XCRemoteSwiftPackageReference "WebRTC" */,
 				200000000000000000000006 /* XCRemoteSwiftPackageReference "mars-rs" */,
-				20000000000000000000000B /* XCRemoteSwiftPackageReference "libPhoneNumber" */,
+				20000000000000000000000B /* XCRemoteSwiftPackageReference "libPhoneNumber-iOS" */,
 			);
 			productRefGroup = 100000000000000000000031 /* Products */;
 			projectDirPath = "";
@@ -869,7 +869,7 @@
 				version = "0.1.0-alpha.4";
 			};
 		};
-		20000000000000000000000B /* XCRemoteSwiftPackageReference "libPhoneNumber" */ = {
+		20000000000000000000000B /* XCRemoteSwiftPackageReference "libPhoneNumber-iOS" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/iziz/libPhoneNumber-iOS.git";
 			requirement = {
@@ -892,12 +892,12 @@
 		};
 		200000000000000000000008 /* libPhoneNumberSwiftCore */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 20000000000000000000000B /* XCRemoteSwiftPackageReference "libPhoneNumber" */;
+			package = 20000000000000000000000B /* XCRemoteSwiftPackageReference "libPhoneNumber-iOS" */;
 			productName = libPhoneNumberSwiftCore;
 		};
 		20000000000000000000000A /* libPhoneNumberSwiftGeocoding */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 20000000000000000000000B /* XCRemoteSwiftPackageReference "libPhoneNumber" */;
+			package = 20000000000000000000000B /* XCRemoteSwiftPackageReference "libPhoneNumber-iOS" */;
 			productName = libPhoneNumberSwiftGeocoding;
 		};
 /* End XCSwiftPackageProductDependency section */

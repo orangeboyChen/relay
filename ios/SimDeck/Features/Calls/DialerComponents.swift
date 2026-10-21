@@ -224,12 +224,12 @@ private struct DialPadKey: View {
                 onPress(.tap)
             }
         } label: {
-            VStack(spacing: -2) {
+            VStack(spacing: -4) {
                 Text(verbatim: content.symbol)
-                    .font(.system(size: 32, weight: .regular, design: .rounded))
+                    .font(.system(size: 32, weight: .regular, design: .default))
                     .foregroundStyle(.primary)
                 Text(verbatim: content.letters)
-                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                    .font(.system(size: 9, weight: .semibold, design: .default))
                     .tracking(content.letters.count > 1 ? 2 : 0)
                     .foregroundStyle(.primary)
                     .frame(height: 11)

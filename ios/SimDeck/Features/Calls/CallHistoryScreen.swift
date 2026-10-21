@@ -102,6 +102,7 @@ struct CallHistoryScreen: View {
         }
         .navigationTitle("Calls")
         .navigationBarTitleDisplayMode(.inline)
+        .scrollEdgeEffectStyle(.soft, for: .all)
         .toolbar(editMode.isEditing ? .hidden : .visible, for: .tabBar)
         .onChange(of: editMode) { _, newMode in
             if !newMode.isEditing {
@@ -433,9 +434,9 @@ private struct CallHistoryRecordRow: View {
                 } else {
                     Button(action: onCall) {
                         Image(systemName: "phone.fill")
-                            .font(.system(size: 20, weight: .semibold))
+                            .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(.blue)
-                            .frame(width: 52, height: 52)
+                            .frame(width: 42, height: 42)
                             .background(Color(uiColor: .systemGray6), in: Circle())
                     }
                     .buttonStyle(.plain)
@@ -466,9 +467,12 @@ private struct CallHistoryRow: View {
                     .foregroundStyle(record.result == .missed ? .red : .primary)
                     .lineLimit(1)
 
-                HStack(spacing: 5) {
-                    Image(systemName: directionSymbol)
-                    SIMBadge(snapshot: linePresentation.snapshot, size: 14)
+                HStack(spacing: 4) {
+                    HStack(spacing: 2) {
+                        Image(systemName: directionSymbol)
+                            .font(.system(size: 14))
+                        SIMBadge(snapshot: linePresentation.snapshot, size: 14)
+                    }
                     Text(verbatim: secondaryLabel)
                     if entry.records.count > 1 {
                         Text("(\(entry.records.count))")

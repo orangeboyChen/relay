@@ -621,39 +621,12 @@ private struct CallHistoryAvatar: View {
     let contact: ContactRecord?
 
     var body: some View {
-        Group {
-            if let contact {
-                ContactAvatar(contact: contact, size: 54)
-            } else {
-                ZStack {
-                    LinearGradient(
-                        colors: [.blue.opacity(0.32), .indigo.opacity(0.52)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    if let initials {
-                        Text(initials)
-                            .font(.system(size: 21, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white)
-                    } else {
-                        Image(systemName: "person.fill")
-                            .font(.system(size: 28))
-                            .foregroundStyle(.white)
-                    }
-                }
-                .clipShape(Circle())
-            }
-        }
-        .frame(width: 54, height: 54)
-        .accessibilityHidden(true)
-    }
-
-    private var initials: String? {
-        guard let name = record.contactName?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !name.isEmpty else { return nil }
-        let components = name.split(whereSeparator: \.isWhitespace)
-        if components.isEmpty { return String(name.prefix(1)).uppercased() }
-        return components.prefix(2).compactMap(\.first).map(String.init).joined().uppercased()
+        PersonAvatar(
+            imageData: contact?.thumbnailImageData,
+            displayName: contact?.displayName ?? record.contactName,
+            organizationName: contact?.organizationName,
+            size: 54
+        )
     }
 }
 

@@ -71,7 +71,12 @@ struct ContactDetailScreen: View {
 
     private var contactHeader: some View {
         VStack(spacing: 14) {
-            ContactAvatar(contact: contact, size: 128)
+            PersonAvatar(
+                imageData: contact.thumbnailImageData,
+                displayName: contact.displayName,
+                organizationName: contact.organizationName,
+                size: 128
+            )
                 .shadow(color: .black.opacity(0.05), radius: 8, y: 4)
 
             VStack(spacing: 4) {

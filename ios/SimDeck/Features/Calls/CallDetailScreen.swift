@@ -57,23 +57,8 @@ struct CallDetailScreen: View {
 
     private var header: some View {
         VStack(spacing: 33) {
-            ZStack {
-                Circle()
-                    .fill(.ultraThinMaterial)
-                    .overlay {
-                        Circle().stroke(.white.opacity(0.25), lineWidth: 1)
-                    }
-                if let initials {
-                    Text(initials)
-                        .font(.system(size: 84, weight: .medium, design: .rounded))
-                } else {
-                    Image(systemName: "person.fill")
-                        .font(.system(size: 154))
-                }
-            }
-            .foregroundStyle(.white)
-            .frame(width: 240, height: 240)
-            .shadow(color: .black.opacity(0.08), radius: 20, y: 10)
+            PersonAvatar(displayName: record.contactName, size: 240)
+                .shadow(color: .black.opacity(0.08), radius: 20, y: 10)
 
             VStack(spacing: 4) {
                 HStack(spacing: 6) {
@@ -220,14 +205,6 @@ struct CallDetailScreen: View {
             return record.lineID
         }
         return lines.first(where: \.isOnline)?.id
-    }
-
-    private var initials: String? {
-        guard let name = record.contactName?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !name.isEmpty else { return nil }
-        let components = name.split(whereSeparator: \.isWhitespace)
-        if components.isEmpty { return String(name.prefix(1)).uppercased() }
-        return components.prefix(2).compactMap(\.first).map(String.init).joined().uppercased()
     }
 
     private var lineSubtitle: String? {

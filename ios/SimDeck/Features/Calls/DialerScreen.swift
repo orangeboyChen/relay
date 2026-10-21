@@ -160,8 +160,12 @@ struct DialerScreen: View {
         if let exactMatch {
             contactMatchPanel {
                 HStack(spacing: 8) {
-                    Image(systemName: "person.crop.circle.fill")
-                        .foregroundStyle(.secondary)
+                    PersonAvatar(
+                        imageData: exactMatch.contact.thumbnailImageData,
+                        displayName: exactMatch.contact.displayName,
+                        organizationName: exactMatch.contact.organizationName,
+                        size: 24
+                    )
                     Text(exactMatch.contact.displayName)
                         .fontWeight(.medium)
                     Text(exactMatch.phoneNumber.label)
@@ -202,8 +206,12 @@ struct DialerScreen: View {
 
     private func contactMatchRow(_ match: DialerContactMatch) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: "person.crop.circle")
-                .foregroundStyle(.secondary)
+            PersonAvatar(
+                imageData: match.contact.thumbnailImageData,
+                displayName: match.contact.displayName,
+                organizationName: match.contact.organizationName,
+                size: 24
+            )
             Text(match.contact.displayName)
                 .lineLimit(1)
             Text(match.phoneNumber.displayValue)

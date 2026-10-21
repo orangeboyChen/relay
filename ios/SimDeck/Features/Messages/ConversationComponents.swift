@@ -17,9 +17,9 @@ struct ConversationHeader: View {
         if usesAccessibilityLayout {
             lineMenu {
                 VStack(spacing: 2) {
-                    MessageContactAvatar(
-                        contactName: conversation.contactName,
-                        diameter: 48
+                    PersonAvatar(
+                        displayName: conversation.contactName,
+                        size: 48
                     )
                     contactNameLabel
                         .font(.subheadline.weight(.semibold))
@@ -36,9 +36,9 @@ struct ConversationHeader: View {
             }
         } else {
             VStack(spacing: 2) {
-                MessageContactAvatar(
-                    contactName: conversation.contactName,
-                    diameter: 56
+                PersonAvatar(
+                    displayName: conversation.contactName,
+                    size: 56
                 )
                 .overlay(alignment: .bottomTrailing) {
                     SIMBadge(snapshot: linePresentation.snapshot, size: 10)

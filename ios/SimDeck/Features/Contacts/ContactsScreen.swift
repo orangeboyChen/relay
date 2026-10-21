@@ -317,7 +317,12 @@ private struct ContactRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            ContactAvatar(contact: contact, size: 46)
+            PersonAvatar(
+                imageData: contact.thumbnailImageData,
+                displayName: contact.displayName,
+                organizationName: contact.organizationName,
+                size: 46
+            )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(contact.displayName)

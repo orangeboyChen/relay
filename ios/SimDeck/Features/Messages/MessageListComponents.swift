@@ -37,6 +37,7 @@ struct MessageListBottomBar: View {
             .buttonStyle(.glass)
             .buttonBorderShape(.circle)
             .disabled(!canCompose)
+            .frame(width: 50, height: 50)
             .accessibilityLabel("New Message")
             .accessibilityHint(canCompose ? Text("") : Text("An online SIM is required."))
         }
@@ -99,8 +100,9 @@ struct ConversationRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            MessageContactAvatar(
-                contactName: conversation.contactName
+            PersonAvatar(
+                displayName: conversation.contactName,
+                size: 46
             )
 
             VStack(alignment: .leading, spacing: 4) {
@@ -208,58 +210,6 @@ struct ConversationRow: View {
         }
         return lastMessage.body
     }
-}
-
-struct MessageContactAvatar: View {
-    let contactName: String?
-    var diameter: CGFloat = 46
-
-    var body: some View {
-        Group {
-            if let monogram {
-                ZStack {
-                    Circle()
-                        .fill(Color(uiColor: .tertiarySystemFill))
-                    Text(monogram)
-                        .font(.headline.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.65)
-                        .padding(8)
-                }
-            } else {
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color(red: 0.69, green: 0.79, blue: 0.95),
-                                    Color(red: 0.42, green: 0.53, blue: 0.79),
-                                ],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                    Image(systemName: "person.fill")
-                        .font(.system(size: diameter * 0.68, weight: .medium))
-                        .foregroundStyle(.white)
-                }
-            }
-        }
-        .frame(width: diameter, height: diameter)
-        .accessibilityHidden(true)
-    }
-
-    private var monogram: String? {
-        guard let contactName = contactName?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !contactName.isEmpty else {
-            return nil
-        }
-        let nameParts = contactName.split(whereSeparator: { $0.isWhitespace })
-        let initials = nameParts.prefix(2).compactMap(\.first)
-        return initials.isEmpty ? nil : String(initials).uppercased()
-    }
-
 }
 
 #if DEBUG

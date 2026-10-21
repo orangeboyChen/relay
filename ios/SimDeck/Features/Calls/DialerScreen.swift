@@ -42,54 +42,58 @@ struct DialerScreen: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            let compactLayout = geometry.size.height < 900
-            let keySize: CGFloat = compactLayout ? 72 : 80
-
-            VStack(spacing: compactLayout ? 2 : 10) {
-                Color.clear
-                    .frame(height: 4)
-                    .accessibilityHidden(true)
-
-                NumberEntry(number: $number)
-
-                ZStack(alignment: .top) {
-                    contactMatchContent
+        VStack(spacing: 0) {
+            Grid(horizontalSpacing: 16, verticalSpacing: 18) {
+                GridRow {
+                    Color.clear
+                        .frame(height: 4)
+                        .accessibilityHidden(true)
+                        .gridCellColumns(3)
                 }
-                .frame(maxWidth: .infinity)
-                .frame(height: 62, alignment: .top)
 
-                DialPad(
-                    number: $number,
-                    keySize: keySize,
-                    rowSpacing: compactLayout ? 8 : 18
-                )
+                GridRow {
+                    NumberEntry(number: $number)
+                        .gridCellColumns(3)
+                }
 
-                HStack {
+                GridRow {
+                    ZStack(alignment: .top) {
+                        contactMatchContent
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 62, alignment: .top)
+                    .gridCellColumns(3)
+                }
+
+                GridRow {
+                    DialPad(number: $number)
+                        .gridCellColumns(3)
+                }
+
+                GridRow {
                     Color.clear
                         .frame(width: 80, height: 64)
-
-                    Spacer()
+                        .accessibilityHidden(true)
 
                     CallButton(isCalling: isCalling, isEnabled: selectedLine != nil) {
                         startCall()
                     }
-
-                    Spacer()
+                    .frame(width: 80, height: 64)
 
                     DialerDeleteButton(isVisible: !number.isEmpty) {
                         number = DialerNumberMutation.deletingLastCharacter(from: number)
                     }
-                    .frame(width: 80, height: 64)
+                    .frame(width: 80, height: 64, alignment: .center)
                 }
-                .padding(.top, compactLayout ? 0 : 8)
-
-                Spacer(minLength: 0)
+                .padding(.top, 8)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .padding(.horizontal, 28)
-            .padding(.bottom, 8)
+            .frame(maxWidth: 288)
+
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.horizontal, 28)
+        .padding(.bottom, 8)
         .safeAreaInset(edge: .top, spacing: 0) {
             HStack {
                 LinePicker(

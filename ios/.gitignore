@@ -9,5 +9,6 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/
 build/fastlane/
+/fastlane/build/
 .bundle/
 vendor/bundle/

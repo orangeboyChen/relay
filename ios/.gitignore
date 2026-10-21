@@ -3,6 +3,7 @@ DerivedData/
 *.xcuserstate
 xcuserdata/
 .env
+/e2e.local.env
 fastlane/.env
 fastlane/report.xml
 fastlane/Preview.html

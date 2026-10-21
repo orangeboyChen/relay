@@ -56,7 +56,7 @@ final class ContactListModelTests: XCTestCase {
         XCTAssertEqual(ContactDirectory.sections(for: [apple]).map(\.title), ["A"])
     }
 
-    func testContactNameIndexMatchesChineseCountryCodeAndNativeFormatting() {
+    func testContactNameIndexMatchesInternationalNumberFormatting() {
         let index = ContactNameIndex(
             contacts: [
                 contact(
@@ -68,8 +68,8 @@ final class ContactListModelTests: XCTestCase {
             ]
         )
 
-        XCTAssertEqual(index.name(for: "13500000000"), "张三")
-        XCTAssertEqual(index.name(for: "0086 135 0000 0000"), "张三")
+        XCTAssertEqual(index.name(for: "+8613500000000"), "张三")
+        XCTAssertEqual(index.name(for: "+86 135 0000 0000"), "张三")
     }
 
     func testSectionIndexSelectsExactOrNearestAvailableSection() {

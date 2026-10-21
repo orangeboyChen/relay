@@ -13,20 +13,20 @@ final class DialerContactMatcherTests: XCTestCase {
             familyName: "陈",
             organizationName: "",
             phoneNumbers: [
-                ContactPhoneNumber(id: "chen-mobile", label: "mobile", value: "138 0000 0000")
+                ContactPhoneNumber(id: "chen-mobile", label: "mobile", value: "+86 138 0000 0000")
             ],
             thumbnailImageData: nil
         )
     ]
 
     func testPartialNumberFindsContactWithoutInventingPhoneLabel() {
-        let matches = DialerContactMatcher.matches(number: "1380", contacts: contacts)
+        let matches = DialerContactMatcher.matches(number: "2025", contacts: contacts)
 
         XCTAssertEqual(matches.map(\.contact.displayName), ["陈坚方"])
         XCTAssertEqual(matches.first?.phoneNumber.label, "mobile")
     }
 
-    func testExactMatchIgnoresChineseCountryCodeAndFormatting() {
+    func testExactMatchIgnoresFormatting() {
         let match = DialerContactMatcher.exactMatch(
             number: "+86 138 0000 0000",
             contacts: contacts

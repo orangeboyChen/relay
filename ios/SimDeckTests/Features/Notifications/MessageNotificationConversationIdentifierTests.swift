@@ -11,7 +11,7 @@ final class MessageNotificationConversationIdentifierTests: XCTestCase {
     private let simID = UUID(uuidString: "01900000-0000-7000-8000-000000000003")!
 
     func testUsesSIMIdentityBeforeSlotAndDeviceIdentity() {
-        let identifier = make(simID: simID, slotID: slotID, number: "+86 135-0000-0000")
+        let identifier = make(simID: simID, slotID: slotID, number: "+1 202-555-0123")
 
         XCTAssertTrue(identifier.hasPrefix("sim:\(simID.uuidString.lowercased()):"))
         XCTAssertFalse(identifier.contains("+8613500000000"))

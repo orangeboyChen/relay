@@ -91,6 +91,7 @@ struct SIMFilterMenu: View {
 struct ConversationRow: View {
     let conversation: MessageConversation
     let linePresentation: LineHistoryPresentation
+    let referenceDate: Date
     var isMuted = false
     var isEditing = false
 
@@ -139,7 +140,12 @@ struct ConversationRow: View {
             Spacer(minLength: 8)
 
             if let lastMessage = conversation.lastMessage {
-                Text(lastMessage.sentAt, format: .dateTime.hour().minute())
+                Text(
+                    MessageTimestampFormatter.string(
+                        from: lastMessage.sentAt,
+                        relativeTo: referenceDate
+                    )
+                )
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -167,7 +173,12 @@ struct ConversationRow: View {
                 .lineLimit(2)
 
             if let lastMessage = conversation.lastMessage {
-                Text(lastMessage.sentAt, format: .dateTime.hour().minute())
+                Text(
+                    MessageTimestampFormatter.string(
+                        from: lastMessage.sentAt,
+                        relativeTo: referenceDate
+                    )
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -257,7 +268,8 @@ struct MessageContactAvatar: View {
         ForEach(PreviewFixtures.conversations) { conversation in
             ConversationRow(
                 conversation: conversation,
-                linePresentation: conversation.linePresentation(in: PreviewFixtures.devices)
+                linePresentation: conversation.linePresentation(in: PreviewFixtures.devices),
+                referenceDate: .now
             )
         }
     }
@@ -269,7 +281,8 @@ struct MessageContactAvatar: View {
         ForEach(PreviewFixtures.conversations) { conversation in
             ConversationRow(
                 conversation: conversation,
-                linePresentation: conversation.linePresentation(in: PreviewFixtures.devices)
+                linePresentation: conversation.linePresentation(in: PreviewFixtures.devices),
+                referenceDate: .now
             )
         }
     }

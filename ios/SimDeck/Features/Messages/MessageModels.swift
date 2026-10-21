@@ -9,6 +9,27 @@ struct ConversationID: Hashable, Sendable {
     let remoteNumber: String
 }
 
+enum MessageTimestampFormatter {
+    static func string(from date: Date, relativeTo referenceDate: Date) -> String {
+        let calendar = Calendar.current
+
+        if calendar.isDate(date, inSameDayAs: referenceDate) {
+            return date.formatted(.dateTime.hour().minute())
+        }
+        if calendar.isDateInYesterday(date) {
+            let formatter = RelativeDateTimeFormatter()
+            formatter.dateTimeStyle = .named
+            formatter.unitsStyle = .full
+            return formatter.localizedString(for: date, relativeTo: referenceDate).capitalized
+        }
+        if let weekInterval = calendar.dateInterval(of: .weekOfYear, for: referenceDate),
+           weekInterval.contains(date) {
+            return date.formatted(.dateTime.weekday(.wide))
+        }
+        return date.formatted(.dateTime.month(.abbreviated).day())
+    }
+}
+
 struct MessageConversation: Identifiable, Equatable, Sendable, Codable {
     let lineID: UUID
     var lineSnapshot: LineHistorySnapshot?

@@ -7,6 +7,7 @@ import SwiftUI
 struct MessagesScreen: View {
     let state: MessageListState
     let lines: [DeviceLineIdentity]
+    let referenceDate: Date
     let defaultLineID: UUID?
     let refreshAction: () async -> Void
     let sendAction: (UUID, String, String) async throws -> Void
@@ -30,6 +31,7 @@ struct MessagesScreen: View {
     init(
         state: MessageListState,
         lines: [DeviceLineIdentity],
+        referenceDate: Date = .now,
         defaultLineID: UUID? = nil,
         refreshAction: @escaping () async -> Void = {},
         sendAction: @escaping (UUID, String, String) async throws -> Void = { _, _, _ in },
@@ -42,6 +44,7 @@ struct MessagesScreen: View {
     ) {
         self.state = state
         self.lines = lines
+        self.referenceDate = referenceDate
         self.defaultLineID = defaultLineID
         self.refreshAction = refreshAction
         self.sendAction = sendAction
@@ -200,6 +203,7 @@ struct MessagesScreen: View {
             ConversationRow(
                 conversation: conversation,
                 linePresentation: conversation.linePresentation(in: lines),
+                referenceDate: referenceDate,
                 isMuted: mutedConversationIDs.contains(conversation.id),
                 isEditing: true
             )
@@ -211,6 +215,7 @@ struct MessagesScreen: View {
                 ConversationRow(
                     conversation: conversation,
                     linePresentation: conversation.linePresentation(in: lines),
+                referenceDate: referenceDate,
                     isMuted: mutedConversationIDs.contains(conversation.id),
                     isEditing: false
                 )

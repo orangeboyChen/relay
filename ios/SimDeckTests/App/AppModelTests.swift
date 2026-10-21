@@ -55,7 +55,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(DialString.normalized("+86 135 0000 0000"), "+8613500000000")
         XCTAssertTrue(DialString.isValid("+86 135 0000 0000"))
         XCTAssertTrue(DialString.isValid("*100#"))
-        XCTAssertFalse(DialString.isValid("135+1041"))
+        XCTAssertFalse(DialString.isValid("135+0000"))
         XCTAssertFalse(DialString.isValid("1"))
     }
 

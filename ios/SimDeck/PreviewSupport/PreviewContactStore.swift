@@ -57,7 +57,7 @@ enum PreviewContactFixtures {
                 ContactPhoneNumber(
                     id: "indexed-\(index)-mobile",
                     label: "mobile",
-                    value: "+86 135 0000 \(String(format: "%04d", 1700 + index))"
+                    value: "13500000000"
                 ),
             ],
             thumbnailImageData: nil

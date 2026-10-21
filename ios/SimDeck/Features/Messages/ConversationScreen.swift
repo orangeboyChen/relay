@@ -286,6 +286,7 @@ struct ConversationScreen: View {
                     .frame(width: 44, height: 44)
                     .accessibilityHidden(true)
             }
+            .frame(maxHeight: .infinity, alignment: .top)
         }
         .frame(height: dynamicTypeSize.isAccessibilitySize ? 108 : 86)
         .padding(.horizontal, 16)

@@ -1,17 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="background" x1="90" y1="70" x2="934" y2="954" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#4EACFF"/>
-      <stop offset="0.38" stop-color="#0A7EF1"/>
-      <stop offset="1" stop-color="#004FB8"/>
-    </linearGradient>
-    <radialGradient id="highlight" cx="0" cy="0" r="1" gradientTransform="translate(242 178) rotate(42) scale(520)" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.18"/>
+    <radialGradient id="highlight" cx="210" cy="184" r="720" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.10"/>
       <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
     </radialGradient>
   </defs>
-  <rect width="1024" height="1024" fill="url(#background)"/>
+  <rect width="1024" height="1024" fill="#007AFF"/>
   <rect width="1024" height="1024" fill="url(#highlight)"/>
-  <path fill="#FFFFFF" d="M742 151C788 133 859 177 899 224C946 280 932 374 895 463C849 574 764 683 660 770C557 856 438 920 344 932C273 941 228 903 196 830C170 770 187 722 235 682C288 638 348 620 393 641C431 659 459 714 489 732C520 750 560 729 612 688C691 625 759 543 799 471C835 406 817 382 767 351C725 325 711 284 719 239C726 197 733 162 742 151Z"/>
+  <!-- Official SF Symbols 27 phone.fill regular outline, exported by Apple's sfsymbols tool. -->
+  <path fill="#FFFFFF" transform="translate(126.5 814.9) scale(8.609)" d="M28.5645-19.2383C39.9414-7.86133 53.5156 0.830078 64.4531 0.830078C69.6289 0.830078 74.1211-1.2207 77.0508-4.54102C79.834-7.71484 80.8105-10.0586 80.8105-12.1582C80.8105-13.7695 79.7852-15.2344 77.2949-17.041L67.8223-23.8281C65.4785-25.4883 64.4043-25.7812 63.0371-25.7812C61.8652-25.7812 60.8398-25.5859 58.8379-24.4629L52.6367-21.0449C51.9043-20.6543 51.5625-20.5566 51.0254-20.5566C50.293-20.5566 49.8047-20.752 49.0723-21.0449C46.1426-22.4121 41.9922-25.6836 38.3301-29.2969C34.668-32.959 31.7871-36.7676 30.3711-39.6484C30.1758-40.0391 29.9316-40.625 29.9316-41.2598C29.9316-41.748 30.2246-42.1875 30.5176-42.7246L34.1309-48.9746C35.1074-50.6836 35.4004-51.6113 35.4004-52.9297C35.4004-54.4434 34.9121-56.0547 33.4473-58.0566L27.002-67.1387C25.1465-69.7266 23.7305-71.3379 21.6309-71.3379C19.043-71.3379 15.9668-69.3359 13.7207-67.1875C10.498-64.0625 8.78906-59.7168 8.78906-54.8828C8.78906-43.8477 17.2363-30.5176 28.5645-19.2383Z"/>
 </svg>

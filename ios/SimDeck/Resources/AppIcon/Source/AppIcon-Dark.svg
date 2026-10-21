@@ -1,5 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <rect width="1024" height="1024" fill="#000000"/>
-  <path fill="#007AFF" d="M742 151C788 133 859 177 899 224C946 280 932 374 895 463C849 574 764 683 660 770C557 856 438 920 344 932C273 941 228 903 196 830C170 770 187 722 235 682C288 638 348 620 393 641C431 659 459 714 489 732C520 750 560 729 612 688C691 625 759 543 799 471C835 406 817 382 767 351C725 325 711 284 719 239C726 197 733 162 742 151Z"/>
+  <defs>
+    <linearGradient id="background" x1="90" y1="70" x2="934" y2="954" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4EACFF"/>
+      <stop offset="0.38" stop-color="#0A7EF1"/>
+      <stop offset="1" stop-color="#004FB8"/>
+    </linearGradient>
+    <radialGradient id="highlight" cx="0" cy="0" r="1" gradientTransform="translate(242 178) rotate(42) scale(520)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#background)"/>
+  <rect width="1024" height="1024" fill="url(#highlight)"/>
+  <path fill="#FFFFFF" d="M742 151C788 133 859 177 899 224C946 280 932 374 895 463C849 574 764 683 660 770C557 856 438 920 344 932C273 941 228 903 196 830C170 770 187 722 235 682C288 638 348 620 393 641C431 659 459 714 489 732C520 750 560 729 612 688C691 625 759 543 799 471C835 406 817 382 767 351C725 325 711 284 719 239C726 197 733 162 742 151Z"/>
 </svg>

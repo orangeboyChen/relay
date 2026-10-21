@@ -92,6 +92,9 @@
         }
       }
     },
+    "(%lld)" : {
+
+    },
     "0, long press for plus" : {
       "localizations" : {
         "zh-Hans" : {
@@ -168,6 +171,9 @@
         }
       }
     },
+    "Add Contact" : {
+
+    },
     "Add Device" : {
       "localizations" : {
         "zh-Hans" : {
@@ -177,6 +183,9 @@
           }
         }
       }
+    },
+    "Add Name" : {
+
     },
     "Add a device in Device Management." : {
       "localizations" : {
@@ -257,6 +266,9 @@
           }
         }
       }
+    },
+    "Alerts hidden" : {
+
     },
     "All" : {
       "localizations" : {
@@ -449,6 +461,9 @@
         }
       }
     },
+    "Back, %lld unread" : {
+
+    },
     "Bound devices" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -527,6 +542,7 @@
 
     },
     "Call filter" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -644,6 +660,7 @@
       }
     },
     "Choose contact" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1265,6 +1282,9 @@
         }
       }
     },
+    "End" : {
+
+    },
     "End call" : {
 
     },
@@ -1357,6 +1377,9 @@
         }
       }
     },
+    "FaceTime" : {
+
+    },
     "Failed" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1386,6 +1409,9 @@
           }
         }
       }
+    },
+    "Filter calls by SIM" : {
+
     },
     "For multiple SIMs, create a separate code, container, state volume, and hardware mapping for each modem." : {
       "extractionState" : "stale",
@@ -1449,6 +1475,9 @@
           }
         }
       }
+    },
+    "Hide Alerts" : {
+
     },
     "Hide Keypad" : {
 
@@ -1725,6 +1754,9 @@
         }
       }
     },
+    "Mail" : {
+
+    },
     "Make and receive calls and text messages on this iPhone using SIM cards in your connected Sim Deck device." : {
       "localizations" : {
         "zh-Hans" : {
@@ -1857,6 +1889,9 @@
           }
         }
       }
+    },
+    "More" : {
+
     },
     "Mount the secret in the container" : {
       "extractionState" : "stale",
@@ -2089,6 +2124,9 @@
           }
         }
       }
+    },
+    "Not selected" : {
+
     },
     "Notifications" : {
       "localizations" : {
@@ -2427,6 +2465,7 @@
       }
     },
     "Recents" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2728,6 +2767,9 @@
         }
       }
     },
+    "SIM Line:" : {
+
+    },
     "SIM cards appear after a modem reports its ICCID." : {
 
     },
@@ -2783,6 +2825,7 @@
       }
     },
     "Search Contacts" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2835,6 +2878,9 @@
           }
         }
       }
+    },
+    "Selected" : {
+
     },
     "Send" : {
       "extractionState" : "stale",
@@ -2926,6 +2972,12 @@
           }
         }
       }
+    },
+    "Show Alerts" : {
+
+    },
+    "Show More" : {
+
     },
     "Show message preview" : {
       "localizations" : {
@@ -3560,6 +3612,9 @@
         }
       }
     },
+    "Toggles this call for deletion" : {
+
+    },
     "Trusted iPhones" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3701,6 +3756,9 @@
         }
       }
     },
+    "Unread" : {
+
+    },
     "Use unique device mappings and a unique state volume." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3730,6 +3788,9 @@
           }
         }
       }
+    },
+    "Video" : {
+
     },
     "View Source Code" : {
       "extractionState" : "stale",
@@ -3846,6 +3907,7 @@
       }
     },
     "·" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {

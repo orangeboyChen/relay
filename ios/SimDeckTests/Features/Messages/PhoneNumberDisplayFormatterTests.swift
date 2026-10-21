@@ -13,7 +13,7 @@ final class PhoneNumberDisplayFormatterTests: XCTestCase {
         )
         XCTAssertEqual(
             PhoneNumberDisplayFormatter.string(from: "13500000000"),
-            "13500000000"
+            "135 0000 0000"
         )
     }
 

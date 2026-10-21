@@ -20,7 +20,7 @@ final class DialerContactMatcherTests: XCTestCase {
     ]
 
     func testPartialNumberFindsContactWithoutInventingPhoneLabel() {
-        let matches = DialerContactMatcher.matches(number: "2025", contacts: contacts)
+        let matches = DialerContactMatcher.matches(number: "1380", contacts: contacts)
 
         XCTAssertEqual(matches.map(\.contact.displayName), ["陈坚方"])
         XCTAssertEqual(matches.first?.phoneNumber.label, "mobile")

@@ -147,6 +147,8 @@ private struct DialerNumberTextField: UIViewRepresentable {
 
 struct DialPad: View {
     @Binding var number: String
+    var keySize: CGFloat = 80
+    var rowSpacing: CGFloat = 18
 
     @State private var feedbackTrigger = 0
 
@@ -168,10 +170,10 @@ struct DialPad: View {
     var body: some View {
         LazyVGrid(
             columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 3),
-            spacing: 18
+            spacing: rowSpacing
         ) {
             ForEach(keys, id: \.self) { key in
-                DialPadKey(content: key) { press in
+                DialPadKey(content: key, size: keySize) { press in
                     guard let input = DialPadInput.output(for: key.symbol, press: press) else {
                         return
                     }
@@ -208,6 +210,7 @@ private struct DialPadKeyContent: Hashable {
 
 private struct DialPadKey: View {
     let content: DialPadKeyContent
+    let size: CGFloat
     let onPress: (DialPadPress) -> Void
 
     @State private var handledLongPress = false
@@ -233,7 +236,7 @@ private struct DialPadKey: View {
                     .opacity(content.letters.isEmpty ? 0 : 1)
                     .accessibilityHidden(true)
             }
-            .frame(width: min(scaledSize, 86), height: min(scaledSize, 86))
+            .frame(width: min(scaledSize, size), height: min(scaledSize, size))
             .glassEffect(.regular.interactive(), in: Circle())
             .contentShape(Circle())
         }

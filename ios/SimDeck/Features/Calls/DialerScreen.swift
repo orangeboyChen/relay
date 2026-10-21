@@ -42,44 +42,54 @@ struct DialerScreen: View {
     }
 
     var body: some View {
-        VStack(spacing: 10) {
-            Color.clear
-                .frame(height: 4)
-                .accessibilityHidden(true)
+        GeometryReader { geometry in
+            let compactLayout = geometry.size.height < 900
+            let keySize: CGFloat = compactLayout ? 72 : 80
 
-            NumberEntry(number: $number)
-
-            ZStack(alignment: .top) {
-                contactMatchContent
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 62, alignment: .top)
-
-            DialPad(number: $number)
-
-            HStack {
+            VStack(spacing: compactLayout ? 2 : 10) {
                 Color.clear
-                    .frame(width: 80, height: 80)
+                    .frame(height: 4)
+                    .accessibilityHidden(true)
 
-                Spacer()
+                NumberEntry(number: $number)
 
-                CallButton(isCalling: isCalling, isEnabled: selectedLine != nil) {
-                    startCall()
+                ZStack(alignment: .top) {
+                    contactMatchContent
                 }
+                .frame(maxWidth: .infinity)
+                .frame(height: 62, alignment: .top)
 
-                Spacer()
+                DialPad(
+                    number: $number,
+                    keySize: keySize,
+                    rowSpacing: compactLayout ? 8 : 18
+                )
 
-                DialerDeleteButton(isVisible: !number.isEmpty) {
-                    number = DialerNumberMutation.deletingLastCharacter(from: number)
+                HStack {
+                    Color.clear
+                        .frame(width: 80, height: 64)
+
+                    Spacer()
+
+                    CallButton(isCalling: isCalling, isEnabled: selectedLine != nil) {
+                        startCall()
+                    }
+
+                    Spacer()
+
+                    DialerDeleteButton(isVisible: !number.isEmpty) {
+                        number = DialerNumberMutation.deletingLastCharacter(from: number)
+                    }
+                    .frame(width: 80, height: 64)
                 }
-                .frame(width: 80, height: 80)
+                .padding(.top, compactLayout ? 0 : 8)
+
+                Spacer(minLength: 0)
             }
-            .padding(.top, 14)
-
-            Spacer(minLength: 10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.horizontal, 28)
+            .padding(.bottom, 8)
         }
-        .padding(.horizontal, 28)
-        .padding(.bottom, 8)
         .safeAreaInset(edge: .top, spacing: 0) {
             HStack {
                 LinePicker(

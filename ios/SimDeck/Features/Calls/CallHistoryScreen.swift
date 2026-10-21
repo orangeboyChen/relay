@@ -79,6 +79,12 @@ struct CallHistoryScreen: View {
                         editMode = .inactive
                     }
                 }
+                .onChange(of: filter) { _, _ in
+                    pruneSelection(from: records)
+                }
+                .onChange(of: selectedLineID) { _, _ in
+                    pruneSelection(from: records)
+                }
             case .failed:
                 ContentUnavailableView(
                     "Calls Unavailable",
@@ -219,6 +225,10 @@ struct CallHistoryScreen: View {
         } else {
             selectedRecordIDs.insert(recordID)
         }
+    }
+
+    private func pruneSelection(from records: [CallRecord]) {
+        selectedRecordIDs.formIntersection(Set(filtered(records).map(\.id)))
     }
 
     private var detailIsPresented: Binding<Bool> {

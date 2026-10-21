@@ -113,7 +113,7 @@ struct ConversationRow: View {
             }
             .padding(.top, 1)
         }
-        .padding(.vertical, 15)
+        .padding(.vertical, 11)
         .overlay(alignment: .leading) {
             unreadIndicator
                 .offset(x: -18)
@@ -241,7 +241,7 @@ struct MessageContactAvatar: View {
                             )
                         )
                     Image(systemName: "person.fill")
-                        .font(.system(size: diameter * 0.42, weight: .medium))
+                        .font(.system(size: diameter * 0.68, weight: .medium))
                         .foregroundStyle(.white)
                 }
             }

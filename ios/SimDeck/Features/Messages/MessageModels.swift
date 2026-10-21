@@ -16,7 +16,8 @@ enum MessageTimestampFormatter {
         if calendar.isDate(date, inSameDayAs: referenceDate) {
             return date.formatted(.dateTime.hour().minute())
         }
-        if calendar.isDateInYesterday(date) {
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: referenceDate),
+           calendar.isDate(date, inSameDayAs: yesterday) {
             let formatter = RelativeDateTimeFormatter()
             formatter.dateTimeStyle = .named
             formatter.unitsStyle = .full

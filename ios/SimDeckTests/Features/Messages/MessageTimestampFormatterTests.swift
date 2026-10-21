@@ -31,6 +31,21 @@ final class MessageTimestampFormatterTests: XCTestCase {
         )
     }
 
+    func testYesterdayIsRelativeToTheInjectedReferenceDate() {
+        let calendar = Calendar.current
+        let referenceDate = calendar.date(from: DateComponents(year: 2035, month: 6, day: 15, hour: 9))!
+        let messageDate = calendar.date(from: DateComponents(year: 2035, month: 6, day: 14, hour: 22))!
+
+        let formatter = RelativeDateTimeFormatter()
+        formatter.dateTimeStyle = .named
+        formatter.unitsStyle = .full
+
+        XCTAssertEqual(
+            MessageTimestampFormatter.string(from: messageDate, relativeTo: referenceDate),
+            formatter.localizedString(for: messageDate, relativeTo: referenceDate).capitalized
+        )
+    }
+
     func testUsesWeekdayForEarlierMessagesThisWeek() {
         let calendar = Calendar.current
         let referenceDate = calendar.date(from: DateComponents(year: 2026, month: 10, day: 21, hour: 9))!

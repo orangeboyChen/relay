@@ -216,7 +216,14 @@ struct ConversationScreen: View {
     }
 
     private var conversation: MessageConversation {
-        conversations.first(where: { $0.id == selectedID }) ?? conversations[0]
+        conversations.first(where: { $0.id == selectedID })
+            ?? MessageConversation(
+                lineID: selectedID.deviceUUID,
+                remoteNumber: selectedID.remoteNumber,
+                contactName: nil,
+                unreadCount: 0,
+                messages: []
+            )
     }
 
     private var currentLine: DeviceLineIdentity? {

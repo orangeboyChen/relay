@@ -124,17 +124,31 @@ struct CallHistoryScreen: View {
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
                             Picker("Call filter", selection: $filter) {
-                                Text("Calls").tag(CallHistoryFilter.all)
-                                Text("Missed").tag(CallHistoryFilter.missed)
-                                Text("Unknown Callers").tag(CallHistoryFilter.unknownCallers)
+                                Label("Calls", systemImage: "phone")
+                                    .tag(CallHistoryFilter.all)
+                                Label("Missed", systemImage: "phone.down")
+                                    .tag(CallHistoryFilter.missed)
+                                Label(
+                                    "Unknown Callers",
+                                    systemImage: "person.crop.circle.badge.questionmark"
+                                )
+                                .tag(CallHistoryFilter.unknownCallers)
                             }
                             .pickerStyle(.inline)
 
-                            Picker("SIM", selection: $selectedLineID) {
-                                Text("All SIMs").tag(UUID?.none)
+                            Picker(selection: $selectedLineID) {
+                                Label("All SIMs", systemImage: "simcard.2")
+                                    .tag(UUID?.none)
                                 ForEach(lines) { line in
-                                    Text(line.displayName).tag(Optional(line.id))
+                                    Label {
+                                        Text(line.displayName)
+                                    } icon: {
+                                        SIMBadge(line: line, size: 16)
+                                    }
+                                    .tag(Optional(line.id))
                                 }
+                            } label: {
+                                Label("SIM", systemImage: "simcard")
                             }
                             .pickerStyle(.menu)
                         } label: {

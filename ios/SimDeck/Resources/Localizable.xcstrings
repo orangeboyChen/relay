@@ -673,6 +673,16 @@
         }
       }
     },
+    "Clear phone number" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除电话号码"
+          }
+        }
+      }
+    },
     "Close" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -2346,6 +2356,16 @@
         }
       }
     },
+    "Phone Numbers" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "电话号码"
+          }
+        }
+      }
+    },
     "Preview image" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2779,6 +2799,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搜索短信"
+          }
+        }
+      }
+    },
+    "See All" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看全部"
           }
         }
       }

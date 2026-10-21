@@ -43,4 +43,29 @@ final class DialerContactMatcherTests: XCTestCase {
 
         XCTAssertEqual(number, "")
     }
+
+    func testHighlightPreservesPhoneNumberFormatting() {
+        let highlighted = DialerContactMatcher.highlightedPhoneNumber(
+            "+86 138 0000 0000",
+            matching: "3800"
+        )
+
+        XCTAssertEqual(
+            highlighted,
+            DialerHighlightedPhoneNumber(
+                prefix: "+86 1",
+                match: "38 00",
+                suffix: "00 0000"
+            )
+        )
+    }
+
+    func testHighlightUsesDomesticDigitsAfterCountryCode() {
+        let highlighted = DialerContactMatcher.highlightedPhoneNumber(
+            "+86 138 0000 0000",
+            matching: "+86 138"
+        )
+
+        XCTAssertEqual(highlighted?.match, "138")
+    }
 }

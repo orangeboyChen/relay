@@ -99,6 +99,12 @@ private struct DialerNumberTextField: UIViewRepresentable {
         let field = UITextField()
         field.delegate = context.coordinator
         field.addTarget(context.coordinator, action: #selector(Coordinator.textDidChange(_:)), for: .editingChanged)
+        let deleteGesture = UISwipeGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.deleteLastDigit)
+        )
+        deleteGesture.direction = .left
+        field.addGestureRecognizer(deleteGesture)
         field.textAlignment = .center
         field.font = UIFont.monospacedDigitSystemFont(ofSize: 34, weight: .regular)
         field.textColor = .label
@@ -129,6 +135,12 @@ private struct DialerNumberTextField: UIViewRepresentable {
 
         @objc func textDidChange(_ field: UITextField) {
             textBinding.wrappedValue = DialString.normalized(field.text ?? "")
+        }
+
+        @objc func deleteLastDigit() {
+            textBinding.wrappedValue = DialerNumberMutation.deletingLastCharacter(
+                from: textBinding.wrappedValue
+            )
         }
     }
 }

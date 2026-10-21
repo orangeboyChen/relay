@@ -492,7 +492,8 @@ private struct CallHistoryRow: View {
 
                 HStack(spacing: 5) {
                     Image(systemName: directionSymbol)
-                    SIMLabel(snapshot: linePresentation.snapshot, size: 14)
+                    SIMBadge(snapshot: linePresentation.snapshot, size: 14)
+                    Text(verbatim: secondaryLabel)
                     if entry.records.count > 1 {
                         Text("(\(entry.records.count))")
                     }
@@ -516,6 +517,15 @@ private struct CallHistoryRow: View {
 
     private var directionSymbol: String {
         record.direction == .incoming ? "arrow.down.left" : "arrow.up.right"
+    }
+
+    private var secondaryLabel: String {
+        if let phoneNumber = contact?.phoneNumber(matching: record.remoteNumber) {
+            let label = phoneNumber.label.trimmingCharacters(in: .whitespacesAndNewlines)
+            return label.isEmpty ? String(localized: "mobile") : label
+        }
+        return PhoneNumberAttributionFormatter.string(from: record.remoteNumber)
+            ?? String(localized: "Unknown")
     }
 }
 

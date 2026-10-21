@@ -76,6 +76,15 @@ struct ContactRecord: Identifiable, Hashable, Sendable {
                     || (!queryDigits.isEmpty && $0.value.filter(\.isNumber).contains(queryDigits))
             }
     }
+
+    func phoneNumber(matching value: String) -> ContactPhoneNumber? {
+        let lookupKeys = Set(ContactPhoneNumberLookup.keys(for: value))
+        guard !lookupKeys.isEmpty else { return nil }
+
+        return phoneNumbers.first { phoneNumber in
+            !lookupKeys.isDisjoint(with: ContactPhoneNumberLookup.keys(for: phoneNumber.value))
+        }
+    }
 }
 
 struct ContactSection: Identifiable, Equatable, Sendable {

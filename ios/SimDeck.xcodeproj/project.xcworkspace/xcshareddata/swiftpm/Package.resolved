@@ -1,6 +1,15 @@
 {
-  "originHash" : "bef719f2e9090eb78bdecbabce5d3d1f50c3e22bfd8f2b9ffaa422715e26576a",
+  "originHash" : "d13423f0155dc1b1862260794e9062faa2da564d5d346e71d389f745fc640d7b",
   "pins" : [
+    {
+      "identity" : "libphonenumber-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/iziz/libPhoneNumber-iOS.git",
+      "state" : {
+        "revision" : "85d5486deb600fd6c5d56c908d5966d2daf88968",
+        "version" : "2.1.2"
+      }
+    },
     {
       "identity" : "mars-rs",
       "kind" : "remoteSourceControl",

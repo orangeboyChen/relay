@@ -50,8 +50,16 @@ struct ContactAvatar: View {
             }
         }
         .frame(width: size, height: size)
-        .clipShape(Circle())
+        .clipShape(avatarShape)
         .accessibilityHidden(true)
+    }
+
+    private var avatarShape: AnyShape {
+        if !contact.organizationName.isEmpty {
+            AnyShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
+        } else {
+            AnyShape(Circle())
+        }
     }
 }
 

@@ -309,3 +309,48 @@ struct DialerDeleteButton: View {
         }
     }
 }
+
+#if DEBUG
+#Preview("Dial Pad - Empty") {
+    @Previewable @State var number = ""
+
+    VStack(spacing: 20) {
+        NumberEntry(number: $number)
+        DialPad(number: $number)
+    }
+    .padding()
+}
+
+#Preview("Dial Pad - Entered Number") {
+    @Previewable @State var number = "+8613500000000"
+
+    VStack(spacing: 20) {
+        NumberEntry(number: $number)
+        DialPad(number: $number)
+    }
+    .padding()
+}
+
+#Preview("Dial Pad - Dark") {
+    @Previewable @State var number = "10086"
+
+    VStack(spacing: 20) {
+        NumberEntry(number: $number)
+        DialPad(number: $number)
+    }
+    .padding()
+    .preferredColorScheme(.dark)
+}
+
+#Preview("Dial Pad - Accessibility") {
+    @Previewable @State var number = "13500000000"
+
+    VStack(spacing: 20) {
+        NumberEntry(number: $number)
+        DialPad(number: $number)
+    }
+    .padding()
+    .environment(\.dynamicTypeSize, .accessibility5)
+    .environment(\.locale, Locale(identifier: "zh-Hans"))
+}
+#endif

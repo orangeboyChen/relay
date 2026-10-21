@@ -105,6 +105,11 @@ struct ContactsScreen: View {
                             .id(section.id)
                         }
                     }
+                    Color.clear
+                        .frame(height: 96)
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                        .accessibilityHidden(true)
                 }
                 .overlay(alignment: .trailing) {
                     if contactModel.searchText.isEmpty {
@@ -114,11 +119,6 @@ struct ContactsScreen: View {
                             proxy.scrollTo(title, anchor: .top)
                         }
                     }
-                }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    Color.clear
-                        .frame(height: 64)
-                        .accessibilityHidden(true)
                 }
                 .navigationDestination(item: $selectedContact) { contact in
                     ContactDetailScreen(

@@ -65,10 +65,10 @@ struct CallHistoryScreen: View {
                             }
                         )
                         .listRowInsets(
-                            EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 10)
+                            EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 8)
                         )
                         .alignmentGuide(.listRowSeparatorLeading) { dimensions in
-                            dimensions[.leading] + 66
+                            dimensions[.leading] + 54
                         }
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {
@@ -117,9 +117,6 @@ struct CallHistoryScreen: View {
                             editMode = editMode.isEditing ? .inactive : .active
                         }
                     }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.capsule)
-                    .controlSize(.large)
                 }
                 if !editMode.isEditing {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -137,21 +134,35 @@ struct CallHistoryScreen: View {
                             }
                             .pickerStyle(.inline)
 
-                            Picker(selection: $selectedLineID) {
-                                Label("All SIMs", systemImage: "simcard.2")
-                                    .tag(UUID?.none)
+                            Menu {
+                                Button {
+                                    selectedLineID = nil
+                                } label: {
+                                    Label("All SIMs", systemImage: selectedLineID == nil ? "checkmark" : "simcard.2")
+                                }
+
                                 ForEach(lines) { line in
-                                    Label {
-                                        Text(line.displayName)
-                                    } icon: {
-                                        SIMBadge(line: line, size: 16)
+                                    Button {
+                                        selectedLineID = line.id
+                                    } label: {
+                                        HStack {
+                                            SIMLabel(line: line)
+                                            if selectedLineID == line.id {
+                                                Image(systemName: "checkmark")
+                                            }
+                                        }
                                     }
-                                    .tag(Optional(line.id))
                                 }
                             } label: {
-                                Label("SIM", systemImage: "simcard")
+                                if let selectedLine {
+                                    HStack {
+                                        SIMBadge(line: selectedLine, size: 16)
+                                        Text(selectedLine.displayName)
+                                    }
+                                } else {
+                                    Label("All SIMs", systemImage: "simcard.2")
+                                }
                             }
-                            .pickerStyle(.menu)
                         } label: {
                             Label("Call filter", systemImage: "line.3.horizontal.decrease")
                                 .labelStyle(.iconOnly)
@@ -239,6 +250,11 @@ struct CallHistoryScreen: View {
 
     private func filtered(_ records: [CallRecord]) -> [CallRecord] {
         filter.records(from: records, lineID: selectedLineID, contacts: contacts)
+    }
+
+    private var selectedLine: DeviceLineIdentity? {
+        guard let selectedLineID else { return nil }
+        return lines.first(where: { $0.id == selectedLineID })
     }
 
     private var emptyStateTitle: LocalizedStringKey {
@@ -447,7 +463,7 @@ private struct CallHistoryRecordRow: View {
                 }
             }
         }
-        .frame(minHeight: 82)
+        .frame(minHeight: 74)
     }
 }
 
@@ -458,7 +474,7 @@ private struct CallHistoryRow: View {
     let referenceDate: Date
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             CallHistoryAvatar(record: record, contact: contact)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -478,7 +494,7 @@ private struct CallHistoryRow: View {
                         Text("(\(entry.records.count))")
                     }
                 }
-                .font(.body)
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
@@ -487,7 +503,6 @@ private struct CallHistoryRow: View {
 
             CallHistoryTimestamp(date: record.startedAt, referenceDate: referenceDate)
         }
-        .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
     }
 
@@ -564,7 +579,7 @@ private struct CallHistoryTimestamp: View {
                 Text(date, format: .dateTime.month(.abbreviated).day())
             }
         }
-        .font(.body)
+        .font(.subheadline)
         .foregroundStyle(.secondary)
         .lineLimit(1)
     }
@@ -625,7 +640,7 @@ private struct CallHistoryAvatar: View {
             imageData: contact?.thumbnailImageData,
             displayName: contact?.displayName ?? record.contactName,
             organizationName: contact?.organizationName,
-            size: 54
+            size: 46
         )
     }
 }

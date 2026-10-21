@@ -51,7 +51,7 @@ var _ = Describe("SMS PDU codec", func() {
 		message, err := DecodeDeliver("00040B913105000000F0000862015121436500044F60597D")
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(message.Sender).To(Equal("+8613500000000"))
+		Expect(message.Sender).To(Equal("+13500000000"))
 		Expect(message.Text).To(Equal("你好"))
 		Expect(message.Timestamp.Year()).To(Equal(2026))
 		Expect(message.Timestamp.Month()).To(Equal(time.October))
@@ -62,7 +62,7 @@ var _ = Describe("SMS PDU codec", func() {
 		report, err := DecodeStatusReport("0002070B913105000000F0620151214365006201512143650000")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(report.MessageReference).To(Equal(byte(7)))
-		Expect(report.Recipient).To(Equal("+8613500000000"))
+		Expect(report.Recipient).To(Equal("+13500000000"))
 		Expect(report.Status).To(Equal(DeliveryDelivered))
 		Expect(report.StatusCode).To(Equal(byte(0)))
 
@@ -91,7 +91,7 @@ var _ = Describe("SMS PDU codec", func() {
 		Expect(pdus).To(HaveLen(1))
 		Expect(pdus[0].Total).To(Equal(1))
 		Expect(pdus[0].TPDULength).To(BeNumerically(">", 0))
-		Expect(pdus[0].Hex).To(HavePrefix("0011000B913105000000F0"))
+		Expect(pdus[0].Hex).To(HavePrefix("0011000D91683105000000F0"))
 	})
 
 	It("round-trips every GSM-7 extension-table character", func() {

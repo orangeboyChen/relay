@@ -395,7 +395,7 @@ var _ = Describe("Modem session", func() {
 
 		Expect(session.SendSMS(context.Background(), "+8613500000000", "hello", 7)).To(Succeed())
 		Eventually(commands).Should(Receive(HavePrefix("AT+CMGS=")))
-		Eventually(payloads).Should(Receive(HavePrefix("0011000B913105000000F0")))
+		Eventually(payloads).Should(Receive(HavePrefix("0011000D91683105000000F0")))
 	})
 
 	It("submits every segment of a multipart outbound SMS", func() {

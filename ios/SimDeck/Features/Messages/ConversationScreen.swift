@@ -93,7 +93,7 @@ struct ConversationScreen: View {
                         .frame(height: 1)
                         .id(ConversationScrollAnchor.bottom)
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 8)
                 .padding(.vertical, 8)
                 .id(selectedID)
                 .transition(.opacity)

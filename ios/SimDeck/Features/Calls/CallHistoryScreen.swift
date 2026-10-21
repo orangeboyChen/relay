@@ -371,7 +371,6 @@ private struct CallHistoryRecordRow: View {
                             .font(.system(size: 21, weight: .regular))
                             .foregroundStyle(.blue)
                             .frame(width: 44, height: 44)
-                            .glassEffect(.regular.interactive(), in: Circle())
                     }
                     .buttonStyle(.plain)
                     .frame(width: 58, height: 50)
@@ -380,7 +379,6 @@ private struct CallHistoryRecordRow: View {
             }
         }
         .frame(minHeight: 76)
-        .offset(y: 3)
     }
 }
 

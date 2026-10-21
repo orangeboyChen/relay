@@ -310,6 +310,29 @@ final class LiveCallTransportTests: XCTestCase {
         XCTAssertEqual(media.appliedAnswers, [CallMediaSessionFake.answer, CallMediaSessionFake.answer])
     }
 
+    func testMediaRestartRetriesUntilConnectivityRecovers() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let media = CallMediaSessionFake()
+        media.connectivityWaitResults = [.failure(CallMediaSessionError.connectivityTimedOut), .success(())]
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: api.commandSigner,
+            makeMediaSession: { media },
+            waitBeforePollingAgain: {},
+            waitBeforeMediaRestart: {},
+            automaticallyPollEvents: false
+        )
+        try await transport.startOutgoingCall(callID: callID, number: "13500000000", lineID: deviceID)
+
+        media.reportConnectivity(.failed)
+        for _ in 0..<100 where api.payloads.count < 3 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(api.payloads.map(\.operation), ["call.start", "call.media.restart", "call.media.restart"])
+        XCTAssertEqual(media.connectivityWaitCount, 2)
+    }
+
     func testConnectedMediaCancelsPendingDisconnectedRestart() async throws {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
         let media = CallMediaSessionFake()
@@ -897,6 +920,8 @@ private final class CallMediaSessionFake: CallMediaSession {
     private(set) var deactivatedAudioSessions: [ObjectIdentifier] = []
     private(set) var isClosed = false
     private(set) var restartOfferRequests: [[CallTURNCredentials]] = []
+    var connectivityWaitResults: [Result<Void, Error>] = []
+    private(set) var connectivityWaitCount = 0
     private var connectivityHandler: (@MainActor (CallMediaConnectivityState) -> Void)?
 
     func makeOffer() async throws -> String {
@@ -916,6 +941,14 @@ private final class CallMediaSessionFake: CallMediaSession {
             throw applyAnswerError
         }
         appliedAnswers.append(answer)
+    }
+
+    func waitUntilConnected(timeout: Duration) async throws {
+        connectivityWaitCount += 1
+        if !connectivityWaitResults.isEmpty {
+            let result = connectivityWaitResults.removeFirst()
+            try result.get()
+        }
     }
 
     func setMuted(_ isMuted: Bool) {

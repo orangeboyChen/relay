@@ -13,6 +13,7 @@ enum CallMediaSessionError: LocalizedError, Equatable, Sendable {
     case pcmuUnavailable
     case offerCreationFailed
     case iceGatheringTimedOut
+    case connectivityTimedOut
     case invalidAnswer
     case closed
 
@@ -22,7 +23,7 @@ enum CallMediaSessionError: LocalizedError, Equatable, Sendable {
             String(localized: "The secure audio connection could not be created.")
         case .pcmuUnavailable:
             String(localized: "The required call audio codec is unavailable.")
-        case .offerCreationFailed, .iceGatheringTimedOut:
+        case .offerCreationFailed, .iceGatheringTimedOut, .connectivityTimedOut:
             String(localized: "The secure audio connection could not be prepared.")
         case .invalidAnswer:
             String(localized: "The device returned an invalid audio response.")
@@ -43,6 +44,7 @@ protocol CallMediaSession: AnyObject {
     func makeOffer() async throws -> String
     func makeRestartOffer(iceServers: [CallTURNCredentials]) async throws -> String
     func applyAnswer(_ answer: String) async throws
+    func waitUntilConnected(timeout: Duration) async throws
     func setConnectivityHandler(_ handler: (@MainActor (CallMediaConnectivityState) -> Void)?)
     func setMuted(_ isMuted: Bool)
     func audioSessionDidActivate(_ audioSession: AVAudioSession)
@@ -69,6 +71,8 @@ final class WebRTCCallMediaSession: NSObject, CallMediaSession {
     private var iceContinuation: CheckedContinuation<String, Error>?
     private var iceTimeoutTask: Task<Void, Never>?
     private var connectivityHandler: (@MainActor (CallMediaConnectivityState) -> Void)?
+    private var connectivityContinuation: CheckedContinuation<Void, Error>?
+    private var connectivityTimeoutTask: Task<Void, Never>?
     private var isClosed = false
 
     init(
@@ -264,6 +268,36 @@ final class WebRTCCallMediaSession: NSObject, CallMediaSession {
         }
     }
 
+    func waitUntilConnected(timeout: Duration) async throws {
+        guard !isClosed else { throw CallMediaSessionError.closed }
+        if peerConnection.iceConnectionState == .connected
+            || peerConnection.iceConnectionState == .completed {
+            return
+        }
+        guard connectivityContinuation == nil else {
+            throw CallMediaSessionError.offerCreationFailed
+        }
+        try await withCheckedThrowingContinuation { continuation in
+            connectivityContinuation = continuation
+            connectivityTimeoutTask = Task { [weak self] in
+                do {
+                    try await Task.sleep(for: timeout)
+                } catch {
+                    return
+                }
+                self?.finishConnectivityWait(with: .failure(.connectivityTimedOut))
+            }
+        }
+    }
+
+    private func finishConnectivityWait(with result: Result<Void, CallMediaSessionError>) {
+        guard let continuation = connectivityContinuation else { return }
+        connectivityContinuation = nil
+        connectivityTimeoutTask?.cancel()
+        connectivityTimeoutTask = nil
+        continuation.resume(with: result.mapError { $0 as Error })
+    }
+
     func setMuted(_ isMuted: Bool) {
         localAudioTrack.isEnabled = !isMuted
     }
@@ -284,6 +318,7 @@ final class WebRTCCallMediaSession: NSObject, CallMediaSession {
         guard !isClosed else { return }
         isClosed = true
         connectivityHandler = nil
+        finishConnectivityWait(with: .failure(.closed))
         localAudioTrack.isEnabled = false
         failPendingOffer(with: .closed)
         peerConnection.close()
@@ -447,6 +482,11 @@ extension WebRTCCallMediaSession: RTCPeerConnectionDelegate {
                 "WebRTC ICE connection state changed: \(String(describing: newState), privacy: .public)"
             )
             self?.connectivityHandler?(state)
+            if state == .connected {
+                self?.finishConnectivityWait(with: .success(()))
+            } else if state == .failed {
+                self?.finishConnectivityWait(with: .failure(.connectivityTimedOut))
+            }
         }
     }
 

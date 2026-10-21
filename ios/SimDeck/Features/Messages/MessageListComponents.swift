@@ -27,15 +27,14 @@ struct MessageListBottomBar: View {
             }
             .padding(.horizontal, 14)
             .frame(height: 50)
-            .glassEffect(.regular, in: Capsule())
+            .glassEffect(.regular.interactive(), in: Capsule())
 
             Button(action: composeAction) {
                 Image(systemName: "square.and.pencil")
                     .font(.system(size: 20, weight: .medium))
                     .frame(width: 48, height: 48)
             }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.circle)
+            .glassEffect(.regular.interactive(), in: Circle())
             .disabled(!canCompose)
             .frame(width: 50, height: 50)
             .accessibilityLabel("New Message")

@@ -16,22 +16,27 @@ struct ContactDetailScreen: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 18) {
+            VStack(spacing: 0) {
                 contactHeader
-                communicationActions
 
                 if !contact.phoneNumbers.isEmpty {
+                    communicationActions
+                        .padding(.top, 22)
+
                     phoneNumbersCard
+                        .padding(.top, 23)
                 }
 
                 if !contact.organizationName.isEmpty,
                    contact.organizationName != contact.displayName {
                     informationCard
+                        .padding(.top, 16)
                 }
             }
             .frame(maxWidth: .infinity)
-            .padding(.horizontal, 20)
-            .padding(.bottom, 32)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 120)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(uiColor: .systemGroupedBackground))
@@ -65,8 +70,9 @@ struct ContactDetailScreen: View {
     }
 
     private var contactHeader: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 14) {
             ContactAvatar(contact: contact, size: 128)
+                .shadow(color: .black.opacity(0.05), radius: 8, y: 4)
 
             VStack(spacing: 4) {
                 Text(contact.displayName)
@@ -82,59 +88,79 @@ struct ContactDetailScreen: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 24)
     }
 
     private var communicationActions: some View {
-        HStack(spacing: 18) {
-            ContactActionButton(title: "Message", systemImage: "message.fill") {
+        HStack(spacing: 27) {
+            ContactActionButton(
+                title: "Message",
+                systemImage: "message.fill",
+                isEnabled: !contact.phoneNumbers.isEmpty
+            ) {
                 choosePhoneNumber(for: .message)
             }
-            ContactActionButton(title: "Call", systemImage: "phone.fill") {
+            ContactActionButton(
+                title: "Call",
+                systemImage: "phone.fill",
+                isEnabled: !contact.phoneNumbers.isEmpty
+            ) {
                 choosePhoneNumber(for: .call)
             }
         }
         .frame(maxWidth: .infinity)
-        .disabled(contact.phoneNumbers.isEmpty)
     }
 
     private var phoneNumbersCard: some View {
         VStack(spacing: 0) {
             ForEach(Array(contact.phoneNumbers.enumerated()), id: \.element.id) { index, phoneNumber in
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(phoneNumber.label)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Text(phoneNumber.displayValue)
-                            .font(.body)
-                            .foregroundStyle(.primary)
-                            .textSelection(.enabled)
+                Button {
+                    Task {
+                        await callAction(phoneNumber.value)
                     }
+                } label: {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(phoneNumber.label)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Text(phoneNumber.displayValue)
+                                .font(.body)
+                                .foregroundStyle(.primary)
+                        }
 
-                    Spacer(minLength: 8)
+                        Spacer(minLength: 8)
 
+                        Image(systemName: "phone.fill")
+                            .foregroundStyle(.tint)
+                            .frame(width: 44, height: 44)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Call \(phoneNumber.displayValue) with Sim Deck")
+                .contextMenu {
                     Button {
                         Task {
                             await callAction(phoneNumber.value)
                         }
                     } label: {
-                        Image(systemName: "phone.fill")
-                            .frame(width: 44, height: 44)
+                        Label("Call", systemImage: "phone.fill")
                     }
-                    .accessibilityLabel("Call \(phoneNumber.displayValue) with Sim Deck")
                 }
-                .padding(.leading, 16)
-                .padding(.trailing, 8)
-                .padding(.vertical, 8)
+                .padding(.leading, 20)
+                .padding(.trailing, 10)
+                .padding(.vertical, 7)
 
                 if index < contact.phoneNumbers.count - 1 {
                     Divider()
-                        .padding(.leading, 16)
+                        .padding(.leading, 20)
                 }
             }
         }
-        .background(.background, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(
+            Color(uiColor: .secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+        )
     }
 
     private var informationCard: some View {
@@ -146,8 +172,11 @@ struct ContactDetailScreen: View {
                 .font(.body)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(.background, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .padding(20)
+        .background(
+            Color(uiColor: .secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+        )
     }
 
     private var preferredMessageLineID: UUID? {
@@ -193,6 +222,7 @@ private enum ContactCommunicationAction {
 private struct ContactActionButton: View {
     let title: LocalizedStringKey
     let systemImage: String
+    var isEnabled = true
     let action: () -> Void
 
     var body: some View {
@@ -200,15 +230,17 @@ private struct ContactActionButton: View {
             VStack(spacing: 6) {
                 Image(systemName: systemImage)
                     .font(.title2)
-                    .foregroundStyle(.tint)
-                    .frame(width: 64, height: 64)
+                    .foregroundStyle(isEnabled ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                    .frame(width: 56, height: 56)
                     .glassEffect(.regular.interactive(), in: Circle())
                 Text(title)
                     .font(.caption)
             }
-            .frame(minWidth: 82)
+            .frame(width: 74)
         }
         .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.48)
     }
 }
 

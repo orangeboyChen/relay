@@ -119,6 +119,15 @@ struct RootTabView: View {
                 },
                 markReadAction: { conversationID in
                     model.markConversationRead(conversationID)
+                },
+                markUnreadAction: { conversationID in
+                    model.markConversationUnread(conversationID)
+                },
+                isMutedAction: { conversationID in
+                    model.isConversationMuted(conversationID)
+                },
+                setMutedAction: { conversationID, isMuted in
+                    model.setConversationMuted(isMuted, id: conversationID)
                 }
             )
         }

@@ -40,6 +40,12 @@ class NotificationService: UNNotificationServiceExtension {
             deviceUUID: payload.deviceUUID,
             remoteNumber: payload.remoteNumber
         )
+        if MessageNotificationMuteStore.isMuted(
+            conversationIdentifier: conversationIdentifier
+        ) {
+            bestAttemptContent.sound = nil
+            bestAttemptContent.interruptionLevel = .passive
+        }
         let intent = communicationBuilder.makeIntent(
             remoteNumber: payload.remoteNumber,
             messageBody: visibleBody,

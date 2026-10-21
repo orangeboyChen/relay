@@ -21,6 +21,7 @@ struct CallHistoryScreen: View {
     @State private var selectedRecordIDs: Set<UUID> = []
     @State private var isDeleteConfirmationPresented = false
     @State private var filter: CallHistoryFilter = .all
+    @State private var selectedLineID: UUID?
 
     var body: some View {
         Group {
@@ -34,7 +35,7 @@ struct CallHistoryScreen: View {
                     description: Text("Calls made through sim-deck appear here.")
                 )
             case .loaded(let records):
-                List(selection: $selectedRecordIDs) {
+                List {
                     ForEach(filtered(records)) { record in
                         let linePresentation = record.linePresentation(in: lines)
                         CallHistoryRecordRow(
@@ -42,8 +43,12 @@ struct CallHistoryScreen: View {
                             linePresentation: linePresentation,
                             referenceDate: referenceDate,
                             isEditing: editMode.isEditing,
+                            isSelected: selectedRecordIDs.contains(record.id),
                             isStarting: startingRecordID == record.id,
                             isInteractionDisabled: startingRecordID != nil,
+                            onSelect: {
+                                toggleSelection(for: record.id)
+                            },
                             onCall: { startCall(from: record) },
                             onDetails: {
                                 selectedDetail = CallDetailSelection(
@@ -52,7 +57,6 @@ struct CallHistoryScreen: View {
                                 )
                             }
                         )
-                        .tag(record.id)
                         .listRowInsets(
                             EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 8)
                         )
@@ -75,6 +79,12 @@ struct CallHistoryScreen: View {
                         editMode = .inactive
                     }
                 }
+                .onChange(of: filter) { _, _ in
+                    pruneSelection(from: records)
+                }
+                .onChange(of: selectedLineID) { _, _ in
+                    pruneSelection(from: records)
+                }
             case .failed:
                 ContentUnavailableView(
                     "Calls Unavailable",
@@ -83,7 +93,6 @@ struct CallHistoryScreen: View {
                 )
             }
         }
-        .environment(\.editMode, $editMode)
         .navigationTitle("Recents")
         .navigationBarTitleDisplayMode(.large)
         .onChange(of: editMode) { _, newMode in
@@ -99,6 +108,7 @@ struct CallHistoryScreen: View {
                             editMode = editMode.isEditing ? .inactive : .active
                         }
                     }
+                    .controlSize(.large)
                 }
                 ToolbarItem(placement: .principal) {
                     Picker("Call filter", selection: $filter) {
@@ -107,6 +117,40 @@ struct CallHistoryScreen: View {
                     }
                     .pickerStyle(.segmented)
                     .frame(width: 140)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button {
+                            selectedLineID = nil
+                        } label: {
+                            if selectedLineID == nil {
+                                Label("All SIMs", systemImage: "checkmark")
+                            } else {
+                                Text("All SIMs")
+                            }
+                        }
+
+                        ForEach(lines) { line in
+                            Button {
+                                selectedLineID = line.id
+                            } label: {
+                                if selectedLineID == line.id {
+                                    Label(line.displayName, systemImage: "checkmark")
+                                } else {
+                                    Text(line.displayName)
+                                }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "line.3.horizontal")
+                            .font(.body.weight(.semibold))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
+                    .controlSize(.large)
+                    .accessibilityLabel("Filter calls by SIM")
                 }
             }
         }
@@ -122,9 +166,18 @@ struct CallHistoryScreen: View {
                     } label: {
                         Label("Delete", systemImage: "trash")
                             .fontWeight(.semibold)
+                            .foregroundStyle(
+                                selectedRecordIDs.isEmpty
+                                    ? AnyShapeStyle(.secondary)
+                                    : AnyShapeStyle(.red)
+                            )
+                            .frame(minHeight: 44)
+                            .padding(.horizontal, 12)
+                            .contentShape(Capsule())
                     }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.capsule)
                     .disabled(selectedRecordIDs.isEmpty)
-                    .frame(minHeight: 44)
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 6)
@@ -163,7 +216,19 @@ struct CallHistoryScreen: View {
     }
 
     private func filtered(_ records: [CallRecord]) -> [CallRecord] {
-        filter.records(from: records)
+        filter.records(from: records, lineID: selectedLineID)
+    }
+
+    private func toggleSelection(for recordID: UUID) {
+        if selectedRecordIDs.contains(recordID) {
+            selectedRecordIDs.remove(recordID)
+        } else {
+            selectedRecordIDs.insert(recordID)
+        }
+    }
+
+    private func pruneSelection(from records: [CallRecord]) {
+        selectedRecordIDs.formIntersection(Set(filtered(records).map(\.id)))
     }
 
     private var detailIsPresented: Binding<Bool> {
@@ -264,21 +329,35 @@ private struct CallHistoryRecordRow: View {
     let linePresentation: LineHistoryPresentation
     let referenceDate: Date
     let isEditing: Bool
+    let isSelected: Bool
     let isStarting: Bool
     let isInteractionDisabled: Bool
+    let onSelect: () -> Void
     let onCall: () -> Void
     let onDetails: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
             if isEditing {
-                CallHistoryRow(
-                    record: record,
-                    linePresentation: linePresentation,
-                    referenceDate: referenceDate
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+                Button(action: onSelect) {
+                    HStack(spacing: 12) {
+                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 22, weight: .regular))
+                            .foregroundStyle(isSelected ? .blue : Color(uiColor: .systemGray3))
+
+                        CallHistoryRow(
+                            record: record,
+                            linePresentation: linePresentation,
+                            referenceDate: referenceDate
+                        )
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(record.displayName)
+                .accessibilityValue(isSelected ? Text("Selected") : Text("Not selected"))
+                .accessibilityHint("Toggles this call for deletion")
             } else {
                 Button(action: onCall) {
                     CallHistoryRow(
@@ -295,20 +374,21 @@ private struct CallHistoryRecordRow: View {
 
                 if isStarting {
                     ProgressView()
-                        .frame(width: 44, height: 44)
+                        .frame(width: 50, height: 50)
                 } else {
                     Button(action: onDetails) {
                         Image(systemName: "info.circle")
-                            .font(.title3)
+                            .font(.system(size: 21, weight: .regular))
                             .foregroundStyle(.blue)
+                            .frame(width: 44, height: 44)
                     }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
-                    .frame(width: 44, height: 44)
+                    .buttonStyle(.plain)
+                    .frame(width: 58, height: 50)
                     .accessibilityLabel("Call details")
                 }
             }
         }
+        .frame(minHeight: 76)
     }
 }
 
@@ -318,7 +398,7 @@ private struct CallHistoryRow: View {
     let referenceDate: Date
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 9) {
             CallHistoryAvatar(record: record)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -352,7 +432,7 @@ private struct CallHistoryRow: View {
     }
 
     private var directionSymbol: String {
-        record.direction == .incoming ? "phone.arrow.down.left" : "phone.arrow.up.right"
+        record.direction == .incoming ? "arrow.down.left" : "arrow.up.right"
     }
 
     private var dateFormat: Date.FormatStyle {
@@ -374,6 +454,12 @@ enum CallHistoryFilter: Equatable {
         case .missed:
             records.filter { $0.result == .missed }
         }
+    }
+
+    func records(from records: [CallRecord], lineID: UUID?) -> [CallRecord] {
+        let matchingResult = self.records(from: records)
+        guard let lineID else { return matchingResult }
+        return matchingResult.filter { $0.lineID == lineID }
     }
 }
 
@@ -400,7 +486,7 @@ private struct CallHistoryAvatar: View {
                     .foregroundStyle(.white)
             }
         }
-        .frame(width: 50, height: 50)
+        .frame(width: 46, height: 46)
         .accessibilityHidden(true)
     }
 

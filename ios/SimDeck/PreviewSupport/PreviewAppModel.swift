@@ -10,7 +10,8 @@ extension AppModel {
         selectedTab: AppTab = .calls,
         devices: [DeviceLineIdentity] = PreviewFixtures.devices,
         keyRecoveryState: KeyRecoveryState = .available,
-        onboardingCompleted: Bool = true
+        onboardingCompleted: Bool = true,
+        activeCall: ActiveCallSession? = nil
     ) -> AppModel {
         let serverConnection = ServerConnectionManager(
             network: PreviewServerNetworking(),
@@ -43,7 +44,9 @@ extension AppModel {
             serverConnection: serverConnection,
             callCoordinator: CallKitCoordinator(
                 transport: PreviewCallTransport(),
-                integratesWithSystem: false
+                integratesWithSystem: false,
+                initialCall: activeCall,
+                audioRoutes: CallAudioRouteController(source: PreviewCallAudioRouteSource())
             ),
             installationBootstrapper: PreviewInstallationBootstrapper(),
             messageTransport: PreviewMessageTransport(),

@@ -4,44 +4,106 @@
 
 import SwiftUI
 
+struct MessageListBottomBar: View {
+    @Binding var searchText: String
+    let canCompose: Bool
+    let composeAction: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.secondary)
+
+                TextField("Search", text: $searchText)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+
+                Image(systemName: "mic.fill")
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 50)
+            .glassEffect(.regular, in: Capsule())
+
+            Button(action: composeAction) {
+                Image(systemName: "square.and.pencil")
+                    .font(.system(size: 20, weight: .medium))
+                    .frame(width: 48, height: 48)
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .disabled(!canCompose)
+            .accessibilityLabel("New Message")
+            .accessibilityHint(canCompose ? Text("") : Text("An online SIM is required."))
+        }
+        .padding(.leading, 28)
+        .padding(.trailing, 15)
+        .padding(.vertical, 6)
+    }
+}
+
 struct SIMFilterMenu: View {
     let lines: [DeviceLineIdentity]
     @Binding var selection: UUID?
 
     var body: some View {
         Menu {
-            Button("All SIMs") {
+            Button {
                 selection = nil
+            } label: {
+                if selection == nil {
+                    Label("All SIMs", systemImage: "checkmark")
+                } else {
+                    Text("All SIMs")
+                }
             }
             ForEach(lines) { line in
-                Button("SIM \(line.numericID) · \(line.displayName)") {
+                Button {
                     selection = line.id
+                } label: {
+                    if selection == line.id {
+                        Label(
+                            "SIM \(line.numericID) · \(line.displayName)",
+                            systemImage: "checkmark"
+                        )
+                    } else {
+                        Text("SIM \(line.numericID) · \(line.displayName)")
+                    }
                 }
             }
         } label: {
-            Label(
-                "Filter by SIM",
-                systemImage: selection == nil
-                    ? "line.3.horizontal.decrease.circle"
-                    : "line.3.horizontal.decrease.circle.fill"
-            )
+            Image(systemName: "line.3.horizontal")
+                .font(.body.weight(.semibold))
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
         }
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
+        .controlSize(.large)
+        .accessibilityLabel("Filter by SIM")
     }
 }
 
 struct ConversationRow: View {
     let conversation: MessageConversation
     let linePresentation: LineHistoryPresentation
+    let referenceDate: Date
+    var isMuted = false
+    var isEditing = false
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        HStack(alignment: .top, spacing: 11) {
+        HStack(alignment: .top, spacing: 12) {
             MessageContactAvatar(
                 contactName: conversation.contactName
             )
 
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 4) {
                 if dynamicTypeSize.isAccessibilitySize {
                     accessibilityTitle
                 } else {
@@ -51,10 +113,10 @@ struct ConversationRow: View {
             }
             .padding(.top, 1)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 11)
         .overlay(alignment: .leading) {
             unreadIndicator
-                .offset(x: -10)
+                .offset(x: -18)
         }
         .accessibilityElement(children: .combine)
     }
@@ -64,7 +126,7 @@ struct ConversationRow: View {
         if conversation.unreadCount > 0 {
             Circle()
                 .fill(.blue)
-                .frame(width: 8, height: 8)
+                .frame(width: 10, height: 10)
                 .accessibilityLabel("\(conversation.unreadCount) unread messages")
         }
     }
@@ -72,31 +134,51 @@ struct ConversationRow: View {
     private var titleRow: some View {
         HStack(spacing: 8) {
             Text(conversation.displayName)
-                .font(.body)
-                .fontWeight(conversation.unreadCount > 0 ? .semibold : .regular)
+                .font(.headline)
                 .lineLimit(1)
 
             Spacer(minLength: 8)
 
             if let lastMessage = conversation.lastMessage {
-                Text(lastMessage.sentAt, format: .dateTime.hour().minute())
+                Text(
+                    MessageTimestampFormatter.string(
+                        from: lastMessage.sentAt,
+                        relativeTo: referenceDate
+                    )
+                )
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
             }
+
+            if isMuted {
+                Image(systemName: "bell.slash.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Alerts hidden")
+            }
+
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
         }
     }
 
     private var accessibilityTitle: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(conversation.displayName)
-                .font(.body)
-                .fontWeight(conversation.unreadCount > 0 ? .semibold : .regular)
+                .font(.headline)
                 .lineLimit(2)
 
             if let lastMessage = conversation.lastMessage {
-                Text(lastMessage.sentAt, format: .dateTime.hour().minute())
+                Text(
+                    MessageTimestampFormatter.string(
+                        from: lastMessage.sentAt,
+                        relativeTo: referenceDate
+                    )
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -107,12 +189,12 @@ struct ConversationRow: View {
 
     private var previewRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: 7) {
-            SIMBadge(snapshot: linePresentation.snapshot)
+            SIMBadge(snapshot: linePresentation.snapshot, size: 14)
 
             Text(summary)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-                .lineLimit(2)
+                .lineLimit(isEditing ? 1 : 2)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -148,9 +230,18 @@ struct MessageContactAvatar: View {
             } else {
                 ZStack {
                     Circle()
-                        .fill(Color(uiColor: .systemGray3))
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.69, green: 0.79, blue: 0.95),
+                                    Color(red: 0.42, green: 0.53, blue: 0.79),
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
                     Image(systemName: "person.fill")
-                        .font(.system(size: diameter * 0.42, weight: .medium))
+                        .font(.system(size: diameter * 0.68, weight: .medium))
                         .foregroundStyle(.white)
                 }
             }
@@ -177,7 +268,8 @@ struct MessageContactAvatar: View {
         ForEach(PreviewFixtures.conversations) { conversation in
             ConversationRow(
                 conversation: conversation,
-                linePresentation: conversation.linePresentation(in: PreviewFixtures.devices)
+                linePresentation: conversation.linePresentation(in: PreviewFixtures.devices),
+                referenceDate: .now
             )
         }
     }
@@ -189,7 +281,8 @@ struct MessageContactAvatar: View {
         ForEach(PreviewFixtures.conversations) { conversation in
             ConversationRow(
                 conversation: conversation,
-                linePresentation: conversation.linePresentation(in: PreviewFixtures.devices)
+                linePresentation: conversation.linePresentation(in: PreviewFixtures.devices),
+                referenceDate: .now
             )
         }
     }

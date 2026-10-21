@@ -8,6 +8,7 @@ import UIKit
 struct LinePicker: View {
     let lines: [DeviceLineIdentity]
     @Binding var selection: UUID?
+    var isCompact = false
 
     var body: some View {
         if let selectedLine = lines.first(where: { $0.id == selection }) {
@@ -16,20 +17,33 @@ struct LinePicker: View {
                     Button {
                         selection = line.id
                     } label: {
-                        Text("SIM \(line.numericID) · \(line.displayName)")
+                        if selection == line.id {
+                            Label(
+                                "SIM \(line.numericID) · \(line.displayName)",
+                                systemImage: "checkmark"
+                            )
+                        } else {
+                            Text("SIM \(line.numericID) · \(line.displayName)")
+                        }
                     }
                 }
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: 8) {
                     SIMBadge(line: selectedLine, size: 22)
+                    Text(isCompact ? "SIM \(selectedLine.numericID)" : selectedLine.displayName)
+                        .font(.body)
+                        .lineLimit(1)
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                 }
-                .frame(minWidth: 44, minHeight: 44)
-                .contentShape(.rect)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 44)
+                .contentShape(Capsule())
+                .glassEffect(.regular.interactive(), in: Capsule())
             }
             .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            .buttonStyle(.plain)
         } else if lines.isEmpty {
             Image(systemName: "simcard")
                 .foregroundStyle(.secondary)
@@ -51,6 +65,7 @@ struct LinePicker: View {
                     .contentShape(.rect)
                     .accessibilityLabel("Select SIM")
             }
+            .buttonStyle(.plain)
         }
     }
 }
@@ -99,8 +114,9 @@ private struct DialerNumberTextField: UIViewRepresentable {
     }
 
     func updateUIView(_ field: UITextField, context: Context) {
-        if field.text != text {
-            field.text = text
+        let formattedText = PhoneNumberDisplayFormatter.string(from: text)
+        if field.text != formattedText {
+            field.text = formattedText
         }
     }
 
@@ -112,13 +128,15 @@ private struct DialerNumberTextField: UIViewRepresentable {
         }
 
         @objc func textDidChange(_ field: UITextField) {
-            textBinding.wrappedValue = field.text ?? ""
+            textBinding.wrappedValue = DialString.normalized(field.text ?? "")
         }
     }
 }
 
 struct DialPad: View {
     @Binding var number: String
+    var keySize: CGFloat = 80
+    var rowSpacing: CGFloat = 18
 
     @State private var feedbackTrigger = 0
 
@@ -139,11 +157,11 @@ struct DialPad: View {
 
     var body: some View {
         LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(), spacing: 20), count: 3),
-            spacing: 14
+            columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 3),
+            spacing: rowSpacing
         ) {
             ForEach(keys, id: \.self) { key in
-                DialPadKey(content: key) { press in
+                DialPadKey(content: key, size: keySize) { press in
                     guard let input = DialPadInput.output(for: key.symbol, press: press) else {
                         return
                     }
@@ -152,7 +170,7 @@ struct DialPad: View {
                 }
             }
         }
-        .frame(maxWidth: 318)
+        .frame(maxWidth: 288)
         .sensoryFeedback(.selection, trigger: feedbackTrigger)
     }
 }
@@ -180,10 +198,11 @@ private struct DialPadKeyContent: Hashable {
 
 private struct DialPadKey: View {
     let content: DialPadKeyContent
+    let size: CGFloat
     let onPress: (DialPadPress) -> Void
 
     @State private var handledLongPress = false
-    @ScaledMetric(relativeTo: .title) private var scaledSize = 72.0
+    @ScaledMetric(relativeTo: .title) private var scaledSize = 80.0
 
     var body: some View {
         Button {
@@ -205,7 +224,7 @@ private struct DialPadKey: View {
                     .opacity(content.letters.isEmpty ? 0 : 1)
                     .accessibilityHidden(true)
             }
-            .frame(width: min(scaledSize, 82), height: min(scaledSize, 82))
+            .frame(width: min(scaledSize, size), height: min(scaledSize, size))
             .glassEffect(.regular.interactive(), in: Circle())
             .contentShape(Circle())
         }
@@ -253,7 +272,7 @@ struct CallButton: View {
                         .font(.system(size: 28, weight: .semibold))
                 }
             }
-            .frame(width: 72, height: 72)
+            .frame(width: 64, height: 64)
             .foregroundStyle(.white)
         }
         .buttonStyle(.glassProminent)
@@ -269,17 +288,24 @@ struct DialerDeleteButton: View {
     let isVisible: Bool
     let action: () -> Void
 
+    @ViewBuilder
     var body: some View {
-        Button(action: action) {
-            Image(systemName: "delete.left.fill")
-                .font(.system(size: 24, weight: .regular))
-                .foregroundStyle(.primary)
+        if isVisible {
+            Button(action: action) {
+                Image(systemName: "delete.left.fill")
+                    .font(.system(size: 24, weight: .regular))
+                    .foregroundStyle(.primary)
+                    .frame(width: 56, height: 56)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(PressFeedbackButtonStyle())
+            .frame(width: 56, height: 56)
+            .contentShape(Rectangle())
+            .accessibilityLabel("Delete digit")
+        } else {
+            Color.clear
                 .frame(width: 56, height: 56)
+                .accessibilityHidden(true)
         }
-        .buttonStyle(PressFeedbackButtonStyle())
-        .opacity(isVisible ? 1 : 0)
-        .allowsHitTesting(isVisible)
-        .accessibilityHidden(!isVisible)
-        .accessibilityLabel("Delete digit")
     }
 }

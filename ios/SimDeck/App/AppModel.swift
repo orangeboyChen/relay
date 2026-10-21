@@ -476,8 +476,40 @@ final class AppModel {
         persistMessageHistoryIfAvailable()
     }
 
+    func markConversationUnread(_ id: ConversationID) {
+        guard case .loaded(var conversations) = messages,
+              let index = conversations.firstIndex(where: { $0.id == id }),
+              conversations[index].unreadCount == 0 else { return }
+        conversations[index].unreadCount = 1
+        messages = .loaded(sortedConversations(conversations))
+        persistMessageHistoryIfAvailable()
+    }
+
+    func isConversationMuted(_ id: ConversationID) -> Bool {
+        guard let identifier = notificationConversationIdentifier(for: id) else { return false }
+        return MessageNotificationMuteStore.isMuted(conversationIdentifier: identifier)
+    }
+
+    func setConversationMuted(_ isMuted: Bool, id: ConversationID) {
+        guard let identifier = notificationConversationIdentifier(for: id) else { return }
+        MessageNotificationMuteStore.setMuted(
+            isMuted,
+            conversationIdentifier: identifier
+        )
+    }
+
     func deleteMessage(id: UUID) throws {
         try deleteMessages(ids: [id])
+    }
+
+    private func notificationConversationIdentifier(for id: ConversationID) -> String? {
+        guard let line = devices.first(where: { $0.id == id.deviceUUID }) else { return nil }
+        return MessageNotificationConversationIdentifier.make(
+            simID: line.simID,
+            slotID: line.slotID,
+            deviceUUID: line.deviceID,
+            remoteNumber: id.remoteNumber
+        )
     }
 
     func deleteMessages(ids: Set<UUID>) throws {

@@ -18,10 +18,33 @@ final class CallHistoryFilterTests: XCTestCase {
         XCTAssertEqual(CallHistoryFilter.all.records(from: records), records)
     }
 
-    private func record(result: CallResult) -> CallRecord {
+    func testFilterCombinesCallResultAndSelectedSIM() {
+        let firstLineID = UUID()
+        let secondLineID = UUID()
+        let records = [
+            record(lineID: firstLineID, result: .missed),
+            record(lineID: firstLineID, result: .answered),
+            record(lineID: secondLineID, result: .missed),
+        ]
+
+        XCTAssertEqual(
+            CallHistoryFilter.missed.records(from: records, lineID: firstLineID),
+            [records[0]]
+        )
+        XCTAssertEqual(
+            CallHistoryFilter.all.records(from: records, lineID: secondLineID),
+            [records[2]]
+        )
+        XCTAssertEqual(
+            CallHistoryFilter.all.records(from: records, lineID: nil),
+            records
+        )
+    }
+
+    private func record(lineID: UUID = UUID(), result: CallResult) -> CallRecord {
         CallRecord(
             id: UUID(),
-            lineID: UUID(),
+            lineID: lineID,
             remoteNumber: "10086",
             contactName: nil,
             direction: .incoming,

@@ -451,6 +451,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
             throw LiveCallTransportError.invalidResponse
         }
         try await mediaSession.applyAnswer(answer)
+        try await mediaSession.waitUntilConnected(timeout: .seconds(12))
     }
 
     private func finishMediaRestart(callID: UUID, generation: UUID) {

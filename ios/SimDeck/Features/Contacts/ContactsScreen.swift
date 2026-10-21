@@ -50,7 +50,7 @@ struct ContactsScreen: View {
                 set: { contactModel.searchText = $0 }
             ),
             placement: .navigationBarDrawer(displayMode: .always),
-            prompt: "Search Contacts"
+            prompt: "Search"
         )
         .task {
             guard startsSynchronization else { return }
@@ -79,7 +79,7 @@ struct ContactsScreen: View {
             ScrollViewReader { proxy in
                 List {
                     ForEach(sections) { section in
-                        Section(section.title) {
+                        Section {
                             ForEach(section.contacts) { contact in
                                 Button {
                                     selectedContact = contact
@@ -92,10 +92,24 @@ struct ContactsScreen: View {
                                 .listRowInsets(
                                     EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 44)
                                 )
+                                .alignmentGuide(.listRowSeparatorLeading) { dimensions in
+                                    dimensions[.leading] + 56
+                                }
                             }
+                        } header: {
+                            HStack {
+                                Text(section.title)
+                                Spacer(minLength: 0)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .id(section.id)
                         }
-                        .id(section.id)
                     }
+                    Color.clear
+                        .frame(height: 96)
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                        .accessibilityHidden(true)
                 }
                 .overlay(alignment: .trailing) {
                     if contactModel.searchText.isEmpty {
@@ -181,36 +195,41 @@ private struct ContactSectionIndex: View {
 
     var body: some View {
         GeometryReader { proxy in
-            VStack {
-                Spacer(minLength: 0)
+            let trackHeight = ContactSectionIndexResolver.visibleTrackHeight
+            let centeredTop = max((proxy.size.height - trackHeight) / 2, 0)
+
+            VStack(spacing: 0) {
+                Color.clear
+                    .frame(height: max(centeredTop - 4, 0))
+                    .accessibilityHidden(true)
 
                 VStack(spacing: 0) {
                     ForEach(Array(ContactSectionIndexResolver.titles.enumerated()), id: \.offset) { index, title in
                         Text(title)
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.tint)
                             .frame(height: ContactSectionIndexResolver.visibleItemHeight)
                             .opacity(activeIndex == nil || activeIndex == index ? 1 : 0.7)
                     }
                 }
-                .frame(width: 44, height: ContactSectionIndexResolver.visibleTrackHeight)
-                .contentShape(Rectangle())
-                .highPriorityGesture(
-                    DragGesture(minimumDistance: 0, coordinateSpace: .local)
-                        .onChanged { value in
-                            selectIndex(
-                                for: value.location.y,
-                                height: ContactSectionIndexResolver.visibleTrackHeight
-                            )
-                        }
-                        .onEnded { _ in
-                            activeIndex = nil
-                        }
-                )
+                .frame(width: 18, height: trackHeight)
+                .frame(width: 44, alignment: .trailing)
 
                 Spacer(minLength: 0)
             }
-            .frame(width: proxy.size.width, height: proxy.size.height)
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
+
+            ContactSectionIndexTouchOverlay { locationY, isActive in
+                guard isActive else {
+                    activeIndex = nil
+                    return
+                }
+                selectIndex(
+                    for: locationY - centeredTop + 4,
+                    height: trackHeight
+                )
+            }
+            .frame(width: 44, height: proxy.size.height)
         }
         .frame(width: 44)
         .accessibilityElement(children: .ignore)
@@ -236,12 +255,69 @@ private struct ContactSectionIndex: View {
     }
 }
 
+private struct ContactSectionIndexTouchOverlay: UIViewRepresentable {
+    let onTouch: (CGFloat, Bool) -> Void
+
+    func makeUIView(context: Context) -> ContactSectionIndexTouchView {
+        let view = ContactSectionIndexTouchView()
+        view.onTouch = onTouch
+        return view
+    }
+
+    func updateUIView(_ view: ContactSectionIndexTouchView, context: Context) {
+        view.onTouch = onTouch
+    }
+}
+
+private final class ContactSectionIndexTouchView: UIView {
+    var onTouch: ((CGFloat, Bool) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        isOpaque = false
+        isAccessibilityElement = false
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        backgroundColor = .clear
+        isOpaque = false
+        isAccessibilityElement = false
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        report(touches, isActive: true)
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesMoved(touches, with: event)
+        report(touches, isActive: true)
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        report(touches, isActive: false)
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesCancelled(touches, with: event)
+        report(touches, isActive: false)
+    }
+
+    private func report(_ touches: Set<UITouch>, isActive: Bool) {
+        guard let touch = touches.first else { return }
+        onTouch?(touch.location(in: self).y, isActive)
+    }
+}
+
 private struct ContactRow: View {
     let contact: ContactRecord
 
     var body: some View {
         HStack(spacing: 12) {
-            ContactAvatar(contact: contact)
+            ContactAvatar(contact: contact, size: 46)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(contact.displayName)
@@ -258,7 +334,7 @@ private struct ContactRow: View {
                 }
             }
         }
-        .frame(minHeight: 48)
+        .frame(minHeight: 64)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(contact.displayName)
         .accessibilityValue(

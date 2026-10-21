@@ -88,6 +88,10 @@ struct ConversationScreen: View {
                         )
                         .id(message.id)
                     }
+
+                    Color.clear
+                        .frame(height: 1)
+                        .id(ConversationScrollAnchor.bottom)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
@@ -96,7 +100,10 @@ struct ConversationScreen: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .defaultScrollAnchor(.bottom)
-            .onChange(of: conversation.messages.count, initial: true) {
+            .task(id: selectedID) {
+                scrollToBottom(using: proxy)
+            }
+            .onChange(of: conversation.messages.count) {
                 scrollToBottom(using: proxy)
             }
             .onChange(of: dynamicTypeSize) {
@@ -349,19 +356,25 @@ struct ConversationScreen: View {
     }
 
     private func scrollToBottom(using proxy: ScrollViewProxy, animated: Bool = false) {
-        guard let lastID = conversation.messages.last?.id else { return }
+        guard !conversation.messages.isEmpty else { return }
 
         Task { @MainActor in
             await Task.yield()
             if animated {
                 withAnimation(motionAnimation) {
-                    proxy.scrollTo(lastID, anchor: .bottom)
+                    proxy.scrollTo(ConversationScrollAnchor.bottom, anchor: .bottom)
                 }
             } else {
-                proxy.scrollTo(lastID, anchor: .bottom)
+                proxy.scrollTo(ConversationScrollAnchor.bottom, anchor: .bottom)
+                await Task.yield()
+                proxy.scrollTo(ConversationScrollAnchor.bottom, anchor: .bottom)
             }
         }
     }
+}
+
+private enum ConversationScrollAnchor: Hashable {
+    case bottom
 }
 
 private enum ConversationSheet: Identifiable {

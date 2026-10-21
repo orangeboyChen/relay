@@ -385,6 +385,38 @@ final class LiveCallTransportTests: XCTestCase {
         XCTAssertEqual(media.restartOfferRequests.count, 1)
     }
 
+    func testNetworkInterfaceMigrationImmediatelyRestartsMedia() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let media = CallMediaSessionFake()
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: api.commandSigner,
+            makeMediaSession: { media },
+            waitBeforePollingAgain: {},
+            waitBeforeMediaRestart: {
+                XCTFail("An explicit network migration must not use the disconnected debounce")
+            },
+            automaticallyPollEvents: false
+        )
+        try await transport.startOutgoingCall(
+            callID: callID,
+            number: "13500000000",
+            lineID: deviceID
+        )
+
+        transport.networkPathDidChange(
+            isAvailable: true,
+            requiresMediaRestart: true
+        )
+        for _ in 0..<100 where api.payloads.count < 2 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(api.payloads.map(\.operation), ["call.start", "call.media.restart"])
+        XCTAssertEqual(media.restartOfferRequests.count, 1)
+        await transport.reset()
+    }
+
     func testDuplicateFailedMediaSignalsDoNotStartConcurrentRestarts() async throws {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
         let media = CallMediaSessionFake()

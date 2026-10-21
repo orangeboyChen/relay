@@ -65,7 +65,7 @@ protocol CallLineRouting: AnyObject {
 
 @MainActor
 protocol CallNetworkPathHandling: AnyObject {
-    func networkPathDidChange(isAvailable: Bool)
+    func networkPathDidChange(isAvailable: Bool, requiresMediaRestart: Bool)
 }
 
 enum CallTransportError: LocalizedError {

@@ -346,9 +346,12 @@ final class AppModel {
 
     func startNetworkPathObservation() {
         guard networkPathObserver == nil else { return }
-        let observer = NetworkPathObserver { [weak self] isAvailable in
-            self?.messageEventMonitor?.networkPathDidChange(isAvailable: isAvailable)
-            self?.callCoordinator.networkPathDidChange(isAvailable: isAvailable)
+        let observer = NetworkPathObserver { [weak self] update in
+            self?.messageEventMonitor?.networkPathDidChange(isAvailable: update.isAvailable)
+            self?.callCoordinator.networkPathDidChange(
+                isAvailable: update.isAvailable,
+                requiresMediaRestart: update.requiresConnectionMigration
+            )
         }
         networkPathObserver = observer
         observer.start()

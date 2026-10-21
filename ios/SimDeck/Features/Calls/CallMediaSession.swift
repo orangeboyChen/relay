@@ -96,7 +96,7 @@ final class WebRTCCallMediaSession: NSObject, CallMediaSession {
             configuration.iceTransportPolicy = .relay
         }
         configuration.tcpCandidatePolicy = .enabled
-        configuration.continualGatheringPolicy = .gatherOnce
+        configuration.continualGatheringPolicy = .gatherContinually
 
         let peerConstraints = RTCMediaConstraints(
             mandatoryConstraints: nil,

@@ -124,7 +124,10 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
         eventHandler = handler
     }
 
-    func networkPathDidChange(isAvailable: Bool) {
+    func networkPathDidChange(
+        isAvailable: Bool,
+        requiresMediaRestart: Bool = false
+    ) {
         networkIsAvailable = isAvailable
         eventGeneration = nil
         activeEventStream?.close()
@@ -133,6 +136,13 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
         eventTask = nil
         if isAvailable, automaticallyPollEvents, !callEvents.isEmpty {
             startEventLoopIfNeeded()
+        }
+        guard isAvailable, requiresMediaRestart else { return }
+        Self.logger.info(
+            "Network interface changed; restarting media for \(self.mediaSessions.count, privacy: .public) active call(s)"
+        )
+        for callID in mediaSessions.keys {
+            scheduleMediaRestart(callID: callID, debounce: false)
         }
     }
 
@@ -386,6 +396,9 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
         }
         let generation = UUID()
         mediaRestartGenerations[callID] = generation
+        if !debounce {
+            mediaRestartsInProgress.insert(callID)
+        }
         mediaRestartTasks[callID] = Task { [weak self] in
             guard let self else { return }
             if debounce {
@@ -397,7 +410,9 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
                 }
             }
             guard mediaRestartGenerations[callID] == generation else { return }
-            mediaRestartsInProgress.insert(callID)
+            if debounce {
+                mediaRestartsInProgress.insert(callID)
+            }
             defer {
                 mediaRestartsInProgress.remove(callID)
                 finishMediaRestart(callID: callID, generation: generation)

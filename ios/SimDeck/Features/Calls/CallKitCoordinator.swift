@@ -82,8 +82,14 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
         (transport as? any CallLineRouting)?.updateLineRoutes(lines)
     }
 
-    func networkPathDidChange(isAvailable: Bool) {
-        (transport as? any CallNetworkPathHandling)?.networkPathDidChange(isAvailable: isAvailable)
+    func networkPathDidChange(
+        isAvailable: Bool,
+        requiresMediaRestart: Bool = false
+    ) {
+        (transport as? any CallNetworkPathHandling)?.networkPathDidChange(
+            isAvailable: isAvailable,
+            requiresMediaRestart: requiresMediaRestart
+        )
     }
 
     func setHistoryHandler(_ handler: @escaping @MainActor (CallRecord) -> Void) {

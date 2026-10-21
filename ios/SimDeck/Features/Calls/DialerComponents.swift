@@ -28,31 +28,19 @@ struct LinePicker: View {
                     }
                 }
             } label: {
-                if isCompact {
-                    HStack(spacing: 5) {
-                        SIMBadge(line: selectedLine, size: 22)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(minWidth: 44, minHeight: 44, alignment: .leading)
-                    .contentShape(Rectangle())
-                } else {
-                    HStack(spacing: 8) {
-                        SIMBadge(line: selectedLine, size: 22)
-                        Text(selectedLine.displayName)
-                            .font(.body)
-                            .lineLimit(1)
-                        Image(systemName: "chevron.down")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .padding(.horizontal, 12)
-                    .frame(minHeight: 44)
-                    .frame(minWidth: 198, alignment: .leading)
-                    .contentShape(Capsule())
-                    .glassEffect(.regular.interactive(), in: Capsule())
+                HStack(spacing: 8) {
+                    SIMBadge(line: selectedLine, size: 22)
+                    Text(isCompact ? "SIM \(selectedLine.numericID)" : selectedLine.displayName)
+                        .font(.body)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
                 }
+                .padding(.horizontal, 12)
+                .frame(minHeight: 44)
+                .contentShape(Capsule())
+                .glassEffect(.regular.interactive(), in: Capsule())
             }
             .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .buttonStyle(.plain)

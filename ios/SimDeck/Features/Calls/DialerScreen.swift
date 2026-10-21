@@ -158,41 +158,60 @@ struct DialerScreen: View {
     @ViewBuilder
     private var contactMatchContent: some View {
         if let exactMatch {
-            HStack(spacing: 6) {
-                Text(exactMatch.contact.displayName)
-                Text(exactMatch.phoneNumber.label)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.secondary)
-            }
-            .font(.body)
-            .lineLimit(1)
-            .frame(maxWidth: .infinity, minHeight: 44)
-        } else if let firstMatch = partialMatches.first {
-            VStack(spacing: 0) {
+            contactMatchPanel {
                 HStack(spacing: 8) {
-                    Image(systemName: "person.crop.circle")
-                    Text(firstMatch.contact.displayName)
-                    Text(firstMatch.phoneNumber.displayValue)
+                    Image(systemName: "person.crop.circle.fill")
+                        .foregroundStyle(.secondary)
+                    Text(exactMatch.contact.displayName)
+                        .fontWeight(.medium)
+                    Text(exactMatch.phoneNumber.label)
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 0)
                 }
-                .frame(minHeight: 30)
-
-                if partialMatches.count > 1 {
-                    Divider()
-                    HStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass")
-                        Text("\(partialMatches.count - 1) More Results")
-                            .foregroundStyle(.secondary)
-                        Spacer(minLength: 0)
+            }
+        } else if let firstMatch = partialMatches.first {
+            contactMatchPanel {
+                VStack(spacing: 0) {
+                    contactMatchRow(firstMatch)
+                    if partialMatches.count > 1 {
+                        Divider()
+                        HStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundStyle(.secondary)
+                            Text("\(partialMatches.count - 1) More Results")
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 0)
+                        }
+                        .frame(minHeight: 30)
                     }
-                    .frame(minHeight: 30)
                 }
             }
-            .font(.subheadline)
-            .padding(.horizontal, 12)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
+    }
+
+    private func contactMatchPanel<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .font(.subheadline)
+            .lineLimit(1)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func contactMatchRow(_ match: DialerContactMatch) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "person.crop.circle")
+                .foregroundStyle(.secondary)
+            Text(match.contact.displayName)
+                .lineLimit(1)
+            Text(match.phoneNumber.displayValue)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .frame(minHeight: 30)
     }
 
     private var exactMatch: DialerContactMatch? {

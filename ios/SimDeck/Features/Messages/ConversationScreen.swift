@@ -109,9 +109,6 @@ struct ConversationScreen: View {
             .onChange(of: dynamicTypeSize) {
                 scrollToBottom(using: proxy)
             }
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { _ in
-                scrollToBottom(using: proxy, animated: true)
-            }
             .onChange(of: selectedID) {
                 markReadAction(selectedID)
                 replyTarget = nil

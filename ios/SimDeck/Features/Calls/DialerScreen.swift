@@ -80,9 +80,15 @@ struct DialerScreen: View {
                     }
                     .frame(width: 80, height: 64)
 
-                    DialerDeleteButton(isVisible: !number.isEmpty) {
-                        number = DialerNumberMutation.deletingLastCharacter(from: number)
-                    }
+                    DialerDeleteButton(
+                        isVisible: !number.isEmpty,
+                        onDelete: {
+                            number = DialerNumberMutation.deletingLastCharacter(from: number)
+                        },
+                        onDeleteAll: {
+                            number = ""
+                        }
+                    )
                     .frame(width: 80, height: 64, alignment: .center)
                 }
                 .padding(.top, 8)

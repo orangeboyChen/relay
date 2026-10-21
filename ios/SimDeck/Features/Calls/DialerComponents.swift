@@ -286,12 +286,21 @@ struct CallButton: View {
 
 struct DialerDeleteButton: View {
     let isVisible: Bool
-    let action: () -> Void
+    let onDelete: () -> Void
+    let onDeleteAll: () -> Void
+
+    @State private var handledLongPress = false
 
     @ViewBuilder
     var body: some View {
         if isVisible {
-            Button(action: action) {
+            Button {
+                if handledLongPress {
+                    handledLongPress = false
+                } else {
+                    onDelete()
+                }
+            } label: {
                 Image(systemName: "delete.left.fill")
                     .font(.system(size: 24, weight: .regular))
                     .foregroundStyle(.primary)
@@ -301,7 +310,18 @@ struct DialerDeleteButton: View {
             .buttonStyle(PressFeedbackButtonStyle())
             .frame(width: 56, height: 56)
             .contentShape(Rectangle())
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.5)
+                    .onEnded { _ in
+                        handledLongPress = true
+                        onDeleteAll()
+                    }
+            )
             .accessibilityLabel("Delete digit")
+            .accessibilityHint("Long press to clear the number")
+            .accessibilityActions {
+                Button("Clear number", action: onDeleteAll)
+            }
         } else {
             Color.clear
                 .frame(width: 56, height: 56)

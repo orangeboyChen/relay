@@ -63,8 +63,7 @@ struct CallDetailScreen: View {
             VStack(spacing: 4) {
                 HStack(spacing: 6) {
                     Text("SIM Line:")
-                    SIMBadge(snapshot: linePresentation.snapshot, size: 16)
-                    Text(linePresentation.displayName)
+                    SIMLabel(snapshot: linePresentation.snapshot, size: 16)
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.caption2.weight(.semibold))
                 }

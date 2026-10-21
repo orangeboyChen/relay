@@ -17,22 +17,22 @@ struct LinePicker: View {
                     Button {
                         selection = line.id
                     } label: {
-                        if selection == line.id {
-                            Label(
-                                "SIM \(line.numericID) · \(line.displayName)",
-                                systemImage: "checkmark"
-                            )
-                        } else {
-                            Text("SIM \(line.numericID) · \(line.displayName)")
+                        HStack {
+                            SIMLabel(line: line)
+                            if selection == line.id {
+                                Image(systemName: "checkmark")
+                            }
                         }
                     }
                 }
             } label: {
                 HStack(spacing: 8) {
-                    SIMBadge(line: selectedLine, size: 22)
-                    Text(isCompact ? "SIM \(selectedLine.numericID)" : selectedLine.displayName)
+                    SIMLabel(
+                        line: selectedLine,
+                        size: 22,
+                        titleStyle: isCompact ? .identifier : .displayName
+                    )
                         .font(.body)
-                        .lineLimit(1)
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
@@ -55,7 +55,7 @@ struct LinePicker: View {
                     Button {
                         selection = line.id
                     } label: {
-                        Text("SIM \(line.numericID) · \(line.displayName)")
+                        SIMLabel(line: line)
                     }
                 }
             } label: {

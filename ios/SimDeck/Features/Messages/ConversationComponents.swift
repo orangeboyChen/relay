@@ -23,11 +23,7 @@ struct ConversationHeader: View {
                     )
                     contactNameLabel
                         .font(.subheadline.weight(.semibold))
-                    HStack(spacing: 3) {
-                        SIMBadge(snapshot: linePresentation.snapshot, size: 12)
-                        Text(linePresentation.displayName)
-                            .lineLimit(1)
-                    }
+                    SIMLabel(snapshot: linePresentation.snapshot, size: 12)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 }
@@ -63,8 +59,15 @@ struct ConversationHeader: View {
         Menu {
             ForEach(alternatives) { alternative in
                 let alternativeLine = alternative.linePresentation(in: lines)
-                Button(lineLabel(for: alternativeLine)) {
+                Button {
                     selectedID = alternative.id
+                } label: {
+                    HStack {
+                        SIMLabel(snapshot: alternativeLine.snapshot)
+                        if alternative.id == selectedID {
+                            Image(systemName: "checkmark")
+                        }
+                    }
                 }
             }
         } label: {
@@ -75,13 +78,6 @@ struct ConversationHeader: View {
         .accessibilityLabel(
             Text(verbatim: accessibilityLabel)
         )
-    }
-
-    private func lineLabel(for presentation: LineHistoryPresentation) -> String {
-        guard let numericID = presentation.snapshot?.numericID else {
-            return String(localized: "Unavailable SIM")
-        }
-        return String(localized: "SIM \(numericID) · \(presentation.displayName)")
     }
 
     private var accessibilityLabel: String {

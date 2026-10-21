@@ -94,11 +94,7 @@ struct SIMRadioStatusRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 12) {
-                SIMBadge(line: line, size: 20)
-                SIMLineDescription(
-                    displayName: line.displayName,
-                    deviceName: line.deviceName
-                )
+                SIMLineDescription(line: line)
 
                 if !dynamicTypeSize.isAccessibilitySize {
                     Spacer(minLength: 12)
@@ -128,15 +124,13 @@ struct SIMRadioStatusRow: View {
 }
 
 private struct SIMLineDescription: View {
-    let displayName: String
-    let deviceName: String
+    let line: DeviceLineIdentity
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(displayName)
-                .lineLimit(1)
-            if !deviceName.isEmpty {
-                Text(deviceName)
+            SIMLabel(line: line, size: 20)
+            if !line.deviceName.isEmpty {
+                Text(line.deviceName)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import SwiftUI
+import UIKit
 
 struct SIMBadge: View {
     let number: Int?
@@ -12,62 +13,73 @@ struct SIMBadge: View {
     @ScaledMetric(relativeTo: .caption) private var scale = 1.0
 
     init(line: DeviceLineIdentity, size: CGFloat = 18) {
-        number = line.numericID
-        if !line.phoneNumber.isEmpty {
-            accessibilityLabel = Text("SIM \(line.numericID), local number \(line.phoneNumber)")
-        } else if !line.lineName.isEmpty {
-            accessibilityLabel = Text("SIM \(line.numericID), line \(line.lineName)")
-        } else {
-            accessibilityLabel = Text("SIM \(line.numericID)")
-        }
+        let presentation = SIMLabelPresentation(line: line, titleStyle: .identifier)
+        number = presentation.number
+        accessibilityLabel = Text(verbatim: presentation.accessibilityLabel)
         baseSide = size
     }
 
     init(number: Int, size: CGFloat = 18) {
-        self.number = number
-        accessibilityLabel = Text("SIM \(number)")
+        let presentation = SIMLabelPresentation(
+            number: number,
+            displayName: nil,
+            phoneNumber: nil,
+            lineName: nil,
+            titleStyle: .identifier
+        )
+        self.number = presentation.number
+        accessibilityLabel = Text(verbatim: presentation.accessibilityLabel)
         baseSide = size
     }
 
     init(snapshot: LineHistorySnapshot?, size: CGFloat = 18) {
-        number = snapshot?.numericID
-        if let snapshot {
-            if !snapshot.phoneNumber.isEmpty {
-                accessibilityLabel = Text("SIM \(snapshot.numericID), local number \(snapshot.phoneNumber)")
-            } else if !snapshot.lineName.isEmpty {
-                accessibilityLabel = Text("SIM \(snapshot.numericID), line \(snapshot.lineName)")
-            } else {
-                accessibilityLabel = Text("SIM \(snapshot.numericID)")
-            }
-        } else {
-            accessibilityLabel = Text("Unavailable SIM")
-        }
+        let presentation = SIMLabelPresentation(snapshot: snapshot, titleStyle: .identifier)
+        number = presentation.number
+        accessibilityLabel = Text(verbatim: presentation.accessibilityLabel)
         baseSide = size
     }
 
     var body: some View {
         let badgeSide = min(baseSide * scale, baseSide + 4)
 
-        Group {
-            if let number {
-                Text(number, format: .number.grouping(.never))
-            } else {
-                Text("?")
-            }
-        }
-            .font(.caption2.weight(.semibold).monospacedDigit())
-            .foregroundStyle(.white)
-            .lineLimit(1)
-            .minimumScaleFactor(0.65)
+        SIMNumberSymbol(number: number, side: badgeSide)
             .frame(width: badgeSide, height: badgeSide)
-            .background(
-                Color(uiColor: .systemGray),
-                in: RoundedRectangle(cornerRadius: badgeSide * 0.2, style: .continuous)
-            )
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityLabel)
     }
+}
 
+private struct SIMNumberSymbol: View {
+    let number: Int?
+    let side: CGFloat
+
+    var body: some View {
+        Group {
+            if let symbolName {
+                Image(systemName: symbolName)
+                    .font(.system(size: side))
+            } else if let number {
+                ZStack {
+                    Image(systemName: "square.fill")
+                        .font(.system(size: side))
+                    Text(number, format: .number.grouping(.never))
+                        .font(.system(size: side * 0.48, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.background)
+                        .minimumScaleFactor(0.7)
+                }
+            } else {
+                Image(systemName: "questionmark.square.fill")
+                    .font(.system(size: side))
+            }
+        }
+        .foregroundStyle(.secondary)
+    }
+
+    private var symbolName: String? {
+        guard let number else { return nil }
+        let candidate = "\(number).square.fill"
+        return UIImage(systemName: candidate) == nil ? nil : candidate
+    }
 }
 
 #if DEBUG
@@ -98,4 +110,5 @@ struct SIMBadge: View {
     .preferredColorScheme(.dark)
     .environment(\.dynamicTypeSize, .accessibility5)
 }
+
 #endif

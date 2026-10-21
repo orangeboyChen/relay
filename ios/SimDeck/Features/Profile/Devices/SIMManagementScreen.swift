@@ -55,9 +55,16 @@ private struct ManagedSIMRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            SIMBadge(number: sim.numericID, size: 22)
             VStack(alignment: .leading, spacing: 3) {
-                Text(sim.phoneNumber.isEmpty ? (sim.lineName.isEmpty ? "SIM \(sim.numericID)" : sim.lineName) : sim.phoneNumber)
+                SIMLabel(
+                    number: sim.numericID,
+                    displayName: sim.phoneNumber.isEmpty
+                        ? (sim.lineName.isEmpty ? "SIM \(sim.numericID)" : sim.lineName)
+                        : sim.phoneNumber,
+                    phoneNumber: sim.phoneNumber,
+                    lineName: sim.lineName,
+                    size: 22
+                )
                 Text(sim.isOffline ? "Offline" : "Inserted in device")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)

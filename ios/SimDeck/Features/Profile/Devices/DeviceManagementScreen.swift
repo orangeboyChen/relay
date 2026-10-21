@@ -150,9 +150,7 @@ private struct DeviceSlotRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            if line.simID != nil {
-                SIMBadge(line: line)
-            } else {
+            if line.simID == nil {
                 Image(systemName: "simcard")
                     .foregroundStyle(.secondary)
                     .frame(width: 22, height: 22)
@@ -161,10 +159,16 @@ private struct DeviceSlotRow: View {
                 Text(line.slotIndex.map { String(localized: "Slot \($0)") } ?? String(localized: "Slot"))
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
-                Text(line.simID == nil ? String(localized: "No SIM inserted") : line.displayName)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if line.simID == nil {
+                    Text("No SIM inserted")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    SIMLabel(line: line)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer(minLength: 12)
             Text(line.isOnline ? String(localized: "Online") : String(localized: "Offline"))

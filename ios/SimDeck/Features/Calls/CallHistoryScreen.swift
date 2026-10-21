@@ -492,8 +492,7 @@ private struct CallHistoryRow: View {
 
                 HStack(spacing: 5) {
                     Image(systemName: directionSymbol)
-                    SIMBadge(snapshot: linePresentation.snapshot, size: 14)
-                    Text(linePresentation.displayName)
+                    SIMLabel(snapshot: linePresentation.snapshot, size: 14)
                     if entry.records.count > 1 {
                         Text("(\(entry.records.count))")
                     }

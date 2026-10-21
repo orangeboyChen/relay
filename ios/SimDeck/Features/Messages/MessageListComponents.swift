@@ -66,13 +66,11 @@ struct SIMFilterMenu: View {
                 Button {
                     selection = line.id
                 } label: {
-                    if selection == line.id {
-                        Label(
-                            "SIM \(line.numericID) · \(line.displayName)",
-                            systemImage: "checkmark"
-                        )
-                    } else {
-                        Text("SIM \(line.numericID) · \(line.displayName)")
+                    HStack {
+                        SIMLabel(line: line)
+                        if selection == line.id {
+                            Image(systemName: "checkmark")
+                        }
                     }
                 }
             }

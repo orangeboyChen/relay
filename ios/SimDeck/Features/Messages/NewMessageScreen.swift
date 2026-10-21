@@ -199,7 +199,12 @@ struct NewMessageScreen: View {
                         draft.selectedLineID = line.id
                         focusedField = .recipient
                     } label: {
-                        Text("SIM \(line.numericID) · \(line.displayName)")
+                        HStack {
+                            SIMLabel(line: line)
+                            if draft.selectedLineID == line.id {
+                                Image(systemName: "checkmark")
+                            }
+                        }
                     }
                 }
             } label: {
@@ -207,7 +212,7 @@ struct NewMessageScreen: View {
                     if dynamicTypeSize.isAccessibilitySize, let selectedLine {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
-                                SIMBadge(line: selectedLine)
+                                SIMLabel(line: selectedLine, titleStyle: .identifier)
                                 Spacer(minLength: 8)
                                 linePickerIndicator
                             }
@@ -219,10 +224,8 @@ struct NewMessageScreen: View {
                     } else {
                         HStack(spacing: 8) {
                             if let selectedLine {
-                                SIMBadge(line: selectedLine)
-                                Text(selectedLine.displayName)
+                                SIMLabel(line: selectedLine)
                                     .foregroundStyle(.primary)
-                                    .lineLimit(1)
                             } else {
                                 Text("Choose a SIM")
                             }

@@ -203,7 +203,7 @@ struct ContactNameIndex: Equatable, Sendable {
         var namesByNumber: [String: String] = [:]
         for contact in contacts {
             for phoneNumber in contact.phoneNumbers {
-                for key in Self.lookupKeys(for: phoneNumber.value) {
+                for key in ContactPhoneNumberLookup.keys(for: phoneNumber.value) {
                     namesByNumber[key, default: contact.displayName] = contact.displayName
                 }
             }
@@ -212,10 +212,36 @@ struct ContactNameIndex: Equatable, Sendable {
     }
 
     func name(for phoneNumber: String) -> String? {
-        Self.lookupKeys(for: phoneNumber).lazy.compactMap { namesByNumber[$0] }.first
+        ContactPhoneNumberLookup.keys(for: phoneNumber).lazy
+            .compactMap { namesByNumber[$0] }
+            .first
+    }
+}
+
+struct ContactRecordIndex: Equatable, Sendable {
+    private let contactsByNumber: [String: ContactRecord]
+
+    init(contacts: [ContactRecord] = []) {
+        var contactsByNumber: [String: ContactRecord] = [:]
+        for contact in contacts {
+            for phoneNumber in contact.phoneNumbers {
+                for key in ContactPhoneNumberLookup.keys(for: phoneNumber.value) {
+                    contactsByNumber[key, default: contact] = contact
+                }
+            }
+        }
+        self.contactsByNumber = contactsByNumber
     }
 
-    private static func lookupKeys(for phoneNumber: String) -> [String] {
+    func contact(for phoneNumber: String) -> ContactRecord? {
+        ContactPhoneNumberLookup.keys(for: phoneNumber).lazy
+            .compactMap { contactsByNumber[$0] }
+            .first
+    }
+}
+
+private enum ContactPhoneNumberLookup {
+    static func keys(for phoneNumber: String) -> [String] {
         let digits = phoneNumber.filter(\.isNumber)
         guard !digits.isEmpty else { return [] }
 

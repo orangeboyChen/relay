@@ -41,16 +41,104 @@ final class CallHistoryFilterTests: XCTestCase {
         )
     }
 
-    private func record(lineID: UUID = UUID(), result: CallResult) -> CallRecord {
+    func testEntriesGroupAdjacentMatchingCallsFromTheSameDay() {
+        let calendar = Calendar(identifier: .gregorian)
+        let lineID = UUID()
+        let day = Date(timeIntervalSince1970: 1_800_000_000)
+        let records = [
+            record(
+                lineID: lineID,
+                number: "+86 135 0000 0000",
+                direction: .outgoing,
+                result: .answered,
+                startedAt: day.addingTimeInterval(120)
+            ),
+            record(
+                lineID: lineID,
+                number: "+8613500000000",
+                direction: .outgoing,
+                result: .answered,
+                startedAt: day
+            ),
+            record(
+                lineID: lineID,
+                number: "+8613500000000",
+                direction: .incoming,
+                result: .answered,
+                startedAt: day.addingTimeInterval(-60)
+            ),
+        ]
+
+        let entries = CallHistoryEntry.grouped(records, calendar: calendar)
+
+        XCTAssertEqual(entries.map(\.records.count), [2, 1])
+        XCTAssertEqual(entries[0].recordIDs, Set(records.prefix(2).map(\.id)))
+    }
+
+    func testEntriesDoNotGroupMatchingCallsAcrossDays() {
+        let calendar = Calendar(identifier: .gregorian)
+        let lineID = UUID()
+        let firstDay = Date(timeIntervalSince1970: 1_800_000_000)
+        let records = [
+            record(lineID: lineID, startedAt: firstDay),
+            record(lineID: lineID, startedAt: firstDay.addingTimeInterval(-86_400)),
+        ]
+
+        XCTAssertEqual(
+            CallHistoryEntry.grouped(records, calendar: calendar).map(\.records.count),
+            [1, 1]
+        )
+    }
+
+    func testDetailSelectionCarriesMatchedContact() {
+        let phoneNumber = ContactPhoneNumber(
+            id: "mobile",
+            label: "mobile",
+            value: "135 0000 0000"
+        )
+        let contact = ContactRecord(
+            id: "contact",
+            givenName: "Test",
+            familyName: "Contact",
+            organizationName: "",
+            phoneNumbers: [phoneNumber],
+            thumbnailImageData: nil
+        )
+        let call = record(number: "+86 135 0000 0000")
+        let linePresentation = LineHistoryPresentation(
+            line: nil,
+            snapshot: LineHistorySnapshot(
+                numericID: 1,
+                lineName: "Primary",
+                phoneNumber: "13500000000"
+            )
+        )
+
+        let selection = CallDetailSelection(
+            record: call,
+            linePresentation: linePresentation,
+            contact: ContactRecordIndex(contacts: [contact]).contact(for: call.remoteNumber)
+        )
+
+        XCTAssertEqual(selection.contact, contact)
+    }
+
+    private func record(
+        lineID: UUID = UUID(),
+        number: String = "10086",
+        direction: CallDirection = .incoming,
+        result: CallResult = .answered,
+        startedAt: Date = .now
+    ) -> CallRecord {
         CallRecord(
             id: UUID(),
             lineID: lineID,
-            remoteNumber: "10086",
+            remoteNumber: number,
             contactName: nil,
-            direction: .incoming,
+            direction: direction,
             result: result,
-            startedAt: .now,
-            endedAt: .now
+            startedAt: startedAt,
+            endedAt: startedAt
         )
     }
 }

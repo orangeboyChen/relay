@@ -72,6 +72,20 @@ final class ContactListModelTests: XCTestCase {
         XCTAssertEqual(index.name(for: "+86 135 0000 0000"), "张三")
     }
 
+    func testContactRecordIndexReturnsTheMatchingContactForFormattedNumbers() {
+        let expected = contact(
+            id: "zhang",
+            givenName: "三",
+            familyName: "张",
+            phoneNumber: "+86 135 0000 0000"
+        )
+        let index = ContactRecordIndex(contacts: [expected])
+
+        XCTAssertEqual(index.contact(for: "+8613500000000"), expected)
+        XCTAssertEqual(index.contact(for: "13500000000"), expected)
+        XCTAssertNil(index.contact(for: "10086"))
+    }
+
     func testSectionIndexSelectsExactOrNearestAvailableSection() {
         let availableTitles = ["A", "L", "Z", "#"]
 

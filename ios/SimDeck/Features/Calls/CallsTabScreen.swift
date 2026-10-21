@@ -9,11 +9,13 @@ struct CallsTabScreen: View {
     @Bindable var model: AppModel
 
     @State private var historyEditMode: EditMode = .inactive
+    @State private var contacts: [ContactRecord] = []
 
     var body: some View {
         CallHistoryScreen(
             state: model.callHistory,
             lines: model.devices,
+            contacts: contacts,
             referenceDate: .now,
             callStarter: model.callCoordinator,
             defaultMessageLineID: model.defaultMessageLineID,
@@ -24,6 +26,22 @@ struct CallsTabScreen: View {
             onDelete: model.deleteCallHistoryRecords(withIDs:)
         ) { lineID in
             model.lastSuccessfulDialLineID = lineID
+        }
+        .task {
+            refreshContacts()
+            for await _ in model.contactStore.changes() {
+                guard !Task.isCancelled else { return }
+                refreshContacts()
+            }
+        }
+    }
+
+    private func refreshContacts() {
+        switch model.contactStore.authorizationState {
+        case .limited, .authorized:
+            contacts = (try? model.contactStore.fetchContacts()) ?? []
+        case .notDetermined, .denied:
+            contacts = []
         }
     }
 }

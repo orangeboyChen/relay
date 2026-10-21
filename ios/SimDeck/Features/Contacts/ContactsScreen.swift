@@ -61,6 +61,7 @@ struct ContactsScreen: View {
                 model.refreshContactNames()
             }
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
     @ViewBuilder

@@ -34,6 +34,7 @@ struct CallsTabScreen: View {
                 refreshContacts()
             }
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
     private func refreshContacts() {

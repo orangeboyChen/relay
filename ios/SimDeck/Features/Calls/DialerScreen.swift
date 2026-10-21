@@ -129,6 +129,7 @@ struct DialerScreen: View {
             guard !onlineLineIDs.contains(where: { $0 == selectedLineID }) else { return }
             selectedLineID = onlineLineIDs.count == 1 ? onlineLineIDs.first : nil
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
     private var onlineLines: [DeviceLineIdentity] {

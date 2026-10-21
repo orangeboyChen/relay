@@ -146,6 +146,7 @@ struct MessagesScreen: View {
             )
             .id(composition.id)
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
     private func conversationList(_ conversations: [MessageConversation]) -> some View {

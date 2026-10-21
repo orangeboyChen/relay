@@ -54,6 +54,7 @@ struct DeviceManagementScreen: View {
         .task {
             await model.refreshDevices()
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 }
 

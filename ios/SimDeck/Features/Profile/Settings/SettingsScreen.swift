@@ -44,6 +44,7 @@ struct SettingsScreen: View {
             }
         }
         .navigationTitle("Settings")
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 }
 

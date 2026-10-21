@@ -15,6 +15,7 @@ struct ServerSettingsScreen: View {
             ServerVersionSection()
         }
         .navigationTitle("Server")
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 }
 
@@ -222,6 +223,7 @@ struct DefaultLineSettingsScreen: View {
             )
         }
         .navigationTitle("Default Lines")
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 }
 
@@ -276,6 +278,7 @@ struct NotificationSettingsScreen: View {
             Toggle("Show message preview", isOn: $showMessagePreview)
         }
         .navigationTitle("Notifications")
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 }
 
@@ -297,6 +300,7 @@ struct ContactsSettingsScreen: View {
             Link("Open System Settings", destination: URL(string: UIApplication.openSettingsURLString)!)
         }
         .navigationTitle("Contacts")
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
     private var statusLabel: String {

@@ -94,6 +94,7 @@ struct NewMessageScreen: View {
                 selectAvailableLineIfNeeded()
             }
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
     @ViewBuilder

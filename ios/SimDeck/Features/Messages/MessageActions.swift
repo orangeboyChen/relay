@@ -98,6 +98,7 @@ struct MessageDetailsScreen: View {
                 }
             }
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
     private var direction: LocalizedStringResource {

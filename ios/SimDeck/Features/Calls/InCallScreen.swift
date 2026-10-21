@@ -116,6 +116,7 @@ struct InCallScreen: View {
                 endsFailedCall: true
             )
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
     private func line(for call: ActiveCallSession) -> DeviceLineIdentity? {

@@ -53,6 +53,7 @@ struct CallDetailScreen: View {
                 SystemUnknownContactView(phoneNumber: record.remoteNumber)
             }
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
     private var header: some View {

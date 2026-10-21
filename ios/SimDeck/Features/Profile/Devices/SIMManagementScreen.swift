@@ -46,6 +46,7 @@ struct SIMManagementScreen: View {
         } message: { _ in
             Text("The SIM identity and its encrypted profile will be removed from this account. A future insertion creates a new managed record.")
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 }
 

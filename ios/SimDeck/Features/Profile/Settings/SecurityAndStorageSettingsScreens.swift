@@ -52,6 +52,7 @@ struct SecuritySettingsScreen: View {
         } message: {
             Text(errorMessage ?? "")
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 }
 
@@ -70,6 +71,7 @@ struct TrustedDevicesScreen: View {
                 .foregroundStyle(.secondary)
         }
         .navigationTitle("Trusted iPhones")
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 }
 
@@ -93,6 +95,7 @@ struct StorageSettingsScreen: View {
         .alert("Clear Cache", isPresented: .init(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) { errorMessage = nil }
         } message: { Text(errorMessage ?? "") }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 }
 
@@ -118,6 +121,7 @@ struct AdvancedSettingsScreen: View {
             }
         }
         .navigationTitle("Advanced")
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 }
 
@@ -151,6 +155,7 @@ struct AboutScreen: View {
             }
         }
         .navigationTitle("About")
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 }
 
@@ -175,6 +180,7 @@ private struct WebRTCLicenseScreen: View {
             }
         }
         .navigationTitle("WebRTC License")
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 }
 
@@ -190,6 +196,7 @@ struct DataDeletionScreen: View {
             }
         }
         .navigationTitle("Delete Data")
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 }
 

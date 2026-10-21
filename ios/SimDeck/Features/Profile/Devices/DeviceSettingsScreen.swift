@@ -94,6 +94,7 @@ struct DeviceSettingsScreen: View {
             Text("The modem credential will stop working immediately. This action cannot be undone.")
         }
         .interactiveDismissDisabled(isWorking)
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
     private var canSave: Bool {
@@ -177,6 +178,7 @@ struct SIMSettingsScreen: View {
                     .disabled(isWorking || !model.canEditDeviceProfiles)
             }
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
     private func save() {
@@ -209,6 +211,7 @@ struct MMSSettingsScreen: View {
             Stepper("Size limit: \(sizeLimit) KB", value: $sizeLimit, in: 128...10_240, step: 128)
         }
         .navigationTitle("MMS Configuration")
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 }
 

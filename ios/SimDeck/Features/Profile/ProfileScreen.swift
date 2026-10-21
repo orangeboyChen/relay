@@ -35,6 +35,7 @@ struct ProfileScreen: View {
         .refreshable {
             await model.refreshDevices()
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 }
 

@@ -210,6 +210,7 @@ struct ConversationScreen: View {
         } message: {
             Text("This message will be removed from this conversation.")
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
     private var conversation: MessageConversation {

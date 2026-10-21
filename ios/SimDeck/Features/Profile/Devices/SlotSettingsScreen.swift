@@ -72,6 +72,7 @@ struct SlotSettingsScreen: View {
         } message: {
             Text("VoLTE changes require a modem restart. Restarting temporarily takes this SIM offline.")
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
     private var canSave: Bool {

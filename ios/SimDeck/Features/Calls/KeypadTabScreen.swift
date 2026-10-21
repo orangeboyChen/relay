@@ -27,6 +27,7 @@ struct KeypadTabScreen: View {
         .task {
             reloadContacts()
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
     private func reloadContacts() {

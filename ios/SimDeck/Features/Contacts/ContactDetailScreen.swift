@@ -67,6 +67,7 @@ struct ContactDetailScreen: View {
                 sendAction: sendAction
             )
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
     private var contactHeader: some View {

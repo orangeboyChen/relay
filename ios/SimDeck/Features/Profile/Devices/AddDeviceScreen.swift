@@ -89,6 +89,7 @@ struct AddDeviceScreen: View {
                 Text("The modem is now SIM \(approved.numericID). You can turn off Device Discovery.")
             }
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
     private func close() {

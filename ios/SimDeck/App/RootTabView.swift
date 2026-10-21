@@ -151,6 +151,7 @@ private struct PlaceholderScreen: View {
             description: Text("This section is ready for its feature implementation.")
         )
         .navigationTitle(title)
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 }
 

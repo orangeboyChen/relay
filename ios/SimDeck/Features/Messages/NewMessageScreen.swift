@@ -7,11 +7,13 @@ import SwiftUI
 struct NewMessageScreen: View {
     let lines: [DeviceLineIdentity]
     let sendAction: (UUID, String, String) async throws -> Void
+    let sendImageAction: (UUID, String, String, MessageImageAttachment) async throws -> Void
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @FocusState private var focusedField: Field?
     @State private var draft: NewMessageDraft
+    @State private var attachment: MessageImageAttachment?
     @State private var isSending = false
     @State private var errorMessage: String?
 
@@ -20,10 +22,17 @@ struct NewMessageScreen: View {
         selectedLineID: UUID? = nil,
         recipient: String = "",
         message: String = "",
-        sendAction: @escaping (UUID, String, String) async throws -> Void = { _, _, _ in }
+        sendAction: @escaping (UUID, String, String) async throws -> Void = { _, _, _ in },
+        sendImageAction: @escaping (
+            UUID,
+            String,
+            String,
+            MessageImageAttachment
+        ) async throws -> Void = { _, _, _, _ in }
     ) {
         self.lines = lines
         self.sendAction = sendAction
+        self.sendImageAction = sendImageAction
         let initialLineID = selectedLineID ?? lines.first(where: \.isOnline)?.id
         _draft = State(
             initialValue: NewMessageDraft(
@@ -69,11 +78,9 @@ struct NewMessageScreen: View {
                     }
                     MessageComposer(
                         draft: $draft.body,
+                        attachment: $attachment,
                         isTextEntryEnabled: canEditMessage && !isSending,
-                        canSend: draft.canSend(using: lines) && !isSending,
-                        attachmentAction: {
-                            errorMessage = String(localized: "Image attachments are not available yet.")
-                        },
+                        canSend: canSend && !isSending,
                         sendAction: send
                     )
                 }
@@ -256,6 +263,12 @@ struct NewMessageScreen: View {
         selectedLine != nil && draft.hasValidRecipient
     }
 
+    private var canSend: Bool {
+        canEditMessage
+            && (attachment != nil
+                || !draft.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
     private func selectAvailableLineIfNeeded() {
         guard selectedLine == nil else { return }
         draft.selectedLineID = onlineLines.first?.id
@@ -276,16 +289,21 @@ struct NewMessageScreen: View {
     }
 
     private func send() {
-        guard draft.canSend(using: lines),
+        guard canSend,
               let lineID = draft.selectedLineID,
               !isSending else { return }
         let recipient = draft.recipient
         let body = draft.body
+        let attachment = attachment
         errorMessage = nil
         isSending = true
         Task {
             do {
-                try await sendAction(lineID, recipient, body)
+                if let attachment {
+                    try await sendImageAction(lineID, recipient, body, attachment)
+                } else {
+                    try await sendAction(lineID, recipient, body)
+                }
                 dismiss()
             } catch {
                 errorMessage = error.localizedDescription

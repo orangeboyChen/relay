@@ -7,20 +7,11 @@ import SwiftUI
 import UIKit
 
 enum MessageSwipeInteraction {
-    static let replyThreshold: CGFloat = 52
-    static let maximumReplyOffset: CGFloat = 68
     static let maximumTimestampOffset: CGFloat = 72
 
     static func offset(horizontal: CGFloat, vertical: CGFloat) -> CGFloat {
-        guard abs(horizontal) > abs(vertical) else { return 0 }
-        if horizontal > 0 {
-            return min(horizontal, maximumReplyOffset)
-        }
+        guard horizontal < 0, abs(horizontal) > abs(vertical) else { return 0 }
         return max(horizontal, -maximumTimestampOffset)
-    }
-
-    static func shouldReply(horizontal: CGFloat, vertical: CGFloat) -> Bool {
-        abs(horizontal) > abs(vertical) && horizontal >= replyThreshold
     }
 
     static func shouldBegin(horizontalVelocity: CGFloat, verticalVelocity: CGFloat) -> Bool {

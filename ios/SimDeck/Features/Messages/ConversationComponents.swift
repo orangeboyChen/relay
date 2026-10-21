@@ -5,107 +5,70 @@
 import SwiftUI
 
 struct ConversationHeader: View {
-    let conversation: MessageConversation
-    let linePresentation: LineHistoryPresentation
-    let alternatives: [MessageConversation]
-    let lines: [DeviceLineIdentity]
+    let contact: ContactRecord
     let usesAccessibilityLayout: Bool
-    @Binding var selectedID: ConversationID
+    let transitionID: String
+    let transitionNamespace: Namespace.ID
+    let action: () -> Void
 
-    @ViewBuilder
     var body: some View {
-        if usesAccessibilityLayout {
-            lineMenu {
-                VStack(spacing: 2) {
-                    PersonAvatar(
-                        displayName: conversation.contactName,
-                        size: 48
-                    )
-                    contactNameLabel
-                        .font(.subheadline.weight(.semibold))
-                    SIMLabel(snapshot: linePresentation.snapshot, size: 12)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: 270)
-                .padding(.vertical, 4)
-            }
-        } else {
-            VStack(spacing: 2) {
+        Button(action: action) {
+            VStack(spacing: usesAccessibilityLayout ? -8 : -12) {
                 PersonAvatar(
-                    displayName: conversation.contactName,
-                    size: 56
+                    imageData: contact.thumbnailImageData,
+                    displayName: contact.displayName,
+                    organizationName: contact.organizationName,
+                    size: usesAccessibilityLayout ? 48 : 56
                 )
-                .overlay(alignment: .bottomTrailing) {
-                    SIMBadge(snapshot: linePresentation.snapshot, size: 10)
-                        .offset(x: 3, y: 2)
-                }
+                .matchedTransitionSource(
+                    id: transitionID,
+                    in: transitionNamespace
+                )
+                .zIndex(1)
 
-                lineMenu {
-                    contactNameLabel
-                        .font(.footnote.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .frame(minHeight: 28)
-                        .glassEffect(.regular.interactive(), in: Capsule())
-                }
+                contactIdentity
             }
-            .frame(maxWidth: 230)
-        }
-    }
-
-    private func lineMenu<Label: View>(
-        @ViewBuilder label: () -> Label
-    ) -> some View {
-        Menu {
-            ForEach(alternatives) { alternative in
-                let alternativeLine = alternative.linePresentation(in: lines)
-                Button {
-                    selectedID = alternative.id
-                } label: {
-                    HStack {
-                        SIMLabel(snapshot: alternativeLine.snapshot)
-                        if alternative.id == selectedID {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
-        } label: {
-            label()
-                .contentShape(.rect)
+            .frame(maxWidth: usesAccessibilityLayout ? 270 : 230)
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(
-            Text(verbatim: accessibilityLabel)
-        )
+        .accessibilityLabel(Text("Contact details for \(contact.displayName)"))
     }
 
-    private var accessibilityLabel: String {
-        guard let numericID = linePresentation.snapshot?.numericID else {
-            return "\(conversation.displayName), \(String(localized: "Unavailable SIM"))"
-        }
-        return "\(conversation.displayName), SIM \(numericID), \(linePresentation.displayName)"
-    }
-
-    private var contactNameLabel: some View {
-        HStack(spacing: 2) {
-            Text(conversation.displayName)
+    private var contactIdentity: some View {
+        HStack(spacing: 3) {
+            Text(contact.displayName)
+                .font(
+                    usesAccessibilityLayout
+                        ? .subheadline.weight(.semibold)
+                        : .footnote.weight(.semibold)
+                )
                 .lineLimit(1)
 
-            Image(systemName: "chevron.down")
+            Image(systemName: "chevron.right")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.tertiary)
         }
         .foregroundStyle(.primary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .frame(minHeight: 28)
+        .glassEffect(
+            .regular
+                .tint(Color(uiColor: .secondarySystemFill))
+                .interactive(),
+            in: Capsule()
+        )
     }
+
 }
 
 struct MessageBubble: View {
     let message: MessageItem
     let lineSnapshot: LineHistorySnapshot?
+    let showsLineBadge: Bool
     let canRetry: Bool
     let openAttachment: () -> Void
-    let replyAction: () -> Void
     let copyAction: () -> Void
     let copyVerificationCodeAction: () -> Void
     let forwardAction: () -> Void
@@ -115,14 +78,13 @@ struct MessageBubble: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding private var timestampRevealState: MessageTimestampRevealState
-    @State private var horizontalOffset: CGFloat = 0
 
     init(
         message: MessageItem,
         lineSnapshot: LineHistorySnapshot?,
+        showsLineBadge: Bool = false,
         canRetry: Bool = true,
         openAttachment: @escaping () -> Void = {},
-        replyAction: @escaping () -> Void = {},
         copyAction: @escaping () -> Void = {},
         copyVerificationCodeAction: @escaping () -> Void = {},
         forwardAction: @escaping () -> Void = {},
@@ -133,9 +95,9 @@ struct MessageBubble: View {
     ) {
         self.message = message
         self.lineSnapshot = lineSnapshot
+        self.showsLineBadge = showsLineBadge
         self.canRetry = canRetry
         self.openAttachment = openAttachment
-        self.replyAction = replyAction
         self.copyAction = copyAction
         self.copyVerificationCodeAction = copyVerificationCodeAction
         self.forwardAction = forwardAction
@@ -147,76 +109,54 @@ struct MessageBubble: View {
 
     var body: some View {
         ZStack {
-            swipeAffordances
+            swipeTimestamp
 
             HStack {
                 if message.direction == .sent {
-                    Spacer(minLength: 84)
+                    Spacer(minLength: 64)
                 }
 
                 VStack(alignment: message.direction == .sent ? .trailing : .leading, spacing: 2) {
+                    if showsLineBadge {
+                        lineBadge
+                            .padding(
+                                message.direction == .sent ? .trailing : .leading,
+                                6
+                            )
+                    }
                     bubbleContent
                     messageMetadata
                 }
 
                 if message.direction == .received {
-                    Spacer(minLength: 84)
+                    Spacer(minLength: 64)
                 }
             }
-            .offset(x: messageOffset)
+            .offset(x: timestampRevealState.offset)
         }
         .contentShape(.rect)
         .gesture(
             MessageHorizontalSwipeGesture(
                 onChanged: { horizontal, vertical in
-                    let proposedOffset = MessageSwipeInteraction.offset(
+                    timestampRevealState.update(
                         horizontal: horizontal,
                         vertical: vertical
                     )
-                    if proposedOffset < 0 {
-                        horizontalOffset = 0
-                        timestampRevealState.update(
-                            horizontal: horizontal,
-                            vertical: vertical
-                        )
-                    } else {
-                        timestampRevealState.end()
-                        horizontalOffset = proposedOffset
-                    }
                 },
-                onEnded: { horizontal, vertical in
-                    let shouldReply = MessageSwipeInteraction.shouldReply(
-                        horizontal: horizontal,
-                        vertical: vertical
-                    )
+                onEnded: { _, _ in
                     withAnimation(reduceMotion ? nil : .snappy) {
-                        horizontalOffset = 0
                         timestampRevealState.end()
-                    }
-                    if shouldReply {
-                        replyAction()
                     }
                 }
             )
         )
-        .accessibilityAction(named: Text("Reply")) {
-            replyAction()
-        }
         .accessibilityAction(named: Text("Details")) {
             detailsAction()
         }
     }
 
-    private var swipeAffordances: some View {
-        HStack(spacing: 0) {
-            Image(systemName: "arrowshape.turn.up.left.fill")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.blue)
-                .frame(width: 44, height: 44)
-                .scaleEffect(replyProgress)
-                .opacity(replyProgress)
-                .accessibilityHidden(true)
-
+    private var swipeTimestamp: some View {
+        HStack {
             Spacer(minLength: 0)
 
             Text(
@@ -232,12 +172,9 @@ struct MessageBubble: View {
         }
     }
 
-    private var messageOffset: CGFloat {
-        horizontalOffset > 0 ? horizontalOffset : timestampRevealState.offset
-    }
-
-    private var replyProgress: CGFloat {
-        min(max(horizontalOffset / MessageSwipeInteraction.replyThreshold, 0), 1)
+    private var lineBadge: some View {
+        SIMBadge(snapshot: lineSnapshot, size: 14)
+            .accessibilityHidden(true)
     }
 
     private var bubbleContent: some View {
@@ -251,28 +188,29 @@ struct MessageBubble: View {
             }
             if !message.body.isEmpty {
                 Text(MessageLinkDetector.attributedString(from: message.body))
+                    .font(.body)
                     .foregroundStyle(message.direction == .sent ? .white : .primary)
                     .tint(message.direction == .sent ? .white : .blue)
+                    .padding(.horizontal, message.attachment == nil ? 0 : 6)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background(bubbleColor, in: bubbleBodyShape)
-        .overlay(alignment: tailAlignment) {
-            MessageBubbleTail(direction: message.direction)
-                .fill(bubbleColor)
-                .frame(width: 18, height: 20)
-                .offset(x: message.direction == .received ? -9 : 9)
+        .padding(.horizontal, message.attachment == nil ? 14 : 8)
+        .padding(.top, 8)
+        .padding(.bottom, message.attachment != nil && message.body.isEmpty ? 8 : 9)
+        .background {
+            MessageBubbleBackground(
+                direction: message.direction,
+                color: bubbleColor
+            )
         }
         .frame(maxWidth: 271, alignment: message.direction == .sent ? .trailing : .leading)
-        .contentShape(.contextMenuPreview, bubbleBodyShape)
+        .contentShape(.contextMenuPreview, bubbleShape)
         .contextMenu {
             MessageContextMenu(
                 canCopy: !message.body.isEmpty,
                 verificationCode: VerificationCodeDetector.code(in: message.body),
                 canForward: !message.body.isEmpty,
                 canRetry: canRetry && message.direction == .sent && message.status == .failed,
-                replyAction: replyAction,
                 copyAction: copyAction,
                 copyVerificationCodeAction: copyVerificationCodeAction,
                 forwardAction: forwardAction,
@@ -284,8 +222,7 @@ struct MessageBubble: View {
     }
 
     private var messageMetadata: some View {
-        HStack(spacing: 5) {
-            SIMBadge(snapshot: lineSnapshot, size: 14)
+        Group {
             deliveryStatusView
         }
         .font(.caption2)
@@ -319,32 +256,12 @@ struct MessageBubble: View {
 
     private var bubbleColor: Color {
         message.direction == .sent
-            ? .blue
-            : Color(uiColor: .secondarySystemBackground)
+            ? .green
+            : Color(uiColor: .systemGray5)
     }
 
-    private var tailAlignment: Alignment {
-        message.direction == .sent ? .bottomTrailing : .bottomLeading
-    }
-
-    private var bubbleBodyShape: UnevenRoundedRectangle {
-        if message.direction == .sent {
-            UnevenRoundedRectangle(
-                topLeadingRadius: 18,
-                bottomLeadingRadius: 18,
-                bottomTrailingRadius: 4,
-                topTrailingRadius: 18,
-                style: .continuous
-            )
-        } else {
-            UnevenRoundedRectangle(
-                topLeadingRadius: 18,
-                bottomLeadingRadius: 4,
-                bottomTrailingRadius: 18,
-                topTrailingRadius: 18,
-                style: .continuous
-            )
-        }
+    private var bubbleShape: MessageBubbleShape {
+        MessageBubbleShape(direction: message.direction)
     }
 
     private var deliveryStatus: LocalizedStringResource {
@@ -357,50 +274,105 @@ struct MessageBubble: View {
     }
 }
 
-private struct MessageBubbleTail: Shape {
+private struct MessageBubbleBackground: View {
+    let direction: MessageDirection
+    let color: Color
+
+    var body: some View {
+        ZStack(alignment: direction == .sent ? .bottomTrailing : .bottomLeading) {
+            MessageBubbleTailCorner(
+                direction: direction,
+                horizontalRadius: 16,
+                verticalRadius: 14
+            )
+            .fill(color)
+            .frame(width: 20, height: 19)
+            .offset(x: direction == .sent ? 7 : -7, y: 1)
+
+            MessageBubbleTailCorner(
+                direction: direction,
+                horizontalRadius: 10,
+                verticalRadius: 10
+            )
+            .fill(.black)
+            .frame(width: 25, height: 19)
+            .offset(x: direction == .sent ? 25 : -25, y: 1)
+            .blendMode(.destinationOut)
+
+            RoundedRectangle(cornerRadius: 18, style: .circular)
+                .fill(color)
+        }
+        .compositingGroup()
+    }
+}
+
+private struct MessageBubbleTailCorner: Shape {
+    let direction: MessageDirection
+    let horizontalRadius: CGFloat
+    let verticalRadius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        var receivedPath = Path()
+        receivedPath.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        receivedPath.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        receivedPath.addLine(
+            to: CGPoint(x: rect.maxX, y: rect.maxY - verticalRadius)
+        )
+        receivedPath.addCurve(
+            to: CGPoint(x: rect.maxX - horizontalRadius, y: rect.maxY),
+            control1: CGPoint(x: rect.maxX, y: rect.maxY - verticalRadius * 0.45),
+            control2: CGPoint(x: rect.maxX - horizontalRadius * 0.45, y: rect.maxY)
+        )
+        receivedPath.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        receivedPath.closeSubpath()
+
+        guard direction == .sent else {
+            return receivedPath
+        }
+
+        return receivedPath.applying(
+            CGAffineTransform(
+                a: -1,
+                b: 0,
+                c: 0,
+                d: 1,
+                tx: rect.minX + rect.maxX,
+                ty: 0
+            )
+        )
+    }
+}
+
+private struct MessageBubbleShape: Shape {
     let direction: MessageDirection
 
     func path(in rect: CGRect) -> Path {
-        var path = Path()
-        if direction == .received {
-            path.move(to: CGPoint(x: rect.maxX, y: rect.minY))
-            path.addCurve(
-                to: CGPoint(x: rect.minX, y: rect.maxY),
-                control1: CGPoint(x: rect.maxX * 0.62, y: rect.height * 0.25),
-                control2: CGPoint(x: rect.maxX * 0.5, y: rect.height * 0.8)
-            )
-            path.addCurve(
-                to: CGPoint(x: rect.maxX, y: rect.height * 0.6),
-                control1: CGPoint(x: rect.maxX * 0.34, y: rect.maxY),
-                control2: CGPoint(x: rect.maxX * 0.78, y: rect.height * 0.85)
-            )
-        } else {
-            path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-            path.addCurve(
-                to: CGPoint(x: rect.maxX, y: rect.maxY),
-                control1: CGPoint(x: rect.maxX * 0.38, y: rect.height * 0.25),
-                control2: CGPoint(x: rect.maxX * 0.5, y: rect.height * 0.8)
-            )
-            path.addCurve(
-                to: CGPoint(x: rect.minX, y: rect.height * 0.6),
-                control1: CGPoint(x: rect.maxX * 0.66, y: rect.maxY),
-                control2: CGPoint(x: rect.maxX * 0.22, y: rect.height * 0.85)
-            )
-        }
-        path.closeSubpath()
-        return path
+        RoundedRectangle(cornerRadius: 18, style: .circular)
+            .path(in: rect)
     }
 }
 
 struct MessageImage: View {
     let attachment: MessageImageAttachment
 
+    @ViewBuilder
     var body: some View {
-        Image(systemName: attachment.systemImageName)
-            .font(.system(size: 52))
-            .foregroundStyle(.white)
-            .frame(width: 180, height: 120)
-            .background(.orange.gradient, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        if let data = attachment.data, let image = UIImage(data: data) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 220, height: 165)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        } else {
+            Image(systemName: attachment.systemImageName ?? "photo")
+                .font(.system(size: 52))
+                .foregroundStyle(.white)
+                .frame(width: 180, height: 120)
+                .background(
+                    .orange.gradient,
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                )
+        }
     }
 }
 
@@ -426,26 +398,31 @@ struct AttachmentPreview: View {
 
 #if DEBUG
 #Preview("Conversation components") {
-    VStack(spacing: 20) {
-        ConversationHeader(
-            conversation: PreviewFixtures.conversations[0],
-            linePresentation: PreviewFixtures.conversations[0].linePresentation(
-                in: PreviewFixtures.devices
-            ),
-            alternatives: PreviewFixtures.conversations,
-            lines: PreviewFixtures.devices,
-            usesAccessibilityLayout: false,
-            selectedID: .constant(PreviewFixtures.conversations[0].id)
-        )
+    ConversationComponentsPreview()
+        .padding()
+}
 
-        ForEach(PreviewFixtures.conversations[0].messages) { message in
-            MessageBubble(
-                message: message,
-                lineSnapshot: LineHistorySnapshot(line: PreviewFixtures.devices[0])
-            ) {}
+private struct ConversationComponentsPreview: View {
+    @Namespace private var contactTransitionNamespace
+
+    var body: some View {
+        VStack(spacing: 20) {
+            ConversationHeader(
+                contact: PreviewContactFixtures.contacts[0],
+                usesAccessibilityLayout: false,
+                transitionID: "preview-contact",
+                transitionNamespace: contactTransitionNamespace,
+                action: {}
+            )
+
+            ForEach(PreviewFixtures.conversations[0].messages) { message in
+                MessageBubble(
+                    message: message,
+                    lineSnapshot: LineHistorySnapshot(line: PreviewFixtures.devices[0])
+                )
+            }
         }
     }
-    .padding()
 }
 
 #Preview("Failed message") {

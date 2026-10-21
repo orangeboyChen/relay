@@ -6,14 +6,10 @@ import XCTest
 @testable import SimDeck
 
 final class MessageSwipeInteractionTests: XCTestCase {
-    func testHorizontalDragTracksWithinDirectionalLimits() {
+    func testLeftDragTracksWithinDirectionalLimit() {
         XCTAssertEqual(
             MessageSwipeInteraction.offset(horizontal: 40, vertical: 4),
-            40
-        )
-        XCTAssertEqual(
-            MessageSwipeInteraction.offset(horizontal: 400, vertical: 4),
-            MessageSwipeInteraction.maximumReplyOffset
+            0
         )
         XCTAssertEqual(
             MessageSwipeInteraction.offset(horizontal: -400, vertical: 4),
@@ -30,13 +26,6 @@ final class MessageSwipeInteractionTests: XCTestCase {
             MessageSwipeInteraction.offset(horizontal: -20, vertical: -40),
             0
         )
-    }
-
-    func testReplyRequiresDominantRightwardDragPastThreshold() {
-        XCTAssertFalse(MessageSwipeInteraction.shouldReply(horizontal: 51, vertical: 0))
-        XCTAssertTrue(MessageSwipeInteraction.shouldReply(horizontal: 52, vertical: 0))
-        XCTAssertFalse(MessageSwipeInteraction.shouldReply(horizontal: -80, vertical: 0))
-        XCTAssertFalse(MessageSwipeInteraction.shouldReply(horizontal: 80, vertical: 90))
     }
 
     func testGestureBeginsOnlyForHorizontalVelocity() {

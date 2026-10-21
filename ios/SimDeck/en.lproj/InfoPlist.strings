@@ -1,2 +1,2 @@
-"NSCameraUsageDescription" = "Sim Deck's calling framework checks camera availability during call setup. Sim Deck does not capture or send video.";
+"NSCameraUsageDescription" = "Sim Deck uses the camera when you choose to take a photo to send in a message.";
 "NSContactsUsageDescription" = "Sim Deck uses your contacts to display names for phone calls and messages.";

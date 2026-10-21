@@ -9,7 +9,6 @@ struct MessageContextMenu: View {
     let verificationCode: String?
     let canForward: Bool
     let canRetry: Bool
-    let replyAction: () -> Void
     let copyAction: () -> Void
     let copyVerificationCodeAction: () -> Void
     let forwardAction: () -> Void
@@ -18,10 +17,6 @@ struct MessageContextMenu: View {
     let deleteAction: () -> Void
 
     var body: some View {
-        Button(action: replyAction) {
-            Label("Reply", systemImage: "arrowshape.turn.up.left")
-        }
-
         if canCopy {
             Button(action: copyAction) {
                 Label("Copy", systemImage: "document.on.document")
@@ -122,7 +117,6 @@ struct MessageDetailsScreen: View {
         verificationCode: "482913",
         canForward: true,
         canRetry: false,
-        replyAction: {},
         copyAction: {},
         copyVerificationCodeAction: {},
         forwardAction: {},

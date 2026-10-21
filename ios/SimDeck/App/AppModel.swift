@@ -439,6 +439,49 @@ final class AppModel {
         }
     }
 
+    @discardableResult
+    func sendImageMessage(
+        lineID: UUID,
+        remoteNumber: String,
+        body: String,
+        attachment: MessageImageAttachment
+    ) async throws -> UUID {
+        guard devices.contains(where: { $0.id == lineID && $0.isOnline }) else {
+            throw ServerConnectionError.deviceUnavailable
+        }
+        let number = DialString.normalized(remoteNumber)
+        guard DialString.isValid(number), attachment.data != nil else {
+            throw ServerConnectionError.invalidResponse
+        }
+
+        let messageID = UUID()
+        upsertOutgoingMessage(
+            id: messageID,
+            lineID: lineID,
+            remoteNumber: number,
+            body: body,
+            attachment: attachment,
+            status: .sending
+        )
+        persistMessageHistoryIfAvailable()
+        do {
+            try await messageTransport.sendMMS(
+                messageID: messageID,
+                lineID: lineID,
+                remoteNumber: number,
+                body: body,
+                attachment: attachment
+            )
+            updateMessageStatus(id: messageID, status: .sent)
+            persistMessageHistoryIfAvailable()
+            return messageID
+        } catch {
+            updateMessageStatus(id: messageID, status: .failed)
+            persistMessageHistoryIfAvailable()
+            throw error
+        }
+    }
+
     func retryMessage(id: UUID) async throws {
         guard case .loaded(let conversations) = messages,
               let conversation = conversations.first(where: { conversation in
@@ -455,12 +498,22 @@ final class AppModel {
         }
         updateMessageStatus(id: id, status: .sending)
         do {
-            try await messageTransport.send(
-                messageID: id,
-                lineID: conversation.lineID,
-                remoteNumber: conversation.remoteNumber,
-                body: message.body
-            )
+            if let attachment = message.attachment {
+                try await messageTransport.sendMMS(
+                    messageID: id,
+                    lineID: conversation.lineID,
+                    remoteNumber: conversation.remoteNumber,
+                    body: message.body,
+                    attachment: attachment
+                )
+            } else {
+                try await messageTransport.send(
+                    messageID: id,
+                    lineID: conversation.lineID,
+                    remoteNumber: conversation.remoteNumber,
+                    body: message.body
+                )
+            }
             updateMessageStatus(id: id, status: .sent)
             persistMessageHistoryIfAvailable()
         } catch {
@@ -993,6 +1046,7 @@ final class AppModel {
         lineID: UUID,
         remoteNumber: String,
         body: String,
+        attachment: MessageImageAttachment? = nil,
         status: MessageDeliveryStatus
     ) {
         var conversations = loadedConversations
@@ -1001,7 +1055,7 @@ final class AppModel {
             id: id,
             direction: .sent,
             body: body,
-            attachment: nil,
+            attachment: attachment,
             sentAt: Date(),
             status: status
         )

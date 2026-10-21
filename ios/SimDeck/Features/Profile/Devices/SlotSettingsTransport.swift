@@ -11,19 +11,34 @@ struct SlotSettings: Codable, Equatable, Sendable {
     var incomingCallsEnabled: Bool
     var incomingSMSEnabled: Bool
     var volteEnabled: Bool
+    var mmsAPN: String
+    var mmscURL: String
+    var mmsProxyHost: String
+    var mmsProxyPort: Int
+    var mmsContextID: Int
 
     init(
         dataEnabled: Bool,
         airplaneModeEnabled: Bool,
         incomingCallsEnabled: Bool,
         incomingSMSEnabled: Bool,
-        volteEnabled: Bool = false
+        volteEnabled: Bool = false,
+        mmsAPN: String = "",
+        mmscURL: String = "",
+        mmsProxyHost: String = "",
+        mmsProxyPort: Int = 80,
+        mmsContextID: Int = 1
     ) {
         self.dataEnabled = dataEnabled
         self.airplaneModeEnabled = airplaneModeEnabled
         self.incomingCallsEnabled = incomingCallsEnabled
         self.incomingSMSEnabled = incomingSMSEnabled
         self.volteEnabled = volteEnabled
+        self.mmsAPN = mmsAPN
+        self.mmscURL = mmscURL
+        self.mmsProxyHost = mmsProxyHost
+        self.mmsProxyPort = mmsProxyPort
+        self.mmsContextID = mmsContextID
     }
 
     init(from decoder: any Decoder) throws {
@@ -33,6 +48,11 @@ struct SlotSettings: Codable, Equatable, Sendable {
         incomingCallsEnabled = try container.decode(Bool.self, forKey: .incomingCallsEnabled)
         incomingSMSEnabled = try container.decode(Bool.self, forKey: .incomingSMSEnabled)
         volteEnabled = try container.decodeIfPresent(Bool.self, forKey: .volteEnabled) ?? false
+        mmsAPN = try container.decodeIfPresent(String.self, forKey: .mmsAPN) ?? ""
+        mmscURL = try container.decodeIfPresent(String.self, forKey: .mmscURL) ?? ""
+        mmsProxyHost = try container.decodeIfPresent(String.self, forKey: .mmsProxyHost) ?? ""
+        mmsProxyPort = try container.decodeIfPresent(Int.self, forKey: .mmsProxyPort) ?? 80
+        mmsContextID = try container.decodeIfPresent(Int.self, forKey: .mmsContextID) ?? 1
     }
 
     static let enabled = SlotSettings(
@@ -49,6 +69,11 @@ struct SlotSettings: Codable, Equatable, Sendable {
         case incomingCallsEnabled = "incoming_calls_enabled"
         case incomingSMSEnabled = "incoming_sms_enabled"
         case volteEnabled = "volte_enabled"
+        case mmsAPN = "mms_apn"
+        case mmscURL = "mmsc_url"
+        case mmsProxyHost = "mms_proxy_host"
+        case mmsProxyPort = "mms_proxy_port"
+        case mmsContextID = "mms_context_id"
     }
 }
 
@@ -131,7 +156,12 @@ final class LiveSlotSettingsTransport: SlotSettingsTransport {
                 airplaneModeEnabled: nil,
                 incomingCallsEnabled: nil,
                 incomingSMSEnabled: nil,
-                volteEnabled: nil
+                volteEnabled: nil,
+                mmsAPN: nil,
+                mmscURL: nil,
+                mmsProxyHost: nil,
+                mmsProxyPort: nil,
+                mmsContextID: nil
             ),
             target: target,
             line: line
@@ -156,7 +186,12 @@ final class LiveSlotSettingsTransport: SlotSettingsTransport {
             airplaneModeEnabled: settings?.airplaneModeEnabled,
             incomingCallsEnabled: settings?.incomingCallsEnabled,
             incomingSMSEnabled: settings?.incomingSMSEnabled,
-            volteEnabled: settings?.volteEnabled
+            volteEnabled: settings?.volteEnabled,
+            mmsAPN: settings?.mmsAPN,
+            mmscURL: settings?.mmscURL,
+            mmsProxyHost: settings?.mmsProxyHost,
+            mmsProxyPort: settings?.mmsProxyPort,
+            mmsContextID: settings?.mmsContextID
         )
         let result = try await execute(payload, target: target, line: line)
         guard result.success else { throw SlotSettingsTransportError.rejected }
@@ -228,6 +263,43 @@ struct SlotSettingsCommandPayload: Codable, Equatable, Sendable {
     let incomingCallsEnabled: Bool?
     let incomingSMSEnabled: Bool?
     let volteEnabled: Bool?
+    let mmsAPN: String?
+    let mmscURL: String?
+    let mmsProxyHost: String?
+    let mmsProxyPort: Int?
+    let mmsContextID: Int?
+
+    init(
+        version: Int,
+        operation: String,
+        slotID: UUID?,
+        simID: UUID?,
+        dataEnabled: Bool?,
+        airplaneModeEnabled: Bool?,
+        incomingCallsEnabled: Bool?,
+        incomingSMSEnabled: Bool?,
+        volteEnabled: Bool?,
+        mmsAPN: String? = nil,
+        mmscURL: String? = nil,
+        mmsProxyHost: String? = nil,
+        mmsProxyPort: Int? = nil,
+        mmsContextID: Int? = nil
+    ) {
+        self.version = version
+        self.operation = operation
+        self.slotID = slotID
+        self.simID = simID
+        self.dataEnabled = dataEnabled
+        self.airplaneModeEnabled = airplaneModeEnabled
+        self.incomingCallsEnabled = incomingCallsEnabled
+        self.incomingSMSEnabled = incomingSMSEnabled
+        self.volteEnabled = volteEnabled
+        self.mmsAPN = mmsAPN
+        self.mmscURL = mmscURL
+        self.mmsProxyHost = mmsProxyHost
+        self.mmsProxyPort = mmsProxyPort
+        self.mmsContextID = mmsContextID
+    }
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -239,5 +311,10 @@ struct SlotSettingsCommandPayload: Codable, Equatable, Sendable {
         case incomingCallsEnabled = "incoming_calls_enabled"
         case incomingSMSEnabled = "incoming_sms_enabled"
         case volteEnabled = "volte_enabled"
+        case mmsAPN = "mms_apn"
+        case mmscURL = "mmsc_url"
+        case mmsProxyHost = "mms_proxy_host"
+        case mmsProxyPort = "mms_proxy_port"
+        case mmsContextID = "mms_context_id"
     }
 }

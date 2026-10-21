@@ -128,7 +128,31 @@ struct MessageItem: Identifiable, Equatable, Sendable, Codable {
 
 struct MessageImageAttachment: Identifiable, Equatable, Sendable, Codable {
     let id: UUID
-    let systemImageName: String
+    let data: Data?
+    let mimeType: String?
+    let filename: String?
+    let systemImageName: String?
+
+    init(
+        id: UUID = UUID(),
+        data: Data,
+        mimeType: String,
+        filename: String
+    ) {
+        self.id = id
+        self.data = data
+        self.mimeType = mimeType
+        self.filename = filename
+        systemImageName = nil
+    }
+
+    init(id: UUID = UUID(), systemImageName: String) {
+        self.id = id
+        data = nil
+        mimeType = nil
+        filename = nil
+        self.systemImageName = systemImageName
+    }
 }
 
 enum MessageDirection: Equatable, Sendable, Codable {

@@ -79,7 +79,9 @@ struct RootTabView: View {
         }
 
         Tab("Messages", systemImage: "message.fill", value: AppTab.messages) {
-            messagesContent
+            NavigationStack {
+                MessagesTabScreen(model: model)
+            }
         }
 
         Tab("Contacts", systemImage: "person.2.fill", value: AppTab.contacts) {
@@ -92,44 +94,6 @@ struct RootTabView: View {
             NavigationStack {
                 ProfileScreen(model: model)
             }
-        }
-    }
-
-    private var messagesContent: some View {
-        NavigationStack {
-            MessagesScreen(
-                state: model.messages,
-                lines: model.devices,
-                defaultLineID: model.defaultMessageLineID,
-                refreshAction: {
-                    await model.refreshMessages()
-                },
-                sendAction: { lineID, remoteNumber, body in
-                    try await model.sendMessage(
-                        lineID: lineID,
-                        remoteNumber: remoteNumber,
-                        body: body
-                    )
-                },
-                retryAction: { messageID in
-                    try await model.retryMessage(id: messageID)
-                },
-                deleteAction: { messageIDs in
-                    try model.deleteMessages(ids: messageIDs)
-                },
-                markReadAction: { conversationID in
-                    model.markConversationRead(conversationID)
-                },
-                markUnreadAction: { conversationID in
-                    model.markConversationUnread(conversationID)
-                },
-                isMutedAction: { conversationID in
-                    model.isConversationMuted(conversationID)
-                },
-                setMutedAction: { conversationID, isMuted in
-                    model.setConversationMuted(isMuted, id: conversationID)
-                }
-            )
         }
     }
 

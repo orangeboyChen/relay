@@ -64,6 +64,13 @@ struct DetectedSIMProfile: Equatable, Sendable {
 protocol MessageTransport: AnyObject {
     var currentSequence: Int64 { get }
     func send(messageID: UUID, lineID: UUID, remoteNumber: String, body: String) async throws
+    func sendMMS(
+        messageID: UUID,
+        lineID: UUID,
+        remoteNumber: String,
+        body: String,
+        attachment: MessageImageAttachment
+    ) async throws
     func synchronize(lines: [DeviceLineIdentity]) async throws -> MessageSyncBatch
     func acknowledge(sequence: Int64)
     func updateLineRoutes(_ lines: [DeviceLineIdentity])
@@ -71,6 +78,15 @@ protocol MessageTransport: AnyObject {
 
 extension MessageTransport {
     var currentSequence: Int64 { 0 }
+    func sendMMS(
+        messageID: UUID,
+        lineID: UUID,
+        remoteNumber: String,
+        body: String,
+        attachment: MessageImageAttachment
+    ) async throws {
+        throw LiveMessageTransportError.modemRejected("mms_unavailable")
+    }
     func updateLineRoutes(_ lines: [DeviceLineIdentity]) {}
     func acknowledge(sequence: Int64) {}
 }
@@ -165,6 +181,47 @@ final class LiveMessageTransport: MessageTransport {
         remoteNumber: String,
         body: String
     ) async throws {
+        try await sendCommand(
+            messageID: messageID,
+            lineID: lineID,
+            remoteNumber: remoteNumber,
+            body: body,
+            attachment: nil
+        )
+    }
+
+    func sendMMS(
+        messageID: UUID,
+        lineID: UUID,
+        remoteNumber: String,
+        body: String,
+        attachment: MessageImageAttachment
+    ) async throws {
+        guard let data = attachment.data,
+              let mimeType = attachment.mimeType,
+              let filename = attachment.filename else {
+            throw LiveMessageTransportError.invalidResponse
+        }
+        try await sendCommand(
+            messageID: messageID,
+            lineID: lineID,
+            remoteNumber: remoteNumber,
+            body: body,
+            attachment: MessageCommandAttachment(
+                filename: filename,
+                mimeType: mimeType,
+                data: data
+            )
+        )
+    }
+
+    private func sendCommand(
+        messageID: UUID,
+        lineID: UUID,
+        remoteNumber: String,
+        body: String,
+        attachment: MessageCommandAttachment?
+    ) async throws {
         guard let installationIdentity = commandSigner.identity else {
             throw LiveMessageTransportError.missingInstallationIdentity
         }
@@ -185,7 +242,8 @@ final class LiveMessageTransport: MessageTransport {
             slotID: target.slotID,
             simID: target.simID,
             number: remoteNumber,
-            body: body
+            body: body,
+            attachment: attachment
         )
         let sealed: SealedCallCommand
         do {
@@ -204,7 +262,8 @@ final class LiveMessageTransport: MessageTransport {
         }
         try await api.enqueueCommand(deviceID: target.deviceID, command: sealed.request)
 
-        for attempt in 0..<60 {
+        let maximumAttempts = attachment == nil ? 60 : 300
+        for attempt in 0..<maximumAttempts {
             let status = try await api.commandStatus(deviceID: target.deviceID, commandID: commandID)
             if status.state == "completed" {
                 guard let encryptedResult = status.result else {
@@ -228,7 +287,7 @@ final class LiveMessageTransport: MessageTransport {
                 }
                 return
             }
-            if attempt < 59 {
+            if attempt + 1 < maximumAttempts {
                 try await waitBeforePollingAgain()
             }
         }
@@ -383,6 +442,7 @@ struct MessageCommandPayload: Codable, Equatable, Sendable {
     let simID: UUID?
     let number: String
     let body: String
+    let attachment: MessageCommandAttachment?
 
     init(
         version: Int,
@@ -391,7 +451,8 @@ struct MessageCommandPayload: Codable, Equatable, Sendable {
         slotID: UUID? = nil,
         simID: UUID? = nil,
         number: String,
-        body: String
+        body: String,
+        attachment: MessageCommandAttachment? = nil
     ) {
         self.version = version
         self.operation = operation
@@ -400,6 +461,7 @@ struct MessageCommandPayload: Codable, Equatable, Sendable {
         self.simID = simID
         self.number = number
         self.body = body
+        self.attachment = attachment
     }
 
     enum CodingKeys: String, CodingKey {
@@ -410,6 +472,7 @@ struct MessageCommandPayload: Codable, Equatable, Sendable {
         case simID = "sim_id"
         case number
         case body
+        case attachment
     }
 
     func encode(to encoder: Encoder) throws {
@@ -421,6 +484,19 @@ struct MessageCommandPayload: Codable, Equatable, Sendable {
         try values.encodeIfPresent(simID, forKey: .simID)
         try values.encode(number, forKey: .number)
         try values.encode(body, forKey: .body)
+        try values.encodeIfPresent(attachment, forKey: .attachment)
+    }
+}
+
+struct MessageCommandAttachment: Codable, Equatable, Sendable {
+    let filename: String
+    let mimeType: String
+    let data: Data
+
+    enum CodingKeys: String, CodingKey {
+        case filename
+        case mimeType = "mime_type"
+        case data
     }
 }
 

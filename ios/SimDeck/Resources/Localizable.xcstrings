@@ -105,9 +105,6 @@
         }
       }
     },
-    "?" : {
-
-    },
     "A reachable Sim Deck server, a paired device, and an active SIM card are required for calls and messages." : {
       "localizations" : {
         "zh-Hans" : {
@@ -149,6 +146,7 @@
       }
     },
     "Account" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -162,6 +160,7 @@
 
     },
     "Active" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -197,7 +196,11 @@
         }
       }
     },
+    "Add attachment" : {
+
+    },
     "Add image" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -271,6 +274,7 @@
 
     },
     "All" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -542,7 +546,6 @@
 
     },
     "Call filter" : {
-      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -586,6 +589,9 @@
       }
     },
     "Calls this number using the displayed SIM" : {
+
+    },
+    "Camera" : {
 
     },
     "Cancel" : {
@@ -639,6 +645,9 @@
         }
       }
     },
+    "Choose File" : {
+
+    },
     "Choose a SIM" : {
       "localizations" : {
         "zh-Hans" : {
@@ -670,6 +679,9 @@
         }
       }
     },
+    "Choose sending SIM" : {
+
+    },
     "Choose the SIM that places each call." : {
       "localizations" : {
         "zh-Hans" : {
@@ -690,6 +702,9 @@
         }
       }
     },
+    "Clear number" : {
+
+    },
     "Clear phone number" : {
       "localizations" : {
         "zh-Hans" : {
@@ -701,7 +716,6 @@
       }
     },
     "Close" : {
-      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -812,6 +826,9 @@
           }
         }
       }
+    },
+    "Contact details for %@" : {
+
     },
     "Contact index" : {
       "localizations" : {
@@ -1410,9 +1427,6 @@
         }
       }
     },
-    "Filter calls by SIM" : {
-
-    },
     "For multiple SIMs, create a separate code, container, state volume, and hardware mapping for each modem." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1525,9 +1539,6 @@
           }
         }
       }
-    },
-    "Image attachments are not available yet." : {
-
     },
     "Incoming" : {
       "extractionState" : "stale",
@@ -1713,6 +1724,9 @@
           }
         }
       }
+    },
+    "Long press to clear the number" : {
+
     },
     "Looking for devices…" : {
       "localizations" : {
@@ -2007,16 +2021,6 @@
         }
       }
     },
-    "No Unknown Callers" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "没有未知来电"
-          }
-        }
-      }
-    },
     "No SIM Cards" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2036,6 +2040,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有在线的 SIM。"
+          }
+        }
+      }
+    },
+    "No Unknown Callers" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有未知来电"
           }
         }
       }
@@ -2301,6 +2315,7 @@
       }
     },
     "Owner" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2384,6 +2399,16 @@
         }
       }
     },
+    "Phone Numbers" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "电话号码"
+          }
+        }
+      }
+    },
     "Phone number" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2394,15 +2419,8 @@
         }
       }
     },
-    "Phone Numbers" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "电话号码"
-          }
-        }
-      }
+    "Photos" : {
+
     },
     "Preview image" : {
       "localizations" : {
@@ -2540,6 +2558,9 @@
         }
       }
     },
+    "Remove attachment" : {
+
+    },
     "Remove this device?" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2572,6 +2593,7 @@
       }
     },
     "Reply" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2582,6 +2604,7 @@
       }
     },
     "Replying to" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2684,6 +2707,7 @@
       }
     },
     "SIM %lld · %@" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2846,22 +2870,22 @@
         }
       }
     },
-    "See All" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "查看全部"
-          }
-        }
-      }
-    },
     "Security" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "安全"
+          }
+        }
+      }
+    },
+    "See All" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看全部"
           }
         }
       }
@@ -3175,6 +3199,7 @@
       }
     },
     "Stop replying" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -3232,7 +3257,11 @@
         }
       }
     },
+    "Text Message · MMS" : {
+
+    },
     "Text Message · SMS" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -3612,6 +3641,9 @@
         }
       }
     },
+    "Today %@" : {
+
+    },
     "Toggles this call for deletion" : {
 
     },
@@ -3863,6 +3895,9 @@
         }
       }
     },
+    "Yesterday %@" : {
+
+    },
     "Your calls" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3893,9 +3928,6 @@
         }
       }
     },
-    "admin" : {
-
-    },
     "iCloud Keychain recovery" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3905,6 +3937,9 @@
           }
         }
       }
+    },
+    "mobile" : {
+
     },
     "·" : {
       "extractionState" : "stale",

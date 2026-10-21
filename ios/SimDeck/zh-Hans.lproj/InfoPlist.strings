@@ -1,2 +1,2 @@
-"NSCameraUsageDescription" = "Sim Deck 的通话组件会在建立通话时检查相机可用性，但不会采集或发送视频。";
+"NSCameraUsageDescription" = "Sim Deck 会在你选择拍摄照片并通过信息发送时使用相机。";
 "NSContactsUsageDescription" = "Sim Deck 使用您的通讯录，为通话和短信显示联系人姓名。";

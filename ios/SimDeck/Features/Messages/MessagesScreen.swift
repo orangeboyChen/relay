@@ -7,16 +7,19 @@ import SwiftUI
 struct MessagesScreen: View {
     let state: MessageListState
     let lines: [DeviceLineIdentity]
+    let contacts: [ContactRecord]
     let referenceDate: Date
     let defaultLineID: UUID?
     let refreshAction: () async -> Void
     let sendAction: (UUID, String, String) async throws -> Void
+    let sendImageAction: (UUID, String, String, MessageImageAttachment) async throws -> Void
     let retryAction: (UUID) async throws -> Void
     let deleteAction: (Set<UUID>) throws -> Void
     let markReadAction: (ConversationID) -> Void
     let markUnreadAction: (ConversationID) -> Void
     let isMutedAction: (ConversationID) -> Bool
     let setMutedAction: (ConversationID, Bool) -> Void
+    let callAction: (String) async -> Void
 
     @State private var searchText = ""
     @State private var selectedLineID: UUID?
@@ -31,29 +34,40 @@ struct MessagesScreen: View {
     init(
         state: MessageListState,
         lines: [DeviceLineIdentity],
+        contacts: [ContactRecord] = [],
         referenceDate: Date = .now,
         defaultLineID: UUID? = nil,
         refreshAction: @escaping () async -> Void = {},
         sendAction: @escaping (UUID, String, String) async throws -> Void = { _, _, _ in },
+        sendImageAction: @escaping (
+            UUID,
+            String,
+            String,
+            MessageImageAttachment
+        ) async throws -> Void = { _, _, _, _ in },
         retryAction: @escaping (UUID) async throws -> Void = { _ in },
         deleteAction: @escaping (Set<UUID>) throws -> Void = { _ in },
         markReadAction: @escaping (ConversationID) -> Void = { _ in },
         markUnreadAction: @escaping (ConversationID) -> Void = { _ in },
         isMutedAction: @escaping (ConversationID) -> Bool = { _ in false },
-        setMutedAction: @escaping (ConversationID, Bool) -> Void = { _, _ in }
+        setMutedAction: @escaping (ConversationID, Bool) -> Void = { _, _ in },
+        callAction: @escaping (String) async -> Void = { _ in }
     ) {
         self.state = state
         self.lines = lines
+        self.contacts = contacts
         self.referenceDate = referenceDate
         self.defaultLineID = defaultLineID
         self.refreshAction = refreshAction
         self.sendAction = sendAction
+        self.sendImageAction = sendImageAction
         self.retryAction = retryAction
         self.deleteAction = deleteAction
         self.markReadAction = markReadAction
         self.markUnreadAction = markUnreadAction
         self.isMutedAction = isMutedAction
         self.setMutedAction = setMutedAction
+        self.callAction = callAction
     }
 
     var body: some View {
@@ -142,7 +156,8 @@ struct MessagesScreen: View {
             NewMessageScreen(
                 lines: lines,
                 selectedLineID: defaultLineID,
-                sendAction: sendAction
+                sendAction: sendAction,
+                sendImageAction: sendImageAction
             )
             .id(composition.id)
         }
@@ -184,13 +199,17 @@ struct MessagesScreen: View {
                             initialID: conversation.id,
                             conversations: conversation.lineAlternatives(in: conversations),
                             lines: lines,
+                            contacts: contacts,
+                            defaultMessageLineID: defaultLineID,
                             backUnreadCount: conversations.reduce(into: 0) { count, item in
                                 count += item.unreadCount
                             },
                             sendAction: sendAction,
+                            sendImageAction: sendImageAction,
                             retryAction: retryAction,
                             deleteAction: deleteAction,
-                            markReadAction: markReadAction
+                            markReadAction: markReadAction,
+                            callAction: callAction
                         )
                     }
                 }

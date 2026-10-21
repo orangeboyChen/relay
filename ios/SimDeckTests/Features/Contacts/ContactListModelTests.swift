@@ -175,6 +175,72 @@ final class ContactListModelTests: XCTestCase {
         XCTAssertEqual(store.fetchCount, 1)
     }
 
+    func testInitialLoadedStateKeepsContactsAvailableForSearch() {
+        let contacts = [
+            contact(id: "1", givenName: "Alpha"),
+            contact(id: "2", givenName: "Beta"),
+        ]
+        let store = ContactStoreStub(authorizationState: .authorized, contacts: contacts)
+        let model = ContactListModel(
+            store: store,
+            state: .loaded([
+                ContactSection(id: "A", title: "A", contacts: [contacts[0]]),
+                ContactSection(id: "B", title: "B", contacts: [contacts[1]]),
+            ])
+        )
+
+        model.searchText = "Beta"
+
+        XCTAssertEqual(model.state, .loaded([
+            ContactSection(id: "B", title: "B", contacts: [contacts[1]]),
+        ]))
+        XCTAssertEqual(store.fetchCount, 0)
+    }
+
+    func testSearchPreservesNonLoadedStates() {
+        for state: ContactListState in [.permissionRequired, .permissionDenied, .loading, .failed] {
+            let store = ContactStoreStub(authorizationState: .notDetermined, contacts: [])
+            let model = ContactListModel(store: store, state: state)
+
+            model.searchText = "Alice"
+
+            XCTAssertEqual(model.state, state)
+            XCTAssertEqual(store.fetchCount, 0)
+        }
+    }
+
+    func testRefreshClearsCachedContactsWhenPermissionIsRevoked() async {
+        let contact = contact(id: "1", givenName: "Alpha")
+        let store = ContactStoreStub(authorizationState: .authorized, contacts: [contact])
+        let model = ContactListModel(store: store)
+        await model.refresh()
+        store.authorizationState = .denied
+
+        await model.refresh()
+        model.searchText = "Alpha"
+
+        XCTAssertEqual(model.state, .permissionDenied)
+    }
+
+    func testFetchFailureStaysVisibleUntilSuccessfulRefresh() async {
+        let contact = contact(id: "1", givenName: "Alpha")
+        let store = ContactStoreStub(authorizationState: .authorized, contacts: [contact])
+        let model = ContactListModel(store: store)
+        await model.refresh()
+        store.failsFetch = true
+
+        await model.refresh()
+        model.searchText = "Alpha"
+
+        XCTAssertEqual(model.state, .failed)
+
+        store.failsFetch = false
+        store.contacts = []
+        await model.refresh()
+
+        XCTAssertEqual(model.state, .loaded([]))
+    }
+
     func testRunReloadsContactsAfterTheSystemDirectoryChanges() async {
         let store = ContactStoreStub(
             authorizationState: .authorized,
@@ -227,6 +293,7 @@ private final class ContactStoreStub: ContactStoreProviding {
     var authorizationState: ContactAuthorizationState
     var contacts: [ContactRecord]
     var grantsAccess = false
+    var failsFetch = false
     private(set) var fetchCount = 0
     private var changeContinuation: AsyncStream<Void>.Continuation?
 
@@ -248,6 +315,9 @@ private final class ContactStoreStub: ContactStoreProviding {
 
     func fetchContacts() throws -> [ContactRecord] {
         fetchCount += 1
+        if failsFetch {
+            throw NSError(domain: "ContactStoreStub", code: 1)
+        }
         return contacts
     }
 

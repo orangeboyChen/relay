@@ -6,3 +6,5 @@
 - Run the relevant tests before committing.
 - Write all code comments and documentation comments in English.
 - Always request elevated permissions before running `gh`.
+- Real end-to-end destination numbers must come from local untracked configuration and must never be committed.
+- Unit tests and previews do not access the real modem and must not be described as real end-to-end tests.

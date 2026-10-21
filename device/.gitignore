@@ -1,4 +1,6 @@
 /secrets/*
 !/secrets/.gitignore
+/.env
+/e2e.local.env
 /coverage.out
 __pycache__/

@@ -93,6 +93,11 @@ struct MessagesScreen: View {
         }
         .navigationTitle("Messages")
         .navigationBarTitleDisplayMode(.inline)
+        .searchable(
+            text: $searchText,
+            placement: .navigationBarDrawer(displayMode: .always),
+            prompt: "Search"
+        )
         .environment(\.editMode, $editMode)
         .task {
             await refreshAction()
@@ -112,22 +117,26 @@ struct MessagesScreen: View {
                     .controlSize(.large)
                 }
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                SIMFilterMenu(lines: lines, selection: $selectedLineID)
-                    .controlSize(.large)
+            if !editMode.isEditing {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    SIMFilterMenu(lines: lines, selection: $selectedLineID)
+
+                    Button {
+                        composition = MessageComposition()
+                    } label: {
+                        Label("New Message", systemImage: "square.and.pencil")
+                            .labelStyle(.iconOnly)
+                    }
+                    .disabled(!hasOnlineLine)
+                    .accessibilityHint(
+                        hasOnlineLine ? Text("") : Text("An online SIM is required.")
+                    )
+                }
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if editMode.isEditing {
                 messageSelectionBar
-            } else if case .loaded(let conversations) = state, !conversations.isEmpty {
-                MessageListBottomBar(
-                    searchText: $searchText,
-                    canCompose: hasOnlineLine,
-                    composeAction: {
-                        composition = MessageComposition()
-                    }
-                )
             }
         }
         .onChange(of: editMode) { _, newMode in
@@ -165,6 +174,7 @@ struct MessagesScreen: View {
     }
 
     private func conversationList(_ conversations: [MessageConversation]) -> some View {
+        let contactIndex = ContactRecordIndex(contacts: contacts)
         let filtered = conversations.filter { conversation in
             (selectedLineID == nil || conversation.lineID == selectedLineID)
                 && conversation.matches(searchText)
@@ -176,7 +186,10 @@ struct MessagesScreen: View {
             } else {
                 List(selection: $selectedConversationIDs) {
                     ForEach(filtered) { conversation in
-                        conversationRow(conversation)
+                        conversationRow(
+                            conversation,
+                            contact: contactIndex.contact(for: conversation.remoteNumber)
+                        )
                             .tag(conversation.id)
                             .listRowInsets(
                                 EdgeInsets(top: 0, leading: 26, bottom: 0, trailing: 16)
@@ -218,11 +231,15 @@ struct MessagesScreen: View {
     }
 
     @ViewBuilder
-    private func conversationRow(_ conversation: MessageConversation) -> some View {
+    private func conversationRow(
+        _ conversation: MessageConversation,
+        contact: ContactRecord?
+    ) -> some View {
         if editMode.isEditing {
             ConversationRow(
                 conversation: conversation,
                 linePresentation: conversation.linePresentation(in: lines),
+                contact: contact,
                 referenceDate: referenceDate,
                 isMuted: mutedConversationIDs.contains(conversation.id),
                 isEditing: true
@@ -235,7 +252,8 @@ struct MessagesScreen: View {
                 ConversationRow(
                     conversation: conversation,
                     linePresentation: conversation.linePresentation(in: lines),
-                referenceDate: referenceDate,
+                    contact: contact,
+                    referenceDate: referenceDate,
                     isMuted: mutedConversationIDs.contains(conversation.id),
                     isEditing: false
                 )

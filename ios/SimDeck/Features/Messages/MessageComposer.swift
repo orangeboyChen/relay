@@ -52,45 +52,36 @@ struct MessageComposer: View {
             HStack(alignment: .bottom, spacing: 8) {
                 Button(action: attachmentAction) {
                     Image(systemName: "plus")
-                        .font(.system(size: 19, weight: .medium))
-                        .frame(width: 44, height: 44)
-                        .contentShape(.circle)
+                        .font(.system(size: 18, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                        .frame(width: 44, height: 44, alignment: .bottom)
                 }
-                .buttonStyle(.plain)
-                .glassEffect(.regular.interactive(), in: Circle())
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
                 .disabled(!isTextEntryEnabled)
                 .accessibilityLabel("Add image")
 
                 HStack(alignment: .bottom, spacing: 4) {
-                    TextField("Text Message · SMS", text: $draft, axis: .vertical)
+                    TextField("Text Message", text: $draft, axis: .vertical)
                         .lineLimit(1...5)
                         .focused($isTextFieldFocused)
                         .padding(.leading, 12)
                         .padding(.vertical, 7)
                         .disabled(!isTextEntryEnabled)
 
-                    if canSend {
-                        Button(action: sendAction) {
-                            Image(systemName: "arrow.up.circle.fill")
-                                .font(.system(size: 30))
-                                .frame(width: 36, height: 36)
-                        }
-                        .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
-                        .accessibilityLabel("Send message")
-                        .transition(.scale.combined(with: .opacity))
-                    } else {
-                        Image(systemName: "waveform")
-                            .font(.system(size: 19, weight: .medium))
-                            .foregroundStyle(.tertiary)
+                    Button(action: sendAction) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 30))
                             .frame(width: 36, height: 36)
-                            .accessibilityLabel("Audio messages are unavailable")
-                            .transition(.scale.combined(with: .opacity))
                     }
+                    .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
+                    .disabled(!canSend)
+                    .accessibilityLabel("Send message")
                 }
                 .frame(minHeight: 36)
                 .glassEffect(.regular, in: Capsule())
             }
-            .padding(.horizontal, 28)
+            .padding(.horizontal, 14)
             .padding(.vertical, 5)
         }
         .animation(reduceMotion ? nil : .snappy, value: replyPreview)

@@ -174,14 +174,6 @@ extension AlertPushCoordinator: UNUserNotificationCenterDelegate {
             completionHandler([])
             return
         }
-        let conversationIdentifier = notification.request.content.threadIdentifier
-        if !conversationIdentifier.isEmpty,
-           MessageNotificationMuteStore.isMuted(
-               conversationIdentifier: conversationIdentifier
-           ) {
-            completionHandler([])
-            return
-        }
         completionHandler([.banner, .sound, .badge])
     }
 

@@ -58,6 +58,8 @@ final class AppModel {
     @ObservationIgnored private var messageEventMonitor: MessageEventMonitor?
     @ObservationIgnored private var contactNameIndex = ContactNameIndex()
     @ObservationIgnored private var contactUpdatesTask: Task<Void, Never>?
+    @ObservationIgnored private var networkPathObserver: NetworkPathObserver?
+    @ObservationIgnored private let networkDiagnostics = ServerNetworkDiagnostics()
 
     var canEditDeviceProfiles: Bool { recoveredVaultKey != nil }
 
@@ -147,6 +149,13 @@ final class AppModel {
             },
             synchronizeThrough: { [weak self] requiredSequence in
                 await self?.synchronizeMessages(through: requiredSequence) ?? false
+            },
+            onDisconnected: { [weak self] in
+                guard let self, let baseURL = self.serverConnection.authenticatedBaseURL else { return }
+                self.networkDiagnostics.diagnose(
+                    url: baseURL.appending(path: "healthz"),
+                    networkType: self.networkPathObserver?.networkType ?? 0
+                )
             }
         )
     }
@@ -335,6 +344,16 @@ final class AppModel {
         messageEventMonitor?.start()
     }
 
+    func startNetworkPathObservation() {
+        guard networkPathObserver == nil else { return }
+        let observer = NetworkPathObserver { [weak self] isAvailable in
+            self?.messageEventMonitor?.networkPathDidChange(isAvailable: isAvailable)
+            self?.callCoordinator.networkPathDidChange(isAvailable: isAvailable)
+        }
+        networkPathObserver = observer
+        observer.start()
+    }
+
     func stopMessageRealtimeUpdates() {
         messageEventMonitor?.stop()
     }
@@ -457,40 +476,8 @@ final class AppModel {
         persistMessageHistoryIfAvailable()
     }
 
-    func markConversationUnread(_ id: ConversationID) {
-        guard case .loaded(var conversations) = messages,
-              let index = conversations.firstIndex(where: { $0.id == id }),
-              conversations[index].unreadCount == 0 else { return }
-        conversations[index].unreadCount = 1
-        messages = .loaded(sortedConversations(conversations))
-        persistMessageHistoryIfAvailable()
-    }
-
-    func isConversationMuted(_ id: ConversationID) -> Bool {
-        guard let identifier = notificationConversationIdentifier(for: id) else { return false }
-        return MessageNotificationMuteStore.isMuted(conversationIdentifier: identifier)
-    }
-
-    func setConversationMuted(_ isMuted: Bool, id: ConversationID) {
-        guard let identifier = notificationConversationIdentifier(for: id) else { return }
-        MessageNotificationMuteStore.setMuted(
-            isMuted,
-            conversationIdentifier: identifier
-        )
-    }
-
     func deleteMessage(id: UUID) throws {
         try deleteMessages(ids: [id])
-    }
-
-    private func notificationConversationIdentifier(for id: ConversationID) -> String? {
-        guard let line = devices.first(where: { $0.id == id.deviceUUID }) else { return nil }
-        return MessageNotificationConversationIdentifier.make(
-            simID: line.simID,
-            slotID: line.slotID,
-            deviceUUID: line.deviceID,
-            remoteNumber: id.remoteNumber
-        )
     }
 
     func deleteMessages(ids: Set<UUID>) throws {

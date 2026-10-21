@@ -12,54 +12,7 @@ struct ConversationHeader: View {
     let usesAccessibilityLayout: Bool
     @Binding var selectedID: ConversationID
 
-    @ViewBuilder
     var body: some View {
-        if usesAccessibilityLayout {
-            lineMenu {
-                VStack(spacing: 2) {
-                    MessageContactAvatar(
-                        contactName: conversation.contactName,
-                        diameter: 48
-                    )
-                    contactNameLabel
-                        .font(.subheadline.weight(.semibold))
-                    HStack(spacing: 3) {
-                        SIMBadge(snapshot: linePresentation.snapshot, size: 12)
-                        Text(linePresentation.displayName)
-                            .lineLimit(1)
-                    }
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: 270)
-                .padding(.vertical, 4)
-            }
-        } else {
-            VStack(spacing: 2) {
-                MessageContactAvatar(
-                    contactName: conversation.contactName,
-                    diameter: 56
-                )
-                .overlay(alignment: .bottomTrailing) {
-                    SIMBadge(snapshot: linePresentation.snapshot, size: 10)
-                        .offset(x: 3, y: 2)
-                }
-
-                lineMenu {
-                    contactNameLabel
-                        .font(.footnote.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .frame(minHeight: 28)
-                        .glassEffect(.regular.interactive(), in: Capsule())
-                }
-            }
-            .frame(maxWidth: 230)
-        }
-    }
-
-    private func lineMenu<Label: View>(
-        @ViewBuilder label: () -> Label
-    ) -> some View {
         Menu {
             ForEach(alternatives) { alternative in
                 let alternativeLine = alternative.linePresentation(in: lines)
@@ -68,8 +21,43 @@ struct ConversationHeader: View {
                 }
             }
         } label: {
-            label()
-                .contentShape(.rect)
+            Group {
+                if usesAccessibilityLayout {
+                    VStack(spacing: 2) {
+                        MessageContactAvatar(
+                            contactName: conversation.contactName,
+                            diameter: 48
+                        )
+                        contactNameLabel
+                            .font(.subheadline.weight(.semibold))
+                        HStack(spacing: 3) {
+                            SIMBadge(snapshot: linePresentation.snapshot, size: 12)
+                            Text(linePresentation.displayName)
+                                .lineLimit(1)
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: 270)
+                    .padding(.vertical, 4)
+                } else {
+                    VStack(spacing: 1) {
+                        MessageContactAvatar(
+                            contactName: conversation.contactName,
+                            diameter: 42
+                        )
+                        .overlay(alignment: .bottomTrailing) {
+                            SIMBadge(snapshot: linePresentation.snapshot, size: 10)
+                                .offset(x: 3, y: 2)
+                        }
+
+                        contactNameLabel
+                            .font(.caption2.weight(.medium))
+                    }
+                    .frame(maxWidth: 210)
+                }
+            }
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(
@@ -155,7 +143,7 @@ struct MessageBubble: View {
 
             HStack {
                 if message.direction == .sent {
-                    Spacer(minLength: 84)
+                    Spacer(minLength: 48)
                 }
 
                 VStack(alignment: message.direction == .sent ? .trailing : .leading, spacing: 2) {
@@ -164,7 +152,7 @@ struct MessageBubble: View {
                 }
 
                 if message.direction == .received {
-                    Spacer(minLength: 84)
+                    Spacer(minLength: 48)
                 }
             }
             .offset(x: messageOffset)
@@ -261,15 +249,8 @@ struct MessageBubble: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .background(bubbleColor, in: bubbleBodyShape)
-        .overlay(alignment: tailAlignment) {
-            MessageBubbleTail(direction: message.direction)
-                .fill(bubbleColor)
-                .frame(width: 18, height: 20)
-                .offset(x: message.direction == .received ? -9 : 9)
-        }
-        .frame(maxWidth: 271, alignment: message.direction == .sent ? .trailing : .leading)
-        .contentShape(.contextMenuPreview, bubbleBodyShape)
+        .background(bubbleColor, in: bubbleShape)
+        .contentShape(.contextMenuPreview, bubbleShape)
         .contextMenu {
             MessageContextMenu(
                 canCopy: !message.body.isEmpty,
@@ -327,11 +308,7 @@ struct MessageBubble: View {
             : Color(uiColor: .secondarySystemBackground)
     }
 
-    private var tailAlignment: Alignment {
-        message.direction == .sent ? .bottomTrailing : .bottomLeading
-    }
-
-    private var bubbleBodyShape: UnevenRoundedRectangle {
+    private var bubbleShape: UnevenRoundedRectangle {
         if message.direction == .sent {
             UnevenRoundedRectangle(
                 topLeadingRadius: 18,
@@ -358,41 +335,6 @@ struct MessageBubble: View {
         case .delivered: "Delivered"
         case .failed: "Failed"
         }
-    }
-}
-
-private struct MessageBubbleTail: Shape {
-    let direction: MessageDirection
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        if direction == .received {
-            path.move(to: CGPoint(x: rect.maxX, y: rect.minY))
-            path.addCurve(
-                to: CGPoint(x: rect.minX, y: rect.maxY),
-                control1: CGPoint(x: rect.maxX * 0.62, y: rect.height * 0.25),
-                control2: CGPoint(x: rect.maxX * 0.5, y: rect.height * 0.8)
-            )
-            path.addCurve(
-                to: CGPoint(x: rect.maxX, y: rect.height * 0.6),
-                control1: CGPoint(x: rect.maxX * 0.34, y: rect.maxY),
-                control2: CGPoint(x: rect.maxX * 0.78, y: rect.height * 0.85)
-            )
-        } else {
-            path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-            path.addCurve(
-                to: CGPoint(x: rect.maxX, y: rect.maxY),
-                control1: CGPoint(x: rect.maxX * 0.38, y: rect.height * 0.25),
-                control2: CGPoint(x: rect.maxX * 0.5, y: rect.height * 0.8)
-            )
-            path.addCurve(
-                to: CGPoint(x: rect.minX, y: rect.height * 0.6),
-                control1: CGPoint(x: rect.maxX * 0.66, y: rect.maxY),
-                control2: CGPoint(x: rect.maxX * 0.22, y: rect.height * 0.85)
-            )
-        }
-        path.closeSubpath()
-        return path
     }
 }
 

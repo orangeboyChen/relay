@@ -113,7 +113,6 @@ final class ContactListModel {
     var searchText: String {
         didSet {
             guard searchText != oldValue else { return }
-            guard case .loaded = state else { return }
             rebuildSections()
         }
     }
@@ -129,11 +128,7 @@ final class ContactListModel {
         self.store = store
         self.state = state
         self.searchText = searchText
-        if case .loaded(let sections) = state {
-            self.contacts = sections.flatMap(\.contacts)
-        } else {
-            self.contacts = []
-        }
+        self.contacts = []
     }
 
     func run() async {
@@ -150,7 +145,6 @@ final class ContactListModel {
             _ = try await store.requestAccess()
             await refresh()
         } catch {
-            contacts = []
             state = .permissionDenied
         }
     }
@@ -158,17 +152,14 @@ final class ContactListModel {
     func refresh() async {
         switch store.authorizationState {
         case .notDetermined:
-            contacts = []
             state = .permissionRequired
         case .denied:
-            contacts = []
             state = .permissionDenied
         case .limited, .authorized:
             do {
                 contacts = try store.fetchContacts()
                 rebuildSections()
             } catch {
-                contacts = []
                 state = .failed
             }
         }

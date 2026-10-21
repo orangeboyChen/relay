@@ -378,16 +378,6 @@
         }
       }
     },
-    "Audio messages are unavailable" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "暂不支持语音消息"
-          }
-        }
-      }
-    },
     "Authenticate & Delete" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -2522,16 +2512,6 @@
         }
       }
     },
-    "Restart Modem to Apply VoLTE?" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "重启调制解调器以应用 VoLTE？"
-          }
-        }
-      }
-    },
     "Restore the encryption key before editing this device." : {
       "localizations" : {
         "zh-Hans" : {
@@ -2701,22 +2681,22 @@
     "SIM cards appear after a modem reports its ICCID." : {
 
     },
+    "Restart Modem to Apply VoLTE?" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重启调制解调器以应用 VoLTE？"
+          }
+        }
+      }
+    },
     "Save" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "保存"
-          }
-        }
-      }
-    },
-    "Save Without Restart" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保存但不重启"
           }
         }
       }
@@ -2742,12 +2722,12 @@
         }
       }
     },
-    "Search" : {
+    "Save Without Restart" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "搜索"
+            "value" : "保存但不重启"
           }
         }
       }
@@ -2763,7 +2743,6 @@
       }
     },
     "Search messages" : {
-      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -3130,22 +3109,11 @@
       }
     },
     "Text Message" : {
-      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "短信"
-          }
-        }
-      }
-    },
-    "Text Message · SMS" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "短信 · SMS"
           }
         }
       }

@@ -146,15 +146,6 @@ enum PreviewFixtures {
         )
     ]
 
-    static let activeCall = ActiveCallSession(
-        id: UUID(uuidString: "30000000-0000-0000-0000-000000000099")!,
-        lineID: devices[0].id,
-        remoteNumber: "13500000000",
-        displayName: nil,
-        status: .active(connectedAt: now.addingTimeInterval(-6)),
-        isMuted: false
-    )
-
     static let conversations = [
         MessageConversation(
             lineID: devices[0].id,
@@ -166,7 +157,7 @@ enum PreviewFixtures {
                 MessageItem(
                     id: UUID(uuidString: "20000000-0000-0000-0000-000000000001")!,
                     direction: .received,
-                    body: "Menu: https://example.com · +86 135 0000 0000",
+                    body: "Are you free for dinner?",
                     attachment: nil,
                     sentAt: now.addingTimeInterval(-600),
                     status: .delivered

@@ -15,8 +15,7 @@ struct InCallScreen: View {
 
     var body: some View {
         ZStack {
-            InCallBackdrop()
-                .ignoresSafeArea()
+            Color.black.ignoresSafeArea()
 
             if let call = coordinator.activeCall {
                 VStack(spacing: 0) {
@@ -25,9 +24,9 @@ struct InCallScreen: View {
                         line: line(for: call),
                         referenceDate: referenceDate
                     )
-                        .padding(.top, 40)
+                        .padding(.top, 58)
 
-                    Spacer(minLength: 40)
+                    Spacer(minLength: 28)
 
                     if isKeypadVisible {
                         InCallKeypad { digit in
@@ -36,24 +35,6 @@ struct InCallScreen: View {
                             }
                         }
                         .transition(keypadTransition)
-
-                        Spacer(minLength: 24)
-
-                        InCallEndButton {
-                            Task {
-                                try? await coordinator.endCall()
-                            }
-                        }
-
-                        Button("Hide Keypad") {
-                            withAnimation(motionAnimation) {
-                                isKeypadVisible = false
-                            }
-                        }
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                        .frame(minHeight: 44)
-                        .padding(.top, 10)
                     } else {
                         InCallControls(
                             call: call,
@@ -82,18 +63,43 @@ struct InCallScreen: View {
                                 perform {
                                     try await coordinator.setHeld(!call.status.isHeld)
                                 }
-                            },
-                            onEnd: {
-                                Task {
-                                    try? await coordinator.endCall()
-                                }
                             }
                         )
                         .transition(keypadTransition)
                     }
+
+                    Spacer(minLength: 30)
+
+                    Button {
+                        Task {
+                            try? await coordinator.endCall()
+                        }
+                    } label: {
+                        Image(systemName: "phone.down.fill")
+                            .font(.system(size: 28, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 72, height: 72)
+                            .background(.red, in: Circle())
+                    }
+                    .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
+                    .accessibilityLabel("End call")
+
+                    if isKeypadVisible {
+                        Button("Hide Keypad") {
+                            withAnimation(motionAnimation) {
+                                isKeypadVisible = false
+                            }
+                        }
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .frame(minHeight: 44)
+                        .padding(.top, 10)
+                    } else {
+                        Color.clear.frame(height: 54)
+                    }
                 }
-                .padding(.horizontal, 24)
-                .padding(.bottom, 18)
+                .padding(.horizontal, 28)
+                .padding(.bottom, 26)
             }
         }
         .interactiveDismissDisabled()
@@ -123,11 +129,13 @@ struct InCallScreen: View {
     }
 
     private var motionAnimation: Animation? {
-        reduceMotion ? nil : .easeInOut(duration: 0.18)
+        reduceMotion ? nil : .snappy
     }
 
     private var keypadTransition: AnyTransition {
-        reduceMotion ? .identity : .opacity
+        reduceMotion
+            ? .opacity
+            : .scale(scale: 0.96).combined(with: .opacity)
     }
 
     private func perform(_ operation: @escaping @MainActor () async throws -> Void) {
@@ -149,41 +157,33 @@ private struct CallIdentityHeader: View {
     let referenceDate: Date?
 
     var body: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 6) {
-                if let line {
-                    SIMBadge(line: line, size: 18)
-                }
-
-                CallStatusText(status: call.status, referenceDate: referenceDate)
-            }
-            .font(.title3)
-            .foregroundStyle(.white.opacity(0.68))
-
+        VStack(spacing: 10) {
             Text(call.title)
-                .font(.system(size: 40, weight: .regular))
+                .font(.largeTitle.weight(.semibold))
                 .foregroundStyle(.white)
                 .lineLimit(2)
                 .minimumScaleFactor(0.65)
                 .multilineTextAlignment(.center)
-                .accessibilityLabel(call.title)
 
+            CallStatusText(status: call.status, referenceDate: referenceDate)
+                .font(.title3)
+                .foregroundStyle(.white.opacity(0.72))
+
+            if let line {
+                HStack(spacing: 7) {
+                    SIMBadge(line: line)
+                    Text(line.displayName)
+                        .lineLimit(1)
+                }
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.78))
+                .padding(.horizontal, 12)
+                .frame(minHeight: 34)
+                .background(.white.opacity(0.12), in: Capsule())
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                .accessibilityElement(children: .combine)
+            }
         }
-    }
-}
-
-private struct InCallBackdrop: View {
-    var body: some View {
-        LinearGradient(
-            colors: [
-                Color(red: 0.43, green: 0.34, blue: 0.33),
-                Color(red: 0.26, green: 0.36, blue: 0.32),
-                Color(red: 0.06, green: 0.27, blue: 0.21),
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-        .overlay(.ultraThinMaterial.opacity(0.12))
     }
 }
 
@@ -251,22 +251,10 @@ private struct InCallControls: View {
     let onKeypad: () -> Void
     let onAudioRoute: (CallAudioRoute) -> Void
     let onHold: () -> Void
-    let onEnd: () -> Void
 
     var body: some View {
-        VStack(spacing: 18) {
-            HStack(spacing: 36) {
-                CallAudioRouteMenu(
-                    controller: audioRoutes,
-                    onSelect: onAudioRoute
-                )
-                CallControlButton(
-                    title: "FaceTime",
-                    systemImage: "video.fill",
-                    isSelected: false,
-                    isEnabled: false,
-                    action: {}
-                )
+        VStack(spacing: 26) {
+            HStack(spacing: 24) {
                 CallControlButton(
                     title: "Mute",
                     systemImage: call.isMuted ? "mic.slash.fill" : "mic.slash",
@@ -274,18 +262,6 @@ private struct InCallControls: View {
                     isEnabled: capabilities.supportsMuting,
                     action: onMute
                 )
-            }
-
-            HStack(spacing: 36) {
-                InCallMoreMenu(
-                    isHeld: call.status.isHeld,
-                    canHold: capabilities.supportsHolding && call.status.connectedAt != nil,
-                    canSwap: capabilities.supportsSwapping,
-                    onHold: onHold
-                )
-
-                InCallEndButton(action: onEnd)
-
                 CallControlButton(
                     title: "Keypad",
                     systemImage: "circle.grid.3x3.fill",
@@ -293,82 +269,30 @@ private struct InCallControls: View {
                     isEnabled: capabilities.supportsDTMF,
                     action: onKeypad
                 )
+                CallAudioRouteMenu(
+                    controller: audioRoutes,
+                    onSelect: onAudioRoute
+                )
+            }
+
+            HStack(spacing: 24) {
+                CallControlButton(
+                    title: call.status.isHeld ? "Resume" : "Hold",
+                    systemImage: call.status.isHeld ? "play.fill" : "pause.fill",
+                    isSelected: call.status.isHeld,
+                    isEnabled: capabilities.supportsHolding && call.status.connectedAt != nil,
+                    action: onHold
+                )
+                CallControlButton(
+                    title: "Swap",
+                    systemImage: "arrow.trianglehead.swap",
+                    isSelected: false,
+                    isEnabled: capabilities.supportsSwapping,
+                    action: {}
+                )
             }
         }
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-    }
-}
-
-private struct InCallMoreMenu: View {
-    let isHeld: Bool
-    let canHold: Bool
-    let canSwap: Bool
-    let onHold: () -> Void
-
-    @State private var isPresented = false
-
-    var body: some View {
-        Button {
-            isPresented = true
-        } label: {
-            CallControlLabel(
-                title: "More",
-                systemImage: "ellipsis",
-                foregroundStyle: .white,
-                backgroundStyle: .white.opacity(0.16)
-            )
-        }
-        .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.92))
-        .accessibilityLabel("More")
-        .popover(isPresented: $isPresented, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
-            VStack(spacing: 0) {
-                Button {
-                    isPresented = false
-                    onHold()
-                } label: {
-                    Label(
-                        isHeld ? "Resume" : "Hold",
-                        systemImage: isHeld ? "play.fill" : "pause.fill"
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(minHeight: 44)
-                }
-                .disabled(!canHold)
-
-                if canSwap {
-                    Divider()
-
-                    Button {} label: {
-                        Label("Swap", systemImage: "arrow.trianglehead.swap")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .frame(minHeight: 44)
-                    }
-                    .disabled(true)
-                }
-            }
-            .font(.body)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
-            .frame(width: 184)
-            .presentationCompactAdaptation(.popover)
-        }
-    }
-}
-
-private struct InCallEndButton: View {
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            CallControlLabel(
-                title: "End",
-                systemImage: "phone.down.fill",
-                foregroundStyle: .white,
-                backgroundStyle: .red
-            )
-        }
-        .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
-        .accessibilityLabel("End call")
     }
 }
 
@@ -378,46 +302,8 @@ private struct CallAudioRouteMenu: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var primaryRoutes: [CallAudioRoute] {
-        var routes = controller.availableRoutes.filter {
-            $0.kind == .receiver || $0.kind == .speaker
-        }
-        let externalRoute = controller.currentRoute.kind == .receiver
-            || controller.currentRoute.kind == .speaker
-            ? controller.availableRoutes.first(where: {
-                $0.kind != .receiver && $0.kind != .speaker
-            })
-            : controller.currentRoute
-        if let externalRoute, !routes.contains(where: { $0.id == externalRoute.id }) {
-            routes.append(externalRoute)
-        }
-        return routes
-    }
-
-    private var overflowRoutes: [CallAudioRoute] {
-        controller.availableRoutes.filter { route in
-            !primaryRoutes.contains(where: { $0.id == route.id })
-        }
-    }
-
     var body: some View {
         Menu {
-            if !overflowRoutes.isEmpty {
-                Menu {
-                    ForEach(overflowRoutes.reversed()) { route in
-                        Button {
-                            onSelect(route)
-                        } label: {
-                            Label(route.name, systemImage: route.systemImage)
-                        }
-                        .disabled(!route.isSelectable)
-                    }
-                } label: {
-                    Label("Show More", systemImage: "chevron.right")
-                }
-                Divider()
-            }
-
             Picker(
                 "Audio Output",
                 selection: Binding(
@@ -430,30 +316,40 @@ private struct CallAudioRouteMenu: View {
                     }
                 )
             ) {
-                ForEach(primaryRoutes.reversed()) { route in
+                ForEach(controller.availableRoutes) { route in
                     Label(route.name, systemImage: route.systemImage)
                         .tag(route.id)
                         .disabled(!route.isSelectable)
                 }
             }
         } label: {
-            CallControlLabel(
-                title: "Audio",
-                systemImage: controller.currentRoute.controlSystemImage,
-                foregroundStyle: controller.currentRoute.isControlSelected ? .black : .white,
-                backgroundStyle: controller.currentRoute.isControlSelected
-                    ? .white
-                    : .white.opacity(0.16)
-            )
-            .contentTransition(
-                reduceMotion ? .identity : .symbolEffect(.replace)
-            )
-            .animation(
-                reduceMotion ? nil : .snappy,
-                value: controller.currentRoute.id
-            )
+            VStack(spacing: 8) {
+                Image(systemName: controller.currentRoute.controlSystemImage)
+                    .font(.system(size: 27, weight: .medium))
+                    .frame(width: 72, height: 72)
+                    .foregroundStyle(controller.currentRoute.isControlSelected ? .black : .white)
+                    .background(
+                        controller.currentRoute.isControlSelected
+                            ? .white
+                            : .white.opacity(0.16),
+                        in: Circle()
+                    )
+                    .contentTransition(
+                        reduceMotion ? .identity : .symbolEffect(.replace)
+                    )
+                    .animation(
+                        reduceMotion ? nil : .snappy,
+                        value: controller.currentRoute.id
+                    )
+
+                Text("Audio")
+                    .font(.caption)
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+            }
+            .frame(width: 84)
         }
-        .buttonStyle(InCallControlButtonStyle(pressedScale: 0.92))
+        .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.92))
         .accessibilityLabel("Audio")
         .accessibilityValue(Text(verbatim: controller.currentRoute.name))
     }
@@ -470,63 +366,28 @@ private struct CallControlButton: View {
 
     var body: some View {
         Button(action: action) {
-            CallControlLabel(
-                title: title,
-                systemImage: systemImage,
-                foregroundStyle: isSelected ? .black : .white,
-                backgroundStyle: isSelected ? .white : .white.opacity(0.16),
-                isEnabled: isEnabled
-            )
-            .contentTransition(
-                reduceMotion ? .identity : .symbolEffect(.replace)
-            )
+            VStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 27, weight: .medium))
+                    .frame(width: 72, height: 72)
+                    .foregroundStyle(isSelected ? .black : .white)
+                    .background(isSelected ? .white : .white.opacity(0.16), in: Circle())
+                    .contentTransition(
+                        reduceMotion ? .identity : .symbolEffect(.replace)
+                    )
+
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+            }
+            .frame(width: 84)
         }
-        .buttonStyle(InCallControlButtonStyle(pressedScale: 0.92))
+        .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.92))
         .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.35)
         .animation(reduceMotion ? nil : .snappy, value: isSelected)
         .accessibilityValue(isSelected ? "On" : "Off")
-    }
-}
-
-private struct CallControlLabel: View {
-    let title: LocalizedStringKey
-    let systemImage: String
-    let foregroundStyle: Color
-    let backgroundStyle: Color
-    var isEnabled = true
-
-    var body: some View {
-        VStack(spacing: 8) {
-            ZStack {
-                Circle()
-                    .fill(backgroundStyle)
-
-                Image(systemName: systemImage)
-                    .font(.system(size: 29, weight: .medium))
-                    .foregroundStyle(foregroundStyle)
-            }
-            .frame(width: 80, height: 80)
-            .opacity(isEnabled ? 1 : 0.35)
-
-            Text(title)
-                .font(.callout)
-                .foregroundStyle(.white)
-                .lineLimit(1)
-        }
-        .frame(width: 84)
-    }
-}
-
-private struct InCallControlButtonStyle: ButtonStyle {
-    var pressedScale: CGFloat
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(reduceMotion || !configuration.isPressed ? 1 : pressedScale)
-            .opacity(configuration.isPressed ? 0.78 : 1)
-            .animation(reduceMotion ? nil : .snappy, value: configuration.isPressed)
     }
 }
 

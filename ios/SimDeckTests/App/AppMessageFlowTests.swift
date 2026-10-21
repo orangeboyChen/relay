@@ -332,29 +332,6 @@ final class AppMessageFlowTests: XCTestCase {
         XCTAssertFalse(retained.linePresentation(in: []).isAvailable)
     }
 
-    func testConversationReadStateCanBeToggledFromListActions() throws {
-        let conversation = MessageConversation(
-            lineID: firstLine.id,
-            remoteNumber: "10086",
-            contactName: nil,
-            unreadCount: 2,
-            messages: []
-        )
-        let model = makeModel(
-            transport: MessageTransportFake(),
-            messages: .loaded([conversation])
-        )
-
-        model.markConversationRead(conversation.id)
-
-        XCTAssertEqual(try XCTUnwrap(model.conversations.first).unreadCount, 0)
-
-        model.markConversationUnread(conversation.id)
-        model.markConversationUnread(conversation.id)
-
-        XCTAssertEqual(try XCTUnwrap(model.conversations.first).unreadCount, 1)
-    }
-
     func testRetryRejectsRemovedLineBeforeTransport() async throws {
         let failedMessage = MessageItem(
             id: UUID(),

@@ -8,7 +8,6 @@ import UIKit
 struct ConversationScreen: View {
     let conversations: [MessageConversation]
     let lines: [DeviceLineIdentity]
-    let backUnreadCount: Int
     let sendAction: (UUID, String, String) async throws -> Void
     let retryAction: (UUID) async throws -> Void
     let deleteAction: (Set<UUID>) throws -> Void
@@ -31,7 +30,6 @@ struct ConversationScreen: View {
         initialID: ConversationID,
         conversations: [MessageConversation],
         lines: [DeviceLineIdentity],
-        backUnreadCount: Int = 0,
         sendAction: @escaping (UUID, String, String) async throws -> Void = { _, _, _ in },
         retryAction: @escaping (UUID) async throws -> Void = { _ in },
         deleteAction: @escaping (Set<UUID>) throws -> Void = { _ in },
@@ -39,7 +37,6 @@ struct ConversationScreen: View {
     ) {
         self.conversations = conversations
         self.lines = lines
-        self.backUnreadCount = backUnreadCount
         self.sendAction = sendAction
         self.retryAction = retryAction
         self.deleteAction = deleteAction
@@ -88,26 +85,22 @@ struct ConversationScreen: View {
                         )
                         .id(message.id)
                     }
-
-                    Color.clear
-                        .frame(height: 1)
-                        .id(ConversationScrollAnchor.bottom)
                 }
-                .padding(.horizontal, 8)
+                .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .id(selectedID)
                 .transition(.opacity)
             }
             .scrollDismissesKeyboard(.interactively)
             .defaultScrollAnchor(.bottom)
-            .task(id: selectedID) {
-                scrollToBottom(using: proxy)
-            }
-            .onChange(of: conversation.messages.count) {
+            .onChange(of: conversation.messages.count, initial: true) {
                 scrollToBottom(using: proxy)
             }
             .onChange(of: dynamicTypeSize) {
                 scrollToBottom(using: proxy)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { _ in
+                scrollToBottom(using: proxy, animated: true)
             }
             .onChange(of: selectedID) {
                 markReadAction(selectedID)
@@ -118,7 +111,23 @@ struct ConversationScreen: View {
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            conversationNavigationHeader
+            if dynamicTypeSize.isAccessibilitySize {
+                ConversationHeader(
+                    conversation: conversation,
+                    linePresentation: linePresentation,
+                    alternatives: conversations,
+                    lines: lines,
+                    usesAccessibilityLayout: true,
+                    selectedID: animatedSelectedID
+                )
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .background(Color(uiColor: .systemBackground))
+                .overlay(alignment: .bottom) {
+                    Divider()
+                }
+            }
         }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 0) {
@@ -159,8 +168,22 @@ struct ConversationScreen: View {
                 )
             }
         }
-        .toolbar(.hidden, for: .navigationBar)
-        .toolbar(.hidden, for: .tabBar)
+        .navigationTitle(dynamicTypeSize.isAccessibilitySize ? "" : conversation.displayName)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                if !dynamicTypeSize.isAccessibilitySize {
+                    ConversationHeader(
+                        conversation: conversation,
+                        linePresentation: linePresentation,
+                        alternatives: conversations,
+                        lines: lines,
+                        usesAccessibilityLayout: false,
+                        selectedID: animatedSelectedID
+                    )
+                }
+            }
+        }
         .onAppear {
             markReadAction(selectedID)
         }
@@ -213,14 +236,7 @@ struct ConversationScreen: View {
     }
 
     private var conversation: MessageConversation {
-        conversations.first(where: { $0.id == selectedID })
-            ?? MessageConversation(
-                lineID: selectedID.deviceUUID,
-                remoteNumber: selectedID.remoteNumber,
-                contactName: nil,
-                unreadCount: 0,
-                messages: []
-            )
+        conversations.first(where: { $0.id == selectedID }) ?? conversations[0]
     }
 
     private var currentLine: DeviceLineIdentity? {
@@ -251,57 +267,6 @@ struct ConversationScreen: View {
                 }
             }
         )
-    }
-
-    private var conversationNavigationHeader: some View {
-        ZStack {
-            ConversationHeader(
-                conversation: conversation,
-                linePresentation: linePresentation,
-                alternatives: conversations,
-                lines: lines,
-                usesAccessibilityLayout: dynamicTypeSize.isAccessibilitySize,
-                selectedID: animatedSelectedID
-            )
-            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-
-            HStack {
-                Button {
-                    dismiss()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chevron.left")
-                            .font(.title3.weight(.semibold))
-
-                        if backUnreadCount > 0 {
-                            Text(backUnreadCount, format: .number)
-                                .font(.subheadline.weight(.semibold))
-                                .monospacedDigit()
-                        }
-                    }
-                    .padding(.horizontal, backUnreadCount > 0 ? 12 : 0)
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .glassEffect(.regular.interactive(), in: Capsule())
-                .accessibilityLabel(
-                    backUnreadCount > 0
-                        ? Text("Back, \(backUnreadCount) unread")
-                        : Text("Back")
-                )
-
-                Spacer()
-
-                Color.clear
-                    .frame(width: 44, height: 44)
-                    .accessibilityHidden(true)
-            }
-            .frame(maxHeight: .infinity, alignment: .top)
-        }
-        .frame(height: dynamicTypeSize.isAccessibilitySize ? 108 : 86)
-        .padding(.horizontal, 16)
-        .background(Color(uiColor: .systemBackground))
     }
 
     private var motionAnimation: Animation? {
@@ -360,25 +325,19 @@ struct ConversationScreen: View {
     }
 
     private func scrollToBottom(using proxy: ScrollViewProxy, animated: Bool = false) {
-        guard !conversation.messages.isEmpty else { return }
+        guard let lastID = conversation.messages.last?.id else { return }
 
         Task { @MainActor in
             await Task.yield()
             if animated {
                 withAnimation(motionAnimation) {
-                    proxy.scrollTo(ConversationScrollAnchor.bottom, anchor: .bottom)
+                    proxy.scrollTo(lastID, anchor: .bottom)
                 }
             } else {
-                proxy.scrollTo(ConversationScrollAnchor.bottom, anchor: .bottom)
-                await Task.yield()
-                proxy.scrollTo(ConversationScrollAnchor.bottom, anchor: .bottom)
+                proxy.scrollTo(lastID, anchor: .bottom)
             }
         }
     }
-}
-
-private enum ConversationScrollAnchor: Hashable {
-    case bottom
 }
 
 private enum ConversationSheet: Identifiable {

@@ -15,7 +15,7 @@ enum MessageSwipeInteraction {
     }
 
     static func shouldBegin(horizontalVelocity: CGFloat, verticalVelocity: CGFloat) -> Bool {
-        abs(horizontalVelocity) > abs(verticalVelocity)
+        horizontalVelocity < 0 && abs(horizontalVelocity) > abs(verticalVelocity)
     }
 }
 

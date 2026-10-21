@@ -126,8 +126,9 @@ struct ConversationScreen: View {
                         .frame(height: 1)
                         .id(ConversationScrollAnchor.bottom)
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 16)
                 .padding(.vertical, 8)
+                .padding(.top, conversationHeaderHeight)
                 .id(selectedLineID)
                 .transition(.opacity)
             }
@@ -153,7 +154,7 @@ struct ConversationScreen: View {
                 scrollToBottom(using: proxy, animated: true)
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
+        .overlay(alignment: .top) {
             conversationNavigationHeader
         }
         .safeAreaInset(edge: .bottom) {
@@ -194,7 +195,6 @@ struct ConversationScreen: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
-        .toolbar(.hidden, for: .tabBar)
         .onAppear {
             markVisibleConversationsRead()
         }
@@ -404,9 +404,12 @@ struct ConversationScreen: View {
             }
             .frame(maxHeight: .infinity, alignment: .top)
         }
-        .frame(height: dynamicTypeSize.isAccessibilitySize ? 108 : 86)
+        .frame(height: conversationHeaderHeight)
         .padding(.horizontal, 16)
-        .background(.bar)
+    }
+
+    private var conversationHeaderHeight: CGFloat {
+        dynamicTypeSize.isAccessibilitySize ? 108 : 86
     }
 
     @ViewBuilder

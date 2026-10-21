@@ -132,7 +132,6 @@ struct MessageBubble: View {
                     Spacer(minLength: 64)
                 }
             }
-            .offset(x: timestampRevealState.offset)
         }
         .contentShape(.rect)
         .gesture(
@@ -164,12 +163,21 @@ struct MessageBubble: View {
                 format: .dateTime.hour().minute()
             )
             .font(.caption2)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(
+                message.direction == .sent
+                    ? AnyShapeStyle(.white)
+                    : AnyShapeStyle(.secondary)
+            )
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
             .opacity(timestampRevealState.progress)
+            .offset(
+                x: MessageSwipeInteraction.maximumTimestampOffset
+                    * (1 - timestampRevealState.progress)
+            )
             .accessibilityHidden(true)
         }
+        .zIndex(1)
     }
 
     private var lineBadge: some View {

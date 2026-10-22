@@ -169,6 +169,19 @@ struct MessageBubble: View {
     }
 
     private var bubbleContent: some View {
+        bubbleBody
+            .padding(message.direction == .sent ? .trailing : .leading, 8)
+            .contentShape(
+                .contextMenuPreview,
+                MessageBubblePreviewShape(direction: message.direction)
+            )
+            .contextMenu {
+                messageContextMenu
+            }
+            .padding(message.direction == .sent ? .trailing : .leading, -8)
+    }
+
+    private var bubbleBody: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let attachment = message.attachment {
                 Button(action: openAttachment) {
@@ -195,21 +208,21 @@ struct MessageBubble: View {
             )
         }
         .frame(maxWidth: 271, alignment: message.direction == .sent ? .trailing : .leading)
-        .contentShape(.contextMenuPreview, bubbleShape)
-        .contextMenu {
-            MessageContextMenu(
-                canCopy: !message.body.isEmpty,
-                verificationCode: VerificationCodeDetector.code(in: message.body),
-                canForward: !message.body.isEmpty,
-                canRetry: canRetry && message.direction == .sent && message.status == .failed,
-                copyAction: copyAction,
-                copyVerificationCodeAction: copyVerificationCodeAction,
-                forwardAction: forwardAction,
-                detailsAction: detailsAction,
-                retryAction: retryAction,
-                deleteAction: deleteAction
-            )
-        }
+    }
+
+    private var messageContextMenu: some View {
+        MessageContextMenu(
+            canCopy: !message.body.isEmpty,
+            verificationCode: VerificationCodeDetector.code(in: message.body),
+            canForward: !message.body.isEmpty,
+            canRetry: canRetry && message.direction == .sent && message.status == .failed,
+            copyAction: copyAction,
+            copyVerificationCodeAction: copyVerificationCodeAction,
+            forwardAction: forwardAction,
+            detailsAction: detailsAction,
+            retryAction: retryAction,
+            deleteAction: deleteAction
+        )
     }
 
     private var messageMetadata: some View {
@@ -249,10 +262,6 @@ struct MessageBubble: View {
         message.direction == .sent
             ? .green
             : Color(uiColor: .systemGray5)
-    }
-
-    private var bubbleShape: MessageBubbleShape {
-        MessageBubbleShape(direction: message.direction)
     }
 
     private var deliveryStatus: LocalizedStringResource {
@@ -334,12 +343,36 @@ private struct MessageBubbleTailCorner: Shape {
     }
 }
 
-private struct MessageBubbleShape: Shape {
+private struct MessageBubblePreviewShape: Shape {
     let direction: MessageDirection
 
     func path(in rect: CGRect) -> Path {
-        RoundedRectangle(cornerRadius: 18, style: .circular)
-            .path(in: rect)
+        let tailPadding: CGFloat = 8
+        let bubbleRect = CGRect(
+            x: direction == .received ? rect.minX + tailPadding : rect.minX,
+            y: rect.minY,
+            width: rect.width - tailPadding,
+            height: rect.height
+        )
+        var path = RoundedRectangle(cornerRadius: 18, style: .circular)
+            .path(in: bubbleRect)
+        let tailFrame = CGRect(
+            x: direction == .received
+                ? bubbleRect.minX - 7
+                : bubbleRect.maxX - 13,
+            y: bubbleRect.maxY - 18,
+            width: 20,
+            height: 19
+        )
+        path.addPath(
+            MessageBubbleTailCorner(
+                direction: direction,
+                horizontalRadius: 16,
+                verticalRadius: 14
+            )
+            .path(in: tailFrame)
+        )
+        return path
     }
 }
 
@@ -441,6 +474,36 @@ private struct ConversationComponentsPreview: View {
                 timestampRevealModel: MessageTimestampRevealModel(progress: 1)
             )
         }
+    }
+    .padding()
+}
+
+#Preview("All SIM line badges") {
+    VStack(spacing: 8) {
+        MessageBubble(
+            message: MessageItem(
+                id: UUID(uuidString: "20000000-0000-0000-0000-000000000097")!,
+                direction: .received,
+                body: "Incoming message",
+                attachment: nil,
+                sentAt: PreviewFixtures.now,
+                status: .delivered
+            ),
+            lineSnapshot: LineHistorySnapshot(line: PreviewFixtures.devices[0]),
+            showsLineBadge: true
+        )
+        MessageBubble(
+            message: MessageItem(
+                id: UUID(uuidString: "20000000-0000-0000-0000-000000000098")!,
+                direction: .sent,
+                body: "Outgoing message",
+                attachment: nil,
+                sentAt: PreviewFixtures.now,
+                status: .delivered
+            ),
+            lineSnapshot: LineHistorySnapshot(line: PreviewFixtures.devices[1]),
+            showsLineBadge: true
+        )
     }
     .padding()
 }

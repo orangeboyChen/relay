@@ -258,25 +258,13 @@ struct RootTabView: View {
             .pickerStyle(.inline)
 
             Menu {
-                Button {
-                    callLineID = nil
-                } label: {
-                    Label(
-                        "All SIMs",
-                        systemImage: callLineID == nil ? "checkmark" : "simcard.2"
-                    )
-                }
+                Picker("SIM", selection: $callLineID) {
+                    Label("All SIMs", systemImage: "simcard.2")
+                        .tag(nil as UUID?)
 
-                ForEach(model.devices) { line in
-                    Button {
-                        callLineID = line.id
-                    } label: {
-                        HStack {
-                            SIMLabel(line: line)
-                            if callLineID == line.id {
-                                Image(systemName: "checkmark")
-                            }
-                        }
+                    ForEach(model.devices) { line in
+                        SIMLabel(line: line)
+                            .tag(line.id as UUID?)
                     }
                 }
             } label: {
@@ -290,9 +278,28 @@ struct RootTabView: View {
                 }
             }
         } label: {
-            Label("Call filter", systemImage: "line.3.horizontal.decrease")
+            Label(
+                "Call filter",
+                systemImage: callFilter == .all && callLineID == nil
+                    ? "line.3.horizontal.decrease"
+                    : "line.3.horizontal.decrease.circle.fill"
+            )
                 .labelStyle(.iconOnly)
         }
+        .accessibilityValue(callFilterAccessibilityValue)
+    }
+
+    private var callFilterAccessibilityValue: Text {
+        let scope: LocalizedStringResource = switch callFilter {
+        case .all: "Calls"
+        case .missed: "Missed"
+        case .unknownCallers: "Unknown Callers"
+        }
+        guard let selectedCallLine else {
+            return Text("\(scope), All SIMs")
+        }
+        let line = SIMLabelPresentation(line: selectedCallLine, titleStyle: .displayName)
+        return Text("\(scope), \(line.accessibilityLabel)")
     }
 
     private var hasCallHistory: Bool {

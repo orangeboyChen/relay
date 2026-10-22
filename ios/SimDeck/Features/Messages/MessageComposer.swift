@@ -206,18 +206,13 @@ struct MessageComposer: View {
 
     private var linePicker: some View {
         Menu {
-            ForEach(availableLines) { line in
-                Button {
-                    selectedLineID = line.id
-                } label: {
-                    HStack {
-                        SIMLabel(line: line)
-                        if line.id == selectedLine?.id {
-                            Image(systemName: "checkmark")
-                        }
-                    }
+            Picker("Sending SIM", selection: $selectedLineID) {
+                ForEach(availableLines) { line in
+                    SIMLabel(line: line)
+                        .tag(line.id as UUID?)
                 }
             }
+            .pickerStyle(.inline)
         } label: {
             Group {
                 if let selectedLine {
@@ -232,6 +227,14 @@ struct MessageComposer: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Choose sending SIM")
+        .accessibilityValue(selectedLineAccessibilityValue)
+    }
+
+    private var selectedLineAccessibilityValue: Text {
+        guard let selectedLine else {
+            return Text("No SIM selected")
+        }
+        return Text(SIMLabelPresentation(line: selectedLine, titleStyle: .displayName).accessibilityLabel)
     }
 
     @MainActor
@@ -347,5 +350,20 @@ private struct MessageCameraPicker: UIViewControllerRepresentable {
     }
     .preferredColorScheme(.dark)
     .environment(\.dynamicTypeSize, .accessibility3)
+}
+
+#Preview("Message composer - All SIMs") {
+    @Previewable @State var draft = ""
+    @Previewable @State var selectedLineID: UUID? = PreviewFixtures.devices[0].id
+
+    VStack {
+        Spacer()
+        MessageComposer(
+            draft: $draft,
+            availableLines: PreviewFixtures.devices,
+            selectedLineID: $selectedLineID,
+            showsLinePicker: true
+        )
+    }
 }
 #endif

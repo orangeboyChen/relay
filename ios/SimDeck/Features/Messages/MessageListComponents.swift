@@ -10,32 +10,34 @@ struct SIMFilterMenu: View {
 
     var body: some View {
         Menu {
-            Button {
-                selection = nil
-            } label: {
-                if selection == nil {
-                    Label("All SIMs", systemImage: "checkmark")
-                } else {
-                    Text("All SIMs")
+            Picker("SIM", selection: $selection) {
+                Label("All SIMs", systemImage: "simcard.2")
+                    .tag(nil as UUID?)
+                ForEach(lines) { line in
+                    SIMLabel(line: line)
+                        .tag(line.id as UUID?)
                 }
             }
-            ForEach(lines) { line in
-                Button {
-                    selection = line.id
-                } label: {
-                    HStack {
-                        SIMLabel(line: line)
-                        if selection == line.id {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
+            .pickerStyle(.inline)
         } label: {
-            Label("Filter by SIM", systemImage: "line.3.horizontal.decrease")
+            Label(
+                "Filter by SIM",
+                systemImage: selection == nil
+                    ? "line.3.horizontal.decrease"
+                    : "line.3.horizontal.decrease.circle.fill"
+            )
                 .labelStyle(.iconOnly)
         }
         .accessibilityLabel("Filter by SIM")
+        .accessibilityValue(selectionAccessibilityValue)
+    }
+
+    private var selectionAccessibilityValue: Text {
+        guard let selection,
+              let selectedLine = lines.first(where: { $0.id == selection }) else {
+            return Text("All SIMs")
+        }
+        return Text(SIMLabelPresentation(line: selectedLine, titleStyle: .displayName).accessibilityLabel)
     }
 }
 

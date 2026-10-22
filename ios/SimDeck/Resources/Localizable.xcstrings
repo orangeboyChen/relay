@@ -20,6 +20,32 @@
         }
       }
     },
+    "%@, %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, %2$@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@，%2$@"
+          }
+        }
+      }
+    },
+    "%@, All SIMs" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@，所有 SIM"
+          }
+        }
+      }
+    },
     "%lld More Results" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2047,6 +2073,16 @@
         }
       }
     },
+    "No SIM selected" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未选择 SIM"
+          }
+        }
+      }
+    },
     "No Unknown Callers" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2930,6 +2966,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在发送"
+          }
+        }
+      }
+    },
+    "Sending SIM" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发送 SIM"
           }
         }
       }

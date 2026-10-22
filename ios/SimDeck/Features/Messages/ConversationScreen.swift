@@ -78,7 +78,7 @@ struct ConversationScreen: View {
                             MessageBubble(
                                 message: entry.message,
                                 lineSnapshot: entry.lineSnapshot,
-                                showsLineBadge: selectedLineID == nil && conversations.count > 1,
+                                showsLineBadge: selectedLineID == nil,
                                 canRetry: sendLine(for: entry.lineID)?.isOnline == true,
                                 openAttachment: {
                                     guard let attachment = entry.message.attachment else { return }
@@ -181,7 +181,7 @@ struct ConversationScreen: View {
                     attachment: $draftAttachment,
                     availableLines: availableSendLines,
                     selectedLineID: $sendLineID,
-                    showsLinePicker: selectedLineID == nil && conversations.count > 1,
+                    showsLinePicker: selectedLineID == nil,
                     isTextEntryEnabled: currentLine?.isOnline == true && !isSending,
                     canSend: currentLine?.isOnline == true
                         && !isSending
@@ -374,39 +374,24 @@ struct ConversationScreen: View {
         )
     }
 
-    @ViewBuilder
     private var lineSelectionControl: some View {
         Menu {
-            Button {
-                withAnimation(motionAnimation) {
-                    selectedLineID = nil
-                }
-            } label: {
+            Picker("SIM", selection: $selectedLineID) {
                 Label("All SIMs", systemImage: "simcard.2")
-                if selectedLineID == nil {
-                    Image(systemName: "checkmark")
+                    .tag(nil as UUID?)
+                ForEach(conversations) { alternative in
+                    let alternativeLine = alternative.linePresentation(in: lines)
+                    SIMLabel(snapshot: alternativeLine.snapshot)
+                        .tag(alternative.lineID as UUID?)
                 }
             }
-
-            Divider()
-
-            ForEach(conversations) { alternative in
-                let alternativeLine = alternative.linePresentation(in: lines)
-                Button {
-                    withAnimation(motionAnimation) {
-                        selectedLineID = alternative.lineID
-                    }
-                } label: {
-                    HStack {
-                        SIMLabel(snapshot: alternativeLine.snapshot)
-                        if alternative.lineID == selectedLineID {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
+            .pickerStyle(.inline)
         } label: {
-            Image(systemName: "line.3.horizontal.decrease")
+            Image(
+                systemName: selectedLineID == nil
+                    ? "line.3.horizontal.decrease"
+                    : "line.3.horizontal.decrease.circle.fill"
+            )
                 .font(.body.weight(.semibold))
                 .frame(width: 44, height: 44)
                 .contentShape(Circle())
@@ -414,6 +399,22 @@ struct ConversationScreen: View {
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: Circle())
         .accessibilityLabel("Filter by SIM")
+        .accessibilityValue(lineFilterAccessibilityValue)
+    }
+
+    private var lineFilterAccessibilityValue: Text {
+        guard let selectedLineID,
+              let selectedConversation = conversations.first(where: {
+                  $0.lineID == selectedLineID
+              }) else {
+            return Text("All SIMs")
+        }
+        let presentation = selectedConversation.linePresentation(in: lines)
+        let label = SIMLabelPresentation(
+            snapshot: presentation.snapshot,
+            titleStyle: .displayName
+        )
+        return Text(label.accessibilityLabel)
     }
 
     private func markVisibleConversationsRead() {

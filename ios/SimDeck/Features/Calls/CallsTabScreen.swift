@@ -8,9 +8,10 @@ import SwiftUI
 struct CallsTabScreen: View {
     @Bindable var model: AppModel
 
-    @State private var historyEditMode: EditMode = .inactive
+    @Binding var historyEditMode: EditMode
+    @Binding var filter: CallHistoryFilter
+    @Binding var selectedLineID: UUID?
     @State private var contacts: [ContactRecord] = []
-    @State private var selectedDetail: CallDetailSelection?
 
     var body: some View {
         CallHistoryScreen(
@@ -24,14 +25,9 @@ struct CallsTabScreen: View {
                 try await model.sendMessage(lineID: lineID, remoteNumber: number, body: body)
             },
             editMode: $historyEditMode,
-            onDelete: model.deleteCallHistoryRecords(withIDs:),
-            openDetail: { record, contact in
-                selectedDetail = CallDetailSelection(
-                    record: record,
-                    linePresentation: record.linePresentation(in: model.devices),
-                    contact: contact
-                )
-            }
+            filter: $filter,
+            selectedLineID: $selectedLineID,
+            onDelete: model.deleteCallHistoryRecords(withIDs:)
         ) { lineID in
             model.lastSuccessfulDialLineID = lineID
         }
@@ -43,65 +39,6 @@ struct CallsTabScreen: View {
             }
         }
         .scrollEdgeEffectStyle(.soft, for: .all)
-        .navigationDestination(isPresented: detailIsPresented) {
-            if let selectedDetail {
-                if let contact = selectedDetail.contact {
-                    ContactDetailScreen(
-                        contact: contact,
-                        lines: model.devices,
-                        defaultMessageLineID: selectedDetail.record.lineID,
-                        callAction: { number in
-                            await model.handleExternalDial(
-                                number: number,
-                                requiredLineID: selectedDetail.record.lineID
-                            )
-                        },
-                        sendAction: { lineID, number, body in
-                            try await model.sendMessage(
-                                lineID: lineID,
-                                remoteNumber: number,
-                                body: body
-                            )
-                        }
-                    )
-                    .toolbar(.hidden, for: .tabBar)
-                } else {
-                    CallDetailScreen(
-                        record: selectedDetail.record,
-                        linePresentation: selectedDetail.linePresentation,
-                        lines: model.devices,
-                        defaultMessageLineID: model.defaultMessageLineID,
-                        callAction: {
-                            Task {
-                                await model.handleExternalDial(
-                                    number: selectedDetail.record.remoteNumber,
-                                    requiredLineID: selectedDetail.record.lineID
-                                )
-                            }
-                        },
-                        sendAction: { lineID, number, body in
-                            try await model.sendMessage(
-                                lineID: lineID,
-                                remoteNumber: number,
-                                body: body
-                            )
-                        }
-                    )
-                    .toolbar(.hidden, for: .tabBar)
-                }
-            }
-        }
-    }
-
-    private var detailIsPresented: Binding<Bool> {
-        Binding(
-            get: { selectedDetail != nil },
-            set: { isPresented in
-                if !isPresented {
-                    selectedDetail = nil
-                }
-            }
-        )
     }
 
     private func refreshContacts() {

@@ -6,6 +6,9 @@ import SwiftUI
 
 struct MessagesTabScreen: View {
     @Bindable var model: AppModel
+    @Binding var searchText: String
+    @Binding var selectedLineID: UUID?
+    @Binding var editMode: EditMode
 
     @State private var contacts: [ContactRecord] = []
 
@@ -13,6 +16,9 @@ struct MessagesTabScreen: View {
         MessagesScreen(
             state: model.messages,
             lines: model.devices,
+            searchText: $searchText,
+            selectedLineID: $selectedLineID,
+            editMode: $editMode,
             contacts: contacts,
             defaultLineID: model.defaultMessageLineID,
             refreshAction: {
@@ -60,48 +66,6 @@ struct MessagesTabScreen: View {
             for await _ in model.contactStore.changes() {
                 guard !Task.isCancelled else { return }
                 refreshContacts()
-            }
-        }
-        .navigationDestination(for: ConversationID.self) { selectedConversationID in
-            if case .loaded(let conversations) = model.messages,
-               let conversation = conversations.first(where: {
-                   $0.id == selectedConversationID
-               }) {
-                ConversationScreen(
-                    initialID: conversation.id,
-                    conversations: conversation.lineAlternatives(in: conversations),
-                    lines: model.devices,
-                    contacts: contacts,
-                    defaultMessageLineID: model.defaultMessageLineID,
-                    sendAction: { lineID, number, body in
-                        try await model.sendMessage(
-                            lineID: lineID,
-                            remoteNumber: number,
-                            body: body
-                        )
-                    },
-                    sendImageAction: { lineID, number, body, attachment in
-                        try await model.sendImageMessage(
-                            lineID: lineID,
-                            remoteNumber: number,
-                            body: body,
-                            attachment: attachment
-                        )
-                    },
-                    retryAction: { messageID in
-                        try await model.retryMessage(id: messageID)
-                    },
-                    deleteAction: { messageIDs in
-                        try model.deleteMessages(ids: messageIDs)
-                    },
-                    markReadAction: { conversationID in
-                        model.markConversationRead(conversationID)
-                    },
-                    callAction: { number in
-                        await model.handleExternalDial(number: number)
-                    }
-                )
-                .toolbar(.hidden, for: .tabBar)
             }
         }
     }

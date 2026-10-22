@@ -14,16 +14,15 @@ struct CallHistoryScreen: View {
     let defaultMessageLineID: UUID?
     let sendMessage: (UUID, String, String) async throws -> Void
     @Binding var editMode: EditMode
+    @Binding var filter: CallHistoryFilter
+    @Binding var selectedLineID: UUID?
     let onDelete: (Set<UUID>) throws -> Void
-    var openDetail: (CallRecord, ContactRecord?) -> Void = { _, _ in }
     let onStarted: (UUID) -> Void
 
     @State private var startingRecordID: UUID?
     @State private var presentedError: CallHistoryPresentedError?
-    @State private var selectedRecordIDs: Set<UUID> = []
+    @State private var selectedEntryIDs: Set<UUID> = []
     @State private var isDeleteConfirmationPresented = false
-    @State private var filter: CallHistoryFilter = .all
-    @State private var selectedLineID: UUID?
 
     var body: some View {
         Group {
@@ -38,8 +37,9 @@ struct CallHistoryScreen: View {
                 )
             case .loaded(let records):
                 let contactIndex = ContactRecordIndex(contacts: contacts)
-                List {
-                    ForEach(CallHistoryEntry.grouped(filtered(records))) { entry in
+                let entries = CallHistoryEntry.grouped(filtered(records))
+                List(selection: editMode.isEditing ? $selectedEntryIDs : nil) {
+                    ForEach(entries) { entry in
                         let record = entry.latestRecord
                         let linePresentation = record.linePresentation(in: lines)
                         let contact = contactIndex.contact(for: record.remoteNumber)
@@ -49,17 +49,11 @@ struct CallHistoryScreen: View {
                             contact: contact,
                             referenceDate: referenceDate,
                             isEditing: editMode.isEditing,
-                            isSelected: entry.recordIDs.isSubset(of: selectedRecordIDs),
                             isStarting: startingRecordID == record.id,
                             isInteractionDisabled: startingRecordID != nil,
-                            onSelect: {
-                                toggleSelection(for: entry.recordIDs)
-                            },
-                            onCall: { startCall(from: record) },
-                            onDetails: {
-                                openDetail(record, contact)
-                            }
+                            onCall: { startCall(from: record) }
                         )
+                        .tag(entry.id)
                         .listRowInsets(
                             EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 8)
                         )
@@ -76,8 +70,8 @@ struct CallHistoryScreen: View {
                     }
                 }
                 .listStyle(.plain)
-                .onChange(of: records.map(\.id)) { _, recordIDs in
-                    selectedRecordIDs.formIntersection(recordIDs)
+                .onChange(of: records.map(\.id)) { _, _ in
+                    selectedEntryIDs.formIntersection(entries.map(\.id))
                     if records.isEmpty {
                         editMode = .inactive
                     }
@@ -99,72 +93,11 @@ struct CallHistoryScreen: View {
         .navigationTitle("Calls")
         .navigationBarTitleDisplayMode(.inline)
         .scrollEdgeEffectStyle(.soft, for: .all)
+        .environment(\.editMode, $editMode)
         .toolbar(editMode.isEditing ? .hidden : .visible, for: .tabBar)
         .onChange(of: editMode) { _, newMode in
             if !newMode.isEditing {
-                selectedRecordIDs.removeAll()
-            }
-        }
-        .toolbar {
-            if case .loaded(let records) = state, !records.isEmpty {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(editMode.isEditing ? "Done" : "Edit") {
-                        withAnimation {
-                            editMode = editMode.isEditing ? .inactive : .active
-                        }
-                    }
-                }
-                if !editMode.isEditing {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Menu {
-                            Picker("Call filter", selection: $filter) {
-                                Label("Calls", systemImage: "phone")
-                                    .tag(CallHistoryFilter.all)
-                                Label("Missed", systemImage: "phone.down")
-                                    .tag(CallHistoryFilter.missed)
-                                Label(
-                                    "Unknown Callers",
-                                    systemImage: "person.crop.circle.badge.questionmark"
-                                )
-                                .tag(CallHistoryFilter.unknownCallers)
-                            }
-                            .pickerStyle(.inline)
-
-                            Menu {
-                                Button {
-                                    selectedLineID = nil
-                                } label: {
-                                    Label("All SIMs", systemImage: selectedLineID == nil ? "checkmark" : "simcard.2")
-                                }
-
-                                ForEach(lines) { line in
-                                    Button {
-                                        selectedLineID = line.id
-                                    } label: {
-                                        HStack {
-                                            SIMLabel(line: line)
-                                            if selectedLineID == line.id {
-                                                Image(systemName: "checkmark")
-                                            }
-                                        }
-                                    }
-                                }
-                            } label: {
-                                if let selectedLine {
-                                    HStack {
-                                        SIMBadge(line: selectedLine, size: 16)
-                                        Text(selectedLine.displayName)
-                                    }
-                                } else {
-                                    Label("All SIMs", systemImage: "simcard.2")
-                                }
-                            }
-                        } label: {
-                            Label("Call filter", systemImage: "line.3.horizontal.decrease")
-                                .labelStyle(.iconOnly)
-                        }
-                    }
-                }
+                selectedEntryIDs.removeAll()
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -180,7 +113,7 @@ struct CallHistoryScreen: View {
                         Label("Delete", systemImage: "trash")
                             .fontWeight(.semibold)
                             .foregroundStyle(
-                                selectedRecordIDs.isEmpty
+                                selectedEntryIDs.isEmpty
                                     ? AnyShapeStyle(.secondary)
                                     : AnyShapeStyle(.red)
                             )
@@ -190,7 +123,7 @@ struct CallHistoryScreen: View {
                     }
                     .buttonStyle(.glass)
                     .buttonBorderShape(.capsule)
-                    .disabled(selectedRecordIDs.isEmpty)
+                    .disabled(selectedEntryIDs.isEmpty)
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 6)
@@ -210,7 +143,7 @@ struct CallHistoryScreen: View {
             titleVisibility: .visible
         ) {
             Button("Delete", role: .destructive) {
-                deleteRecords(withIDs: selectedRecordIDs)
+                deleteSelectedEntries()
             }
             Button("Cancel", role: .cancel) {}
         }
@@ -218,11 +151,6 @@ struct CallHistoryScreen: View {
 
     private func filtered(_ records: [CallRecord]) -> [CallRecord] {
         filter.records(from: records, lineID: selectedLineID, contacts: contacts)
-    }
-
-    private var selectedLine: DeviceLineIdentity? {
-        guard let selectedLineID else { return nil }
-        return lines.first(where: { $0.id == selectedLineID })
     }
 
     private var emptyStateTitle: LocalizedStringKey {
@@ -237,22 +165,24 @@ struct CallHistoryScreen: View {
     }
 
     private var selectedEntryCount: Int {
-        guard case .loaded(let records) = state else { return 0 }
-        return CallHistoryEntry.grouped(filtered(records))
-            .filter { $0.recordIDs.isSubset(of: selectedRecordIDs) }
-            .count
-    }
-
-    private func toggleSelection(for recordIDs: Set<UUID>) {
-        if recordIDs.isSubset(of: selectedRecordIDs) {
-            selectedRecordIDs.subtract(recordIDs)
-        } else {
-            selectedRecordIDs.formUnion(recordIDs)
-        }
+        selectedEntryIDs.count
     }
 
     private func pruneSelection(from records: [CallRecord]) {
-        selectedRecordIDs.formIntersection(Set(filtered(records).map(\.id)))
+        selectedEntryIDs.formIntersection(
+            CallHistoryEntry.grouped(filtered(records)).map(\.id)
+        )
+    }
+
+    private func deleteSelectedEntries() {
+        guard case .loaded(let records) = state else { return }
+        let selectedRecordIDs = Set(
+            CallHistoryEntry.grouped(filtered(records))
+                .filter { selectedEntryIDs.contains($0.id) }
+                .flatMap(\.records)
+                .map(\.id)
+        )
+        deleteRecords(withIDs: selectedRecordIDs)
     }
 
     private func startCall(from record: CallRecord) {
@@ -284,8 +214,15 @@ struct CallHistoryScreen: View {
     private func deleteRecords(withIDs recordIDs: Set<UUID>) {
         do {
             try onDelete(recordIDs)
-            selectedRecordIDs.subtract(recordIDs)
-            if selectedRecordIDs.isEmpty {
+            if case .loaded(let records) = state {
+                let removedEntryIDs = CallHistoryEntry.grouped(filtered(records))
+                    .filter { !$0.recordIDs.isDisjoint(with: recordIDs) }
+                    .map(\.id)
+                selectedEntryIDs.subtract(removedEntryIDs)
+            } else {
+                selectedEntryIDs.removeAll()
+            }
+            if selectedEntryIDs.isEmpty {
                 editMode = .inactive
             }
         } catch {
@@ -350,44 +287,35 @@ struct CallDetailSelection {
     let contact: ContactRecord?
 }
 
+struct CallDetailRoute: Hashable {
+    let recordID: UUID
+}
+
 private struct CallHistoryRecordRow: View {
     let entry: CallHistoryEntry
     let linePresentation: LineHistoryPresentation
     let contact: ContactRecord?
     let referenceDate: Date
     let isEditing: Bool
-    let isSelected: Bool
     let isStarting: Bool
     let isInteractionDisabled: Bool
-    let onSelect: () -> Void
     let onCall: () -> Void
-    let onDetails: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
             if isEditing {
-                Button(action: onSelect) {
-                    HStack(spacing: 12) {
-                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                            .font(.system(size: 22, weight: .regular))
-                            .foregroundStyle(isSelected ? .blue : Color(uiColor: .systemGray3))
-
-                        CallHistoryRow(
-                            entry: entry,
-                            linePresentation: linePresentation,
-                            contact: contact,
-                            referenceDate: referenceDate
-                        )
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(entry.latestRecord.displayName)
-                .accessibilityValue(isSelected ? Text("Selected") : Text("Not selected"))
+                CallHistoryRow(
+                    entry: entry,
+                    linePresentation: linePresentation,
+                    contact: contact,
+                    referenceDate: referenceDate
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .accessibilityLabel(displayName)
                 .accessibilityHint("Toggles this call for deletion")
             } else {
-                Button(action: onDetails) {
+                NavigationLink(value: CallDetailRoute(recordID: entry.latestRecord.id)) {
                     CallHistoryRow(
                         entry: entry,
                         linePresentation: linePresentation,
@@ -397,7 +325,6 @@ private struct CallHistoryRecordRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
                 .disabled(isInteractionDisabled)
                 .accessibilityHint("Call details")
 
@@ -415,12 +342,16 @@ private struct CallHistoryRecordRow: View {
                     .buttonStyle(.plain)
                     .frame(width: 62, height: 56)
                     .disabled(isInteractionDisabled)
-                    .accessibilityLabel(entry.latestRecord.displayName)
+                    .accessibilityLabel(displayName)
                     .accessibilityHint("Calls this number using the displayed SIM")
                 }
             }
         }
         .frame(minHeight: 74)
+    }
+
+    private var displayName: String {
+        contact?.displayName ?? entry.latestRecord.displayName
     }
 }
 
@@ -435,7 +366,7 @@ private struct CallHistoryRow: View {
             CallHistoryAvatar(record: record, contact: contact)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(record.displayName)
+                Text(contact?.displayName ?? record.displayName)
                     .font(.headline)
                     .foregroundStyle(record.result == .missed ? .red : .primary)
                     .lineLimit(1)
@@ -626,6 +557,8 @@ struct DurationText: View {
             defaultMessageLineID: PreviewFixtures.devices.first?.id,
             sendMessage: { _, _, _ in },
             editMode: .constant(.inactive),
+            filter: .constant(.all),
+            selectedLineID: .constant(nil),
             onDelete: { _ in },
             onStarted: { _ in }
         )
@@ -649,6 +582,8 @@ struct DurationText: View {
             defaultMessageLineID: nil,
             sendMessage: { _, _, _ in },
             editMode: .constant(.inactive),
+            filter: .constant(.all),
+            selectedLineID: .constant(nil),
             onDelete: { _ in },
             onStarted: { _ in }
         )
@@ -668,6 +603,8 @@ struct DurationText: View {
             defaultMessageLineID: nil,
             sendMessage: { _, _, _ in },
             editMode: .constant(.inactive),
+            filter: .constant(.all),
+            selectedLineID: .constant(nil),
             onDelete: { _ in },
             onStarted: { _ in }
         )
@@ -687,6 +624,8 @@ struct DurationText: View {
             defaultMessageLineID: nil,
             sendMessage: { _, _, _ in },
             editMode: .constant(.inactive),
+            filter: .constant(.all),
+            selectedLineID: .constant(nil),
             onDelete: { _ in },
             onStarted: { _ in }
         )
@@ -708,6 +647,8 @@ struct DurationText: View {
             defaultMessageLineID: nil,
             sendMessage: { _, _, _ in },
             editMode: .constant(.inactive),
+            filter: .constant(.all),
+            selectedLineID: .constant(nil),
             onDelete: { _ in },
             onStarted: { _ in }
         )
@@ -733,6 +674,8 @@ private struct CallHistoryEditingPreview: View {
                         defaultMessageLineID: PreviewFixtures.devices.first?.id,
                         sendMessage: { _, _, _ in },
                         editMode: $editMode,
+                        filter: .constant(.all),
+                        selectedLineID: .constant(nil),
                         onDelete: { _ in },
                         onStarted: { _ in }
                     )

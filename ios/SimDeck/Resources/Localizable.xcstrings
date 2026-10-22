@@ -529,6 +529,9 @@
         }
       }
     },
+    "Call Unavailable" : {
+
+    },
     "Call and message through your own SIM devices while your numbers and conversations remain end-to-end encrypted." : {
       "localizations" : {
         "zh-Hans" : {
@@ -886,6 +889,9 @@
           }
         }
       }
+    },
+    "Conversation Unavailable" : {
+
     },
     "Copy" : {
       "localizations" : {
@@ -2136,9 +2142,6 @@
         }
       }
     },
-    "Not selected" : {
-
-    },
     "Notifications" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2900,9 +2903,6 @@
         }
       }
     },
-    "Selected" : {
-
-    },
     "Send" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -3555,6 +3555,9 @@
         }
       }
     },
+    "This call is no longer in your history." : {
+
+    },
     "This call record does not contain a valid phone number." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3564,6 +3567,9 @@
           }
         }
       }
+    },
+    "This conversation is no longer available." : {
+
     },
     "This iPhone" : {
       "localizations" : {

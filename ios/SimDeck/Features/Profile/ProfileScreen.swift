@@ -14,19 +14,16 @@ struct ProfileScreen: View {
             Section {
                 NavigationLink {
                     DeviceManagementScreen(model: model)
-                        .toolbar(.hidden, for: .tabBar)
                 } label: {
                     Label("Device Management", systemImage: "simcard.2")
                 }
                 NavigationLink {
                     SIMManagementScreen(model: model)
-                        .toolbar(.hidden, for: .tabBar)
                 } label: {
                     Label("SIM Cards", systemImage: "simcard")
                 }
                 NavigationLink {
                     SettingsScreen(model: model)
-                        .toolbar(.hidden, for: .tabBar)
                 } label: {
                     Label("Settings", systemImage: "gearshape")
                 }

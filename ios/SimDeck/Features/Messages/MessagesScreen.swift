@@ -21,10 +21,9 @@ struct MessagesScreen: View {
     let setMutedAction: (ConversationID, Bool) -> Void
     let callAction: (String) async -> Void
 
-    @State private var searchText = ""
-    @State private var selectedLineID: UUID?
-    @State private var composition: MessageComposition?
-    @State private var editMode: EditMode = .inactive
+    @Binding private var searchText: String
+    @Binding private var selectedLineID: UUID?
+    @Binding private var editMode: EditMode
     @State private var selectedConversationIDs: Set<ConversationID> = []
     @State private var conversationsPendingDeletion: [MessageConversation] = []
     @State private var deleteErrorMessage: String?
@@ -33,6 +32,9 @@ struct MessagesScreen: View {
     init(
         state: MessageListState,
         lines: [DeviceLineIdentity],
+        searchText: Binding<String> = .constant(""),
+        selectedLineID: Binding<UUID?> = .constant(nil),
+        editMode: Binding<EditMode> = .constant(.inactive),
         contacts: [ContactRecord] = [],
         referenceDate: Date = .now,
         defaultLineID: UUID? = nil,
@@ -54,6 +56,9 @@ struct MessagesScreen: View {
     ) {
         self.state = state
         self.lines = lines
+        _searchText = searchText
+        _selectedLineID = selectedLineID
+        _editMode = editMode
         self.contacts = contacts
         self.referenceDate = referenceDate
         self.defaultLineID = defaultLineID
@@ -92,11 +97,6 @@ struct MessagesScreen: View {
         }
         .navigationTitle("Messages")
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(
-            text: $searchText,
-            placement: .navigationBarDrawer(displayMode: .always),
-            prompt: "Search"
-        )
         .environment(\.editMode, $editMode)
         .task {
             await refreshAction()
@@ -104,34 +104,6 @@ struct MessagesScreen: View {
         }
         .refreshable {
             await refreshAction()
-        }
-        .toolbar {
-            if case .loaded(let conversations) = state, !conversations.isEmpty {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(editMode.isEditing ? "Done" : "Edit") {
-                        withAnimation(.snappy) {
-                            editMode = editMode.isEditing ? .inactive : .active
-                        }
-                    }
-                    .controlSize(.large)
-                }
-            }
-            if !editMode.isEditing {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    SIMFilterMenu(lines: lines, selection: $selectedLineID)
-
-                    Button {
-                        composition = MessageComposition()
-                    } label: {
-                        Label("New Message", systemImage: "square.and.pencil")
-                            .labelStyle(.iconOnly)
-                    }
-                    .disabled(!hasOnlineLine)
-                    .accessibilityHint(
-                        hasOnlineLine ? Text("") : Text("An online SIM is required.")
-                    )
-                }
-            }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if editMode.isEditing {
@@ -141,6 +113,13 @@ struct MessagesScreen: View {
         .onChange(of: editMode) { _, newMode in
             if !newMode.isEditing {
                 selectedConversationIDs.removeAll()
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if case .loaded = state {
+                SystemSearchBar(text: $searchText)
+                    .frame(height: 50)
+                    .background(.bar)
             }
         }
         .alert("Delete Conversations?", isPresented: deletionConfirmationIsPresented) {
@@ -159,15 +138,6 @@ struct MessagesScreen: View {
             }
         } message: {
             Text(deleteErrorMessage ?? "")
-        }
-        .sheet(item: $composition) { composition in
-            NewMessageScreen(
-                lines: lines,
-                selectedLineID: defaultLineID,
-                sendAction: sendAction,
-                sendImageAction: sendImageAction
-            )
-            .id(composition.id)
         }
         .scrollEdgeEffectStyle(.soft, for: .all)
     }
@@ -357,13 +327,6 @@ struct MessagesScreen: View {
         }
     }
 
-    private var hasOnlineLine: Bool {
-        lines.contains(where: \.isOnline)
-    }
-}
-
-private struct MessageComposition: Identifiable {
-    let id = UUID()
 }
 
 #if DEBUG

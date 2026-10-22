@@ -7,21 +7,24 @@ import UIKit
 
 struct ContactsScreen: View {
     @Bindable var model: AppModel
+    @Binding private var searchText: String
     @State private var contactModel: ContactListModel
-    @State private var selectedContact: ContactRecord?
     private let startsSynchronization: Bool
 
     init(
         model: AppModel,
+        searchText: Binding<String> = .constant(""),
         contactStore: (any ContactStoreProviding)? = nil,
         initialState: ContactListState = .loading,
         startsSynchronization: Bool = true
     ) {
         self.model = model
+        _searchText = searchText
         _contactModel = State(
             initialValue: ContactListModel(
                 store: contactStore ?? model.contactStore,
-                state: initialState
+                state: initialState,
+                searchText: searchText.wrappedValue
             )
         )
         self.startsSynchronization = startsSynchronization
@@ -44,14 +47,6 @@ struct ContactsScreen: View {
             }
         }
         .navigationTitle("Contacts")
-        .searchable(
-            text: Binding(
-                get: { contactModel.searchText },
-                set: { contactModel.searchText = $0 }
-            ),
-            placement: .navigationBarDrawer(displayMode: .always),
-            prompt: "Search"
-        )
         .task {
             guard startsSynchronization else { return }
             await contactModel.run()
@@ -59,6 +54,16 @@ struct ContactsScreen: View {
         .onChange(of: contactModel.state) { _, state in
             if case .loaded = state {
                 model.refreshContactNames()
+            }
+        }
+        .onChange(of: searchText, initial: true) { _, newValue in
+            contactModel.searchText = newValue
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if case .loaded = contactModel.state {
+                SystemSearchBar(text: $searchText)
+                    .frame(height: 50)
+                    .background(.bar)
             }
         }
         .scrollEdgeEffectStyle(.soft, for: .all)
@@ -82,14 +87,11 @@ struct ContactsScreen: View {
                     ForEach(sections) { section in
                         Section {
                             ForEach(section.contacts) { contact in
-                                Button {
-                                    selectedContact = contact
-                                } label: {
+                                NavigationLink(value: contact) {
                                     ContactRow(contact: contact)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .contentShape(Rectangle())
                                 }
-                                .buttonStyle(.plain)
                                 .listRowInsets(
                                     EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 44)
                                 )
@@ -120,24 +122,6 @@ struct ContactsScreen: View {
                             proxy.scrollTo(title, anchor: .top)
                         }
                     }
-                }
-                .navigationDestination(item: $selectedContact) { contact in
-                    ContactDetailScreen(
-                        contact: contact,
-                        lines: model.devices,
-                        defaultMessageLineID: model.defaultMessageLineID,
-                        callAction: { number in
-                            await model.handleExternalDial(number: number)
-                        },
-                        sendAction: { lineID, number, body in
-                            try await model.sendMessage(
-                                lineID: lineID,
-                                remoteNumber: number,
-                                body: body
-                            )
-                        }
-                    )
-                    .toolbar(.hidden, for: .tabBar)
                 }
                 .listStyle(.plain)
             }

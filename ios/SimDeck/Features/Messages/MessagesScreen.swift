@@ -19,7 +19,6 @@ struct MessagesScreen: View {
     let markUnreadAction: (ConversationID) -> Void
     let isMutedAction: (ConversationID) -> Bool
     let setMutedAction: (ConversationID, Bool) -> Void
-    let openConversation: (ConversationID) -> Void
     let callAction: (String) async -> Void
 
     @State private var searchText = ""
@@ -51,7 +50,6 @@ struct MessagesScreen: View {
         markUnreadAction: @escaping (ConversationID) -> Void = { _ in },
         isMutedAction: @escaping (ConversationID) -> Bool = { _ in false },
         setMutedAction: @escaping (ConversationID, Bool) -> Void = { _, _ in },
-        openConversation: @escaping (ConversationID) -> Void = { _ in },
         callAction: @escaping (String) async -> Void = { _ in }
     ) {
         self.state = state
@@ -68,7 +66,6 @@ struct MessagesScreen: View {
         self.markUnreadAction = markUnreadAction
         self.isMutedAction = isMutedAction
         self.setMutedAction = setMutedAction
-        self.openConversation = openConversation
         self.callAction = callAction
     }
 
@@ -186,7 +183,7 @@ struct MessagesScreen: View {
             if filtered.isEmpty {
                 ContentUnavailableView.search(text: searchText)
             } else {
-                List(selection: $selectedConversationIDs) {
+                List(selection: editMode.isEditing ? $selectedConversationIDs : nil) {
                     ForEach(filtered) { conversation in
                         conversationRow(
                             conversation,
@@ -225,9 +222,7 @@ struct MessagesScreen: View {
             )
             .contentShape(.rect)
         } else {
-            Button {
-                openConversation(conversation.id)
-            } label: {
+            NavigationLink(value: conversation.id) {
                 ConversationRow(
                     conversation: conversation,
                     linePresentation: conversation.linePresentation(in: lines),
@@ -239,7 +234,6 @@ struct MessagesScreen: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(.rect)
             }
-            .buttonStyle(.plain)
             .swipeActions(edge: .leading, allowsFullSwipe: true) {
                 if conversation.unreadCount > 0 {
                     Button {

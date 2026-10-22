@@ -465,9 +465,6 @@
         }
       }
     },
-    "Back, %lld unread" : {
-
-    },
     "Bound devices" : {
       "extractionState" : "stale",
       "localizations" : {

@@ -10,7 +10,6 @@ struct ConversationScreen: View {
     let lines: [DeviceLineIdentity]
     let contacts: [ContactRecord]
     let defaultMessageLineID: UUID?
-    let backUnreadCount: Int
     let sendAction: (UUID, String, String) async throws -> Void
     let sendImageAction: (UUID, String, String, MessageImageAttachment) async throws -> Void
     let retryAction: (UUID) async throws -> Void
@@ -30,7 +29,7 @@ struct ConversationScreen: View {
     @State private var activeSheet: ConversationSheet?
     @State private var isContactDetailPresented = false
     @State private var messagePendingDeletion: MessageItem?
-    @State private var timestampRevealState = MessageTimestampRevealState()
+    @State private var timestampRevealModel = MessageTimestampRevealModel()
     @State private var isSending = false
     @State private var errorMessage: String?
 
@@ -40,7 +39,6 @@ struct ConversationScreen: View {
         lines: [DeviceLineIdentity],
         contacts: [ContactRecord] = [],
         defaultMessageLineID: UUID? = nil,
-        backUnreadCount: Int = 0,
         sendAction: @escaping (UUID, String, String) async throws -> Void = { _, _, _ in },
         sendImageAction: @escaping (
             UUID,
@@ -57,7 +55,6 @@ struct ConversationScreen: View {
         self.lines = lines
         self.contacts = contacts
         self.defaultMessageLineID = defaultMessageLineID
-        self.backUnreadCount = backUnreadCount
         self.sendAction = sendAction
         self.sendImageAction = sendImageAction
         self.retryAction = retryAction
@@ -116,7 +113,7 @@ struct ConversationScreen: View {
                                 deleteAction: {
                                     messagePendingDeletion = entry.message
                                 },
-                                timestampRevealState: $timestampRevealState
+                                timestampRevealModel: timestampRevealModel
                             )
                         }
                         .id(entry.id)
@@ -128,12 +125,17 @@ struct ConversationScreen: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
-                .padding(.top, conversationHeaderHeight)
                 .id(selectedLineID)
                 .transition(.opacity)
+                .modifier(
+                    ConversationTimestampGestureModifier(
+                        model: timestampRevealModel,
+                        reduceMotion: reduceMotion
+                    )
+                )
             }
+            .contentShape(Rectangle())
             .scrollDismissesKeyboard(.interactively)
-            .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(.top, for: .alignment)
             .task(id: selectedLineID) {
                 scrollToBottom(using: proxy)
@@ -150,15 +152,9 @@ struct ConversationScreen: View {
                 }
                 markVisibleConversationsRead()
                 messagePendingDeletion = nil
-                timestampRevealState.end()
+                timestampRevealModel.end()
                 scrollToBottom(using: proxy, animated: true)
             }
-        }
-        .overlay(alignment: .top) {
-            conversationNavigationHeader
-        }
-        .overlay(alignment: .leading) {
-            conversationBackGestureRegion
         }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 0) {
@@ -197,7 +193,27 @@ struct ConversationScreen: View {
                 )
             }
         }
-        .toolbar(.hidden, for: .navigationBar)
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                ConversationHeader(
+                    contact: displayedContact,
+                    usesAccessibilityLayout: dynamicTypeSize.isAccessibilitySize,
+                    transitionID: contactTransitionID,
+                    transitionNamespace: contactTransitionNamespace,
+                    action: {
+                        isContactDetailPresented = true
+                    }
+                )
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            }
+
+            ToolbarItem(placement: .topBarTrailing) {
+                lineSelectionControl
+            }
+        }
         .onAppear {
             markVisibleConversationsRead()
         }
@@ -358,81 +374,6 @@ struct ConversationScreen: View {
         )
     }
 
-    private var conversationNavigationHeader: some View {
-        ZStack {
-            ConversationHeader(
-                contact: displayedContact,
-                usesAccessibilityLayout: dynamicTypeSize.isAccessibilitySize,
-                transitionID: contactTransitionID,
-                transitionNamespace: contactTransitionNamespace,
-                action: {
-                    isContactDetailPresented = true
-                }
-            )
-            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-
-            HStack {
-                Button {
-                    dismiss()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chevron.left")
-                            .font(.title3.weight(.semibold))
-
-                        if backUnreadCount > 0 {
-                            Text(backUnreadCount, format: .number)
-                                .font(.subheadline.weight(.semibold))
-                                .monospacedDigit()
-                                .foregroundStyle(Color(uiColor: .systemBackground))
-                                .padding(.horizontal, 9)
-                                .padding(.vertical, 5)
-                                .background(.primary, in: Capsule())
-                        }
-                    }
-                    .padding(.horizontal, backUnreadCount > 0 ? 12 : 0)
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .glassEffect(.regular.interactive(), in: Capsule())
-                .accessibilityLabel(
-                    backUnreadCount > 0
-                        ? Text("Back, \(backUnreadCount) unread")
-                        : Text("Back")
-                )
-
-                Spacer()
-
-                lineSelectionControl
-            }
-            .frame(maxHeight: .infinity, alignment: .top)
-        }
-        .frame(height: conversationHeaderHeight)
-        .padding(.horizontal, 16)
-    }
-
-    private var conversationHeaderHeight: CGFloat {
-        dynamicTypeSize.isAccessibilitySize ? 108 : 86
-    }
-
-    private var conversationBackGestureRegion: some View {
-        Color.clear
-            .frame(width: 24)
-            .frame(maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 12, coordinateSpace: .global)
-                    .onEnded { value in
-                        guard value.translation.width >= 72,
-                              abs(value.translation.width) > abs(value.translation.height) else {
-                            return
-                        }
-                        dismiss()
-                    }
-            )
-            .accessibilityHidden(true)
-    }
-
     @ViewBuilder
     private var lineSelectionControl: some View {
         Menu {
@@ -567,6 +508,26 @@ struct ConversationScreen: View {
                 await Task.yield()
                 proxy.scrollTo(ConversationScrollAnchor.bottom, anchor: .bottom)
             }
+        }
+    }
+}
+
+private struct ConversationTimestampGestureModifier: ViewModifier {
+    let model: MessageTimestampRevealModel
+    let reduceMotion: Bool
+
+    func body(content: Content) -> some View {
+        content.background {
+            MessageHorizontalSwipeGesture(
+                onChanged: { horizontal, vertical in
+                    model.update(horizontal: horizontal, vertical: vertical)
+                },
+                onEnded: { _, _ in
+                    withAnimation(reduceMotion ? nil : .snappy) {
+                        model.end()
+                    }
+                }
+            )
         }
     }
 }

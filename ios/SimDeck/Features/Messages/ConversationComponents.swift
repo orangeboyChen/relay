@@ -75,9 +75,7 @@ struct MessageBubble: View {
     let detailsAction: () -> Void
     let retryAction: () -> Void
     let deleteAction: () -> Void
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Binding private var timestampRevealState: MessageTimestampRevealState
+    @Bindable var timestampRevealModel: MessageTimestampRevealModel
 
     init(
         message: MessageItem,
@@ -91,7 +89,7 @@ struct MessageBubble: View {
         detailsAction: @escaping () -> Void = {},
         retryAction: @escaping () -> Void = {},
         deleteAction: @escaping () -> Void = {},
-        timestampRevealState: Binding<MessageTimestampRevealState> = .constant(.init())
+        timestampRevealModel: MessageTimestampRevealModel = MessageTimestampRevealModel()
     ) {
         self.message = message
         self.lineSnapshot = lineSnapshot
@@ -104,7 +102,7 @@ struct MessageBubble: View {
         self.detailsAction = detailsAction
         self.retryAction = retryAction
         self.deleteAction = deleteAction
-        _timestampRevealState = timestampRevealState
+        self.timestampRevealModel = timestampRevealModel
     }
 
     var body: some View {
@@ -134,21 +132,6 @@ struct MessageBubble: View {
             }
         }
         .contentShape(.rect)
-        .gesture(
-            MessageHorizontalSwipeGesture(
-                onChanged: { horizontal, vertical in
-                    timestampRevealState.update(
-                        horizontal: horizontal,
-                        vertical: vertical
-                    )
-                },
-                onEnded: { _, _ in
-                    withAnimation(reduceMotion ? nil : .snappy) {
-                        timestampRevealState.end()
-                    }
-                }
-            )
-        )
         .accessibilityAction(named: Text("Details")) {
             detailsAction()
         }
@@ -170,10 +153,10 @@ struct MessageBubble: View {
             )
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
-            .opacity(timestampRevealState.progress)
+            .opacity(timestampRevealModel.progress)
             .offset(
                 x: MessageSwipeInteraction.maximumTimestampOffset
-                    * (1 - timestampRevealState.progress)
+                    * (1 - timestampRevealModel.progress)
             )
             .accessibilityHidden(true)
         }
@@ -446,6 +429,19 @@ private struct ConversationComponentsPreview: View {
         lineSnapshot: LineHistorySnapshot(line: PreviewFixtures.devices[0]),
         retryAction: {}
     )
+    .padding()
+}
+
+#Preview("Timestamp reveal") {
+    VStack(spacing: 8) {
+        ForEach(PreviewFixtures.conversations[0].messages.prefix(2)) { message in
+            MessageBubble(
+                message: message,
+                lineSnapshot: LineHistorySnapshot(line: PreviewFixtures.devices[0]),
+                timestampRevealModel: MessageTimestampRevealModel(progress: 1)
+            )
+        }
+    }
     .padding()
 }
 #endif

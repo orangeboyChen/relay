@@ -66,4 +66,29 @@ final class MessageSwipeInteractionTests: XCTestCase {
         XCTAssertEqual(state.offset, 0)
         XCTAssertEqual(state.progress, 0)
     }
+
+    @MainActor
+    func testRevealModelPublishesSharedProgressAndResets() {
+        let model = MessageTimestampRevealModel()
+
+        model.update(horizontal: -14, vertical: 0)
+        XCTAssertEqual(model.progress, 0.5)
+
+        model.update(horizontal: -72, vertical: 0)
+        XCTAssertEqual(model.progress, 1)
+
+        model.end()
+        XCTAssertEqual(model.progress, 0)
+    }
+
+    @MainActor
+    func testRevealModelIgnoresRightwardAndVerticalMovement() {
+        let model = MessageTimestampRevealModel()
+
+        model.update(horizontal: 72, vertical: 0)
+        XCTAssertEqual(model.progress, 0)
+
+        model.update(horizontal: -20, vertical: 40)
+        XCTAssertEqual(model.progress, 0)
+    }
 }

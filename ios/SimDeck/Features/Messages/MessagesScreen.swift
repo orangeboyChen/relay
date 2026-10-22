@@ -19,6 +19,7 @@ struct MessagesScreen: View {
     let markUnreadAction: (ConversationID) -> Void
     let isMutedAction: (ConversationID) -> Bool
     let setMutedAction: (ConversationID, Bool) -> Void
+    let openConversation: (ConversationID) -> Void
     let callAction: (String) async -> Void
 
     @State private var searchText = ""
@@ -28,7 +29,6 @@ struct MessagesScreen: View {
     @State private var selectedConversationIDs: Set<ConversationID> = []
     @State private var conversationsPendingDeletion: [MessageConversation] = []
     @State private var deleteErrorMessage: String?
-    @State private var selectedConversationID: ConversationID?
     @State private var mutedConversationIDs: Set<ConversationID> = []
 
     init(
@@ -51,6 +51,7 @@ struct MessagesScreen: View {
         markUnreadAction: @escaping (ConversationID) -> Void = { _ in },
         isMutedAction: @escaping (ConversationID) -> Bool = { _ in false },
         setMutedAction: @escaping (ConversationID, Bool) -> Void = { _, _ in },
+        openConversation: @escaping (ConversationID) -> Void = { _ in },
         callAction: @escaping (String) async -> Void = { _ in }
     ) {
         self.state = state
@@ -67,6 +68,7 @@ struct MessagesScreen: View {
         self.markUnreadAction = markUnreadAction
         self.isMutedAction = isMutedAction
         self.setMutedAction = setMutedAction
+        self.openConversation = openConversation
         self.callAction = callAction
     }
 
@@ -203,29 +205,6 @@ struct MessagesScreen: View {
                 .onChange(of: filtered.map(\.id)) { _, conversationIDs in
                     selectedConversationIDs.formIntersection(conversationIDs)
                 }
-                .navigationDestination(isPresented: selectedConversationIsPresented) {
-                    if let selectedConversationID,
-                       let conversation = conversations.first(where: {
-                           $0.id == selectedConversationID
-                       }) {
-                        ConversationScreen(
-                            initialID: conversation.id,
-                            conversations: conversation.lineAlternatives(in: conversations),
-                            lines: lines,
-                            contacts: contacts,
-                            defaultMessageLineID: defaultLineID,
-                            backUnreadCount: conversations.reduce(into: 0) { count, item in
-                                count += item.unreadCount
-                            },
-                            sendAction: sendAction,
-                            sendImageAction: sendImageAction,
-                            retryAction: retryAction,
-                            deleteAction: deleteAction,
-                            markReadAction: markReadAction,
-                            callAction: callAction
-                        )
-                    }
-                }
             }
         }
     }
@@ -247,7 +226,7 @@ struct MessagesScreen: View {
             .contentShape(.rect)
         } else {
             Button {
-                selectedConversationID = conversation.id
+                openConversation(conversation.id)
             } label: {
                 ConversationRow(
                     conversation: conversation,
@@ -330,17 +309,6 @@ struct MessagesScreen: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 6)
         .background(.bar)
-    }
-
-    private var selectedConversationIsPresented: Binding<Bool> {
-        Binding(
-            get: { selectedConversationID != nil },
-            set: { isPresented in
-                if !isPresented {
-                    selectedConversationID = nil
-                }
-            }
-        )
     }
 
     private func synchronizeMutedConversations() {

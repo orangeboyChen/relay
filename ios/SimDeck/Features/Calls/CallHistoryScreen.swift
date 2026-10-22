@@ -15,11 +15,11 @@ struct CallHistoryScreen: View {
     let sendMessage: (UUID, String, String) async throws -> Void
     @Binding var editMode: EditMode
     let onDelete: (Set<UUID>) throws -> Void
+    var openDetail: (CallRecord, ContactRecord?) -> Void = { _, _ in }
     let onStarted: (UUID) -> Void
 
     @State private var startingRecordID: UUID?
     @State private var presentedError: CallHistoryPresentedError?
-    @State private var selectedDetail: CallDetailSelection?
     @State private var selectedRecordIDs: Set<UUID> = []
     @State private var isDeleteConfirmationPresented = false
     @State private var filter: CallHistoryFilter = .all
@@ -57,11 +57,7 @@ struct CallHistoryScreen: View {
                             },
                             onCall: { startCall(from: record) },
                             onDetails: {
-                                selectedDetail = CallDetailSelection(
-                                    record: record,
-                                    linePresentation: linePresentation,
-                                    contact: contact
-                                )
+                                openDetail(record, contact)
                             }
                         )
                         .listRowInsets(
@@ -201,34 +197,6 @@ struct CallHistoryScreen: View {
                 .background(.bar)
             }
         }
-        .navigationDestination(isPresented: detailIsPresented) {
-            if let selectedDetail {
-                if let contact = selectedDetail.contact {
-                    ContactDetailScreen(
-                        contact: contact,
-                        lines: lines,
-                        defaultMessageLineID: selectedDetail.record.lineID,
-                        callAction: { number in
-                            await startCall(
-                                to: number,
-                                using: selectedDetail.record.lineID,
-                                recordID: selectedDetail.record.id
-                            )
-                        },
-                        sendAction: sendMessage
-                    )
-                } else {
-                    CallDetailScreen(
-                        record: selectedDetail.record,
-                        linePresentation: selectedDetail.linePresentation,
-                        lines: lines,
-                        defaultMessageLineID: defaultMessageLineID,
-                        callAction: { startCall(from: selectedDetail.record) },
-                        sendAction: sendMessage
-                    )
-                }
-            }
-        }
         .alert(item: $presentedError) { error in
             Alert(
                 title: Text(error.title),
@@ -285,17 +253,6 @@ struct CallHistoryScreen: View {
 
     private func pruneSelection(from records: [CallRecord]) {
         selectedRecordIDs.formIntersection(Set(filtered(records).map(\.id)))
-    }
-
-    private var detailIsPresented: Binding<Bool> {
-        Binding(
-            get: { selectedDetail != nil },
-            set: { isPresented in
-                if !isPresented {
-                    selectedDetail = nil
-                }
-            }
-        )
     }
 
     private func startCall(from record: CallRecord) {

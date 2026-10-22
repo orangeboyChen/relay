@@ -8,6 +8,7 @@ struct MessagesTabScreen: View {
     @Bindable var model: AppModel
 
     @State private var contacts: [ContactRecord] = []
+    @State private var selectedConversationID: ConversationID?
 
     var body: some View {
         MessagesScreen(
@@ -51,6 +52,9 @@ struct MessagesTabScreen: View {
             setMutedAction: { conversationID, isMuted in
                 model.setConversationMuted(isMuted, id: conversationID)
             },
+            openConversation: { conversationID in
+                selectedConversationID = conversationID
+            },
             callAction: { number in
                 await model.handleExternalDial(number: number)
             }
@@ -62,6 +66,63 @@ struct MessagesTabScreen: View {
                 refreshContacts()
             }
         }
+        .navigationDestination(isPresented: conversationIsPresented) {
+            if let selectedConversationID,
+               case .loaded(let conversations) = model.messages,
+               let conversation = conversations.first(where: {
+                   $0.id == selectedConversationID
+               }) {
+                ConversationScreen(
+                    initialID: conversation.id,
+                    conversations: conversation.lineAlternatives(in: conversations),
+                    lines: model.devices,
+                    contacts: contacts,
+                    defaultMessageLineID: model.defaultMessageLineID,
+                    backUnreadCount: conversations.reduce(into: 0) { count, item in
+                        count += item.unreadCount
+                    },
+                    sendAction: { lineID, number, body in
+                        try await model.sendMessage(
+                            lineID: lineID,
+                            remoteNumber: number,
+                            body: body
+                        )
+                    },
+                    sendImageAction: { lineID, number, body, attachment in
+                        try await model.sendImageMessage(
+                            lineID: lineID,
+                            remoteNumber: number,
+                            body: body,
+                            attachment: attachment
+                        )
+                    },
+                    retryAction: { messageID in
+                        try await model.retryMessage(id: messageID)
+                    },
+                    deleteAction: { messageIDs in
+                        try model.deleteMessages(ids: messageIDs)
+                    },
+                    markReadAction: { conversationID in
+                        model.markConversationRead(conversationID)
+                    },
+                    callAction: { number in
+                        await model.handleExternalDial(number: number)
+                    }
+                )
+                .toolbar(.hidden, for: .tabBar)
+            }
+        }
+    }
+
+    private var conversationIsPresented: Binding<Bool> {
+        Binding(
+            get: { selectedConversationID != nil },
+            set: { isPresented in
+                if !isPresented {
+                    selectedConversationID = nil
+                }
+            }
+        )
     }
 
     private func refreshContacts() {

@@ -137,6 +137,7 @@ struct ContactsScreen: View {
                             )
                         }
                     )
+                    .toolbar(.hidden, for: .tabBar)
                 }
                 .listStyle(.plain)
             }

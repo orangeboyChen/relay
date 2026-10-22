@@ -10,9 +10,7 @@ struct RootTabView: View {
 
     var body: some View {
         ZStack {
-            NavigationStack {
-                tabs
-            }
+            tabs
 
             if model.callCoordinator.activeCall != nil {
                 InCallScreen(
@@ -75,24 +73,34 @@ struct RootTabView: View {
     @TabContentBuilder<AppTab>
     private var standardTabs: some TabContent<AppTab> {
         Tab("Calls", systemImage: "phone.fill", value: AppTab.calls) {
-            CallsTabScreen(model: model)
+            NavigationStack {
+                CallsTabScreen(model: model)
+            }
         }
 
         Tab("Messages", systemImage: "message.fill", value: AppTab.messages) {
-            MessagesTabScreen(model: model)
+            NavigationStack {
+                MessagesTabScreen(model: model)
+            }
         }
 
         Tab("Contacts", systemImage: "person.2.fill", value: AppTab.contacts) {
-            ContactsScreen(model: model)
+            NavigationStack {
+                ContactsScreen(model: model)
+            }
         }
 
         Tab("Me", systemImage: "person.crop.circle.fill", value: AppTab.profile) {
-            ProfileScreen(model: model)
+            NavigationStack {
+                ProfileScreen(model: model)
+            }
         }
     }
 
     private var keypadContent: some View {
-        KeypadTabScreen(model: model)
+        NavigationStack {
+            KeypadTabScreen(model: model)
+        }
     }
 }
 

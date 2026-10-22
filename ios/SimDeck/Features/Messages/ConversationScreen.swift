@@ -157,6 +157,9 @@ struct ConversationScreen: View {
         .overlay(alignment: .top) {
             conversationNavigationHeader
         }
+        .overlay(alignment: .leading) {
+            conversationBackGestureRegion
+        }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 0) {
                 if currentLine == nil {
@@ -410,6 +413,24 @@ struct ConversationScreen: View {
 
     private var conversationHeaderHeight: CGFloat {
         dynamicTypeSize.isAccessibilitySize ? 108 : 86
+    }
+
+    private var conversationBackGestureRegion: some View {
+        Color.clear
+            .frame(width: 24)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 12, coordinateSpace: .global)
+                    .onEnded { value in
+                        guard value.translation.width >= 72,
+                              abs(value.translation.width) > abs(value.translation.height) else {
+                            return
+                        }
+                        dismiss()
+                    }
+            )
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder

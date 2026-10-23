@@ -50,6 +50,8 @@ jobs:
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
 
       - uses: actions/setup-go@v6
         with:

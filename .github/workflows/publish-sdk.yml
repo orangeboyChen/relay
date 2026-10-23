@@ -1,0 +1,109 @@
+name: Publish SDK
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: SDK version, with or without a leading v
+        required: true
+        type: string
+      source_ref:
+        description: Relay revision containing the protocol schema
+        required: true
+        default: main
+        type: string
+
+concurrency:
+  group: publish-sdk
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Generate, verify, and publish SDK
+    runs-on: macos-26
+    steps:
+      - name: Validate release inputs
+        id: release
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          version="${INPUT_VERSION#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Version must use x.y.z or vx.y.z format." >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check out relay schema
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+
+      - name: Resolve source revision
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: bufbuild/buf-setup-action@v1
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: protocol/sdk/go.mod
+          cache-dependency-path: protocol/sdk/go.sum
+
+      - name: Generate and verify SDK
+        working-directory: protocol
+        run: ./scripts/build-sdk.sh
+
+      - name: Check out SDK publisher repository
+        uses: actions/checkout@v5
+        with:
+          repository: orangeboyChen/relay-sdk
+          ref: main
+          path: sdk-release
+          ssh-key: ${{ secrets.RELAY_SDK_DEPLOY_KEY }}
+          fetch-depth: 0
+
+      - name: Verify release tag is unused
+        working-directory: sdk-release
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            echo "SDK tag $RELEASE_TAG already exists." >&2
+            exit 1
+          fi
+
+      - name: Synchronize generated package
+        run: >-
+          rsync --archive --delete
+          --exclude=.git
+          --exclude=.github
+          protocol/sdk/
+          sdk-release/
+
+      - name: Commit and tag generated SDK
+        working-directory: sdk-release
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --all
+          if git diff --cached --quiet; then
+            echo "Generated SDK is identical to relay-sdk main; refusing an empty release." >&2
+            exit 1
+          fi
+          git commit -m "chore: publish SDK $RELEASE_VERSION" \
+            -m "Generated from orangeboyChen/relay@$SOURCE_SHA."
+          git tag --annotate "$RELEASE_TAG" --message "Relay SDK $RELEASE_VERSION"
+          git push origin HEAD:main "refs/tags/$RELEASE_TAG"

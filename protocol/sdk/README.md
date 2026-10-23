@@ -2,7 +2,7 @@
 
 Generated Go and Swift clients for the Sim Deck protobuf and Connect RPC contracts.
 
-This repository is generated from [`orangeboyChen/relay`](https://github.com/orangeboyChen/relay). Do not edit generated files directly.
+Release commits and tags are created exclusively by the publisher workflow in [`orangeboyChen/relay`](https://github.com/orangeboyChen/relay). Do not generate or edit SDK sources locally.
 
 ## Go
 

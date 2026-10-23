@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import Testing
+import UIKit
 @testable import SimDeck
 
 struct PersonAvatarTests {
@@ -54,5 +55,26 @@ struct PersonAvatarTests {
     @Test func notificationFallbackRendererAlwaysProducesAnImage() {
         #expect(PersonAvatarImageRenderer.pngData(displayName: "Alice Brown") != nil)
         #expect(PersonAvatarImageRenderer.pngData(displayName: "10086") != nil)
+    }
+
+    @Test func appAndNotificationFallbacksShareOneRenderer() throws {
+        let image = try #require(
+            PersonAvatarImageRenderer.image(
+                displayName: "Alice Brown",
+                size: 44,
+                scale: 3
+            )
+        )
+        let notificationData = try #require(
+            PersonAvatarImageRenderer.pngData(
+                displayName: "Alice Brown",
+                size: 44
+            )
+        )
+        let notificationImage = try #require(UIImage(data: notificationData))
+
+        #expect(image.size == CGSize(width: 44, height: 44))
+        #expect(image.scale == 3)
+        #expect(notificationImage.size == CGSize(width: 44, height: 44))
     }
 }

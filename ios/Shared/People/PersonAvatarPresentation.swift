@@ -47,21 +47,22 @@ enum PersonAvatarPalette {
 }
 
 enum PersonAvatarImageRenderer {
-    static func pngData(
+    static func image(
         displayName: String?,
         organizationName: String? = nil,
-        size: CGFloat = 180
-    ) -> Data? {
-        guard size > 0 else { return nil }
+        size: CGFloat = 180,
+        scale: CGFloat = 1
+    ) -> UIImage? {
+        guard size > 0, scale > 0 else { return nil }
         let fallback = PersonAvatarFallback.resolve(
             displayName: displayName,
             organizationName: organizationName
         )
         let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
+        format.scale = scale
         format.opaque = false
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size), format: format)
-        let image = renderer.image { context in
+        return renderer.image { context in
             let bounds = CGRect(origin: .zero, size: CGSize(width: size, height: size))
             let shape = fallback == .organization
                 ? UIBezierPath(
@@ -83,7 +84,18 @@ enum PersonAvatarImageRenderer {
                 drawSymbol("person.fill", in: bounds, size: size * 0.46)
             }
         }
-        return image.pngData()
+    }
+
+    static func pngData(
+        displayName: String?,
+        organizationName: String? = nil,
+        size: CGFloat = 180
+    ) -> Data? {
+        image(
+            displayName: displayName,
+            organizationName: organizationName,
+            size: size
+        )?.pngData()
     }
 
     private static func drawGradient(in context: CGContext, bounds: CGRect) {
@@ -101,7 +113,10 @@ enum PersonAvatarImageRenderer {
     }
 
     private static func drawMonogram(_ monogram: String, in bounds: CGRect, size: CGFloat) {
-        let font = UIFont.systemFont(ofSize: size * 0.4, weight: .medium)
+        let baseFont = UIFont.systemFont(ofSize: size * 0.4, weight: .medium)
+        let font = baseFont.fontDescriptor.withDesign(.rounded)
+            .map { UIFont(descriptor: $0, size: size * 0.4) }
+            ?? baseFont
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: UIColor.white,

@@ -56,22 +56,30 @@ type EncryptedResult struct {
 
 // Payload is the command plaintext visible only to the iPhone and target device.
 type Payload struct {
-	Version              int    `json:"version"`
-	Operation            string `json:"operation"`
-	SlotID               string `json:"slot_id,omitempty"`
-	SIMID                string `json:"sim_id,omitempty"`
-	CallID               string `json:"call_id,omitempty"`
-	MessageID            string `json:"message_id,omitempty"`
-	Number               string `json:"number,omitempty"`
-	Body                 string `json:"body,omitempty"`
-	Digits               string `json:"digits,omitempty"`
-	MediaOffer           string `json:"media_offer,omitempty"`
-	CallLeaseSeconds     int    `json:"call_lease_seconds,omitempty"`
-	DataEnabled          *bool  `json:"data_enabled,omitempty"`
-	AirplaneModeEnabled  *bool  `json:"airplane_mode_enabled,omitempty"`
-	IncomingCallsEnabled *bool  `json:"incoming_calls_enabled,omitempty"`
-	IncomingSMSEnabled   *bool  `json:"incoming_sms_enabled,omitempty"`
-	VoLTEEnabled         *bool  `json:"volte_enabled,omitempty"`
+	Version              int                `json:"version"`
+	Operation            string             `json:"operation"`
+	SlotID               string             `json:"slot_id,omitempty"`
+	SIMID                string             `json:"sim_id,omitempty"`
+	CallID               string             `json:"call_id,omitempty"`
+	MessageID            string             `json:"message_id,omitempty"`
+	Number               string             `json:"number,omitempty"`
+	Body                 string             `json:"body,omitempty"`
+	Digits               string             `json:"digits,omitempty"`
+	MediaOffer           string             `json:"media_offer,omitempty"`
+	CallLeaseSeconds     int                `json:"call_lease_seconds,omitempty"`
+	DataEnabled          *bool              `json:"data_enabled,omitempty"`
+	AirplaneModeEnabled  *bool              `json:"airplane_mode_enabled,omitempty"`
+	IncomingCallsEnabled *bool              `json:"incoming_calls_enabled,omitempty"`
+	IncomingSMSEnabled   *bool              `json:"incoming_sms_enabled,omitempty"`
+	VoLTEEnabled         *bool              `json:"volte_enabled,omitempty"`
+	Attachment           *MessageAttachment `json:"attachment,omitempty"`
+}
+
+// MessageAttachment is one inline encrypted MMS object.
+type MessageAttachment struct {
+	Filename string `json:"filename"`
+	MIMEType string `json:"mime_type"`
+	Data     []byte `json:"data"`
 }
 
 // Result is the encrypted execution outcome consumed by the initiating iPhone.
@@ -108,6 +116,10 @@ type Calls interface {
 // Messages is the modem SMS capability used by encrypted commands.
 type Messages interface {
 	SendSMS(context.Context, string, string, byte) error
+}
+
+type mmsMessages interface {
+	SendMMS(context.Context, string, string, MessageAttachment) error
 }
 
 // CallEventRegistrar binds modem state changes to the initiating encrypted call.
@@ -328,12 +340,26 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload, senderInst
 		}
 		return executionResult{}, nil
 	case "message.send":
-		if !identity.ValidDeviceUUID(payload.MessageID) || strings.TrimSpace(payload.Number) == "" || strings.TrimSpace(payload.Body) == "" {
+		if !identity.ValidDeviceUUID(payload.MessageID) || strings.TrimSpace(payload.Number) == "" ||
+			(strings.TrimSpace(payload.Body) == "" && payload.Attachment == nil) {
+			return executionResult{}, errInvalidCommand
+		}
+		if payload.Attachment != nil &&
+			(strings.TrimSpace(payload.Attachment.Filename) == "" ||
+				payload.Attachment.MIMEType != "image/jpeg" ||
+				len(payload.Attachment.Data) == 0 || len(payload.Attachment.Data) > 40_000) {
 			return executionResult{}, errInvalidCommand
 		}
 		reference := sha256.Sum256([]byte(payload.MessageID))
 		if registrar, ok := runtime.messages.(interface{ PrepareMessageStatus(string) }); ok {
 			registrar.PrepareMessageStatus(payload.MessageID)
+		}
+		if payload.Attachment != nil {
+			messages, ok := runtime.messages.(mmsMessages)
+			if !ok {
+				return executionResult{}, errMMSUnavailable
+			}
+			return executionResult{}, messages.SendMMS(ctx, payload.Number, payload.Body, *payload.Attachment)
 		}
 		return executionResult{}, runtime.messages.SendSMS(ctx, payload.Number, payload.Body, reference[0])
 	case "call.start":
@@ -547,6 +573,7 @@ var (
 	errInvalidCommand   = errors.New("invalid command payload")
 	errWrongSlot        = errors.New("command targets another SIM slot")
 	errMediaUnavailable = errors.New("call media unavailable")
+	errMMSUnavailable   = errors.New("modem session does not support MMS")
 )
 
 func commandErrorCode(err error) string {
@@ -558,6 +585,9 @@ func commandErrorCode(err error) string {
 	}
 	if errors.Is(err, errMediaUnavailable) {
 		return "media_unavailable"
+	}
+	if errors.Is(err, errMMSUnavailable) {
+		return "mms_unavailable"
 	}
 	return "modem_rejected"
 }

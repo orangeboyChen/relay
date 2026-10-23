@@ -137,6 +137,207 @@ var _ = Describe("AT client", func() {
 		Expect(response.Terminal).To(Equal("+CMS ERROR: 304"))
 	})
 
+	It("uploads a fixed-length binary payload after CONNECT", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := NewClient(clientTransport)
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+
+		payload := []byte{0xff, 0xd8, 0x00, 0xff, 0xd9}
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			command, _ := reader.ReadString('\r')
+			Expect(command).To(Equal("AT+QFUPL=\"RAM:photo.jpg\",5,300,1\r"))
+			_, _ = modemTransport.Write([]byte("\r\nCONNECT\r\n"))
+			received := make([]byte, len(payload))
+			_, _ = io.ReadFull(reader, received)
+			Expect(received).To(Equal(payload))
+			_, _ = modemTransport.Write([]byte("\r\n+QFUPL: 5,1234\r\nOK\r\n"))
+		}()
+
+		response, err := client.SendUpload(
+			context.Background(),
+			`AT+QFUPL="RAM:photo.jpg",5,300,1`,
+			payload,
+		)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(response.OK()).To(BeTrue())
+		Expect(response.Lines).To(Equal([]string{"+QFUPL: 5,1234"}))
+	})
+
+	It("validates upload commands before writing", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := NewClient(clientTransport)
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+
+		_, err := client.SendUpload(context.Background(), "", []byte("data"))
+		Expect(err).To(MatchError(ContainSubstring("one non-empty line")))
+		_, err = client.SendUpload(context.Background(), "AT+QFUPL\nBAD", []byte("data"))
+		Expect(err).To(MatchError(ContainSubstring("one non-empty line")))
+		_, err = client.SendUpload(context.Background(), "AT+QFUPL", nil)
+		Expect(err).To(MatchError(ContainSubstring("non-empty")))
+	})
+
+	It("returns an upload command rejection without writing binary data", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := NewClient(clientTransport)
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			_, _ = reader.ReadString('\r')
+			_, _ = modemTransport.Write([]byte("+CME ERROR: 407\r\n"))
+		}()
+
+		response, err := client.SendUpload(context.Background(), "AT+QFUPL", []byte("data"))
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(response.Terminal).To(Equal("+CME ERROR: 407"))
+	})
+
+	It("honors cancellation while waiting for an upload CONNECT prompt", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := NewClient(clientTransport)
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+
+		commandRead := make(chan struct{})
+		go func() {
+			_, _ = bufio.NewReader(modemTransport).ReadString('\r')
+			close(commandRead)
+		}()
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-commandRead
+			cancel()
+		}()
+
+		_, err := client.SendUpload(ctx, "AT+QFUPL", []byte("data"))
+
+		Expect(err).To(MatchError(context.Canceled))
+	})
+
+	It("honors cancellation after writing an upload payload", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := NewClient(clientTransport)
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+
+		payloadRead := make(chan struct{})
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			_, _ = reader.ReadString('\r')
+			_, _ = modemTransport.Write([]byte("\r\nCONNECT\r\n"))
+			payload := make([]byte, 4)
+			_, _ = io.ReadFull(reader, payload)
+			close(payloadRead)
+		}()
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-payloadRead
+			cancel()
+		}()
+
+		_, err := client.SendUpload(ctx, "AT+QFUPL", []byte("data"))
+
+		Expect(err).To(MatchError(context.Canceled))
+	})
+
+	It("stops an upload when the client closes before CONNECT", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := NewClient(clientTransport)
+		DeferCleanup(func() { _ = modemTransport.Close() })
+
+		commandRead := make(chan struct{})
+		go func() {
+			_, _ = bufio.NewReader(modemTransport).ReadString('\r')
+			close(commandRead)
+		}()
+		go func() {
+			<-commandRead
+			_ = client.Close()
+		}()
+
+		_, err := client.SendUpload(context.Background(), "AT+QFUPL", []byte("data"))
+
+		Expect(err).To(Or(
+			MatchError(ErrClosed),
+			MatchError(ContainSubstring("read AT transport")),
+		))
+	})
+
+	It("stops an upload when the client closes after writing the payload", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := NewClient(clientTransport)
+		DeferCleanup(func() { _ = modemTransport.Close() })
+
+		payloadRead := make(chan struct{})
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			_, _ = reader.ReadString('\r')
+			_, _ = modemTransport.Write([]byte("\r\nCONNECT\r\n"))
+			payload := make([]byte, 4)
+			_, _ = io.ReadFull(reader, payload)
+			close(payloadRead)
+		}()
+		go func() {
+			<-payloadRead
+			_ = client.Close()
+		}()
+
+		_, err := client.SendUpload(context.Background(), "AT+QFUPL", []byte("data"))
+
+		Expect(err).To(Or(
+			MatchError(ErrClosed),
+			MatchError(ContainSubstring("read AT transport")),
+		))
+	})
+
+	It("reports a transport failure while writing an upload payload", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := NewClient(clientTransport)
+		DeferCleanup(func() { _ = client.Close() })
+
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			_, _ = reader.ReadString('\r')
+			_, _ = modemTransport.Write([]byte("\r\nCONNECT\r\n"))
+			_ = modemTransport.Close()
+		}()
+
+		_, err := client.SendUpload(context.Background(), "AT+QFUPL", []byte("data"))
+
+		Expect(err).To(MatchError(ContainSubstring("write AT upload payload")))
+	})
+
+	It("rejects uploads before I/O when the context or client is closed", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := NewClient(clientTransport)
+		DeferCleanup(func() { _ = modemTransport.Close() })
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := client.SendUpload(ctx, "AT+QFUPL", []byte("data"))
+		Expect(err).To(MatchError(context.Canceled))
+
+		Expect(client.Close()).To(Succeed())
+		_, err = client.SendUpload(context.Background(), "AT+QFUPL", []byte("data"))
+		Expect(err).To(MatchError(ErrClosed))
+	})
+
 	It("drains a timed-out response before sending the next command", func() {
 		clientTransport, modemTransport := net.Pipe()
 		client := NewClient(clientTransport)
@@ -298,6 +499,9 @@ var _ = Describe("AT client", func() {
 
 		_, err = client.SendPrompt(context.Background(), "AT+CMGS=12", []byte("AABB"))
 		Expect(err).To(MatchError("write AT command: write failed"))
+
+		_, err = client.SendUpload(context.Background(), "AT+QFUPL", []byte("data"))
+		Expect(err).To(MatchError("write AT upload command: write failed"))
 	})
 
 	It("honors cancellation before acquiring the command slot", func() {

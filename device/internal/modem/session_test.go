@@ -17,6 +17,7 @@ import (
 
 	"sim-deck-device/internal/at"
 	"sim-deck-device/internal/call"
+	"sim-deck-device/internal/command"
 	"sim-deck-device/internal/sms"
 )
 
@@ -426,6 +427,72 @@ var _ = Describe("Modem session", func() {
 		}
 	})
 
+	It("uploads and submits an image MMS with optional text", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+
+		image := []byte{0xff, 0xd8, 0xff, 0xd9}
+		commands := make(chan string, 11)
+		uploads := make(chan []byte, 2)
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			for index := 0; index < 11; index++ {
+				command, readErr := reader.ReadString('\r')
+				if readErr != nil {
+					return
+				}
+				command = strings.TrimSuffix(command, "\r")
+				commands <- command
+				switch {
+				case strings.HasPrefix(command, "AT+QFUPL="):
+					length := len(image)
+					if strings.Contains(command, "outgoing.txt") {
+						length = len("hello")
+					}
+					_, _ = modemTransport.Write([]byte("\r\nCONNECT\r\n"))
+					payload := make([]byte, length)
+					_, _ = io.ReadFull(reader, payload)
+					uploads <- payload
+					_, _ = modemTransport.Write([]byte(fmt.Sprintf("\r\n+QFUPL: %d,1234\r\nOK\r\n", length)))
+				case command == "AT+QMMSEND=100":
+					_, _ = modemTransport.Write([]byte("OK\r\n"))
+					_ = session.handleURC(context.Background(), "+QMMSEND: 0,200")
+				default:
+					_, _ = modemTransport.Write([]byte("OK\r\n"))
+				}
+			}
+		}()
+
+		err := session.SendMMS(context.Background(), "+8613500000000", "hello", command.MessageAttachment{
+			Filename: "photo.jpg",
+			MIMEType: "image/jpeg",
+			Data:     image,
+		})
+
+		Expect(err).NotTo(HaveOccurred())
+		expectedCommands := []string{
+			"AT+QMMSEDIT=0",
+			`AT+QMMSEDIT=1,1,"+8613500000000"`,
+			`AT+QFUPL="RAM:sd_outgoing.jpg",4,300,1`,
+			`AT+QMMSEDIT=5,1,"RAM:sd_outgoing.jpg"`,
+			`AT+QMMSCFG="character","UTF8"`,
+			`AT+QFUPL="RAM:sd_outgoing.txt",5,300,1`,
+			`AT+QMMSEDIT=5,1,"RAM:sd_outgoing.txt"`,
+			"AT+QMMSEND=100",
+			"AT+QMMSEDIT=0",
+			`AT+QFDEL="RAM:sd_outgoing.jpg"`,
+			`AT+QFDEL="RAM:sd_outgoing.txt"`,
+		}
+		for _, expected := range expectedCommands {
+			Eventually(commands).Should(Receive(Equal(expected)))
+		}
+		Eventually(uploads).Should(Receive(Equal(image)))
+		Eventually(uploads).Should(Receive(Equal([]byte("hello"))))
+	})
+
 	It("does not accept a rejected or incomplete SMS submission", func() {
 		for _, response := range []string{"+CMS ERROR: 500\r\n", "OK\r\n"} {
 			session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
@@ -488,6 +555,20 @@ var _ = Describe("Modem session", func() {
 
 		Expect(session.SendSMS(context.Background(), "invalid", "hello", 1)).To(MatchError(ContainSubstring("encode outbound SMS")))
 	})
+
+	DescribeTable("parses asynchronous MMS submission results",
+		func(urc string, succeeds bool) {
+			err := parseMMSResult(urc)
+			if succeeds {
+				Expect(err).NotTo(HaveOccurred())
+			} else {
+				Expect(err).To(HaveOccurred())
+			}
+		},
+		Entry("success", "+QMMSEND: 0,200", true),
+		Entry("modem rejection", "+QMMSEND: 1,500", false),
+		Entry("malformed", "+QMMSEND: invalid", false),
+	)
 
 	It("retries a deferred durable SMS without restarting the modem", func() {
 		attempts := make(chan sms.ReceivedMessage, 1)

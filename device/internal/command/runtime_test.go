@@ -171,8 +171,13 @@ type fakeMessages struct {
 	body        string
 	reference   byte
 	preparedID  string
+	attachment  MessageAttachment
 	err         error
 }
+
+type fakeSMSOnlyMessages struct{}
+
+func (fakeSMSOnlyMessages) SendSMS(context.Context, string, string, byte) error { return nil }
 
 type fakeSlotSettings struct {
 	settings  slotpolicy.Settings
@@ -197,6 +202,13 @@ func (messages *fakeMessages) SendSMS(_ context.Context, destination string, bod
 	messages.destination = destination
 	messages.body = body
 	messages.reference = reference
+	return messages.err
+}
+
+func (messages *fakeMessages) SendMMS(_ context.Context, destination string, body string, attachment MessageAttachment) error {
+	messages.destination = destination
+	messages.body = body
+	messages.attachment = attachment
 	return messages.err
 }
 
@@ -301,6 +313,67 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(result.Success).To(BeFalse())
 		Expect(result.ErrorCode).To(Equal("modem_rejected"))
 		Expect(string(remote.result.Ciphertext)).NotTo(ContainSubstring("CMS ERROR"))
+	})
+
+	It("executes an encrypted image MMS command", func() {
+		attachment := MessageAttachment{
+			Filename: "photo.jpg",
+			MIMEType: "image/jpeg",
+			Data:     []byte{0xff, 0xd8, 0xff, 0xd9},
+		}
+		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{
+			Version: 1, Operation: "message.send", MessageID: "01900000-0000-7000-8000-000000000020",
+			Number: "+8613500000000", Body: "photo", Attachment: &attachment,
+		})
+
+		Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+
+		Expect(messages.destination).To(Equal("+8613500000000"))
+		Expect(messages.body).To(Equal("photo"))
+		Expect(messages.attachment).To(Equal(attachment))
+		Expect(openResult(sharedSecret, envelope, remote.result).Success).To(BeTrue())
+		Expect(string(envelope.Ciphertext)).NotTo(ContainSubstring("photo.jpg"))
+	})
+
+	It("rejects invalid or unsupported MMS commands without invoking SMS", func() {
+		validAttachment := MessageAttachment{
+			Filename: "photo.jpg",
+			MIMEType: "image/jpeg",
+			Data:     []byte{0xff, 0xd8, 0xff, 0xd9},
+		}
+		invalidAttachments := []MessageAttachment{
+			{MIMEType: "image/jpeg", Data: validAttachment.Data},
+			{Filename: "photo.png", MIMEType: "image/png", Data: validAttachment.Data},
+			{Filename: "photo.jpg", MIMEType: "image/jpeg"},
+			{Filename: "photo.jpg", MIMEType: "image/jpeg", Data: make([]byte, 40_001)},
+		}
+		for index := range invalidAttachments {
+			attachment := invalidAttachments[index]
+			envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{
+				Version: 1, Operation: "message.send", MessageID: "01900000-0000-7000-8000-000000000020",
+				Number: "10086", Attachment: &attachment,
+			})
+			Expect(runtime.process(context.Background(), envelope)).To(Succeed())
+			Expect(openResult(sharedSecret, envelope, remote.result).ErrorCode).To(Equal("invalid_command"))
+		}
+		Expect(messages.destination).To(BeEmpty())
+
+		unsupportedRuntime, err := NewRuntime(
+			remote,
+			state,
+			calls,
+			time.Millisecond,
+			Dependencies{
+				Events: events, Media: media, Messages: fakeSMSOnlyMessages{}, SlotSettings: settings,
+			},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{
+			Version: 1, Operation: "message.send", MessageID: "01900000-0000-7000-8000-000000000020",
+			Number: "10086", Attachment: &validAttachment,
+		})
+		Expect(unsupportedRuntime.process(context.Background(), envelope)).To(Succeed())
+		Expect(openResult(sharedSecret, envelope, remote.result).ErrorCode).To(Equal("mms_unavailable"))
 	})
 
 	It("applies and returns slot policy only through the encrypted command", func() {

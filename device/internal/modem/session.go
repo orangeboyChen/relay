@@ -13,6 +13,7 @@ import (
 
 	"sim-deck-device/internal/at"
 	"sim-deck-device/internal/call"
+	"sim-deck-device/internal/command"
 	"sim-deck-device/internal/sms"
 )
 
@@ -123,6 +124,7 @@ type Session struct {
 	pendingMessageID     string
 	messageStatusMu      sync.Mutex
 	deliveryReportSink   DeliveryReportSink
+	mmsResults           chan error
 }
 
 // SIMSlotStatus describes one physical slot reported by a modem-specific command.
@@ -153,6 +155,7 @@ func NewSession(client *at.Client, inbox *sms.Inbox, sink MessageSink, logger *s
 		messageRetryInterval: defaultMessageRetryInterval,
 		messagePollInterval:  defaultMessagePollInterval,
 		references:           make(map[byte]string),
+		mmsResults:           make(chan error, 1),
 	}, nil
 }
 
@@ -358,6 +361,122 @@ func (session *Session) SendSMS(ctx context.Context, destination string, text st
 				session.trackMessageReference(reference, messageID)
 			}
 		}
+	}
+	return nil
+}
+
+// SendMMS uploads an image to modem RAM and submits it through the configured MMSC.
+func (session *Session) SendMMS(
+	ctx context.Context,
+	destination string,
+	text string,
+	attachment command.MessageAttachment,
+) error {
+	messageID := session.takePendingMessageID()
+	if !validDialNumber(destination) || attachment.MIMEType != "image/jpeg" || len(attachment.Data) == 0 || len(attachment.Data) > 40_000 {
+		return errors.New("invalid MMS destination or attachment")
+	}
+	for {
+		select {
+		case <-session.mmsResults:
+		default:
+			goto drained
+		}
+	}
+
+drained:
+	suffix := strings.ReplaceAll(messageID, "-", "")
+	if len(suffix) > 12 {
+		suffix = suffix[:12]
+	}
+	if suffix == "" {
+		suffix = "outgoing"
+	}
+	imagePath := "RAM:sd_" + suffix + ".jpg"
+	textPath := "RAM:sd_" + suffix + ".txt"
+	paths := []string{imagePath}
+	defer func() {
+		_, _ = session.send(context.Background(), "AT+QMMSEDIT=0")
+		for _, path := range paths {
+			_, _ = session.send(context.Background(), fmt.Sprintf("AT+QFDEL=\"%s\"", path))
+		}
+	}()
+
+	if err := session.requireOK(ctx, "AT+QMMSEDIT=0", "clear MMS editor"); err != nil {
+		return err
+	}
+	if err := session.requireOK(
+		ctx,
+		fmt.Sprintf("AT+QMMSEDIT=1,1,\"%s\"", destination),
+		"add MMS recipient",
+	); err != nil {
+		return err
+	}
+	if err := session.uploadMMSFile(ctx, imagePath, attachment.Data); err != nil {
+		return err
+	}
+	if err := session.requireOK(
+		ctx,
+		fmt.Sprintf("AT+QMMSEDIT=5,1,\"%s\"", imagePath),
+		"attach MMS image",
+	); err != nil {
+		return err
+	}
+	if body := strings.TrimSpace(text); body != "" {
+		paths = append(paths, textPath)
+		if err := session.requireOK(ctx, `AT+QMMSCFG="character","UTF8"`, "set MMS text encoding"); err != nil {
+			return err
+		}
+		if err := session.uploadMMSFile(ctx, textPath, []byte(body)); err != nil {
+			return err
+		}
+		if err := session.requireOK(
+			ctx,
+			fmt.Sprintf("AT+QMMSEDIT=5,1,\"%s\"", textPath),
+			"attach MMS text",
+		); err != nil {
+			return err
+		}
+	}
+
+	response, err := session.sendWithTimeout(ctx, "AT+QMMSEND=100", 110*time.Second)
+	if err != nil {
+		return fmt.Errorf("submit MMS: %w", err)
+	}
+	if !response.OK() {
+		return fmt.Errorf("modem rejected MMS submission: %s", response.Terminal)
+	}
+	select {
+	case result := <-session.mmsResults:
+		return result
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(110 * time.Second):
+		return errors.New("timed out waiting for MMS result")
+	}
+}
+
+func (session *Session) uploadMMSFile(ctx context.Context, path string, data []byte) error {
+	commandText := fmt.Sprintf("AT+QFUPL=\"%s\",%d,300,1", path, len(data))
+	commandContext, cancel := context.WithTimeout(ctx, 310*time.Second)
+	defer cancel()
+	response, err := session.client.SendUpload(commandContext, commandText, data)
+	if err != nil {
+		return fmt.Errorf("upload MMS file %s: %w", path, err)
+	}
+	if !response.OK() {
+		return fmt.Errorf("modem rejected MMS file %s: %s", path, response.Terminal)
+	}
+	return nil
+}
+
+func (session *Session) requireOK(ctx context.Context, commandText string, operation string) error {
+	response, err := session.send(ctx, commandText)
+	if err != nil {
+		return fmt.Errorf("%s: %w", operation, err)
+	}
+	if !response.OK() {
+		return fmt.Errorf("%s: %s", operation, response.Terminal)
 	}
 	return nil
 }
@@ -660,6 +779,14 @@ func parseMessageReference(lines []string) (byte, bool) {
 
 func (session *Session) handleURC(ctx context.Context, urc string) error {
 	switch {
+	case strings.HasPrefix(urc, "+QMMSEND:"):
+		result := parseMMSResult(urc)
+		select {
+		case session.mmsResults <- result:
+		default:
+			session.logger.Warn("discarded MMS result without a pending submission", "result", urc)
+		}
+		return nil
 	case strings.HasPrefix(urc, "+CMT:"):
 		session.logger.Info("direct SMS notification received")
 		_, encoded, ok := strings.Cut(urc, "\n")
@@ -776,6 +903,14 @@ func (session *Session) handleURC(ctx context.Context, urc string) error {
 		session.logger.Info("cellular call state changed", "state", snapshot.State, "active", snapshot.Active, "held", snapshot.Held, "waiting", snapshot.Waiting)
 	default:
 		session.logger.Debug("unhandled modem notification", "type", notificationType(urc))
+	}
+	return nil
+}
+
+func parseMMSResult(urc string) error {
+	fields := strings.Split(strings.TrimSpace(strings.TrimPrefix(urc, "+QMMSEND:")), ",")
+	if len(fields) < 2 || strings.TrimSpace(fields[0]) != "0" {
+		return fmt.Errorf("MMS submission failed: %s", strings.TrimSpace(urc))
 	}
 	return nil
 }

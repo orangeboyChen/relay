@@ -33,11 +33,12 @@ type commandResult struct {
 }
 
 type pendingCommand struct {
-	lines         []string
-	result        chan commandResult
-	prompt        chan struct{}
-	expectsPrompt bool
-	promptSeen    bool
+	lines          []string
+	result         chan commandResult
+	prompt         chan struct{}
+	expectsPrompt  bool
+	expectsConnect bool
+	promptSeen     bool
 }
 
 // Client serializes AT commands while delivering unsolicited result codes separately.
@@ -200,6 +201,78 @@ func (client *Client) SendPrompt(ctx context.Context, command string, payload []
 	}
 }
 
+// SendUpload writes a fixed-length binary payload after a CONNECT prompt.
+func (client *Client) SendUpload(ctx context.Context, command string, payload []byte) (Response, error) {
+	if strings.TrimSpace(command) == "" || strings.ContainsAny(command, "\r\n") {
+		return Response{}, errors.New("AT command must be one non-empty line")
+	}
+	if len(payload) == 0 {
+		return Response{}, errors.New("AT upload payload must be non-empty")
+	}
+	client.commands.Lock()
+	defer client.commands.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return Response{}, err
+	}
+	select {
+	case <-client.done:
+		return Response{}, ErrClosed
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		return Response{}, ctx.Err()
+	case <-client.done:
+		return Response{}, ErrClosed
+	case <-client.idle:
+	}
+
+	pending := &pendingCommand{
+		result:         make(chan commandResult, 1),
+		prompt:         make(chan struct{}, 1),
+		expectsPrompt:  true,
+		expectsConnect: true,
+	}
+	client.state.Lock()
+	client.pending = pending
+	client.state.Unlock()
+
+	if _, err := io.WriteString(client.transport, command+"\r"); err != nil {
+		client.clearPending(pending)
+		return Response{}, fmt.Errorf("write AT upload command: %w", err)
+	}
+
+	select {
+	case result := <-pending.result:
+		return result.response, result.err
+	case <-pending.prompt:
+	case <-ctx.Done():
+		return Response{}, ctx.Err()
+	case <-client.done:
+		return Response{}, ErrClosed
+	}
+
+	if _, err := client.transport.Write(payload); err != nil {
+		client.clearPending(pending)
+		return Response{}, fmt.Errorf("write AT upload payload: %w", err)
+	}
+
+	select {
+	case result := <-pending.result:
+		return result.response, result.err
+	case <-ctx.Done():
+		return Response{}, ctx.Err()
+	case <-client.done:
+		select {
+		case result := <-pending.result:
+			return result.response, result.err
+		default:
+		}
+		return Response{}, ErrClosed
+	}
+}
+
 // Close stops the client and closes its transport.
 func (client *Client) Close() error {
 	var closeError error
@@ -257,7 +330,8 @@ func (client *Client) routeLine(line string) error {
 		client.state.Unlock()
 		return client.deliverURC(line)
 	}
-	if line == ">" && client.pending.expectsPrompt && !client.pending.promptSeen {
+	if client.pending.expectsPrompt && !client.pending.promptSeen &&
+		(line == ">" || (client.pending.expectsConnect && line == "CONNECT")) {
 		client.pending.promptSeen = true
 		prompt := client.pending.prompt
 		client.state.Unlock()
@@ -345,7 +419,7 @@ func isTerminal(line string) bool {
 }
 
 func isURC(line string) bool {
-	for _, prefix := range []string{"RING", "+CMTI:", "+CLIP:", "+CCWA:", "NO CARRIER", "NO ANSWER", "BUSY"} {
+	for _, prefix := range []string{"RING", "+CMTI:", "+CLIP:", "+CCWA:", "+QMMSEND:", "NO CARRIER", "NO ANSWER", "BUSY"} {
 		if strings.HasPrefix(line, prefix) {
 			return true
 		}

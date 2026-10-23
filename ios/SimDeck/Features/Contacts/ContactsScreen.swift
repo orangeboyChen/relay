@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import SwiftUI
+import SwiftUIIntrospect
 import UIKit
 
 struct ContactsScreen: View {
@@ -99,6 +100,9 @@ struct ContactsScreen: View {
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
+                            .introspect(.listCell, on: .iOS(.v26, .v27)) { cell in
+                                (cell as? UICollectionViewListCell)?.accessories = []
+                            }
                             .listRowInsets(
                                 EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 44)
                             )

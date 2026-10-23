@@ -124,6 +124,7 @@ struct DialerScreen: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .safeAreaInset(edge: .top, spacing: 0) {
             if !isShowingAllContactResults {
                 HStack {

@@ -1674,6 +1674,44 @@ func (store *Postgres) ListEvents(ctx context.Context, afterSequence int64, limi
 	return events, nil
 }
 
+// GetHistorySnapshot reads an encrypted archive for its owner and kind.
+func (store *Postgres) GetHistorySnapshot(ctx context.Context, ownerID string, kind int) (domain.HistorySnapshot, error) {
+	var snapshot domain.HistorySnapshot
+	err := store.pool.QueryRow(ctx, `
+		SELECT owner_id, kind, revision, ciphertext, updated_at
+		FROM encrypted_history_snapshots
+		WHERE owner_id = $1 AND kind = $2`, ownerID, kind).Scan(
+		&snapshot.OwnerID, &snapshot.Kind, &snapshot.Revision, &snapshot.Ciphertext, &snapshot.UpdatedAt,
+	)
+	if err != nil {
+		return domain.HistorySnapshot{}, err
+	}
+	return snapshot, nil
+}
+
+// PutHistorySnapshot replaces an archive only when its current revision matches expectedRevision.
+func (store *Postgres) PutHistorySnapshot(ctx context.Context, ownerID string, kind int, expectedRevision int64, ciphertext []byte, now time.Time) (domain.HistorySnapshot, error) {
+	var snapshot domain.HistorySnapshot
+	err := store.pool.QueryRow(ctx, `
+		INSERT INTO encrypted_history_snapshots (owner_id, kind, revision, ciphertext, updated_at)
+		SELECT $1, $2, 1, $4, $5 WHERE $3 = 0
+		ON CONFLICT (owner_id, kind) DO UPDATE
+		SET revision = encrypted_history_snapshots.revision + 1,
+		    ciphertext = EXCLUDED.ciphertext,
+		    updated_at = EXCLUDED.updated_at
+		WHERE encrypted_history_snapshots.revision = $3
+		RETURNING owner_id, kind, revision, ciphertext, updated_at`,
+		ownerID, kind, expectedRevision, ciphertext, now.UTC(),
+	).Scan(&snapshot.OwnerID, &snapshot.Kind, &snapshot.Revision, &snapshot.Ciphertext, &snapshot.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.HistorySnapshot{}, domain.ErrHistoryRevisionConflict
+	}
+	if err != nil {
+		return domain.HistorySnapshot{}, fmt.Errorf("write encrypted history snapshot: %w", err)
+	}
+	return snapshot, nil
+}
+
 // EnqueueCommand stores one opaque command while preserving client idempotency.
 func (store *Postgres) EnqueueCommand(ctx context.Context, encrypted domain.EncryptedCommand) (bool, error) {
 	command, err := store.pool.Exec(ctx, `

@@ -177,6 +177,15 @@ CREATE INDEX IF NOT EXISTS events_device_sequence_idx
 CREATE INDEX IF NOT EXISTS events_expiry_idx
     ON events(expires_at);
 
+CREATE TABLE IF NOT EXISTS encrypted_history_snapshots (
+    owner_id UUID NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+    kind SMALLINT NOT NULL CHECK (kind IN (1, 2)),
+    revision BIGINT NOT NULL CHECK (revision > 0),
+    ciphertext BYTEA NOT NULL CHECK (octet_length(ciphertext) BETWEEN 1 AND 16777216),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (owner_id, kind)
+);
+
 CREATE TABLE IF NOT EXISTS messages (
     event_id UUID PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
     conversation_id UUID NOT NULL,

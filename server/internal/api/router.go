@@ -84,6 +84,7 @@ func Handler(repository Repository, config Config) http.Handler {
 		router.webAuthn, _ = serverwebauthn.New(passkeyStore, config.PublicBaseURL)
 	}
 	mux := http.NewServeMux()
+	mountSyncService(mux, router)
 	mux.HandleFunc("GET /healthz", router.health)
 	mux.HandleFunc("GET /v1/auth/passkey", router.passkeyPage)
 	mux.HandleFunc("GET /.well-known/sim-deck", router.discovery)

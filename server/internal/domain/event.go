@@ -5,6 +5,17 @@ import (
 	"time"
 )
 
+var ErrHistoryRevisionConflict = errors.New("encrypted history revision conflict")
+
+// HistorySnapshot is one owner-scoped encrypted archive.
+type HistorySnapshot struct {
+	OwnerID    string
+	Kind       int
+	Revision   int64
+	Ciphertext []byte
+	UpdatedAt  time.Time
+}
+
 var ErrIdempotencyConflict = errors.New("event id was already used with different content")
 
 // EventEnvelope carries encrypted and signed application data through the server.

@@ -3,14 +3,20 @@ module sim-deck-server
 go 1.26.0
 
 require (
+	connectrpc.com/connect/v2 v2.0.2
+	github.com/orangeboyChen/relay-sdk v0.1.0
 	github.com/go-webauthn/webauthn v0.18.2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/onsi/ginkgo/v2 v2.29.0
 	github.com/onsi/gomega v1.41.0
+	google.golang.org/protobuf v1.36.11
 	golang.org/x/crypto v0.57.0
 	golang.org/x/net v0.58.0
 )
+
+replace github.com/orangeboyChen/relay-sdk => ../protocol/sdk
+
 
 require (
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect

@@ -163,7 +163,6 @@ final class ServerConnectEncryptedEventStream: EncryptedEventStream {
         Relay_Communication_V1_WatchEventsRequest,
         Relay_Communication_V1_WatchEventsResponse
     >
-    private var results: AsyncStream<Connect.StreamResult<Relay_Communication_V1_WatchEventsResponse>>.Iterator
     private var cursor: Int64
     private var pendingAcknowledgement: Int64?
 
@@ -179,7 +178,6 @@ final class ServerConnectEncryptedEventStream: EncryptedEventStream {
         }
         self.stream = stream
         self.cursor = afterSequence
-        self.results = stream.results().makeAsyncIterator()
         try stream.send(Relay_Communication_V1_WatchEventsRequest.with {
             $0.afterSequence = afterSequence
         })
@@ -189,7 +187,7 @@ final class ServerConnectEncryptedEventStream: EncryptedEventStream {
         guard pendingAcknowledgement == nil else {
             throw ServerConnectionError.invalidResponse
         }
-        while let result = await results.next() {
+        for await result in stream.results() {
             switch result {
             case .headers:
                 continue

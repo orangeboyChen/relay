@@ -87,7 +87,7 @@ struct EncryptedEventEnvelope: Decodable, Equatable, Sendable {
         self.signature = signature
     }
 
-    init(from decoder: Decoder) throws {
+    init(from decoder: Swift.Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
         sequence = try values.decode(Int64.self, forKey: .sequence)
@@ -389,6 +389,13 @@ struct URLSessionServerNetworking: ServerNetworking {
 protocol CommunicationSyncClient: AnyObject {
     func pullEvents(afterSequence: Int64, accessToken: String) async throws -> EncryptedEventPage
     func watchEvents(afterSequence: Int64, accessToken: String) throws -> any EncryptedEventStream
+    func getHistorySnapshot(kind: Relay_Communication_V1_HistoryKind, accessToken: String) async throws -> HistorySnapshotPayload
+    func putHistorySnapshot(kind: Relay_Communication_V1_HistoryKind, expectedRevision: Int64, ciphertext: Data, accessToken: String) async throws -> HistorySnapshotPayload
+}
+
+struct HistorySnapshotPayload: Equatable, Sendable {
+    let revision: Int64
+    let ciphertext: Data
 }
 
 @MainActor
@@ -428,6 +435,28 @@ private final class ConnectCommunicationSyncClient: CommunicationSyncClient {
     func watchEvents(afterSequence: Int64, accessToken: String) throws -> any EncryptedEventStream {
         let stream = client.watchEvents(headers: ["authorization": ["Bearer \(accessToken)"]])
         return try ServerConnectEncryptedEventStream(stream: stream, afterSequence: afterSequence)
+    }
+
+    func getHistorySnapshot(kind: Relay_Communication_V1_HistoryKind, accessToken: String) async throws -> HistorySnapshotPayload {
+        let response = await client.getHistorySnapshot(
+            request: Relay_Communication_V1_GetHistorySnapshotRequest.with { $0.kind = kind },
+            headers: ["authorization": ["Bearer \(accessToken)"]]
+        )
+        let snapshot = try response.result.get().snapshot
+        return HistorySnapshotPayload(revision: snapshot.revision, ciphertext: snapshot.ciphertext)
+    }
+
+    func putHistorySnapshot(kind: Relay_Communication_V1_HistoryKind, expectedRevision: Int64, ciphertext: Data, accessToken: String) async throws -> HistorySnapshotPayload {
+        let response = await client.putHistorySnapshot(
+            request: Relay_Communication_V1_PutHistorySnapshotRequest.with {
+                $0.kind = kind
+                $0.expectedRevision = expectedRevision
+                $0.ciphertext = ciphertext
+            },
+            headers: ["authorization": ["Bearer \(accessToken)"]]
+        )
+        let snapshot = try response.result.get().snapshot
+        return HistorySnapshotPayload(revision: snapshot.revision, ciphertext: snapshot.ciphertext)
     }
 }
 
@@ -1034,6 +1063,20 @@ final class ServerConnectionManager {
             .pullEvents(afterSequence: afterSequence, accessToken: activeSession.accessToken)
     }
 
+    func getHistorySnapshot(kind: Relay_Communication_V1_HistoryKind) async throws -> HistorySnapshotPayload {
+        let baseURL = try validatedBaseURL()
+        let activeSession = try await validSession(baseURL: baseURL)
+        return try await communicationSyncClientFactory.makeClient(baseURL: baseURL)
+            .getHistorySnapshot(kind: kind, accessToken: activeSession.accessToken)
+    }
+
+    func putHistorySnapshot(kind: Relay_Communication_V1_HistoryKind, expectedRevision: Int64, ciphertext: Data) async throws -> HistorySnapshotPayload {
+        let baseURL = try validatedBaseURL()
+        let activeSession = try await validSession(baseURL: baseURL)
+        return try await communicationSyncClientFactory.makeClient(baseURL: baseURL)
+            .putHistorySnapshot(kind: kind, expectedRevision: expectedRevision, ciphertext: ciphertext, accessToken: activeSession.accessToken)
+    }
+
     func openEncryptedEventStream(
         afterSequence: Int64
     ) async throws -> any EncryptedEventStream {
@@ -1481,7 +1524,7 @@ private struct ServerSIMRecord: Decodable {
         case profileCiphertext = "profile_ciphertext"
     }
 
-    init(from decoder: Decoder) throws {
+    init(from decoder: Swift.Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
         numericID = try values.decode(Int.self, forKey: .numericID)
@@ -1525,7 +1568,7 @@ private struct ServerDeviceRecord: Decodable {
         case slots
     }
 
-    init(from decoder: Decoder) throws {
+    init(from decoder: Swift.Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         deviceUUID = try values.decode(UUID.self, forKey: .deviceUUID)
         numericID = try values.decode(Int.self, forKey: .numericID)

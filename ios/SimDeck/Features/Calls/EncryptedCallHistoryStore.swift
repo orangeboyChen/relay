@@ -32,14 +32,7 @@ struct EncryptedCallHistoryStore {
     func load(using vaultKey: VaultKey) throws -> [CallRecord] {
         guard fileManager.fileExists(atPath: fileURL.path) else { return [] }
         do {
-            let encrypted = try Data(contentsOf: fileURL)
-            let box = try AES.GCM.SealedBox(combined: encrypted)
-            let plaintext = try AES.GCM.open(
-                box,
-                using: SymmetricKey(data: vaultKey.data),
-                authenticating: Data("sim-deck-call-history-v1".utf8)
-            )
-            let decoded = try JSONDecoder().decode([CallRecord].self, from: plaintext)
+            let decoded = try load(encryptedData: Data(contentsOf: fileURL), using: vaultKey)
             let retained = retainedRecords(from: decoded)
             if retained.count != decoded.count {
                 try save(retained, using: vaultKey)
@@ -50,6 +43,28 @@ struct EncryptedCallHistoryStore {
         } catch {
             throw CallHistoryStoreError.invalidData
         }
+    }
+
+    func load(encryptedData: Data, using vaultKey: VaultKey) throws -> [CallRecord] {
+        do {
+            let box = try AES.GCM.SealedBox(combined: encryptedData)
+            let plaintext = try AES.GCM.open(
+                box,
+                using: SymmetricKey(data: vaultKey.data),
+                authenticating: Data("sim-deck-call-history-v1".utf8)
+            )
+            return try JSONDecoder().decode([CallRecord].self, from: plaintext)
+        } catch {
+            throw CallHistoryStoreError.invalidData
+        }
+    }
+
+    func merge(encryptedData: Data, using vaultKey: VaultKey) throws {
+        var records = Dictionary(uniqueKeysWithValues: try load(using: vaultKey).map { ($0.id, $0) })
+        for remote in try load(encryptedData: encryptedData, using: vaultKey) where records[remote.id] == nil {
+            records[remote.id] = remote
+        }
+        try save(records.values.sorted { $0.startedAt > $1.startedAt }, using: vaultKey)
     }
 
     func save(_ records: [CallRecord], using vaultKey: VaultKey) throws {
@@ -73,6 +88,17 @@ struct EncryptedCallHistoryStore {
             [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
             ofItemAtPath: fileURL.path
         )
+    }
+
+    func encryptedData() throws -> Data? {
+        guard fileManager.fileExists(atPath: fileURL.path) else { return nil }
+        return try Data(contentsOf: fileURL)
+    }
+
+    func replaceEncryptedData(_ data: Data) throws {
+        let directory = fileURL.deletingLastPathComponent()
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        try data.write(to: fileURL, options: .atomic)
     }
 
     func delete() throws {

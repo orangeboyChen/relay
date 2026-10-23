@@ -83,4 +83,26 @@ final class EncryptedMessageHistoryStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
         try store.delete()
     }
+
+    func testMergeKeepsLocalAndRemoteMessages() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let localStore = EncryptedMessageHistoryStore(fileURL: directory.appending(path: "local.bin"))
+        let remoteStore = EncryptedMessageHistoryStore(fileURL: directory.appending(path: "remote.bin"))
+        let key = VaultKey.random()
+        let lineID = UUID()
+        let localMessage = MessageItem(id: UUID(), direction: .received, body: "local", attachment: nil, sentAt: Date(timeIntervalSince1970: 1), status: .delivered)
+        let remoteMessage = MessageItem(id: UUID(), direction: .sent, body: "remote", attachment: nil, sentAt: Date(timeIntervalSince1970: 2), status: .sent)
+        let local = MessageConversation(lineID: lineID, remoteNumber: "13500000000", contactName: nil, unreadCount: 0, messages: [localMessage])
+        let remote = MessageConversation(lineID: lineID, remoteNumber: "13500000000", contactName: "Alex", unreadCount: 1, messages: [remoteMessage])
+        try localStore.save([local], using: key)
+        try remoteStore.save([remote], using: key)
+
+        try localStore.merge(encryptedData: try XCTUnwrap(remoteStore.encryptedData()), using: key)
+
+        let merged = try localStore.load(using: key)
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(Set(merged[0].messages.map(\.body)), ["local", "remote"])
+        XCTAssertEqual(merged[0].contactName, "Alex")
+    }
 }

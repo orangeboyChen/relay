@@ -77,6 +77,23 @@ final class EncryptedCallHistoryStoreTests: XCTestCase {
         try store.delete()
     }
 
+    func testMergeKeepsLocalAndRemoteCallRecords() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let localStore = EncryptedCallHistoryStore(fileURL: directory.appending(path: "local.bin"))
+        let remoteStore = EncryptedCallHistoryStore(fileURL: directory.appending(path: "remote.bin"))
+        let key = VaultKey.random()
+        let now = Date(timeIntervalSince1970: 40_000_000)
+        let local = makeRecord(remoteNumber: "13500000000", startedAt: now.addingTimeInterval(-60), endedAt: now)
+        let remote = makeRecord(remoteNumber: "13800000000", startedAt: now.addingTimeInterval(-30), endedAt: now)
+        try localStore.save([local], using: key)
+        try remoteStore.save([remote], using: key)
+
+        try localStore.merge(encryptedData: try XCTUnwrap(remoteStore.encryptedData()), using: key)
+
+        XCTAssertEqual(Set(try localStore.load(using: key).map(\.id)), [local.id, remote.id])
+    }
+
     private func makeRecord(
         remoteNumber: String,
         startedAt: Date,

@@ -5,6 +5,7 @@
 import Foundation
 import Observation
 import OSLog
+import RelayProtocol
 
 @MainActor
 @Observable
@@ -57,6 +58,7 @@ final class AppModel {
     @ObservationIgnored private let callHistoryStore: EncryptedCallHistoryStore
     @ObservationIgnored private let remoteDeviceRefreshEnabled: Bool
     @ObservationIgnored private var messageEventMonitor: MessageEventMonitor?
+    @ObservationIgnored private var historySnapshotSyncTask: Task<Void, Never>?
     @ObservationIgnored private var contactNameIndex = ContactNameIndex()
     @ObservationIgnored private var contactUpdatesTask: Task<Void, Never>?
     @ObservationIgnored private var networkPathObserver: NetworkPathObserver?
@@ -232,6 +234,7 @@ final class AppModel {
         reconcileLineHistory(using: devices)
         callCoordinator.updateLineRoutes(devices)
         messageTransport.updateLineRoutes(devices)
+        try? await synchronizeEncryptedHistory()
         resolvePendingMessageNotificationSelection()
         if voipPushCoordinator != nil || alertPushCoordinator != nil {
             startVoIPPushes()
@@ -1054,6 +1057,7 @@ final class AppModel {
     private func persistMessageHistoryIfAvailable() {
         guard let recoveredVaultKey else { return }
         try? messageHistoryStore.save(loadedConversations, using: recoveredVaultKey)
+        scheduleHistorySnapshotSync()
     }
 
     private func restoreLocalHistory(using vaultKey: VaultKey) {
@@ -1072,6 +1076,84 @@ final class AppModel {
         }
         reconcileLineHistory(using: devices)
         resolvePendingMessageNotificationSelection()
+    }
+
+    private func synchronizeEncryptedHistory() async throws {
+        guard let recoveredVaultKey else { return }
+        let remoteMessages = try await serverConnection.getHistorySnapshot(kind: .messages)
+        if let local = try messageHistoryStore.encryptedData(), !local.isEmpty {
+            if remoteMessages.ciphertext.isEmpty {
+                try await uploadMessageSnapshot(expectedRevision: remoteMessages.revision)
+            } else {
+                try messageHistoryStore.merge(encryptedData: remoteMessages.ciphertext, using: recoveredVaultKey)
+                try await uploadMessageSnapshot(expectedRevision: remoteMessages.revision)
+            }
+        } else if !remoteMessages.ciphertext.isEmpty {
+            try messageHistoryStore.replaceEncryptedData(remoteMessages.ciphertext)
+        }
+
+        let remoteCalls = try await serverConnection.getHistorySnapshot(kind: .calls)
+        if let local = try callHistoryStore.encryptedData(), !local.isEmpty {
+            if remoteCalls.ciphertext.isEmpty {
+                try await uploadCallSnapshot(expectedRevision: remoteCalls.revision)
+            } else {
+                try callHistoryStore.merge(encryptedData: remoteCalls.ciphertext, using: recoveredVaultKey)
+                try await uploadCallSnapshot(expectedRevision: remoteCalls.revision)
+            }
+        } else if !remoteCalls.ciphertext.isEmpty {
+            try callHistoryStore.replaceEncryptedData(remoteCalls.ciphertext)
+        }
+        restoreLocalHistory(using: recoveredVaultKey)
+    }
+
+    private func uploadMessageSnapshot(expectedRevision: Int64) async throws {
+        var revision = expectedRevision
+        for attempt in 0..<3 {
+            guard let ciphertext = try messageHistoryStore.encryptedData() else { return }
+            do {
+                _ = try await serverConnection.putHistorySnapshot(kind: .messages, expectedRevision: revision, ciphertext: ciphertext)
+                return
+            } catch {
+                guard attempt < 2 else { throw error }
+                let latest = try await serverConnection.getHistorySnapshot(kind: .messages)
+                if !latest.ciphertext.isEmpty, let recoveredVaultKey {
+                    try messageHistoryStore.merge(encryptedData: latest.ciphertext, using: recoveredVaultKey)
+                }
+                revision = latest.revision
+            }
+        }
+    }
+
+    private func uploadCallSnapshot(expectedRevision: Int64) async throws {
+        var revision = expectedRevision
+        for attempt in 0..<3 {
+            guard let ciphertext = try callHistoryStore.encryptedData() else { return }
+            do {
+                _ = try await serverConnection.putHistorySnapshot(kind: .calls, expectedRevision: revision, ciphertext: ciphertext)
+                return
+            } catch {
+                guard attempt < 2 else { throw error }
+                let latest = try await serverConnection.getHistorySnapshot(kind: .calls)
+                if !latest.ciphertext.isEmpty, let recoveredVaultKey {
+                    try callHistoryStore.merge(encryptedData: latest.ciphertext, using: recoveredVaultKey)
+                }
+                revision = latest.revision
+            }
+        }
+    }
+
+    private func scheduleHistorySnapshotSync() {
+        historySnapshotSyncTask?.cancel()
+        historySnapshotSyncTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(700))
+                try Task.checkCancellation()
+                try await self?.synchronizeEncryptedHistory()
+            } catch is CancellationError {
+            } catch {
+                Self.logger.error("Encrypted history snapshot sync failed: \(String(reflecting: error), privacy: .public)")
+            }
+        }
     }
 
     private func deleteEncryptedHistory() throws {
@@ -1232,6 +1314,7 @@ final class AppModel {
         guard let recoveredVaultKey, case .loaded(let records) = callHistory else { return }
         do {
             try callHistoryStore.save(records, using: recoveredVaultKey)
+            scheduleHistorySnapshotSync()
         } catch {
             Self.logger.error("Persisting encrypted call history failed: \(String(reflecting: error), privacy: .public)")
         }

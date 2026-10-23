@@ -4,6 +4,7 @@
 
 import Foundation
 import XCTest
+import RelayProtocol
 @testable import SimDeck
 
 @MainActor
@@ -1126,6 +1127,14 @@ private final class TestCommunicationSyncClient: CommunicationSyncClient {
 
     func watchEvents(afterSequence: Int64, accessToken: String) throws -> any EncryptedEventStream {
         throw ServerConnectionError.eventStreamUnavailable
+    }
+
+    func getHistorySnapshot(kind: Relay_Communication_V1_HistoryKind, accessToken: String) async throws -> HistorySnapshotPayload {
+        HistorySnapshotPayload(revision: 0, ciphertext: Data())
+    }
+
+    func putHistorySnapshot(kind: Relay_Communication_V1_HistoryKind, expectedRevision: Int64, ciphertext: Data, accessToken: String) async throws -> HistorySnapshotPayload {
+        HistorySnapshotPayload(revision: expectedRevision + 1, ciphertext: ciphertext)
     }
 }
 

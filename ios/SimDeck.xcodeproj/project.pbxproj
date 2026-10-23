@@ -12,6 +12,7 @@
 		200000000000000000000007 /* libPhoneNumberSwiftCore in Frameworks */ = {isa = PBXBuildFile; productRef = 200000000000000000000008 /* libPhoneNumberSwiftCore */; };
 		200000000000000000000009 /* libPhoneNumberSwiftGeocoding in Frameworks */ = {isa = PBXBuildFile; productRef = 20000000000000000000000A /* libPhoneNumberSwiftGeocoding */; };
 		20000000000000000000000E /* SwiftUIIntrospect in Frameworks */ = {isa = PBXBuildFile; productRef = 20000000000000000000000D /* SwiftUIIntrospect */; };
+		200000000000000000000012 /* RelayProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = 200000000000000000000011 /* RelayProtocol */; };
 		6483377B30858A3600B91620 /* SMSNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 6483377430858A3600B91620 /* SMSNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		64833A4E3085B93F00B91620 /* AuthenticationServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 64833A4D3085B93F00B91620 /* AuthenticationServices.framework */; };
 		64833A593085B93F00B91620 /* SimDeckAutoFill.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 64833A4B3085B93F00B91620 /* SimDeckAutoFill.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -106,6 +107,7 @@
 				200000000000000000000007 /* libPhoneNumberSwiftCore in Frameworks */,
 				200000000000000000000009 /* libPhoneNumberSwiftGeocoding in Frameworks */,
 				20000000000000000000000E /* SwiftUIIntrospect in Frameworks */,
+				200000000000000000000012 /* RelayProtocol in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -195,7 +197,7 @@
 				200000000000000000000008 /* libPhoneNumberSwiftCore */,
 				20000000000000000000000A /* libPhoneNumberSwiftGeocoding */,
 				20000000000000000000000D /* SwiftUIIntrospect */,
-				20000000000000000000000F /* RelayProtocol */,
+				200000000000000000000011 /* RelayProtocol */,
 			);
 			productName = SimDeck;
 			productReference = 100000000000000000000001 /* SimDeck.app */;
@@ -308,7 +310,7 @@
 				200000000000000000000006 /* XCRemoteSwiftPackageReference "mars-rs" */,
 				20000000000000000000000B /* XCRemoteSwiftPackageReference "libPhoneNumber-iOS" */,
 				20000000000000000000000C /* XCRemoteSwiftPackageReference "swiftui-introspect" */,
-				20000000000000000000000E /* XCRemoteSwiftPackageReference "relay-sdk" */,
+				200000000000000000000010 /* XCRemoteSwiftPackageReference "relay-sdk" */,
 			);
 			productRefGroup = 100000000000000000000031 /* Products */;
 			projectDirPath = "";
@@ -891,7 +893,7 @@
 				minimumVersion = 27.0.0;
 			};
 		};
-		20000000000000000000000E /* XCRemoteSwiftPackageReference "relay-sdk" */ = {
+		200000000000000000000010 /* XCRemoteSwiftPackageReference "relay-sdk" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/orangeboyChen/relay-sdk.git";
 			requirement = {
@@ -927,9 +929,9 @@
 			package = 20000000000000000000000C /* XCRemoteSwiftPackageReference "swiftui-introspect" */;
 			productName = SwiftUIIntrospect;
 		};
-		20000000000000000000000F /* RelayProtocol */ = {
+		200000000000000000000011 /* RelayProtocol */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 20000000000000000000000E /* XCRemoteSwiftPackageReference "relay-sdk" */;
+			package = 200000000000000000000010 /* XCRemoteSwiftPackageReference "relay-sdk" */;
 			productName = RelayProtocol;
 		};
 /* End XCSwiftPackageProductDependency section */

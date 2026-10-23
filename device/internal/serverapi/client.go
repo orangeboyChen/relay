@@ -15,6 +15,12 @@ import (
 	"strings"
 	"time"
 
+	connect "connectrpc.com/connect/v2"
+	"connectrpc.com/connect/v2/connecthttp"
+	communicationv1 "github.com/orangeboyChen/relay-sdk/gen/go/relay/communication/v1"
+	communicationv1connect "github.com/orangeboyChen/relay-sdk/gen/go/relay/communication/v1/communicationv1connect"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	"sim-deck-device/internal/callevent"
 	"sim-deck-device/internal/command"
 	"sim-deck-device/internal/identity"
@@ -27,8 +33,13 @@ const maxResponseBytes = 1 << 20
 
 // Client talks to the server's device endpoints without exposing identity secrets in logs.
 type Client struct {
-	baseURL    string
-	httpClient *http.Client
+	baseURL     string
+	httpClient  *http.Client
+	eventClient eventPublisher
+}
+
+type eventPublisher interface {
+	PublishEvent(context.Context, *communicationv1.PublishEventRequest) (*communicationv1.PublishEventResponse, error)
 }
 
 // FetchTURNCredentials obtains short-lived relay credentials for one bound device.
@@ -228,23 +239,20 @@ func (client *Client) UploadEvent(ctx context.Context, deviceID string, credenti
 	if envelope.DeviceUUID != deviceID {
 		return errors.New("event device does not match the authenticated device")
 	}
-	body, err := json.Marshal(map[string]any{"envelope": envelope})
-	if err != nil {
-		return fmt.Errorf("encode encrypted event: %w", err)
+	if client.eventClient == nil {
+		return errors.New("encrypted event RPC client is unavailable")
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+"/v1/events", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create encrypted event request: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+credential)
-	request.Header.Set("Content-Type", "application/json")
-	response, err := client.httpClient.Do(request)
+	requestContext, callInfo := connect.NewClientContext(ctx)
+	callInfo.RequestHeader().Set("Authorization", "Bearer "+credential)
+	_, err := client.eventClient.PublishEvent(requestContext, &communicationv1.PublishEventRequest{
+		Event: &communicationv1.EncryptedEvent{
+			Id: envelope.ID, Sequence: envelope.Sequence, Type: envelope.Type, DeviceUuid: envelope.DeviceUUID,
+			RecipientInstallationId: optionalString(envelope.RecipientInstallationID), OccurredAt: timestamppb.New(envelope.OccurredAt),
+			KeyEpoch: int32(envelope.KeyEpoch), Nonce: envelope.Nonce, Ciphertext: envelope.Ciphertext, Signature: envelope.Signature,
+		},
+	})
 	if err != nil {
 		return fmt.Errorf("upload encrypted event: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated {
-		return responseError("upload encrypted event", response.StatusCode, io.LimitReader(response.Body, maxResponseBytes))
 	}
 	return nil
 }
@@ -384,7 +392,25 @@ func NewClient(baseURL string, httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 15 * time.Second}
 	}
-	return &Client{baseURL: strings.TrimRight(baseURL, "/"), httpClient: httpClient}
+	baseURL = strings.TrimRight(baseURL, "/")
+	transport := connecthttp.NewTransport(httpClient, baseURL)
+	return &Client{
+		baseURL: baseURL, httpClient: httpClient,
+		eventClient: communicationv1connect.NewCommunicationSyncServiceClient(connect.NewClient(transport)),
+	}
+}
+
+func newClientWithEventPublisher(baseURL string, httpClient *http.Client, publisher eventPublisher) *Client {
+	client := NewClient(baseURL, httpClient)
+	client.eventClient = publisher
+	return client
+}
+
+func optionalString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 // SubmitDiscovery asks the active app-controlled window to display this device for approval.

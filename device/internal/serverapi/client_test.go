@@ -14,6 +14,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	communicationv1 "github.com/orangeboyChen/relay-sdk/gen/go/relay/communication/v1"
 
 	"sim-deck-device/internal/callevent"
 	"sim-deck-device/internal/command"
@@ -34,6 +35,19 @@ func response(status int, body string) *http.Response {
 		Header:     make(http.Header),
 		Body:       io.NopCloser(strings.NewReader(body)),
 	}
+}
+
+type fakeEventPublisher struct {
+	request *communicationv1.PublishEventRequest
+	err     error
+}
+
+func (fake *fakeEventPublisher) PublishEvent(_ context.Context, request *communicationv1.PublishEventRequest) (*communicationv1.PublishEventResponse, error) {
+	fake.request = request
+	if fake.err != nil {
+		return nil, fake.err
+	}
+	return &communicationv1.PublishEventResponse{Created: true}, nil
 }
 
 func clientWithHandler(handler roundTripFunc) *Client {
@@ -681,28 +695,18 @@ var _ = Describe("Encrypted event client", func() {
 	const deviceID = "01900000-0000-7000-8000-000000000001"
 
 	It("uploads an opaque event with device authentication", func() {
-		var received callevent.Envelope
-		client := clientWithHandler(func(request *http.Request) (*http.Response, error) {
-			Expect(request.URL.Path).To(Equal("/v1/events"))
-			Expect(request.Method).To(Equal(http.MethodPost))
-			Expect(request.Header.Get("Authorization")).To(Equal("Bearer device-secret"))
-			var body struct {
-				Envelope callevent.Envelope `json:"envelope"`
-			}
-			Expect(json.NewDecoder(request.Body).Decode(&body)).To(Succeed())
-			received = body.Envelope
-			return response(http.StatusCreated, `{}`), nil
-		})
+		publisher := &fakeEventPublisher{}
+		client := newClientWithEventPublisher("https://deck.example", nil, publisher)
 		envelope := callevent.Envelope{ID: "event-1", DeviceUUID: deviceID, Ciphertext: []byte("opaque")}
 
 		Expect(client.UploadEvent(context.Background(), deviceID, "device-secret", envelope)).To(Succeed())
-		Expect(received).To(Equal(envelope))
+		Expect(publisher.request.GetEvent().GetId()).To(Equal(envelope.ID))
+		Expect(publisher.request.GetEvent().GetDeviceUuid()).To(Equal(envelope.DeviceUUID))
+		Expect(publisher.request.GetEvent().GetCiphertext()).To(Equal(envelope.Ciphertext))
 	})
 
 	It("accepts an idempotent retry and maps invalid requests", func() {
-		client := clientWithHandler(func(*http.Request) (*http.Response, error) {
-			return response(http.StatusOK, `{}`), nil
-		})
+		client := newClientWithEventPublisher("https://deck.example", nil, &fakeEventPublisher{})
 		envelope := callevent.Envelope{DeviceUUID: deviceID}
 		Expect(client.UploadEvent(context.Background(), deviceID, "device-secret", envelope)).To(Succeed())
 		Expect(client.UploadEvent(context.Background(), "another-device", "device-secret", envelope)).To(MatchError(ContainSubstring("does not match")))
@@ -710,14 +714,10 @@ var _ = Describe("Encrypted event client", func() {
 
 	It("maps event transport and server failures", func() {
 		envelope := callevent.Envelope{DeviceUUID: deviceID}
-		transportFailure := clientWithHandler(func(*http.Request) (*http.Response, error) {
-			return nil, errors.New("network unavailable")
-		})
+		transportFailure := newClientWithEventPublisher("https://deck.example", nil, &fakeEventPublisher{err: errors.New("network unavailable")})
 		Expect(transportFailure.UploadEvent(context.Background(), deviceID, "device-secret", envelope)).To(MatchError(ContainSubstring("upload encrypted event")))
 
-		serverFailure := clientWithHandler(func(*http.Request) (*http.Response, error) {
-			return response(http.StatusUnauthorized, `{"error":{"code":"invalid_device_credential"}}`), nil
-		})
+		serverFailure := newClientWithEventPublisher("https://deck.example", nil, &fakeEventPublisher{err: errors.New("invalid_device_credential")})
 		Expect(serverFailure.UploadEvent(context.Background(), deviceID, "device-secret", envelope)).To(MatchError(ContainSubstring("invalid_device_credential")))
 	})
 })

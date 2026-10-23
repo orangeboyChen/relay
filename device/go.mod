@@ -1,15 +1,18 @@
 module sim-deck-device
 
-go 1.26
+go 1.26.0
 
 require (
+	connectrpc.com/connect/v2 v2.0.2
 	github.com/google/uuid v1.6.0
 	github.com/onsi/ginkgo/v2 v2.29.0
 	github.com/onsi/gomega v1.41.0
+	github.com/orangeboyChen/relay-sdk v0.1.0
 	github.com/pion/ice/v4 v4.0.10
 	github.com/pion/logging v0.2.4
 	github.com/pion/transport/v3 v3.0.8
 	github.com/pion/webrtc/v4 v4.1.6
+	google.golang.org/protobuf v1.36.11
 )
 
 require (

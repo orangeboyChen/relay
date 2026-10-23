@@ -539,6 +539,36 @@ func (session *Session) Initialize(ctx context.Context) error {
 	return session.RetryPendingSMS(ctx)
 }
 
+// ClearOrphanedCalls ends carrier calls that survived a previous agent process.
+// A new process cannot safely recover their encrypted media or application lease.
+func (session *Session) ClearOrphanedCalls(ctx context.Context) error {
+	response, err := session.send(ctx, "AT+CLCC")
+	if err != nil {
+		return fmt.Errorf("query orphaned modem calls: %w", err)
+	}
+	if !response.OK() {
+		return fmt.Errorf("modem rejected orphaned call query: %s", response.Terminal)
+	}
+	if err := session.calls.ApplyCLCC(response.Lines); err != nil {
+		return fmt.Errorf("parse orphaned modem calls: %w", err)
+	}
+	snapshot := session.calls.Snapshot()
+	if snapshot.State == call.StateIdle || snapshot.State == call.StateEnded {
+		return nil
+	}
+	session.logger.Warn(
+		"ending orphaned cellular call during startup",
+		"state", snapshot.State,
+		"active", snapshot.Active,
+		"held", snapshot.Held,
+		"waiting", snapshot.Waiting,
+	)
+	if err := session.calls.Hangup(ctx); err != nil {
+		return fmt.Errorf("hang up orphaned modem call: %w", err)
+	}
+	return nil
+}
+
 func (session *Session) importStoredSMS(ctx context.Context) error {
 	response, err := session.send(ctx, "AT+CMGL=4")
 	if err != nil {

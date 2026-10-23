@@ -134,6 +134,7 @@ func meaningfulRuntimeError(operation string, err error) error {
 
 type deviceSession interface {
 	Initialize(context.Context) error
+	ClearOrphanedCalls(context.Context) error
 	ReadSIMICCID(context.Context) (string, error)
 	ReadSIMSlotStatus(context.Context) ([]modem.SIMSlotStatus, error)
 	Run(context.Context) error
@@ -383,6 +384,9 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	}
 	if err := session.Initialize(ctx); err != nil {
 		return err
+	}
+	if err := session.ClearOrphanedCalls(ctx); err != nil {
+		return fmt.Errorf("reconcile modem calls after startup: %w", err)
 	}
 	if err := policy.Restore(ctx); err != nil {
 		return fmt.Errorf("restore slot policy: %w", err)

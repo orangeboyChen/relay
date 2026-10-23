@@ -985,6 +985,95 @@ var _ = Describe("Modem session", func() {
 		Expect(session.Calls().Snapshot()).To(Equal(call.Snapshot{State: call.StateActive, Active: true}))
 	})
 
+	It("leaves an idle modem untouched during startup call reconciliation", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			command, _ := reader.ReadString('\r')
+			Expect(command).To(Equal("AT+CLCC\r"))
+			_, _ = modemTransport.Write([]byte("OK\r\n"))
+		}()
+
+		Expect(session.ClearOrphanedCalls(context.Background())).To(Succeed())
+		Expect(session.Calls().State()).To(Equal(call.StateIdle))
+	})
+
+	DescribeTable("ends carrier calls that survived the previous agent process",
+		func(clcc string) {
+			session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+			DeferCleanup(func() {
+				_ = client.Close()
+				_ = modemTransport.Close()
+			})
+			go func() {
+				reader := bufio.NewReader(modemTransport)
+				command, _ := reader.ReadString('\r')
+				Expect(command).To(Equal("AT+CLCC\r"))
+				_, _ = modemTransport.Write([]byte(clcc + "\r\nOK\r\n"))
+				command, _ = reader.ReadString('\r')
+				Expect(command).To(Equal("ATH\r"))
+				_, _ = modemTransport.Write([]byte("OK\r\n"))
+			}()
+
+			Expect(session.ClearOrphanedCalls(context.Background())).To(Succeed())
+			Expect(session.Calls().State()).To(Equal(call.StateEnded))
+		},
+		Entry("active", "+CLCC: 1,1,0,0,0"),
+		Entry("held", "+CLCC: 1,1,1,0,0"),
+		Entry("dialing", "+CLCC: 1,0,2,0,0"),
+		Entry("ringing", "+CLCC: 1,1,4,0,0"),
+		Entry("waiting", "+CLCC: 1,1,5,0,0"),
+	)
+
+	It("fails startup call reconciliation when CLCC is rejected", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+		go func() {
+			_, _ = bufio.NewReader(modemTransport).ReadString('\r')
+			_, _ = modemTransport.Write([]byte("ERROR\r\n"))
+		}()
+
+		Expect(session.ClearOrphanedCalls(context.Background())).To(MatchError("modem rejected orphaned call query: ERROR"))
+	})
+
+	It("reports malformed orphaned call state during startup", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+		go func() {
+			_, _ = bufio.NewReader(modemTransport).ReadString('\r')
+			_, _ = modemTransport.Write([]byte("+CLCC: malformed\r\nOK\r\n"))
+		}()
+
+		Expect(session.ClearOrphanedCalls(context.Background())).To(MatchError(ContainSubstring("parse orphaned modem calls")))
+	})
+
+	It("reports a failed orphaned call hangup", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() {
+			_ = client.Close()
+			_ = modemTransport.Close()
+		})
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			_, _ = reader.ReadString('\r')
+			_, _ = modemTransport.Write([]byte("+CLCC: 1,1,0,0,0\r\nOK\r\n"))
+			_, _ = reader.ReadString('\r')
+			_, _ = modemTransport.Write([]byte("ERROR\r\n"))
+		}()
+
+		Expect(session.ClearOrphanedCalls(context.Background())).To(MatchError("hang up orphaned modem call: modem rejected ATH: ERROR"))
+	})
+
 	It("polls idle CLCC so an incoming call is detected when the modem omits URCs", func() {
 		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
 		DeferCleanup(func() {

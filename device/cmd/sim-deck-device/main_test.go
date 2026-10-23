@@ -113,6 +113,8 @@ func (transport *blockingTransport) Close() error {
 
 type fakeDeviceSession struct {
 	initializeError error
+	clearCallsError error
+	clearCallsCount int
 	readSIMICCID    func(context.Context) (string, error)
 	retryError      error
 	retryMessage    *sms.ReceivedMessage
@@ -231,6 +233,11 @@ func (runtime *fakeCommandRuntime) Run(ctx context.Context) error {
 
 func (session *fakeDeviceSession) Initialize(context.Context) error {
 	return session.initializeError
+}
+
+func (session *fakeDeviceSession) ClearOrphanedCalls(context.Context) error {
+	session.clearCallsCount++
+	return session.clearCallsError
 }
 
 func (session *fakeDeviceSession) Run(ctx context.Context) error {
@@ -556,6 +563,23 @@ var _ = Describe("Device command runtime", func() {
 		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
 
 		Expect(err).To(MatchError("modem rejected setup"))
+		Expect(bound).To(BeFalse())
+	})
+
+	It("does not bind when startup call reconciliation fails", func() {
+		transport := newBlockingTransport()
+		session := &fakeDeviceSession{clearCallsError: errors.New("orphaned call query failed")}
+		dependencies := testDependencies(transport, session)
+		bound := false
+		dependencies.bindIdentity = func(context.Context, agent.Config, identity.Store, identity.State) (identity.State, error) {
+			bound = true
+			return identity.State{}, nil
+		}
+
+		err := runDevice(context.Background(), testConfig(GinkgoT().TempDir()), logger, &atomic.Bool{}, dependencies)
+
+		Expect(err).To(MatchError("reconcile modem calls after startup: orphaned call query failed"))
+		Expect(session.clearCallsCount).To(Equal(1))
 		Expect(bound).To(BeFalse())
 	})
 

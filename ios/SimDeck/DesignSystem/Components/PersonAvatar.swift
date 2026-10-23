@@ -40,6 +40,7 @@ struct PersonAvatar: View {
             }
         }
         .frame(width: size, height: size)
+        .background(Color(uiColor: .systemBackground))
         .clipShape(PersonAvatarShape(isOrganization: hasOrganizationName))
         .accessibilityHidden(true)
     }
@@ -84,16 +85,13 @@ private struct PersonAvatarFallbackView: View {
         ZStack {
             switch fallback {
             case .organization:
-                LinearGradient(
-                    colors: [.blue.opacity(0.36), .indigo.opacity(0.56)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+                Rectangle()
+                    .fill(avatarGradient)
                 Image(systemName: "building.2.fill")
                     .font(.system(size: size * 0.43, weight: .medium))
                     .foregroundStyle(.white)
             case .monogram(let monogram):
-                Color(uiColor: .tertiarySystemFill)
+                Color(uiColor: .systemGray5)
                 Text(monogram)
                     .font(.system(size: size * 0.4, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
@@ -101,19 +99,35 @@ private struct PersonAvatarFallbackView: View {
                     .minimumScaleFactor(0.65)
                     .padding(size * 0.16)
             case .placeholder:
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.69, green: 0.79, blue: 0.95),
-                        Color(red: 0.42, green: 0.53, blue: 0.79),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                Image(systemName: "person.fill")
-                    .font(.system(size: size * 0.68, weight: .medium))
-                    .foregroundStyle(.white)
+                Image(systemName: "person.crop.circle.fill")
+                    .resizable()
+                    .scaledToFit()
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(
+                        .white,
+                        avatarGradient
+                    )
             }
         }
+    }
+
+    private var avatarGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color(
+                    red: 183.0 / 255.0,
+                    green: 200.0 / 255.0,
+                    blue: 225.0 / 255.0
+                ),
+                Color(
+                    red: 143.0 / 255.0,
+                    green: 154.0 / 255.0,
+                    blue: 198.0 / 255.0
+                ),
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
     }
 }
 

@@ -59,13 +59,6 @@ struct ContactsScreen: View {
         .onChange(of: searchText, initial: true) { _, newValue in
             contactModel.searchText = newValue
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if case .loaded = contactModel.state {
-                SystemSearchBar(text: $searchText)
-                    .frame(height: 50)
-                    .background(.bar)
-            }
-        }
         .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
@@ -95,6 +88,7 @@ struct ContactsScreen: View {
                                 .listRowInsets(
                                     EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 44)
                                 )
+                                .listRowBackground(Color(uiColor: .systemBackground))
                                 .alignmentGuide(.listRowSeparatorLeading) { dimensions in
                                     dimensions[.leading] + 56
                                 }
@@ -107,6 +101,7 @@ struct ContactsScreen: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .id(section.id)
                         }
+                        .listSectionSeparator(.hidden, edges: .top)
                     }
                     Color.clear
                         .frame(height: 96)
@@ -124,6 +119,8 @@ struct ContactsScreen: View {
                     }
                 }
                 .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .background(Color(uiColor: .systemBackground))
             }
         }
     }

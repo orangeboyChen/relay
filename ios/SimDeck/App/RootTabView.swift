@@ -8,8 +8,11 @@ import SwiftUI
 struct RootTabView: View {
     @Bindable var model: AppModel
 
-    @State private var navigationPath = NavigationPath()
+    @State private var callNavigationPath = NavigationPath()
+    @State private var messageNavigationPath = NavigationPath()
+    @State private var contactNavigationPath = NavigationPath()
     @State private var callEditMode: EditMode = .inactive
+    @State private var selectedCallEntryIDs: Set<UUID> = []
     @State private var callFilter: CallHistoryFilter = .all
     @State private var callLineID: UUID?
     @State private var messageSearchText = ""
@@ -17,9 +20,11 @@ struct RootTabView: View {
     @State private var messageEditMode: EditMode = .inactive
     @State private var contactSearchText = ""
     @State private var isMessageComposerPresented = false
+    @State private var isClearAllCallsConfirmationPresented = false
+    @State private var isClearAllCallsErrorPresented = false
 
     var body: some View {
-        navigationContainer
+        rootContent
             .sheet(isPresented: $isMessageComposerPresented) {
                 NewMessageScreen(
                     lines: model.devices,
@@ -43,7 +48,25 @@ struct RootTabView: View {
             }
             .onChange(of: model.selectedTab) { _, _ in
                 callEditMode = .inactive
+                selectedCallEntryIDs.removeAll()
                 messageEditMode = .inactive
+            }
+            .confirmationDialog(
+                "Clear All Calls?",
+                isPresented: $isClearAllCallsConfirmationPresented,
+                titleVisibility: .visible
+            ) {
+                Button("Clear All", role: .destructive) {
+                    clearAllCalls()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("All call history on this iPhone will be removed.")
+            }
+            .alert("Unable to Clear Calls", isPresented: $isClearAllCallsErrorPresented) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("The call history could not be saved.")
             }
             .onContinueUserActivity(INStartCallIntentIdentifier) { activity in
                 Task {
@@ -56,28 +79,6 @@ struct RootTabView: View {
                     await model.handleDefaultCallingRequest(request)
                 }
             }
-    }
-
-    private var navigationContainer: some View {
-        NavigationStack(path: $navigationPath) {
-            rootContent
-            .navigationTitle(rootTitle)
-            .navigationBarTitleDisplayMode(rootTitleDisplayMode)
-            .toolbar {
-                if navigationPath.isEmpty {
-                    rootToolbar
-                }
-            }
-            .navigationDestination(for: CallDetailRoute.self) { route in
-                callDetailDestination(for: route)
-            }
-            .navigationDestination(for: ConversationID.self) { conversationID in
-                conversationDestination(for: conversationID)
-            }
-            .navigationDestination(for: ContactRecord.self) { contact in
-                contactDetailDestination(for: contact)
-            }
-        }
     }
 
     private var rootContent: some View {
@@ -134,112 +135,169 @@ struct RootTabView: View {
     @TabContentBuilder<AppTab>
     private var standardTabs: some TabContent<AppTab> {
         Tab("Calls", systemImage: "phone.fill", value: AppTab.calls) {
-            CallsTabScreen(
-                model: model,
-                historyEditMode: $callEditMode,
-                filter: $callFilter,
-                selectedLineID: $callLineID
-            )
+            callsNavigation
         }
 
         Tab("Messages", systemImage: "message.fill", value: AppTab.messages) {
+            messagesNavigation
+        }
+
+        Tab("Contacts", systemImage: "person.2.fill", value: AppTab.contacts) {
+            contactsNavigation
+        }
+
+        Tab("Me", systemImage: "person.crop.circle.fill", value: AppTab.profile) {
+            NavigationStack {
+                ProfileScreen(model: model)
+            }
+        }
+    }
+
+    private var keypadContent: some View {
+        NavigationStack {
+            KeypadTabScreen(model: model)
+        }
+    }
+
+    private var callsNavigation: some View {
+        NavigationStack(path: $callNavigationPath) {
+            CallsTabScreen(
+                model: model,
+                historyEditMode: $callEditMode,
+                selectedHistoryEntryIDs: $selectedCallEntryIDs,
+                filter: $callFilter,
+                selectedLineID: $callLineID
+            )
+            .navigationTitle("Calls")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if callNavigationPath.isEmpty {
+                    callRootToolbar
+                }
+            }
+            .navigationDestination(for: CallDetailRoute.self) { route in
+                callDetailDestination(for: route)
+            }
+        }
+    }
+
+    private var messagesNavigation: some View {
+        NavigationStack(path: $messageNavigationPath) {
             MessagesTabScreen(
                 model: model,
                 searchText: $messageSearchText,
                 selectedLineID: $messageLineID,
                 editMode: $messageEditMode
             )
+            .navigationTitle("Messages")
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(
+                text: $messageSearchText,
+                placement: .navigationBarDrawer(
+                    displayMode: messageEditMode.isEditing ? .automatic : .always
+                ),
+                prompt: "Search"
+            )
+            .toolbar {
+                if messageNavigationPath.isEmpty {
+                    messageRootToolbar
+                }
+            }
+            .navigationDestination(for: ConversationID.self) { conversationID in
+                conversationDestination(for: conversationID)
+            }
         }
+    }
 
-        Tab("Contacts", systemImage: "person.2.fill", value: AppTab.contacts) {
+    private var contactsNavigation: some View {
+        NavigationStack(path: $contactNavigationPath) {
             ContactsScreen(model: model, searchText: $contactSearchText)
-        }
-
-        Tab("Me", systemImage: "person.crop.circle.fill", value: AppTab.profile) {
-            ProfileScreen(model: model)
-        }
-    }
-
-    private var keypadContent: some View {
-        KeypadTabScreen(model: model)
-    }
-
-    private var rootTitle: LocalizedStringKey {
-        switch model.selectedTab {
-        case .calls:
-            "Calls"
-        case .messages:
-            "Messages"
-        case .contacts:
-            "Contacts"
-        case .profile:
-            "Me"
-        case .keypad:
-            ""
-        }
-    }
-
-    private var rootTitleDisplayMode: NavigationBarItem.TitleDisplayMode {
-        switch model.selectedTab {
-        case .calls, .messages:
-            .inline
-        case .contacts, .profile:
-            .large
-        case .keypad:
-            .inline
+                .navigationTitle("Contacts")
+                .navigationBarTitleDisplayMode(.large)
+                .searchable(
+                    text: $contactSearchText,
+                    placement: .navigationBarDrawer(displayMode: .always),
+                    prompt: "Search"
+                )
+                .navigationDestination(for: ContactRecord.self) { contact in
+                    contactDetailDestination(for: contact)
+                }
         }
     }
 
     @ToolbarContentBuilder
-    private var rootToolbar: some ToolbarContent {
-        if model.selectedTab == .calls {
-            if hasCallHistory {
+    private var callRootToolbar: some ToolbarContent {
+        if hasCallHistory {
+            if callEditMode.isEditing {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button(callEditMode.isEditing ? "Done" : "Edit") {
-                        withAnimation {
-                            callEditMode = callEditMode.isEditing ? .inactive : .active
-                        }
-                    }
-                }
-
-                if !callEditMode.isEditing {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        callFilterMenu
-                    }
-                }
-            }
-        }
-
-        if model.selectedTab == .messages {
-            if hasMessages {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(messageEditMode.isEditing ? "Done" : "Edit") {
+                    SelectionDoneButton {
                         withAnimation(.snappy) {
-                            messageEditMode = messageEditMode.isEditing ? .inactive : .active
+                            callEditMode = .inactive
                         }
                     }
-                    .controlSize(.large)
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Clear All") {
+                        isClearAllCallsConfirmationPresented = true
+                    }
+                    .buttonBorderShape(.capsule)
+                    .disabled(!selectedCallEntryIDs.isEmpty)
+                }
+            } else {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Edit") {
+                        withAnimation {
+                            callEditMode = .active
+                        }
+                    }
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    callFilterMenu
                 }
             }
+        }
+    }
 
-            if !messageEditMode.isEditing {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    SIMFilterMenu(lines: model.devices, selection: $messageLineID)
-
-                    Button {
-                        isMessageComposerPresented = true
-                    } label: {
-                        Label("New Message", systemImage: "square.and.pencil")
-                            .labelStyle(.iconOnly)
+    @ToolbarContentBuilder
+    private var messageRootToolbar: some ToolbarContent {
+        if hasMessages {
+            if messageEditMode.isEditing {
+                ToolbarItem(placement: .topBarLeading) {
+                    SelectionDoneButton {
+                        withAnimation(.snappy) {
+                            messageEditMode = .inactive
+                        }
                     }
-                    .disabled(!hasOnlineLine)
-                    .accessibilityHint(
-                        hasOnlineLine ? Text("") : Text("An online SIM is required.")
-                    )
+                }
+            } else {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Edit") {
+                        withAnimation(.snappy) {
+                            messageEditMode = .active
+                        }
+                    }
                 }
             }
         }
 
+        if !messageEditMode.isEditing {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                SIMFilterMenu(lines: model.devices, selection: $messageLineID)
+
+                Button {
+                    isMessageComposerPresented = true
+                } label: {
+                    Label("New Message", systemImage: "square.and.pencil")
+                        .labelStyle(.iconOnly)
+                }
+                .disabled(!hasOnlineLine)
+                .accessibilityHint(
+                    hasOnlineLine ? Text("") : Text("An online SIM is required.")
+                )
+            }
+        }
     }
 
     private var callFilterMenu: some View {
@@ -319,6 +377,17 @@ struct RootTabView: View {
     private var selectedCallLine: DeviceLineIdentity? {
         guard let callLineID else { return nil }
         return model.devices.first(where: { $0.id == callLineID })
+    }
+
+    private func clearAllCalls() {
+        guard case .loaded(let records) = model.callHistory else { return }
+        do {
+            try model.deleteCallHistoryRecords(withIDs: Set(records.map(\.id)))
+            callEditMode = .inactive
+            selectedCallEntryIDs.removeAll()
+        } catch {
+            isClearAllCallsErrorPresented = true
+        }
     }
 
     @ViewBuilder

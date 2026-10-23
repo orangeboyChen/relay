@@ -17,6 +17,8 @@ struct CallHistoryScreen: View {
     @Binding var filter: CallHistoryFilter
     @Binding var selectedLineID: UUID?
     let onDelete: (Set<UUID>) throws -> Void
+    var onMarkRead: (Set<UUID>) throws -> Void = { _ in }
+    var onSelectionChange: (Set<UUID>) -> Void = { _ in }
     let onStarted: (UUID) -> Void
 
     @State private var startingRecordID: UUID?
@@ -93,6 +95,7 @@ struct CallHistoryScreen: View {
         .navigationTitle("Calls")
         .navigationBarTitleDisplayMode(.inline)
         .scrollEdgeEffectStyle(.soft, for: .all)
+        .contentMargins(.bottom, editMode.isEditing ? 64 : 0, for: .scrollContent)
         .environment(\.editMode, $editMode)
         .toolbar(editMode.isEditing ? .hidden : .visible, for: .tabBar)
         .onChange(of: editMode) { _, newMode in
@@ -100,34 +103,28 @@ struct CallHistoryScreen: View {
                 selectedEntryIDs.removeAll()
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        .onChange(of: selectedEntryIDs) { _, entryIDs in
+            onSelectionChange(entryIDs)
+        }
+        .overlay(alignment: .bottom) {
             if editMode.isEditing {
-                HStack {
-                    Text("\(selectedEntryCount) Selected")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Spacer()
+                SelectionActionBar {
+                    Button("Mark as Read") {
+                        markSelectedEntriesRead()
+                    }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.capsule)
+                    .disabled(selectedUnreadRecordIDs.isEmpty)
+                } trailing: {
                     Button(role: .destructive) {
                         isDeleteConfirmationPresented = true
                     } label: {
-                        Label("Delete", systemImage: "trash")
-                            .fontWeight(.semibold)
-                            .foregroundStyle(
-                                selectedEntryIDs.isEmpty
-                                    ? AnyShapeStyle(.secondary)
-                                    : AnyShapeStyle(.red)
-                            )
-                            .frame(minHeight: 44)
-                            .padding(.horizontal, 12)
-                            .contentShape(Capsule())
+                        Text("Delete")
                     }
                     .buttonStyle(.glass)
                     .buttonBorderShape(.capsule)
                     .disabled(selectedEntryIDs.isEmpty)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 6)
-                .background(.bar)
             }
         }
         .alert(item: $presentedError) { error in
@@ -164,8 +161,24 @@ struct CallHistoryScreen: View {
         }
     }
 
-    private var selectedEntryCount: Int {
-        selectedEntryIDs.count
+    private var selectedRecordIDs: Set<UUID> {
+        guard case .loaded(let records) = state else { return [] }
+        return Set(
+            CallHistoryEntry.grouped(filtered(records))
+                .filter { selectedEntryIDs.contains($0.id) }
+                .flatMap(\.records)
+                .map(\.id)
+        )
+    }
+
+    private var selectedUnreadRecordIDs: Set<UUID> {
+        guard case .loaded(let records) = state else { return [] }
+        let recordIDs = selectedRecordIDs
+        return Set(
+            records.lazy
+                .filter { recordIDs.contains($0.id) && !$0.isRead }
+                .map(\.id)
+        )
     }
 
     private func pruneSelection(from records: [CallRecord]) {
@@ -175,14 +188,18 @@ struct CallHistoryScreen: View {
     }
 
     private func deleteSelectedEntries() {
-        guard case .loaded(let records) = state else { return }
-        let selectedRecordIDs = Set(
-            CallHistoryEntry.grouped(filtered(records))
-                .filter { selectedEntryIDs.contains($0.id) }
-                .flatMap(\.records)
-                .map(\.id)
-        )
         deleteRecords(withIDs: selectedRecordIDs)
+    }
+
+    private func markSelectedEntriesRead() {
+        do {
+            try onMarkRead(selectedUnreadRecordIDs)
+        } catch {
+            presentedError = CallHistoryPresentedError(
+                title: "Unable to Mark Calls as Read",
+                message: "The call history could not be saved."
+            )
+        }
     }
 
     private func startCall(from record: CallRecord) {
@@ -221,9 +238,6 @@ struct CallHistoryScreen: View {
                 selectedEntryIDs.subtract(removedEntryIDs)
             } else {
                 selectedEntryIDs.removeAll()
-            }
-            if selectedEntryIDs.isEmpty {
-                editMode = .inactive
             }
         } catch {
             presentedError = CallHistoryPresentedError(

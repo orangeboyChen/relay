@@ -13,12 +13,12 @@ struct ConversationHeader: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: usesAccessibilityLayout ? -8 : -12) {
+            ZStack(alignment: .top) {
                 PersonAvatar(
                     imageData: contact.thumbnailImageData,
                     displayName: contact.displayName,
                     organizationName: contact.organizationName,
-                    size: usesAccessibilityLayout ? 48 : 56
+                    size: avatarSize
                 )
                 .matchedTransitionSource(
                     id: transitionID,
@@ -27,12 +27,32 @@ struct ConversationHeader: View {
                 .zIndex(1)
 
                 contactIdentity
+                    .offset(y: identityOffset)
+                    .zIndex(2)
             }
+            .frame(height: headerHeight, alignment: .top)
+            .offset(y: verticalAlignmentOffset)
             .frame(maxWidth: usesAccessibilityLayout ? 270 : 230)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text("Contact details for \(contact.displayName)"))
+    }
+
+    private var avatarSize: CGFloat {
+        usesAccessibilityLayout ? 64 : 60
+    }
+
+    private var identityOffset: CGFloat {
+        avatarSize - 6
+    }
+
+    private var headerHeight: CGFloat {
+        avatarSize + (usesAccessibilityLayout ? 28 : 24) - 6
+    }
+
+    private var verticalAlignmentOffset: CGFloat {
+        (headerHeight - 44) / 2
     }
 
     private var contactIdentity: some View {
@@ -41,7 +61,7 @@ struct ConversationHeader: View {
                 .font(
                     usesAccessibilityLayout
                         ? .subheadline.weight(.semibold)
-                        : .footnote.weight(.semibold)
+                        : .caption.weight(.semibold)
                 )
                 .lineLimit(1)
 
@@ -50,12 +70,10 @@ struct ConversationHeader: View {
                 .foregroundStyle(.tertiary)
         }
         .foregroundStyle(.primary)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-        .frame(minHeight: 28)
+        .padding(.horizontal, 8)
+        .frame(height: usesAccessibilityLayout ? 28 : 24)
         .glassEffect(
-            .regular
-                .tint(Color(uiColor: .secondarySystemFill))
+            .clear
                 .interactive(),
             in: Capsule()
         )

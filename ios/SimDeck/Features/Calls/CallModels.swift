@@ -12,6 +12,7 @@ struct CallRecord: Identifiable, Equatable, Sendable, Codable {
     let contactName: String?
     let direction: CallDirection
     let result: CallResult
+    var isRead: Bool
     let startedAt: Date
     let endedAt: Date?
 
@@ -23,6 +24,7 @@ struct CallRecord: Identifiable, Equatable, Sendable, Codable {
         contactName: String?,
         direction: CallDirection,
         result: CallResult,
+        isRead: Bool? = nil,
         startedAt: Date,
         endedAt: Date?
     ) {
@@ -33,8 +35,53 @@ struct CallRecord: Identifiable, Equatable, Sendable, Codable {
         self.contactName = contactName
         self.direction = direction
         self.result = result
+        self.isRead = isRead ?? (result != .missed)
         self.startedAt = startedAt
         self.endedAt = endedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case lineID
+        case lineSnapshot
+        case remoteNumber
+        case contactName
+        case direction
+        case result
+        case isRead
+        case startedAt
+        case endedAt
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        lineID = try container.decode(UUID.self, forKey: .lineID)
+        lineSnapshot = try container.decodeIfPresent(
+            LineHistorySnapshot.self,
+            forKey: .lineSnapshot
+        )
+        remoteNumber = try container.decode(String.self, forKey: .remoteNumber)
+        contactName = try container.decodeIfPresent(String.self, forKey: .contactName)
+        direction = try container.decode(CallDirection.self, forKey: .direction)
+        result = try container.decode(CallResult.self, forKey: .result)
+        isRead = try container.decodeIfPresent(Bool.self, forKey: .isRead) ?? true
+        startedAt = try container.decode(Date.self, forKey: .startedAt)
+        endedAt = try container.decodeIfPresent(Date.self, forKey: .endedAt)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(lineID, forKey: .lineID)
+        try container.encodeIfPresent(lineSnapshot, forKey: .lineSnapshot)
+        try container.encode(remoteNumber, forKey: .remoteNumber)
+        try container.encodeIfPresent(contactName, forKey: .contactName)
+        try container.encode(direction, forKey: .direction)
+        try container.encode(result, forKey: .result)
+        try container.encode(isRead, forKey: .isRead)
+        try container.encode(startedAt, forKey: .startedAt)
+        try container.encodeIfPresent(endedAt, forKey: .endedAt)
     }
 
     var displayName: String {

@@ -867,6 +867,24 @@ final class AppModel {
         )
     }
 
+    func markCallHistoryRecordsRead(withIDs recordIDs: Set<UUID>) throws {
+        guard !recordIDs.isEmpty,
+              case .loaded(var records) = callHistory else {
+            return
+        }
+        var didChange = false
+        for index in records.indices where recordIDs.contains(records[index].id) {
+            guard !records[index].isRead else { continue }
+            records[index].isRead = true
+            didChange = true
+        }
+        guard didChange else { return }
+        if let recoveredVaultKey {
+            try callHistoryStore.save(records, using: recoveredVaultKey)
+        }
+        callHistory = .loaded(records)
+    }
+
     private func registerInstallationIfNeeded() async throws {
         guard installationTrust == nil, let installationIdentity else { return }
         installationTrust = try await serverConnection.registerAppInstallation(

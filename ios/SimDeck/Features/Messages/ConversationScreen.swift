@@ -180,8 +180,8 @@ struct ConversationScreen: View {
                     draft: $draft,
                     attachment: $draftAttachment,
                     availableLines: availableSendLines,
-                    selectedLineID: $sendLineID,
-                    showsLinePicker: selectedLineID == nil,
+                    selectedLineID: sendLineSelection,
+                    showsLinePicker: !availableSendLines.isEmpty,
                     isTextEntryEnabled: currentLine?.isOnline == true && !isSending,
                     canSend: currentLine?.isOnline == true
                         && !isSending
@@ -209,6 +209,7 @@ struct ConversationScreen: View {
                 )
                 .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             }
+            .sharedBackgroundVisibility(.hidden)
 
             ToolbarItem(placement: .topBarTrailing) {
                 lineSelectionControl
@@ -387,31 +388,64 @@ struct ConversationScreen: View {
             }
             .pickerStyle(.inline)
         } label: {
-            Image(
-                systemName: selectedLineID == nil
-                    ? "line.3.horizontal.decrease"
-                    : "line.3.horizontal.decrease.circle.fill"
-            )
-                .font(.body.weight(.semibold))
-                .frame(width: 44, height: 44)
-                .contentShape(Circle())
+            Image(systemName: "line.3.horizontal.decrease")
+                .font(.system(size: 17, weight: .semibold))
+                .frame(width: 20, height: 20)
+                .foregroundStyle(
+                    isFilteringByLine
+                        ? AnyShapeStyle(.white)
+                        : AnyShapeStyle(.primary)
+                )
+                .padding(8)
+                .background {
+                    Circle()
+                        .fill(.tint)
+                        .scaleEffect(isFilteringByLine ? 1 : 0.8)
+                        .opacity(isFilteringByLine ? 1 : 0)
+                }
+                .animation(
+                    reduceMotion ? nil : .snappy(duration: 0.24),
+                    value: isFilteringByLine
+                )
         }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: Circle())
+        .buttonBorderShape(.circle)
         .accessibilityLabel("Filter by SIM")
         .accessibilityValue(lineFilterAccessibilityValue)
     }
 
-    private var lineFilterAccessibilityValue: Text {
+    private var isFilteringByLine: Bool {
+        selectedLineID != nil
+    }
+
+    private var selectedLinePresentation: LineHistoryPresentation? {
         guard let selectedLineID,
               let selectedConversation = conversations.first(where: {
                   $0.lineID == selectedLineID
               }) else {
+            return nil
+        }
+        return selectedConversation.linePresentation(in: lines)
+    }
+
+    private var sendLineSelection: Binding<UUID?> {
+        Binding(
+            get: { sendLineID },
+            set: { newValue in
+                var transaction = Transaction(animation: nil)
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    sendLineID = newValue
+                }
+            }
+        )
+    }
+
+    private var lineFilterAccessibilityValue: Text {
+        guard let selectedLinePresentation else {
             return Text("All SIMs")
         }
-        let presentation = selectedConversation.linePresentation(in: lines)
         let label = SIMLabelPresentation(
-            snapshot: presentation.snapshot,
+            snapshot: selectedLinePresentation.snapshot,
             titleStyle: .displayName
         )
         return Text(label.accessibilityLabel)

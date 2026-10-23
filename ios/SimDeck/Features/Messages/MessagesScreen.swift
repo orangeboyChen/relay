@@ -98,6 +98,7 @@ struct MessagesScreen: View {
         .navigationTitle("Messages")
         .navigationBarTitleDisplayMode(.inline)
         .environment(\.editMode, $editMode)
+        .toolbar(editMode.isEditing ? .hidden : .visible, for: .tabBar)
         .task {
             await refreshAction()
             synchronizeMutedConversations()
@@ -105,7 +106,8 @@ struct MessagesScreen: View {
         .refreshable {
             await refreshAction()
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        .contentMargins(.bottom, editMode.isEditing ? 64 : 0, for: .scrollContent)
+        .overlay(alignment: .bottom) {
             if editMode.isEditing {
                 messageSelectionBar
             }
@@ -115,11 +117,10 @@ struct MessagesScreen: View {
                 selectedConversationIDs.removeAll()
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if case .loaded = state {
-                SystemSearchBar(text: $searchText)
-                    .frame(height: 50)
-                    .background(.bar)
+        .onChange(of: allConversationIDs) { _, conversationIDs in
+            selectedConversationIDs.formIntersection(conversationIDs)
+            if conversationIDs.isEmpty {
+                editMode = .inactive
             }
         }
         .alert("Delete Conversations?", isPresented: deletionConfirmationIsPresented) {
@@ -144,10 +145,7 @@ struct MessagesScreen: View {
 
     private func conversationList(_ conversations: [MessageConversation]) -> some View {
         let contactIndex = ContactRecordIndex(contacts: contacts)
-        let filtered = conversations.filter { conversation in
-            (selectedLineID == nil || conversation.lineID == selectedLineID)
-                && conversation.matches(searchText)
-        }
+        let filtered = filteredConversations(conversations)
 
         return Group {
             if filtered.isEmpty {
@@ -244,35 +242,82 @@ struct MessagesScreen: View {
     }
 
     private var messageSelectionBar: some View {
-        HStack {
-            Text("\(selectedConversationIDs.count) Selected")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Spacer()
+        SelectionActionBar {
+            Button(selectionReadActionTitle) {
+                performSelectionReadAction()
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.capsule)
+            .disabled(!canPerformSelectionReadAction)
+        } trailing: {
             Button(role: .destructive) {
                 guard case .loaded(let conversations) = state else { return }
                 conversationsPendingDeletion = conversations.filter {
                     selectedConversationIDs.contains($0.id)
                 }
             } label: {
-                Label("Delete", systemImage: "trash")
-                    .fontWeight(.semibold)
-                    .foregroundStyle(
-                        selectedConversationIDs.isEmpty
-                            ? AnyShapeStyle(.secondary)
-                            : AnyShapeStyle(.red)
-                    )
-                    .frame(minHeight: 44)
-                    .padding(.horizontal, 12)
-                    .contentShape(Capsule())
+                Image(systemName: "trash")
             }
             .buttonStyle(.glass)
-            .buttonBorderShape(.capsule)
+            .buttonBorderShape(.circle)
             .disabled(selectedConversationIDs.isEmpty)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 6)
-        .background(.bar)
+    }
+
+    private var allConversationIDs: Set<ConversationID> {
+        guard case .loaded(let conversations) = state else { return [] }
+        return Set(conversations.map(\.id))
+    }
+
+    private var visibleConversations: [MessageConversation] {
+        guard case .loaded(let conversations) = state else { return [] }
+        return filteredConversations(conversations)
+    }
+
+    private var selectedConversations: [MessageConversation] {
+        visibleConversations.filter { selectedConversationIDs.contains($0.id) }
+    }
+
+    private var selectionReadActionTitle: LocalizedStringKey {
+        guard !selectedConversationIDs.isEmpty else { return "Read All" }
+        return selectedConversations.contains(where: { $0.unreadCount > 0 })
+            ? "Read"
+            : "Unread"
+    }
+
+    private var canPerformSelectionReadAction: Bool {
+        if selectedConversationIDs.isEmpty {
+            return visibleConversations.contains(where: { $0.unreadCount > 0 })
+        }
+        return !selectedConversations.isEmpty
+    }
+
+    private func performSelectionReadAction() {
+        if selectedConversationIDs.isEmpty {
+            for conversation in visibleConversations where conversation.unreadCount > 0 {
+                markReadAction(conversation.id)
+            }
+            return
+        }
+
+        let conversations = selectedConversations
+        let marksRead = conversations.contains(where: { $0.unreadCount > 0 })
+        for conversation in conversations {
+            if marksRead {
+                markReadAction(conversation.id)
+            } else {
+                markUnreadAction(conversation.id)
+            }
+        }
+    }
+
+    private func filteredConversations(
+        _ conversations: [MessageConversation]
+    ) -> [MessageConversation] {
+        conversations.filter { conversation in
+            (selectedLineID == nil || conversation.lineID == selectedLineID)
+                && conversation.matches(searchText)
+        }
     }
 
     private func synchronizeMutedConversations() {
@@ -318,9 +363,6 @@ struct MessagesScreen: View {
             try deleteAction(messageIDs)
             selectedConversationIDs.subtract(conversationsPendingDeletion.map(\.id))
             conversationsPendingDeletion = []
-            if selectedConversationIDs.isEmpty {
-                editMode = .inactive
-            }
         } catch {
             conversationsPendingDeletion = []
             deleteErrorMessage = error.localizedDescription

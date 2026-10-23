@@ -9,6 +9,7 @@ struct CallsTabScreen: View {
     @Bindable var model: AppModel
 
     @Binding var historyEditMode: EditMode
+    @Binding var selectedHistoryEntryIDs: Set<UUID>
     @Binding var filter: CallHistoryFilter
     @Binding var selectedLineID: UUID?
     @State private var contacts: [ContactRecord] = []
@@ -27,7 +28,9 @@ struct CallsTabScreen: View {
             editMode: $historyEditMode,
             filter: $filter,
             selectedLineID: $selectedLineID,
-            onDelete: model.deleteCallHistoryRecords(withIDs:)
+            onDelete: model.deleteCallHistoryRecords(withIDs:),
+            onMarkRead: model.markCallHistoryRecordsRead(withIDs:),
+            onSelectionChange: { selectedHistoryEntryIDs = $0 }
         ) { lineID in
             model.lastSuccessfulDialLineID = lineID
         }

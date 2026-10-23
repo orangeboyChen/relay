@@ -550,6 +550,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
                 contactName: context.contactName,
                 direction: context.direction,
                 result: result,
+                isRead: context.direction != .incoming || result != .missed,
                 startedAt: context.connectedAt ?? context.offeredAt,
                 endedAt: now()
             )

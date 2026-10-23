@@ -136,10 +136,6 @@ struct MessageComposer: View {
         HStack(alignment: .bottom, spacing: 4) {
             if showsLinePicker {
                 linePicker
-
-                Divider()
-                    .frame(height: 24)
-                    .padding(.vertical, 10)
             }
 
             TextField("Text Message · MMS", text: $draft, axis: .vertical)
@@ -153,7 +149,9 @@ struct MessageComposer: View {
             if canSend {
                 Button(action: sendAction) {
                     Image(systemName: "arrow.up.circle.fill")
+                        .symbolRenderingMode(.palette)
                         .font(.system(size: 30))
+                        .foregroundStyle(.white, .green)
                         .frame(width: 44, height: 44)
                 }
                 .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
@@ -214,16 +212,23 @@ struct MessageComposer: View {
             }
             .pickerStyle(.inline)
         } label: {
-            Group {
+            HStack(spacing: 3) {
                 if let selectedLine {
                     SIMBadge(line: selectedLine, size: 18)
                 } else {
                     Image(systemName: "simcard")
                         .foregroundStyle(.secondary)
                 }
+
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
             }
-            .frame(width: 36, height: 44)
-            .contentShape(.rect)
+            .padding(.horizontal, 8)
+            .frame(height: 32)
+            .background(Color(uiColor: .secondarySystemFill), in: Capsule())
+            .padding(.leading, 6)
+            .padding(.vertical, 6)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Choose sending SIM")

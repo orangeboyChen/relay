@@ -57,6 +57,7 @@
       }
     },
     "%lld Selected" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -319,6 +320,9 @@
           }
         }
       }
+    },
+    "All call history on this iPhone will be removed." : {
+
     },
     "All messages in the selected conversations will be removed from this iPhone." : {
       "localizations" : {
@@ -717,6 +721,12 @@
           }
         }
       }
+    },
+    "Clear All" : {
+
+    },
+    "Clear All Calls?" : {
+
     },
     "Clear Cache" : {
       "localizations" : {
@@ -1820,6 +1830,9 @@
         }
       }
     },
+    "Mark as Read" : {
+
+    },
     "Me" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2528,6 +2541,9 @@
         }
       }
     },
+    "Read All" : {
+
+    },
     "Received" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2774,6 +2790,7 @@
       }
     },
     "SIM %lld, %@, %@" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2817,6 +2834,7 @@
 
     },
     "SIM Card Information" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -3797,6 +3815,9 @@
     "Unable to Call" : {
 
     },
+    "Unable to Clear Calls" : {
+
+    },
     "Unable to Delete" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3816,6 +3837,9 @@
           }
         }
       }
+    },
+    "Unable to Mark Calls as Read" : {
+
     },
     "Unavailable" : {
       "localizations" : {

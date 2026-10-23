@@ -3,7 +3,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import SwiftUI
-import SwiftUIIntrospect
 
 struct MessagesScreen: View {
     let state: MessageListState
@@ -205,9 +204,7 @@ struct MessagesScreen: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .introspect(.listCell, on: .iOS(.v26, .v27)) { cell in
-                (cell as? UICollectionViewListCell)?.accessories = []
-            }
+            .navigationLinkIndicatorVisibility(.hidden)
             .swipeActions(edge: .leading, allowsFullSwipe: true) {
                 if conversation.unreadCount > 0 {
                     Button {

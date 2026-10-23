@@ -5,9 +5,12 @@
 import Intents
 import SwiftUI
 import SwiftUIIntrospect
+import UIKit
 
 struct RootTabView: View {
     @Bindable var model: AppModel
+
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var navigationPath = NavigationPath()
     @State private var callEditMode: EditMode = .inactive
@@ -149,10 +152,9 @@ struct RootTabView: View {
             model.selectedTab == .keypad ? .hidden : .visible,
             for: .navigationBar
         )
+        .toolbarColorScheme(colorScheme, for: .navigationBar)
         .toolbar {
-            if navigationPath.isEmpty {
-                rootToolbar
-            }
+            rootToolbar
         }
     }
 
@@ -375,75 +377,26 @@ struct RootTabView: View {
     }
 
     private var callFilterMenu: some View {
-        Menu {
-            Picker("Call filter", selection: $callFilter) {
-                Label("Calls", systemImage: "phone")
-                    .tag(CallHistoryFilter.all)
-                Label("Missed", systemImage: "phone.down")
-                    .tag(CallHistoryFilter.missed)
-                Label(
-                    "Unknown Callers",
-                    systemImage: "person.crop.circle.badge.questionmark"
-                )
-                .tag(CallHistoryFilter.unknownCallers)
-            }
-            .pickerStyle(.inline)
-
-            Menu {
-                Picker("SIM", selection: $callLineID) {
-                    Label("All SIMs", systemImage: "simcard.2")
-                        .tag(nil as UUID?)
-
-                    ForEach(model.devices) { line in
-                        SIMLabel(line: line)
-                            .tag(line.id as UUID?)
-                    }
-                }
-                .pickerStyle(.inline)
-            } label: {
-                Label {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("All SIMs")
-                        if let selectedCallLine {
-                            Text(verbatim: selectedCallLineSubtitle(selectedCallLine))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                } icon: {
-                    Image(systemName: "simcard.2")
-                }
-            }
-        } label: {
-            Label(
-                "Call filter",
-                systemImage: callFilter == .all && callLineID == nil
-                    ? "line.3.horizontal.decrease"
-                    : "line.3.horizontal.decrease.circle.fill"
-            )
-                .labelStyle(.iconOnly)
-        }
-        .accessibilityValue(callFilterAccessibilityValue)
+        CallFilterMenuButton(
+            filter: $callFilter,
+            selectedLineID: $callLineID,
+            lines: model.devices,
+            accessibilityValue: callFilterAccessibilityValueString
+        )
+        .frame(width: 24, height: 24)
     }
 
-    private func selectedCallLineSubtitle(_ line: DeviceLineIdentity) -> String {
-        let identifier = String(localized: "SIM \(line.numericID)")
-        let phoneNumber = line.phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !phoneNumber.isEmpty else { return identifier }
-        return "\(identifier) · \(phoneNumber)"
-    }
-
-    private var callFilterAccessibilityValue: Text {
+    private var callFilterAccessibilityValueString: String {
         let scope: LocalizedStringResource = switch callFilter {
         case .all: "Calls"
         case .missed: "Missed"
         case .unknownCallers: "Unknown Callers"
         }
         guard let selectedCallLine else {
-            return Text("\(scope), All SIMs")
+            return String(localized: "\(scope), All SIMs")
         }
         let line = SIMLabelPresentation(line: selectedCallLine, titleStyle: .displayName)
-        return Text("\(scope), \(line.accessibilityLabel)")
+        return String(localized: "\(scope), \(line.accessibilityLabel)")
     }
 
     private var hasCallHistory: Bool {
@@ -607,6 +560,131 @@ struct RootTabView: View {
             (try? model.contactStore.fetchContacts()) ?? []
         case .notDetermined, .denied:
             []
+        }
+    }
+}
+
+struct CallFilterMenuButton: UIViewRepresentable {
+    @Binding var filter: CallHistoryFilter
+    @Binding var selectedLineID: UUID?
+    let lines: [DeviceLineIdentity]
+    let accessibilityValue: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(filter: $filter, selectedLineID: $selectedLineID)
+    }
+
+    func makeUIView(context: Context) -> UIButton {
+        let button = UIButton(type: .system)
+        button.showsMenuAsPrimaryAction = true
+        button.accessibilityLabel = String(localized: "Call filter")
+        return button
+    }
+
+    func updateUIView(_ button: UIButton, context: Context) {
+        context.coordinator.filter = $filter
+        context.coordinator.selectedLineID = $selectedLineID
+
+        let isActive = filter != .all || selectedLineID != nil
+        let symbolName = isActive
+            ? "line.3.horizontal.decrease.circle.fill"
+            : "line.3.horizontal.decrease"
+        let configuration = UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)
+        button.setImage(
+            UIImage(systemName: symbolName, withConfiguration: configuration),
+            for: .normal
+        )
+        button.tintColor = .label
+        button.menu = context.coordinator.makeMenu(lines: lines)
+        button.accessibilityValue = accessibilityValue
+    }
+
+    final class Coordinator: @unchecked Sendable {
+        var filter: Binding<CallHistoryFilter>
+        var selectedLineID: Binding<UUID?>
+
+        init(
+            filter: Binding<CallHistoryFilter>,
+            selectedLineID: Binding<UUID?>
+        ) {
+            self.filter = filter
+            self.selectedLineID = selectedLineID
+        }
+
+        @MainActor
+        func makeMenu(lines: [DeviceLineIdentity]) -> UIMenu {
+            let resultActions = [
+                resultAction(title: "Calls", symbol: "phone", value: .all),
+                resultAction(title: "Missed", symbol: "phone.down", value: .missed),
+                resultAction(
+                    title: "Unknown Callers",
+                    symbol: "person.crop.circle.badge.questionmark",
+                    value: .unknownCallers
+                ),
+            ]
+            let resultMenu = UIMenu(options: .displayInline, children: resultActions)
+
+            let simActions = [allSIMsAction()] + lines.map(simAction)
+            let selectedLine = lines.first(where: { $0.id == selectedLineID.wrappedValue })
+            let simMenu = UIMenu(
+                title: String(localized: "SIM"),
+                subtitle: selectedLine.map(Self.lineSubtitle)
+                    ?? String(localized: "All SIMs"),
+                image: UIImage(systemName: "simcard.2"),
+                children: simActions
+            )
+            return UIMenu(children: [resultMenu, simMenu])
+        }
+
+        @MainActor
+        private func resultAction(
+            title: LocalizedStringResource,
+            symbol: String,
+            value: CallHistoryFilter
+        ) -> UIAction {
+            UIAction(
+                title: String(localized: title),
+                image: UIImage(systemName: symbol),
+                state: filter.wrappedValue == value ? .on : .off
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.filter.wrappedValue = value
+                }
+            }
+        }
+
+        @MainActor
+        private func allSIMsAction() -> UIAction {
+            UIAction(
+                title: String(localized: "All SIMs"),
+                image: UIImage(systemName: "simcard.2"),
+                state: selectedLineID.wrappedValue == nil ? .on : .off
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.selectedLineID.wrappedValue = nil
+                }
+            }
+        }
+
+        @MainActor
+        private func simAction(_ line: DeviceLineIdentity) -> UIAction {
+            UIAction(
+                title: line.displayName,
+                subtitle: String(localized: "SIM \(line.numericID)"),
+                image: UIImage(systemName: "\(line.numericID).square.fill"),
+                state: selectedLineID.wrappedValue == line.id ? .on : .off
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.selectedLineID.wrappedValue = line.id
+                }
+            }
+        }
+
+        private static func lineSubtitle(_ line: DeviceLineIdentity) -> String {
+            let identifier = String(localized: "SIM \(line.numericID)")
+            let phoneNumber = line.phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !phoneNumber.isEmpty else { return identifier }
+            return "\(identifier) · \(phoneNumber)"
         }
     }
 }

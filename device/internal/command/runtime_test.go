@@ -38,6 +38,8 @@ type fakeRemote struct {
 	completed      chan struct{}
 	recipients     []incomingcall.Recipient
 	recipientError error
+	claimAttempts  int
+	claimObserved  chan int
 }
 
 func (remote *fakeRemote) ListInstallationRecipients(context.Context, string, string) ([]incomingcall.Recipient, error) {
@@ -48,6 +50,13 @@ func (remote *fakeRemote) ListInstallationRecipients(context.Context, string, st
 }
 
 func (remote *fakeRemote) Claim(context.Context, string, string) (*Envelope, error) {
+	remote.claimAttempts++
+	if remote.claimObserved != nil {
+		select {
+		case remote.claimObserved <- remote.claimAttempts:
+		default:
+		}
+	}
 	if remote.claimError != nil {
 		return nil, remote.claimError
 	}
@@ -732,15 +741,23 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(runtime.activeCallLease).To(BeNil())
 	})
 
-	It("hangs up an active leased call when the server command loop fails", func() {
+	It("keeps an active leased call during transient server claim failures", func() {
 		runtime.activeCallLease = &callLease{
 			callID: "call-1", senderInstallationID: testInstallationID,
 			duration: defaultCallLease, expiresAt: time.Now().Add(defaultCallLease),
 		}
+		runtime.pollInterval = time.Millisecond
 		calls.state = call.StateActive
 		remote.claimError = errors.New("server unavailable")
+		remote.claimObserved = make(chan int, 4)
+		ctx, cancel := context.WithCancel(context.Background())
+		result := make(chan error, 1)
+		go func() { result <- runtime.Run(ctx) }()
 
-		Expect(runtime.Run(context.Background())).To(MatchError(ContainSubstring("server unavailable")))
+		Eventually(remote.claimObserved).Should(Receive(BeNumerically(">=", 2)))
+		Expect(calls.operations).To(BeEmpty())
+		cancel()
+		Expect(<-result).To(MatchError(context.Canceled))
 
 		Expect(calls.operations).To(Equal([]string{"hangup"}))
 		Expect(media.stopped).To(Equal([]string{"call-1"}))
@@ -933,13 +950,17 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(runtime.process(context.Background(), envelope)).To(MatchError(ContainSubstring("encrypt command result")))
 	})
 
-	It("polls until canceled and surfaces claim failures", func() {
+	It("polls until canceled and retries claim failures", func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		Expect(runtime.Run(ctx)).To(MatchError(context.Canceled))
 
 		remote.claimError = errors.New("server unavailable")
-		Expect(runtime.Run(context.Background())).To(MatchError(ContainSubstring("claim encrypted device command: server unavailable")))
+		runtime.pollInterval = time.Millisecond
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Millisecond)
+		defer cancel()
+		Expect(runtime.Run(ctx)).To(MatchError(context.DeadlineExceeded))
+		Expect(remote.claimAttempts).To(BeNumerically(">=", 1))
 	})
 
 	It("claims, executes, and completes a command before continuing to poll", func() {

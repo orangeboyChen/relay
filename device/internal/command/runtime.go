@@ -194,7 +194,8 @@ func NewRuntime(remote Remote, state identity.State, calls Calls, pollInterval t
 	}, nil
 }
 
-// Run processes commands until cancellation or a server transport failure.
+// Run processes commands until cancellation. Transient server failures are
+// retried so an active WebRTC call can survive a short control-plane outage.
 func (runtime *Runtime) Run(ctx context.Context) (runError error) {
 	defer func() {
 		if err := runtime.releaseActiveCall("command runtime stopped"); err != nil {
@@ -207,28 +208,49 @@ func (runtime *Runtime) Run(ctx context.Context) (runError error) {
 		}
 		envelope, err := runtime.remote.Claim(ctx, runtime.identity.DeviceUUID, runtime.identity.Credential)
 		if err != nil {
-			return fmt.Errorf("claim encrypted device command: %w", err)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			runtime.logger.Warn(
+				"encrypted device command claim deferred",
+				"device_uuid", runtime.identity.DeviceUUID,
+				"active_call", runtime.activeCallLease != nil,
+				"error", err,
+			)
+			if err := runtime.waitForNextPoll(ctx); err != nil {
+				return err
+			}
+			continue
 		}
 		if envelope == nil {
-			wait := runtime.pollInterval
-			if runtime.activeCallLease != nil {
-				remaining := runtime.activeCallLease.expiresAt.Sub(runtime.now())
-				if remaining < wait {
-					wait = max(remaining, 0)
-				}
+			if err := runtime.waitForNextPoll(ctx); err != nil {
+				return err
 			}
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(wait):
-				continue
-			}
+			continue
 		}
 		runtime.logger.Info("encrypted device command claimed", "command_id", envelope.ID, "sender_installation_id", envelope.SenderInstallationID)
 		if err := runtime.process(ctx, *envelope); err != nil {
 			runtime.logger.Error("encrypted device command processing failed", "command_id", envelope.ID, "sender_installation_id", envelope.SenderInstallationID, "error", err)
 			return err
 		}
+	}
+}
+
+func (runtime *Runtime) waitForNextPoll(ctx context.Context) error {
+	wait := runtime.pollInterval
+	if runtime.activeCallLease != nil {
+		remaining := runtime.activeCallLease.expiresAt.Sub(runtime.now())
+		if remaining < wait {
+			wait = max(remaining, 0)
+		}
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 

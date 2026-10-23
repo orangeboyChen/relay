@@ -399,14 +399,19 @@ struct RootTabView: View {
                             .tag(line.id as UUID?)
                     }
                 }
+                .pickerStyle(.inline)
             } label: {
-                if let selectedCallLine {
-                    HStack {
-                        SIMBadge(line: selectedCallLine, size: 16)
-                        Text(selectedCallLine.displayName)
+                Label {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("All SIMs")
+                        if let selectedCallLine {
+                            Text(verbatim: selectedCallLineSubtitle(selectedCallLine))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                } else {
-                    Label("All SIMs", systemImage: "simcard.2")
+                } icon: {
+                    Image(systemName: "simcard.2")
                 }
             }
         } label: {
@@ -419,6 +424,13 @@ struct RootTabView: View {
                 .labelStyle(.iconOnly)
         }
         .accessibilityValue(callFilterAccessibilityValue)
+    }
+
+    private func selectedCallLineSubtitle(_ line: DeviceLineIdentity) -> String {
+        let identifier = String(localized: "SIM \(line.numericID)")
+        let phoneNumber = line.phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !phoneNumber.isEmpty else { return identifier }
+        return "\(identifier) · \(phoneNumber)"
     }
 
     private var callFilterAccessibilityValue: Text {

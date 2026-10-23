@@ -338,6 +338,7 @@ private struct CallHistoryRecordRow: View {
                     .contentShape(Rectangle())
                 }
                 .disabled(isInteractionDisabled)
+                .navigationLinkIndicatorVisibility(.hidden)
                 .accessibilityHint("Call details")
 
                 if isStarting {

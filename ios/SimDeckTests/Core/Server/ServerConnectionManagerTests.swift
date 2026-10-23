@@ -781,36 +781,39 @@ final class ServerConnectionManagerTests: XCTestCase {
         )
         let eventID = UUID(uuidString: "01900000-0000-7000-8000-000000000011")!
         let deviceID = UUID(uuidString: "01900000-0000-7000-8000-000000000001")!
-        let network = ScriptedServerNetwork { request in
-            XCTAssertEqual(request.url?.path, "/v1/events")
-            XCTAssertEqual(request.url?.query, "after_sequence=41&limit=100")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
-            return Self.response(
-                status: 200,
-                body: """
-                {"events":[{
-                  "id":"\(eventID.uuidString.lowercased())",
-                  "sequence":42,
-                  "type":"call.state",
-                  "device_uuid":"\(deviceID.uuidString.lowercased())",
-                  "occurred_at":"2026-10-16T08:09:10.123Z",
-                  "key_epoch":1,
-                  "nonce":"AAAAAAAAAAAAAAAA",
-                  "ciphertext":"AQID",
-                  "signature":"BAUG"
-                }],"next_sequence":42}
-                """
-            )
+        let client = TestCommunicationSyncClient(page: EncryptedEventPage(events: [EncryptedEventEnvelope(
+            id: eventID,
+            sequence: 42,
+            type: "call.state",
+            deviceUUID: deviceID,
+            occurredAt: Date(timeIntervalSince1970: 1_797_000_550.123),
+            keyEpoch: 1,
+            nonce: Data(repeating: 0, count: 12),
+            ciphertext: Data([1, 2, 3]),
+            signature: Data([4, 5, 6])
+        )], nextSequence: 42))
+        let clientFactory = TestCommunicationSyncClientFactory(client: client)
+        let network = ScriptedServerNetwork { _ in
+            XCTFail("Event synchronization must use Connect RPC")
+            return Self.response(status: 500, body: "{}")
         }
         let defaults = isolatedDefaults()
         defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
-        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+        let manager = ServerConnectionManager(
+            network: network,
+            sessionStore: store,
+            defaults: defaults,
+            communicationSyncClientFactory: clientFactory
+        )
 
         let page = try await manager.encryptedEvents(afterSequence: 41)
 
         XCTAssertEqual(page.nextSequence, 42)
         XCTAssertEqual(page.events.first?.id, eventID)
         XCTAssertEqual(page.events.first?.deviceUUID, deviceID)
+        XCTAssertEqual(client.pullCursor, 41)
+        XCTAssertEqual(client.pullToken, "access")
+        XCTAssertEqual(clientFactory.baseURL?.absoluteString, "https://deck.example.test")
     }
 
     func testRegistersInstallationIdentityWithAuthenticatedRequest() async throws {
@@ -1102,6 +1105,42 @@ final class ServerConnectionManagerTests: XCTestCase {
         """
         {"access_token":"\(accessToken)","refresh_token":"\(refreshToken)","access_expires_at":"\(accessExpiresAt)","refresh_expires_at":"\(refreshExpiresAt)"}
         """
+    }
+}
+
+@MainActor
+private final class TestCommunicationSyncClient: CommunicationSyncClient {
+    let page: EncryptedEventPage
+    private(set) var pullCursor: Int64?
+    private(set) var pullToken: String?
+
+    init(page: EncryptedEventPage) {
+        self.page = page
+    }
+
+    func pullEvents(afterSequence: Int64, accessToken: String) async throws -> EncryptedEventPage {
+        pullCursor = afterSequence
+        pullToken = accessToken
+        return page
+    }
+
+    func watchEvents(afterSequence: Int64, accessToken: String) throws -> any EncryptedEventStream {
+        throw ServerConnectionError.eventStreamUnavailable
+    }
+}
+
+@MainActor
+private final class TestCommunicationSyncClientFactory: CommunicationSyncClientCreating {
+    private let client: any CommunicationSyncClient
+    private(set) var baseURL: URL?
+
+    init(client: any CommunicationSyncClient) {
+        self.client = client
+    }
+
+    func makeClient(baseURL: URL) -> any CommunicationSyncClient {
+        self.baseURL = baseURL
+        return client
     }
 }
 

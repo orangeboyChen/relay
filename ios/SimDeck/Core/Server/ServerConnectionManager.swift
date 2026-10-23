@@ -5,7 +5,10 @@
 import Foundation
 import Observation
 import OSLog
+import Connect
+import RelayProtocol
 import Security
+import SwiftProtobuf
 
 struct EncryptedCallCommandRequest: Encodable, Equatable, Sendable {
     let id: UUID
@@ -383,6 +386,52 @@ struct URLSessionServerNetworking: ServerNetworking {
 }
 
 @MainActor
+protocol CommunicationSyncClient: AnyObject {
+    func pullEvents(afterSequence: Int64, accessToken: String) async throws -> EncryptedEventPage
+    func watchEvents(afterSequence: Int64, accessToken: String) throws -> any EncryptedEventStream
+}
+
+@MainActor
+protocol CommunicationSyncClientCreating: AnyObject {
+    func makeClient(baseURL: URL) -> any CommunicationSyncClient
+}
+
+@MainActor
+final class URLSessionCommunicationSyncClientFactory: CommunicationSyncClientCreating {
+    func makeClient(baseURL: URL) -> any CommunicationSyncClient {
+        ConnectCommunicationSyncClient(baseURL: baseURL)
+    }
+}
+
+@MainActor
+private final class ConnectCommunicationSyncClient: CommunicationSyncClient {
+    private let client: Relay_Communication_V1_CommunicationSyncServiceClient
+
+    init(baseURL: URL) {
+        let config = ProtocolClientConfig(host: baseURL.absoluteString, codec: ProtoCodec())
+        client = Relay_Communication_V1_CommunicationSyncServiceClient(
+            client: ProtocolClient(httpClient: URLSessionHTTPClient(), config: config)
+        )
+    }
+
+    func pullEvents(afterSequence: Int64, accessToken: String) async throws -> EncryptedEventPage {
+        let response = await client.pullEvents(
+            request: Relay_Communication_V1_PullEventsRequest.with {
+                $0.afterSequence = afterSequence
+                $0.pageSize = 100
+            },
+            headers: ["authorization": ["Bearer \(accessToken)"]]
+        )
+        return try ServerConnectionManager.eventPage(from: response.result.get())
+    }
+
+    func watchEvents(afterSequence: Int64, accessToken: String) throws -> any EncryptedEventStream {
+        let stream = client.watchEvents(headers: ["authorization": ["Bearer \(accessToken)"]])
+        return try ServerConnectEncryptedEventStream(stream: stream, afterSequence: afterSequence)
+    }
+}
+
+@MainActor
 @Observable
 final class ServerConnectionManager {
     @ObservationIgnored private static let logger = Logger(
@@ -395,7 +444,7 @@ final class ServerConnectionManager {
 
     @ObservationIgnored private let network: any ServerNetworking
     @ObservationIgnored private let sessionStore: any SecureValueStoring
-    @ObservationIgnored private let webSocketFactory: any ServerWebSocketCreating
+    @ObservationIgnored private let communicationSyncClientFactory: any CommunicationSyncClientCreating
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var session: ServerSession?
     @ObservationIgnored private var refreshTask: Task<ServerSession, Error>?
@@ -407,12 +456,12 @@ final class ServerConnectionManager {
         network: any ServerNetworking,
         sessionStore: any SecureValueStoring,
         defaults: UserDefaults,
-        webSocketFactory: any ServerWebSocketCreating = URLSessionServerWebSocketFactory()
+        communicationSyncClientFactory: any CommunicationSyncClientCreating = URLSessionCommunicationSyncClientFactory()
     ) {
         self.network = network
         self.sessionStore = sessionStore
         self.defaults = defaults
-        self.webSocketFactory = webSocketFactory
+        self.communicationSyncClientFactory = communicationSyncClientFactory
         address = defaults.string(forKey: Self.addressKey) ?? ""
         session = try? sessionStore.read().map { data in
             try Self.decoder.decode(ServerSession.self, from: data)
@@ -978,18 +1027,11 @@ final class ServerConnectionManager {
     }
 
     func encryptedEvents(afterSequence: Int64) async throws -> EncryptedEventPage {
-        let (data, response) = try await authenticatedRequest(
-            path: "v1/events",
-            method: "GET",
-            queryItems: [
-                URLQueryItem(name: "after_sequence", value: String(afterSequence)),
-                URLQueryItem(name: "limit", value: "100"),
-            ]
-        )
-        guard response.statusCode == 200 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
-        }
-        return try Self.decoder.decode(EncryptedEventPage.self, from: data)
+        guard afterSequence >= 0 else { throw ServerConnectionError.invalidResponse }
+        let baseURL = try validatedBaseURL()
+        let activeSession = try await validSession(baseURL: baseURL)
+        return try await communicationSyncClientFactory.makeClient(baseURL: baseURL)
+            .pullEvents(afterSequence: afterSequence, accessToken: activeSession.accessToken)
     }
 
     func openEncryptedEventStream(
@@ -1000,27 +1042,8 @@ final class ServerConnectionManager {
         }
         let baseURL = try validatedBaseURL()
         let activeSession = try await validSession(baseURL: baseURL)
-        let httpURL = baseURL.appending(path: "v1/events/ws")
-        guard var components = URLComponents(url: httpURL, resolvingAgainstBaseURL: false) else {
-            throw ServerConnectionError.invalidAddress
-        }
-        components.scheme = components.scheme == "https" ? "wss" : "ws"
-        components.queryItems = [
-            URLQueryItem(name: "after_sequence", value: String(afterSequence)),
-        ]
-        guard let url = components.url else {
-            throw ServerConnectionError.invalidAddress
-        }
-        var request = URLRequest(url: url)
-        request.setValue("Bearer \(activeSession.accessToken)", forHTTPHeaderField: "Authorization")
-        let connection = webSocketFactory.makeConnection(for: request)
-        connection.resume()
-        return ServerEncryptedEventStream(
-            connection: connection,
-            afterSequence: afterSequence,
-            decoder: Self.decoder,
-            encoder: Self.encoder
-        )
+        return try communicationSyncClientFactory.makeClient(baseURL: baseURL)
+            .watchEvents(afterSequence: afterSequence, accessToken: activeSession.accessToken)
     }
 
     func registerAppInstallation(
@@ -1212,6 +1235,44 @@ final class ServerConnectionManager {
             throw ServerConnectionError.invalidAddress
         }
         return url
+    }
+
+    fileprivate static func eventPage(
+        from response: Relay_Communication_V1_PullEventsResponse
+    ) throws -> EncryptedEventPage {
+        let events = try response.events.map(eventEnvelope(from:))
+        if let last = events.last, response.nextSequence != last.sequence {
+            throw ServerConnectionError.invalidResponse
+        }
+        return EncryptedEventPage(events: events, nextSequence: response.nextSequence)
+    }
+
+    static func eventEnvelope(
+        from event: Relay_Communication_V1_EncryptedEvent
+    ) throws -> EncryptedEventEnvelope {
+        guard let id = UUID(uuidString: event.id),
+              let deviceID = UUID(uuidString: event.deviceUuid),
+              event.hasOccurredAt else {
+            throw ServerConnectionError.invalidResponse
+        }
+        let recipientID = event.hasRecipientInstallationID
+            ? UUID(uuidString: event.recipientInstallationID)
+            : nil
+        if event.hasRecipientInstallationID && recipientID == nil {
+            throw ServerConnectionError.invalidResponse
+        }
+        return EncryptedEventEnvelope(
+            id: id,
+            sequence: event.sequence,
+            type: event.type,
+            deviceUUID: deviceID,
+            recipientInstallationID: recipientID,
+            occurredAt: event.occurredAt.date,
+            keyEpoch: Int(event.keyEpoch),
+            nonce: event.nonce,
+            ciphertext: event.ciphertext,
+            signature: event.signature
+        )
     }
 
     private func request(

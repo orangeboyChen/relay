@@ -4,6 +4,8 @@
 
 import Foundation
 import OSLog
+import Connect
+import RelayProtocol
 
 enum ServerWebSocketMessage: Equatable, Sendable {
     case data(Data)
@@ -152,6 +154,79 @@ final class ServerEncryptedEventStream: EncryptedEventStream {
 
     func close() {
         connection.cancel()
+    }
+}
+
+@MainActor
+final class ServerConnectEncryptedEventStream: EncryptedEventStream {
+    private let stream: any Connect.ServerOnlyAsyncStreamInterface<
+        Relay_Communication_V1_WatchEventsRequest,
+        Relay_Communication_V1_WatchEventsResponse
+    >
+    private var results: AsyncStream<Connect.StreamResult<Relay_Communication_V1_WatchEventsResponse>>.Iterator
+    private var cursor: Int64
+    private var pendingAcknowledgement: Int64?
+
+    init(
+        stream: any Connect.ServerOnlyAsyncStreamInterface<
+            Relay_Communication_V1_WatchEventsRequest,
+            Relay_Communication_V1_WatchEventsResponse
+        >,
+        afterSequence: Int64
+    ) throws {
+        guard afterSequence >= 0 else {
+            throw ServerConnectionError.invalidResponse
+        }
+        self.stream = stream
+        self.cursor = afterSequence
+        self.results = stream.results().makeAsyncIterator()
+        try stream.send(Relay_Communication_V1_WatchEventsRequest.with {
+            $0.afterSequence = afterSequence
+        })
+    }
+
+    func receive() async throws -> EncryptedEventPage {
+        guard pendingAcknowledgement == nil else {
+            throw ServerConnectionError.invalidResponse
+        }
+        while let result = await results.next() {
+            switch result {
+            case .headers:
+                continue
+            case .complete(_, let error, _):
+                if let error { throw error }
+                throw ServerConnectionError.eventStreamUnavailable
+            case .message(let response):
+                let events = try response.events.map(ServerConnectionManager.eventEnvelope(from:))
+                guard !events.isEmpty,
+                      response.nextSequence > cursor,
+                      events.last?.sequence == response.nextSequence else {
+                    throw ServerConnectionError.invalidResponse
+                }
+                var previousSequence = cursor
+                for event in events {
+                    guard event.sequence > previousSequence else {
+                        throw ServerConnectionError.invalidResponse
+                    }
+                    previousSequence = event.sequence
+                }
+                pendingAcknowledgement = response.nextSequence
+                return EncryptedEventPage(events: events, nextSequence: response.nextSequence)
+            }
+        }
+        throw ServerConnectionError.eventStreamUnavailable
+    }
+
+    func acknowledge(sequence: Int64) async throws {
+        guard pendingAcknowledgement == sequence else {
+            throw ServerConnectionError.invalidResponse
+        }
+        cursor = sequence
+        pendingAcknowledgement = nil
+    }
+
+    func close() {
+        stream.cancel()
     }
 }
 

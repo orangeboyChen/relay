@@ -195,6 +195,7 @@
 				200000000000000000000008 /* libPhoneNumberSwiftCore */,
 				20000000000000000000000A /* libPhoneNumberSwiftGeocoding */,
 				20000000000000000000000D /* SwiftUIIntrospect */,
+				20000000000000000000000F /* RelayProtocol */,
 			);
 			productName = SimDeck;
 			productReference = 100000000000000000000001 /* SimDeck.app */;
@@ -307,6 +308,7 @@
 				200000000000000000000006 /* XCRemoteSwiftPackageReference "mars-rs" */,
 				20000000000000000000000B /* XCRemoteSwiftPackageReference "libPhoneNumber-iOS" */,
 				20000000000000000000000C /* XCRemoteSwiftPackageReference "swiftui-introspect" */,
+				20000000000000000000000E /* XCRemoteSwiftPackageReference "relay-sdk" */,
 			);
 			productRefGroup = 100000000000000000000031 /* Products */;
 			projectDirPath = "";
@@ -889,6 +891,14 @@
 				minimumVersion = 27.0.0;
 			};
 		};
+		20000000000000000000000E /* XCRemoteSwiftPackageReference "relay-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/orangeboyChen/relay-sdk.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.1.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -916,6 +926,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 20000000000000000000000C /* XCRemoteSwiftPackageReference "swiftui-introspect" */;
 			productName = SwiftUIIntrospect;
+		};
+		20000000000000000000000F /* RelayProtocol */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 20000000000000000000000E /* XCRemoteSwiftPackageReference "relay-sdk" */;
+			productName = RelayProtocol;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -8,37 +8,28 @@ import XCTest
 
 @MainActor
 final class ServerEventStreamTests: XCTestCase {
-    func testOpensAuthenticatedWSSStreamAndAcknowledgesDeliveredCursor() async throws {
-        let connection = RecordingServerWebSocketConnection(incoming: [
-            .string(Self.eventFrame(sequence: 42)),
-        ])
-        let factory = RecordingServerWebSocketFactory(connection: connection)
+    func testOpensAuthenticatedConnectStreamAndAcknowledgesDeliveredCursor() async throws {
+        let eventStream = MonitorEventStream(pages: [Self.eventPage(sequence: 42)])
+        let client = RecordingCommunicationSyncClient(stream: eventStream)
+        let factory = RecordingCommunicationSyncClientFactory(client: client)
         let defaults = isolatedDefaults()
         defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
         let manager = ServerConnectionManager(
             network: FailingServerNetwork(),
             sessionStore: EventStreamSessionStore(value: Self.sessionData),
             defaults: defaults,
-            webSocketFactory: factory
+            communicationSyncClientFactory: factory
         )
 
         let stream = try await manager.openEncryptedEventStream(afterSequence: 41)
         let page = try await stream.receive()
         try await stream.acknowledge(sequence: page.nextSequence)
 
-        let request = try XCTUnwrap(factory.request)
-        XCTAssertEqual(request.url?.scheme, "wss")
-        XCTAssertEqual(request.url?.host, "deck.example.test")
-        XCTAssertEqual(request.url?.path, "/v1/events/ws")
-        XCTAssertEqual(request.url?.query, "after_sequence=41")
-        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
-        XCTAssertTrue(connection.didResume)
+        XCTAssertEqual(factory.baseURL?.absoluteString, "https://deck.example.test")
+        XCTAssertEqual(client.openedSequences, [41])
+        XCTAssertEqual(client.accessTokens, ["access"])
         XCTAssertEqual(page.events.map(\.sequence), [42])
-        let acknowledgement = try XCTUnwrap(connection.sent.first?.dataValue)
-        XCTAssertEqual(
-            try JSONSerialization.jsonObject(with: acknowledgement) as? [String: AnyHashable],
-            ["type": "ack", "sequence": 42]
-        )
+        XCTAssertEqual(eventStream.acknowledgedSequences, [42])
     }
 
     func testRejectsNonAdvancingEventSequenceWithoutAcknowledgingIt() async throws {
@@ -320,6 +311,45 @@ private final class MonitorEventStreamOpener: EncryptedEventStreamOpening {
     func openEncryptedEventStream(afterSequence: Int64) async throws -> any EncryptedEventStream {
         openedSequences.append(afterSequence)
         return try await handler(afterSequence)
+    }
+
+}
+
+@MainActor
+private final class RecordingCommunicationSyncClient: CommunicationSyncClient {
+    private let eventStream: any EncryptedEventStream
+    private(set) var openedSequences: [Int64] = []
+    private(set) var accessTokens: [String] = []
+
+    init(stream: any EncryptedEventStream) {
+        eventStream = stream
+    }
+
+    func pullEvents(afterSequence: Int64, accessToken: String) async throws -> EncryptedEventPage {
+        openedSequences.append(afterSequence)
+        accessTokens.append(accessToken)
+        return EncryptedEventPage(events: [], nextSequence: afterSequence)
+    }
+
+    func watchEvents(afterSequence: Int64, accessToken: String) throws -> any EncryptedEventStream {
+        openedSequences.append(afterSequence)
+        accessTokens.append(accessToken)
+        return eventStream
+    }
+}
+
+@MainActor
+private final class RecordingCommunicationSyncClientFactory: CommunicationSyncClientCreating {
+    private let client: any CommunicationSyncClient
+    private(set) var baseURL: URL?
+
+    init(client: any CommunicationSyncClient) {
+        self.client = client
+    }
+
+    func makeClient(baseURL: URL) -> any CommunicationSyncClient {
+        self.baseURL = baseURL
+        return client
     }
 }
 

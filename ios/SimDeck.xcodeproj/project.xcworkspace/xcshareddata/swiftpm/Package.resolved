@@ -10,6 +10,15 @@
         "version" : "2.1.2"
       }
     },
+		{
+		  "identity" : "relay-sdk",
+		  "kind" : "remoteSourceControl",
+		  "location" : "https://github.com/orangeboyChen/relay-sdk.git",
+		  "state" : {
+		    "revision" : "57bbae810245e2b7649661426a3f19cfdcd8236a",
+		    "version" : "0.1.0"
+		  }
+		},
     {
       "identity" : "mars-rs",
       "kind" : "remoteSourceControl",

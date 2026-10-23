@@ -1218,8 +1218,11 @@ func validUUID(value string) bool {
 }
 
 func bearerToken(value string) (string, bool) {
-	prefix, token, ok := strings.Cut(value, " ")
-	return token, ok && strings.EqualFold(prefix, "Bearer") && strings.TrimSpace(token) != ""
+	parts := strings.Fields(value)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return "", false
+	}
+	return parts[1], true
 }
 
 func decodeJSON(request *http.Request, value any) error {

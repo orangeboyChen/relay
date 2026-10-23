@@ -66,6 +66,13 @@ type fakeRepository struct {
 	revokeSessionError          error
 	ownerID                     string
 	ownerAuthError              error
+	ownerAuthToken              string
+	historySnapshot             domain.HistorySnapshot
+	historySnapshotError        error
+	historyWriteExpected        int64
+	historyWriteCiphertext      []byte
+	historyWriteAt              time.Time
+	historyWriteError           error
 	pairingOwnerID              string
 	pairingTokenHash            []byte
 	pairingExpiresAt            time.Time
@@ -353,7 +360,8 @@ func (fake *fakeRepository) RevokeSession(_ context.Context, access string, _ ti
 	return fake.revokeSessionError
 }
 
-func (fake *fakeRepository) AuthenticateOwnerSession(_ context.Context, _ string, _ time.Time) (string, error) {
+func (fake *fakeRepository) AuthenticateOwnerSession(_ context.Context, token string, _ time.Time) (string, error) {
+	fake.ownerAuthToken = token
 	if fake.ownerAuthError != nil {
 		return "", fake.ownerAuthError
 	}
@@ -361,6 +369,30 @@ func (fake *fakeRepository) AuthenticateOwnerSession(_ context.Context, _ string
 		return "owner-1", nil
 	}
 	return fake.ownerID, nil
+}
+
+func (fake *fakeRepository) GetHistorySnapshot(_ context.Context, ownerID string, kind int) (domain.HistorySnapshot, error) {
+	if fake.historySnapshotError != nil {
+		return domain.HistorySnapshot{}, fake.historySnapshotError
+	}
+	snapshot := fake.historySnapshot
+	snapshot.OwnerID = ownerID
+	snapshot.Kind = kind
+	return snapshot, nil
+}
+
+func (fake *fakeRepository) PutHistorySnapshot(_ context.Context, ownerID string, kind int, expectedRevision int64, ciphertext []byte, now time.Time) (domain.HistorySnapshot, error) {
+	fake.historyWriteExpected = expectedRevision
+	fake.historyWriteCiphertext = append([]byte(nil), ciphertext...)
+	fake.historyWriteAt = now
+	if fake.historyWriteError != nil {
+		return domain.HistorySnapshot{}, fake.historyWriteError
+	}
+	fake.historySnapshot = domain.HistorySnapshot{
+		OwnerID: ownerID, Kind: kind, Revision: expectedRevision + 1,
+		Ciphertext: append([]byte(nil), ciphertext...), UpdatedAt: now,
+	}
+	return fake.historySnapshot, nil
 }
 
 func (fake *fakeRepository) CreatePairingToken(_ context.Context, ownerID string, tokenHash []byte, expiresAt time.Time) error {

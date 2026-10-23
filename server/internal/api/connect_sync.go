@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	connect "connectrpc.com/connect/v2"
@@ -43,8 +42,8 @@ func rpcAuthInterceptor(router *router) connect.ServerInterceptor {
 			if !ok {
 				return connect.NewError(connect.CodeUnauthenticated, "missing request metadata")
 			}
-			token := strings.TrimSpace(strings.TrimPrefix(info.RequestHeader().Get("Authorization"), "Bearer "))
-			if token == "" {
+			token, ok := bearerToken(info.RequestHeader().Get("Authorization"))
+			if !ok {
 				return connect.NewError(connect.CodeUnauthenticated, "bearer credential is required")
 			}
 			if spec.Procedure == communicationv1connect.CommunicationSyncServicePublishEventProcedure {
@@ -199,7 +198,8 @@ func (service *syncService) PutHistorySnapshot(ctx context.Context, request *com
 
 func rpcBearer(ctx context.Context) string {
 	info, _ := connect.CallInfoForServerContext(ctx)
-	return strings.TrimSpace(strings.TrimPrefix(info.RequestHeader().Get("Authorization"), "Bearer "))
+	token, _ := bearerToken(info.RequestHeader().Get("Authorization"))
+	return token
 }
 
 func eventFromProto(event *communicationv1.EncryptedEvent) (domain.EventEnvelope, error) {

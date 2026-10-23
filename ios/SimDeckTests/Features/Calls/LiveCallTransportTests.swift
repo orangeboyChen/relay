@@ -333,6 +333,94 @@ final class LiveCallTransportTests: XCTestCase {
         XCTAssertEqual(media.connectivityWaitCount, 2)
     }
 
+    func testMediaRestartExhaustionEndsTheLocalAndRemoteCall() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let media = CallMediaSessionFake()
+        media.connectivityWaitResults = Array(
+            repeating: .failure(CallMediaSessionError.connectivityTimedOut),
+            count: 3
+        )
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: api.commandSigner,
+            makeMediaSession: { media },
+            waitBeforePollingAgain: {},
+            waitBeforeMediaRestart: {},
+            automaticallyPollEvents: false
+        )
+        let ended = expectation(description: "Exhausted media recovery ends the call")
+        transport.setEventHandler { event in
+            if event == .ended(callID: self.callID, reason: .failed) {
+                ended.fulfill()
+            }
+        }
+        try await transport.startOutgoingCall(
+            callID: callID,
+            number: "13500000000",
+            lineID: deviceID
+        )
+
+        media.reportConnectivity(.failed)
+        await fulfillment(of: [ended], timeout: 1)
+        for _ in 0..<100 where api.payloads.count < 5 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(
+            api.payloads.map(\.operation),
+            ["call.start", "call.media.restart", "call.media.restart", "call.media.restart", "call.end"]
+        )
+        XCTAssertEqual(media.connectivityWaitCount, 3)
+        XCTAssertTrue(media.isClosed)
+        do {
+            try await transport.setHeld(true, callID: callID)
+            XCTFail("Expected exhausted media recovery to discard the call")
+        } catch {
+            XCTAssertEqual(error as? LiveCallTransportError, .invalidResponse)
+        }
+    }
+
+    func testStalledRTPActivityTriggersMediaRestart() async throws {
+        let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
+        let media = CallMediaSessionFake()
+        media.activityResults = Array(
+            repeating: CallMediaActivity(inboundPackets: 10, outboundPackets: 10),
+            count: 4
+        )
+        let gate = CallLeaseRenewalGate()
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: api.commandSigner,
+            makeMediaSession: { media },
+            waitBeforePollingAgain: {},
+            waitBeforeMediaRestart: {},
+            waitBeforeMediaHealthCheck: { await gate.wait() },
+            automaticallyPollEvents: false,
+            automaticallyRenewCallLease: false
+        )
+        try await transport.startOutgoingCall(
+            callID: callID,
+            number: "13500000000",
+            lineID: deviceID
+        )
+        try api.appendCallEvent(callID: callID, state: "active", occurredAt: .now)
+        try await transport.synchronizeEvents()
+
+        for expectedCount in 1...4 {
+            await gate.signal()
+            for _ in 0..<100 where media.activityRequestCount < expectedCount {
+                await Task.yield()
+            }
+        }
+        for _ in 0..<100 where api.payloads.count < 2 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(api.payloads.map(\.operation), ["call.start", "call.media.restart"])
+        XCTAssertEqual(media.activityRequestCount, 4)
+        await transport.reset()
+    }
+
     func testConnectedMediaCancelsPendingDisconnectedRestart() async throws {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
         let media = CallMediaSessionFake()
@@ -691,11 +779,19 @@ final class LiveCallTransportTests: XCTestCase {
         XCTAssertEqual(api.payloads.map(\.operation), ["call.start", "call.heartbeat", "call.end"])
     }
 
-    func testRepeatedEventStreamFailureClosesMediaAndEndsTheCallAsFailed() async throws {
+    func testRepeatedEventStreamFailureReconnectsWithoutEndingTheCall() async throws {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
         let media = CallMediaSessionFake()
+        let recovered = expectation(description: "Event stream reconnects after repeated failures")
+        let stream = BlockingEncryptedEventStream()
+        var attempts = 0
         let opener = RecordingEncryptedEventStreamOpener { _ in
-            throw ServerConnectionError.eventStreamUnavailable
+            attempts += 1
+            if attempts <= 3 {
+                throw ServerConnectionError.eventStreamUnavailable
+            }
+            recovered.fulfill()
+            return stream
         }
         let transport = LiveCallTransport(
             api: api,
@@ -705,28 +801,19 @@ final class LiveCallTransportTests: XCTestCase {
             automaticallyRenewCallLease: false,
             eventStreamOpener: opener
         )
-        let ended = expectation(description: "Repeated stream failures end the active call")
+        var events: [CallTransportEvent] = []
         transport.setEventHandler { event in
-            if event == .ended(callID: self.callID, reason: .failed) {
-                ended.fulfill()
-            }
+            events.append(event)
         }
 
         try await transport.startOutgoingCall(callID: callID, number: "10086", lineID: deviceID)
-        await fulfillment(of: [ended], timeout: 1)
-        for _ in 0..<100 where api.payloads.count < 2 {
-            await Task.yield()
-        }
+        await fulfillment(of: [recovered], timeout: 1)
 
-        XCTAssertEqual(opener.requestedCursors, [0, 0, 0])
-        XCTAssertEqual(api.payloads.map(\.operation), ["call.start", "call.end"])
-        XCTAssertTrue(media.isClosed)
-        do {
-            try await transport.setHeld(true, callID: callID)
-            XCTFail("Expected failed event-stream cleanup to discard the call")
-        } catch {
-            XCTAssertEqual(error as? LiveCallTransportError, .invalidResponse)
-        }
+        XCTAssertEqual(opener.requestedCursors, [0, 0, 0, 0])
+        XCTAssertEqual(api.payloads.map(\.operation), ["call.start"])
+        XCTAssertTrue(events.isEmpty)
+        XCTAssertFalse(media.isClosed)
+        await transport.reset()
     }
 
     func testNetworkSwitchReopensCallEventsWithoutEndingTheCall() async throws {
@@ -1063,7 +1150,9 @@ private final class CallMediaSessionFake: CallMediaSession {
     private(set) var isClosed = false
     private(set) var restartOfferRequests: [[CallTURNCredentials]] = []
     var connectivityWaitResults: [Result<Void, Error>] = []
+    var activityResults: [CallMediaActivity] = []
     private(set) var connectivityWaitCount = 0
+    private(set) var activityRequestCount = 0
     private var connectivityHandler: (@MainActor (CallMediaConnectivityState) -> Void)?
 
     func makeOffer() async throws -> String {
@@ -1091,6 +1180,17 @@ private final class CallMediaSessionFake: CallMediaSession {
             let result = connectivityWaitResults.removeFirst()
             try result.get()
         }
+    }
+
+    func mediaActivity() async throws -> CallMediaActivity {
+        activityRequestCount += 1
+        guard !activityResults.isEmpty else {
+            return CallMediaActivity(
+                inboundPackets: UInt64(activityRequestCount),
+                outboundPackets: UInt64(activityRequestCount)
+            )
+        }
+        return activityResults.removeFirst()
     }
 
     func setMuted(_ isMuted: Bool) {

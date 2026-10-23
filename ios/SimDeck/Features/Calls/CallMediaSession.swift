@@ -39,12 +39,18 @@ enum CallMediaConnectivityState: Equatable, Sendable {
     case failed
 }
 
+struct CallMediaActivity: Equatable, Sendable {
+    let inboundPackets: UInt64
+    let outboundPackets: UInt64
+}
+
 @MainActor
 protocol CallMediaSession: AnyObject {
     func makeOffer() async throws -> String
     func makeRestartOffer(iceServers: [CallTURNCredentials]) async throws -> String
     func applyAnswer(_ answer: String) async throws
     func waitUntilConnected(timeout: Duration) async throws
+    func mediaActivity() async throws -> CallMediaActivity
     func setConnectivityHandler(_ handler: (@MainActor (CallMediaConnectivityState) -> Void)?)
     func setMuted(_ isMuted: Bool)
     func audioSessionDidActivate(_ audioSession: AVAudioSession)
@@ -286,6 +292,35 @@ final class WebRTCCallMediaSession: NSObject, CallMediaSession {
                     return
                 }
                 self?.finishConnectivityWait(with: .failure(.connectivityTimedOut))
+            }
+        }
+    }
+
+    func mediaActivity() async throws -> CallMediaActivity {
+        guard !isClosed else { throw CallMediaSessionError.closed }
+        return await withCheckedContinuation { continuation in
+            peerConnection.statistics { statistics in
+                var inboundPackets: UInt64 = 0
+                var outboundPackets: UInt64 = 0
+                for statistic in statistics.statistics.values {
+                    guard statistic.type == "inbound-rtp" || statistic.type == "outbound-rtp" else {
+                        continue
+                    }
+                    let kind = (statistic.values["kind"] as? NSString) as String?
+                        ?? (statistic.values["mediaType"] as? NSString) as String?
+                    guard kind == nil || kind == "audio" else { continue }
+                    if statistic.type == "inbound-rtp" {
+                        inboundPackets += (statistic.values["packetsReceived"] as? NSNumber)?.uint64Value ?? 0
+                    } else {
+                        outboundPackets += (statistic.values["packetsSent"] as? NSNumber)?.uint64Value ?? 0
+                    }
+                }
+                continuation.resume(
+                    returning: CallMediaActivity(
+                        inboundPackets: inboundPackets,
+                        outboundPackets: outboundPackets
+                    )
+                )
             }
         }
     }

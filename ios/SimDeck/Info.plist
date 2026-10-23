@@ -20,6 +20,7 @@
 	<array>
 		<string>voip</string>
 		<string>remote-notification</string>
+		<string>audio</string>
 	</array>
 </dict>
 </plist>

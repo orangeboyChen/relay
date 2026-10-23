@@ -58,6 +58,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
     private let waitBeforePollingAgain: () async throws -> Void
     private let waitBeforeCallLeaseRenewal: () async throws -> Void
     private let waitBeforeMediaRestart: () async throws -> Void
+    private let waitBeforeMediaHealthCheck: () async throws -> Void
     private let automaticallyPollEvents: Bool
     private let automaticallyRenewCallLease: Bool
     private let eventStreamOpener: (any EncryptedEventStreamOpening)?
@@ -74,6 +75,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
     private var mediaRestartTasks: [UUID: Task<Void, Never>] = [:]
     private var mediaRestartGenerations: [UUID: UUID] = [:]
     private var mediaRestartsInProgress: Set<UUID> = []
+    private var mediaHealthTasks: [UUID: Task<Void, Never>] = [:]
     private var activeEventStream: (any EncryptedEventStream)?
     private var networkIsAvailable = true
     private var lineRoutes: [UUID: DeviceLineIdentity] = [:]
@@ -101,6 +103,9 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
         waitBeforeMediaRestart: @escaping () async throws -> Void = {
             try await Task.sleep(for: .seconds(2))
         },
+        waitBeforeMediaHealthCheck: @escaping () async throws -> Void = {
+            try await Task.sleep(for: .seconds(5))
+        },
         automaticallyPollEvents: Bool = true,
         automaticallyRenewCallLease: Bool? = nil,
         eventStreamOpener: (any EncryptedEventStreamOpening)? = nil
@@ -114,6 +119,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
         self.waitBeforePollingAgain = waitBeforePollingAgain
         self.waitBeforeCallLeaseRenewal = waitBeforeCallLeaseRenewal
         self.waitBeforeMediaRestart = waitBeforeMediaRestart
+        self.waitBeforeMediaHealthCheck = waitBeforeMediaHealthCheck
         self.automaticallyPollEvents = automaticallyPollEvents
         self.automaticallyRenewCallLease = automaticallyRenewCallLease ?? automaticallyPollEvents
         self.eventStreamOpener = eventStreamOpener ?? (api as? any EncryptedEventStreamOpening)
@@ -183,6 +189,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
 
     func discardIncomingCall(callID: UUID) {
         stopMediaRestart(callID: callID)
+        stopMediaHealthMonitoring(callID: callID)
         stopCallLeaseRenewal(callID: callID)
         mediaSessions.removeValue(forKey: callID)?.close()
         callLines.removeValue(forKey: callID)
@@ -289,6 +296,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
         stopMediaRestart(callID: callID)
         defer {
             stopCallLeaseRenewal(callID: callID)
+            stopMediaHealthMonitoring(callID: callID)
             mediaSessions.removeValue(forKey: callID)?.close()
             callLines.removeValue(forKey: callID)
             callEvents.removeValue(forKey: callID)
@@ -347,6 +355,10 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
         mediaRestartTasks.removeAll()
         mediaRestartGenerations.removeAll()
         mediaRestartsInProgress.removeAll()
+        for task in mediaHealthTasks.values {
+            task.cancel()
+        }
+        mediaHealthTasks.removeAll()
         for mediaSession in mediaSessions.values {
             mediaSession.close()
         }
@@ -368,6 +380,9 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
             self?.handleMediaConnectivity(state, callID: callID)
         }
         mediaSessions[callID] = mediaSession
+        if callEvents[callID]?.hasConnected == true {
+            startMediaHealthMonitoring(callID: callID)
+        }
         if let activeAudioSession {
             mediaSession.audioSessionDidActivate(activeAudioSession)
         }
@@ -438,6 +453,10 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
                     }
                 }
             }
+            await failCallAfterMediaRecovery(
+                callID: callID,
+                reason: "ICE restart exhausted"
+            )
         }
     }
 
@@ -479,6 +498,52 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
         mediaRestartTasks.removeValue(forKey: callID)?.cancel()
         mediaRestartGenerations.removeValue(forKey: callID)
         mediaRestartsInProgress.remove(callID)
+    }
+
+    private func startMediaHealthMonitoring(callID: UUID) {
+        guard mediaSessions[callID] != nil, mediaHealthTasks[callID] == nil else { return }
+        mediaHealthTasks[callID] = Task { [weak self] in
+            guard let self else { return }
+            var previousActivity: CallMediaActivity?
+            var stalledChecks = 0
+            while !Task.isCancelled, callEvents[callID] != nil {
+                do {
+                    try await waitBeforeMediaHealthCheck()
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled, let mediaSession = mediaSessions[callID] else { return }
+                if mediaRestartsInProgress.contains(callID) {
+                    previousActivity = nil
+                    stalledChecks = 0
+                    continue
+                }
+                do {
+                    let activity = try await mediaSession.mediaActivity()
+                    if activity == previousActivity {
+                        stalledChecks += 1
+                    } else {
+                        stalledChecks = 0
+                    }
+                    previousActivity = activity
+                    guard stalledChecks >= 3 else { continue }
+                    Self.logger.error(
+                        "WebRTC RTP traffic stalled; restarting media for call \(callID.uuidString, privacy: .public)"
+                    )
+                    previousActivity = nil
+                    stalledChecks = 0
+                    scheduleMediaRestart(callID: callID, debounce: false)
+                } catch {
+                    Self.logger.error(
+                        "WebRTC media health check failed; call: \(callID.uuidString, privacy: .public), error: \(String(reflecting: error), privacy: .public)"
+                    )
+                }
+            }
+        }
+    }
+
+    private func stopMediaHealthMonitoring(callID: UUID) {
+        mediaHealthTasks.removeValue(forKey: callID)?.cancel()
     }
 
     private func startCallLeaseRenewal(callID: UUID) {
@@ -685,12 +750,10 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
                 activeEventStream?.close()
                 activeEventStream = nil
                 consecutiveFailures += 1
-                if consecutiveFailures >= 3 {
-                    failActiveCalls()
-                    return
-                }
                 do {
-                    try await waitBeforePollingAgain()
+                    for _ in 0..<min(consecutiveFailures, 10) {
+                        try await waitBeforePollingAgain()
+                    }
                 } catch {
                     return
                 }
@@ -718,11 +781,13 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
                 guard !context.hasConnected else { return }
                 context.hasConnected = true
                 callEvents[callID] = context
+                startMediaHealthMonitoring(callID: callID)
                 eventHandler?(.connected(callID: callID, at: envelope.occurredAt))
             case "ended":
                 let reason: CallEndReason = context.hasConnected ? .remoteEnded : .unanswered
                 stopCallLeaseRenewal(callID: callID)
                 stopMediaRestart(callID: callID)
+                stopMediaHealthMonitoring(callID: callID)
                 mediaSessions.removeValue(forKey: callID)?.close()
                 callEvents.removeValue(forKey: callID)
                 callLines.removeValue(forKey: callID)
@@ -736,35 +801,20 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
         }
     }
 
-    private func failActiveCalls() {
-        let callIDs = Array(callEvents.keys)
-        let remoteCalls = callIDs.compactMap { callID in
-            callLines[callID].map { (callID: callID, lineID: $0) }
-        }
-        for task in callLeaseTasks.values {
-            task.cancel()
-        }
-        callLeaseTasks.removeAll()
-        for mediaSession in mediaSessions.values {
-            mediaSession.close()
-        }
-        mediaSessions.removeAll()
-        callEvents.removeAll()
-        callLines.removeAll()
-        for callID in callIDs {
-            eventHandler?(.ended(callID: callID, reason: .failed))
-        }
-        Task { [weak self] in
-            guard let self else { return }
-            for call in remoteCalls {
-                await endRemoteCallAfterLocalFailure(
-                    callID: call.callID,
-                    lineID: call.lineID,
-                    reason: "event stream failed"
-                )
-            }
-        }
-        eventTask = nil
+    private func failCallAfterMediaRecovery(callID: UUID, reason: String) async {
+        guard let lineID = callLines[callID] else { return }
+        stopCallLeaseRenewal(callID: callID)
+        stopMediaHealthMonitoring(callID: callID)
+        mediaSessions.removeValue(forKey: callID)?.close()
+        callEvents.removeValue(forKey: callID)
+        callLines.removeValue(forKey: callID)
+        eventHandler?(.ended(callID: callID, reason: .failed))
+        stopEventLoopIfIdle()
+        await endRemoteCallAfterLocalFailure(
+            callID: callID,
+            lineID: lineID,
+            reason: reason
+        )
     }
 
     private func endRemoteCallAfterLocalFailure(callID: UUID, lineID: UUID, reason: String) async {

@@ -2,19 +2,19 @@ version: v2
 clean: true
 plugins:
   - remote: buf.build/protocolbuffers/go
-    out: gen/go
+    out: sdk/gen/go
     opt:
       - paths=source_relative
   - remote: buf.build/connectrpc/go
-    out: gen/go
+    out: sdk/gen/go
     opt:
       - paths=source_relative
   - remote: buf.build/apple/swift
-    out: Sources/RelayProtocol
+    out: sdk/Sources/RelayProtocol
     opt:
       - Visibility=Public
   - remote: buf.build/connectrpc/swift
-    out: Sources/RelayProtocol
+    out: sdk/Sources/RelayProtocol
     opt:
       - GenerateAsyncMethods=true
       - GenerateCallbackMethods=false

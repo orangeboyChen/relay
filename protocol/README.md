@@ -2,11 +2,12 @@
 
 Shared protobuf and Connect RPC contracts for encrypted communication synchronization.
 
-## Generate clients
+The schema and generator configuration are the source of truth. Generated Go and Swift sources are not committed to this repository.
+
+## Validate and build the SDK
 
 ```sh
-buf lint
-buf generate
+./scripts/build-sdk.sh
 ```
 
-Generated Go and Swift sources are committed so consumers do not need protobuf tooling.
+The script generates an ignored `sdk/gen` and `sdk/Sources` tree, then compiles both packages. Tagged releases publish the same generated tree to `orangeboyChen/relay-sdk`, where Go Modules and Swift Package Manager can consume an exact version.

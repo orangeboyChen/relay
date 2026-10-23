@@ -4,7 +4,7 @@ package relay.communication.v1;
 
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/orangeboyChen/relay-protocol/gen/go/relay/communication/v1;communicationv1";
+option go_package = "github.com/orangeboyChen/relay-sdk/gen/go/relay/communication/v1;communicationv1";
 
 // CommunicationSyncService carries opaque end-to-end encrypted communication state.
 service CommunicationSyncService {

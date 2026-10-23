@@ -20,22 +20,13 @@ jobs:
       - uses: bufbuild/buf-setup-action@v1
       - uses: actions/setup-go@v6
         with:
-          go-version-file: protocol/go.mod
-          cache-dependency-path: protocol/go.sum
-      - name: Lint protobuf
+          go-version-file: protocol/sdk/go.mod
+          cache-dependency-path: protocol/sdk/go.sum
+      - name: Generate and build SDK
         working-directory: protocol
-        run: buf lint
-      - name: Regenerate clients
-        working-directory: protocol
-        run: buf generate
-      - name: Verify generated clients are committed
+        run: ./scripts/build-sdk.sh
+      - name: Verify generation does not modify tracked sources
         run: git diff --exit-code -- protocol
-      - name: Test Go package
-        working-directory: protocol
-        run: go test ./...
-      - name: Build Swift package
-        working-directory: protocol
-        run: swift build
 
   server-unit:
     name: Server unit tests

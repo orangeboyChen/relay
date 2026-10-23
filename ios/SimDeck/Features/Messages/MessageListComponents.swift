@@ -47,6 +47,7 @@ struct ConversationRow: View {
     var contact: ContactRecord? = nil
     let referenceDate: Date
     var isMuted = false
+    var isPinned = false
     var isEditing = false
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -96,6 +97,20 @@ struct ConversationRow: View {
             Spacer(minLength: 8)
 
             if let lastMessage = conversation.lastMessage {
+                if isMuted {
+                    Image(systemName: "bell.slash.fill")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Alerts hidden")
+                }
+
+                if isPinned {
+                    Image(systemName: "pin.fill")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Pinned")
+                }
+
                 Text(
                     MessageTimestampFormatter.string(
                         from: lastMessage.sentAt,
@@ -106,13 +121,11 @@ struct ConversationRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
-            }
 
-            if isMuted {
-                Image(systemName: "bell.slash.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel("Alerts hidden")
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
             }
         }
     }
@@ -124,16 +137,23 @@ struct ConversationRow: View {
                 .lineLimit(2)
 
             if let lastMessage = conversation.lastMessage {
-                Text(
-                    MessageTimestampFormatter.string(
-                        from: lastMessage.sentAt,
-                        relativeTo: referenceDate
+                HStack(spacing: 4) {
+                    Text(
+                        MessageTimestampFormatter.string(
+                            from: lastMessage.sentAt,
+                            relativeTo: referenceDate
+                        )
                     )
-                )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
+                }
             }
         }
     }
@@ -166,6 +186,40 @@ struct ConversationRow: View {
             return contactName
         }
         return conversation.displayName
+    }
+}
+
+enum MessageConversationPinStore {
+    private static let key = "message-pinned-conversations-v1"
+
+    static func isPinned(
+        _ conversationID: ConversationID,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        identifiers(defaults: defaults).contains(identifier(for: conversationID))
+    }
+
+    static func setPinned(
+        _ isPinned: Bool,
+        conversationID: ConversationID,
+        defaults: UserDefaults = .standard
+    ) {
+        var storedIdentifiers = identifiers(defaults: defaults)
+        let conversationIdentifier = identifier(for: conversationID)
+        if isPinned {
+            storedIdentifiers.insert(conversationIdentifier)
+        } else {
+            storedIdentifiers.remove(conversationIdentifier)
+        }
+        defaults.set(Array(storedIdentifiers).sorted(), forKey: key)
+    }
+
+    private static func identifiers(defaults: UserDefaults) -> Set<String> {
+        Set(defaults.stringArray(forKey: key) ?? [])
+    }
+
+    private static func identifier(for conversationID: ConversationID) -> String {
+        "\(conversationID.deviceUUID.uuidString)|\(conversationID.remoteNumber)"
     }
 }
 

@@ -61,7 +61,7 @@ struct ConversationScreen: View {
         self.deleteAction = deleteAction
         self.markReadAction = markReadAction
         self.callAction = callAction
-        _selectedLineID = State(initialValue: conversations.count > 1 ? nil : initialID.deviceUUID)
+        _selectedLineID = State(initialValue: nil)
         _sendLineID = State(initialValue: initialID.deviceUUID)
     }
 
@@ -124,7 +124,8 @@ struct ConversationScreen: View {
                         .id(ConversationScrollAnchor.bottom)
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                .padding(.top, 22)
+                .padding(.bottom, 8)
                 .id(selectedLineID)
                 .transition(.opacity)
                 .modifier(
@@ -200,6 +201,7 @@ struct ConversationScreen: View {
             ToolbarItem(placement: .principal) {
                 ConversationHeader(
                     contact: displayedContact,
+                    phoneNumber: conversation.remoteNumber,
                     usesAccessibilityLayout: dynamicTypeSize.isAccessibilitySize,
                     transitionID: contactTransitionID,
                     transitionNamespace: contactTransitionNamespace,

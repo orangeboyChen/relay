@@ -6,6 +6,7 @@ import SwiftUI
 
 struct ConversationHeader: View {
     let contact: ContactRecord
+    let phoneNumber: String
     let usesAccessibilityLayout: Bool
     let transitionID: String
     let transitionNamespace: Namespace.ID
@@ -44,11 +45,11 @@ struct ConversationHeader: View {
     }
 
     private var identityOffset: CGFloat {
-        avatarSize - 6
+        avatarSize - 8
     }
 
     private var headerHeight: CGFloat {
-        avatarSize + (usesAccessibilityLayout ? 28 : 24) - 6
+        avatarSize + (usesAccessibilityLayout ? 46 : 42) - 8
     }
 
     private var verticalAlignmentOffset: CGFloat {
@@ -56,22 +57,28 @@ struct ConversationHeader: View {
     }
 
     private var contactIdentity: some View {
-        HStack(spacing: 3) {
-            Text(contact.displayName)
-                .font(
-                    usesAccessibilityLayout
-                        ? .subheadline.weight(.semibold)
-                        : .caption.weight(.semibold)
-                )
-                .lineLimit(1)
+        VStack(spacing: 1) {
+            HStack(spacing: 3) {
+                Text(contact.displayName)
+                    .font(
+                        usesAccessibilityLayout
+                            ? .subheadline.weight(.semibold)
+                            : .caption.weight(.semibold)
+                    )
+                    .lineLimit(1)
 
-            Image(systemName: "chevron.right")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.tertiary)
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+
+            Text(PhoneNumberDisplayFormatter.string(from: phoneNumber))
+                .font(usesAccessibilityLayout ? .body : .subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
-        .foregroundStyle(.primary)
         .padding(.horizontal, 8)
-        .frame(height: usesAccessibilityLayout ? 28 : 24)
+        .frame(height: usesAccessibilityLayout ? 46 : 42)
         .glassEffect(
             .clear
                 .interactive(),
@@ -451,6 +458,7 @@ private struct ConversationComponentsPreview: View {
         VStack(spacing: 20) {
             ConversationHeader(
                 contact: PreviewContactFixtures.contacts[0],
+                phoneNumber: PreviewContactFixtures.contacts[0].phoneNumbers[0].value,
                 usesAccessibilityLayout: false,
                 transitionID: "preview-contact",
                 transitionNamespace: contactTransitionNamespace,

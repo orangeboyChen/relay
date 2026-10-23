@@ -28,6 +28,7 @@ struct MessagesScreen: View {
     @State private var conversationsPendingDeletion: [MessageConversation] = []
     @State private var deleteErrorMessage: String?
     @State private var mutedConversationIDs: Set<ConversationID> = []
+    @State private var pinnedConversationIDs: Set<ConversationID> = []
 
     init(
         state: MessageListState,
@@ -100,6 +101,7 @@ struct MessagesScreen: View {
         .task {
             await refreshAction()
             synchronizeMutedConversations()
+            synchronizePinnedConversations()
         }
         .refreshable {
             await refreshAction()
@@ -195,11 +197,13 @@ struct MessagesScreen: View {
                     contact: contact,
                     referenceDate: referenceDate,
                     isMuted: mutedConversationIDs.contains(conversation.id),
+                    isPinned: pinnedConversationIDs.contains(conversation.id),
                     isEditing: false
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(.rect)
             }
+            .buttonStyle(.plain)
             .swipeActions(edge: .leading, allowsFullSwipe: true) {
                 if conversation.unreadCount > 0 {
                     Button {
@@ -235,6 +239,50 @@ struct MessagesScreen: View {
                 }
                 .tint(.indigo)
                 .accessibilityLabel(isMuted ? "Show Alerts" : "Hide Alerts")
+            }
+            .contextMenu {
+                Button {
+                    togglePinned(conversation.id)
+                } label: {
+                    Label(
+                        pinnedConversationIDs.contains(conversation.id) ? "Unpin" : "Pin",
+                        systemImage: pinnedConversationIDs.contains(conversation.id)
+                            ? "pin.slash"
+                            : "pin"
+                    )
+                }
+
+                if conversation.unreadCount > 0 {
+                    Button {
+                        markReadAction(conversation.id)
+                    } label: {
+                        Label("Mark as Read", systemImage: "message.badge.filled.fill")
+                    }
+                } else {
+                    Button {
+                        markUnreadAction(conversation.id)
+                    } label: {
+                        Label("Mark as Unread", systemImage: "message.badge.filled.fill")
+                    }
+                }
+
+                let isMuted = mutedConversationIDs.contains(conversation.id)
+                Button {
+                    setConversationMuted(!isMuted, id: conversation.id)
+                } label: {
+                    Label(
+                        isMuted ? "Show Alerts" : "Hide Alerts",
+                        systemImage: isMuted ? "bell" : "bell.slash"
+                    )
+                }
+
+                Divider()
+
+                Button(role: .destructive) {
+                    conversationsPendingDeletion = [conversation]
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
             }
         }
     }
@@ -316,6 +364,14 @@ struct MessagesScreen: View {
             (selectedLineID == nil || conversation.lineID == selectedLineID)
                 && conversation.matches(searchText)
         }
+        .enumerated()
+        .sorted { lhs, rhs in
+            let lhsPinned = pinnedConversationIDs.contains(lhs.element.id)
+            let rhsPinned = pinnedConversationIDs.contains(rhs.element.id)
+            if lhsPinned != rhsPinned { return lhsPinned }
+            return lhs.offset < rhs.offset
+        }
+        .map(\.element)
     }
 
     private func synchronizeMutedConversations() {
@@ -326,6 +382,28 @@ struct MessagesScreen: View {
         mutedConversationIDs = Set(
             conversations.lazy.filter { isMutedAction($0.id) }.map(\.id)
         )
+    }
+
+    private func synchronizePinnedConversations() {
+        guard case .loaded(let conversations) = state else {
+            pinnedConversationIDs = []
+            return
+        }
+        pinnedConversationIDs = Set(
+            conversations.lazy.filter { MessageConversationPinStore.isPinned($0.id) }.map(\.id)
+        )
+    }
+
+    private func togglePinned(_ id: ConversationID) {
+        let isPinned = !pinnedConversationIDs.contains(id)
+        MessageConversationPinStore.setPinned(isPinned, conversationID: id)
+        withAnimation(.snappy) {
+            if isPinned {
+                pinnedConversationIDs.insert(id)
+            } else {
+                pinnedConversationIDs.remove(id)
+            }
+        }
     }
 
     private func setConversationMuted(_ isMuted: Bool, id: ConversationID) {

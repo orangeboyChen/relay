@@ -15,9 +15,6 @@ require (
 	golang.org/x/net v0.58.0
 )
 
-replace github.com/orangeboyChen/relay-sdk => ../protocol/sdk
-
-
 require (
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.4 // indirect

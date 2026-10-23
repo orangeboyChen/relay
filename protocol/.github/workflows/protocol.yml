@@ -1,0 +1,32 @@
+name: Protocol
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Lint and generated sources
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: bufbuild/buf-setup-action@v1
+      - name: Lint protobuf
+        run: buf lint
+      - name: Check breaking changes
+        if: github.event_name == 'pull_request'
+        run: buf breaking --against '.git#branch=origin/${{ github.base_ref }}'
+      - name: Regenerate clients
+        run: buf generate
+      - name: Verify generated clients are committed
+        run: git diff --exit-code
+      - name: Test Go package
+        run: go test ./...
+      - name: Build Swift package
+        run: swift build

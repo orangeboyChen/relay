@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package relay.communication.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/orangeboyChen/relay-protocol/gen/go/relay/communication/v1;communicationv1";
+
+// CommunicationSyncService carries opaque end-to-end encrypted communication state.
+service CommunicationSyncService {
+  // PublishEvent stores one idempotent device-signed event.
+  rpc PublishEvent(PublishEventRequest) returns (PublishEventResponse);
+
+  // PullEvents returns one ordered page after the caller's durable cursor.
+  rpc PullEvents(PullEventsRequest) returns (PullEventsResponse);
+
+  // WatchEvents streams ordered pages after the caller's durable cursor.
+  rpc WatchEvents(WatchEventsRequest) returns (stream WatchEventsResponse);
+
+  // GetHistorySnapshot returns the latest owner-scoped encrypted archive.
+  rpc GetHistorySnapshot(GetHistorySnapshotRequest) returns (GetHistorySnapshotResponse);
+
+  // PutHistorySnapshot atomically replaces an archive at an expected revision.
+  rpc PutHistorySnapshot(PutHistorySnapshotRequest) returns (PutHistorySnapshotResponse);
+}
+
+enum HistoryKind {
+  HISTORY_KIND_UNSPECIFIED = 0;
+  HISTORY_KIND_MESSAGES = 1;
+  HISTORY_KIND_CALLS = 2;
+}
+
+message EncryptedEvent {
+  string id = 1;
+  int64 sequence = 2;
+  string type = 3;
+  string device_uuid = 4;
+  optional string recipient_installation_id = 5;
+  google.protobuf.Timestamp occurred_at = 6;
+  int32 key_epoch = 7;
+  bytes nonce = 8;
+  bytes ciphertext = 9;
+  bytes signature = 10;
+}
+
+message PublishEventRequest {
+  EncryptedEvent event = 1;
+}
+
+message PublishEventResponse {
+  int64 sequence = 1;
+  bool created = 2;
+}
+
+message PullEventsRequest {
+  int64 after_sequence = 1;
+  int32 page_size = 2;
+}
+
+message PullEventsResponse {
+  repeated EncryptedEvent events = 1;
+  int64 next_sequence = 2;
+}
+
+message WatchEventsRequest {
+  int64 after_sequence = 1;
+}
+
+message WatchEventsResponse {
+  repeated EncryptedEvent events = 1;
+  int64 next_sequence = 2;
+}
+
+message GetHistorySnapshotRequest {
+  HistoryKind kind = 1;
+}
+
+message HistorySnapshot {
+  HistoryKind kind = 1;
+  int64 revision = 2;
+  bytes ciphertext = 3;
+  google.protobuf.Timestamp updated_at = 4;
+}
+
+message GetHistorySnapshotResponse {
+  HistorySnapshot snapshot = 1;
+}
+
+message PutHistorySnapshotRequest {
+  HistoryKind kind = 1;
+  int64 expected_revision = 2;
+  bytes ciphertext = 3;
+}
+
+message PutHistorySnapshotResponse {
+  HistorySnapshot snapshot = 1;
+}

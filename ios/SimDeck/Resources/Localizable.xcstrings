@@ -973,6 +973,16 @@
         }
       }
     },
+    "Data" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "数据"
+          }
+        }
+      }
+    },
     "Default Lines" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2083,6 +2093,16 @@
         }
       }
     },
+    "No Services Enabled" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未开启任何服务"
+          }
+        }
+      }
+    },
     "No Unknown Callers" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2763,6 +2783,16 @@
         }
       }
     },
+    "SIM %lld, %@, %@, %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "SIM %1$lld, %2$@, %3$@, %4$@"
+          }
+        }
+      }
+    },
     "SIM %lld, line %@" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2832,6 +2862,16 @@
     },
     "SIM cards appear after a modem reports its ICCID." : {
 
+    },
+    "SMS" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "短信"
+          }
+        }
+      }
     },
     "Save" : {
       "localizations" : {

@@ -171,10 +171,6 @@ private struct DeviceSlotRow: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            Spacer(minLength: 12)
-            Text(line.isOnline ? String(localized: "Online") : String(localized: "Offline"))
-                .font(.caption)
-                .foregroundStyle(line.isOnline ? .green : .secondary)
         }
         .frame(minHeight: 44)
         .accessibilityElement(children: .combine)

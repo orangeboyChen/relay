@@ -30,13 +30,6 @@ struct SlotSettingsScreen: View {
                     }
                 }
             }
-            if line.simID != nil {
-                Section("SIM Card") {
-                    NavigationLink("SIM Card Information") {
-                        SIMSettingsScreen(model: model, line: line)
-                    }
-                }
-            }
             if let errorDescription {
                 SlotControlErrorSection(message: errorDescription, retry: load)
             }

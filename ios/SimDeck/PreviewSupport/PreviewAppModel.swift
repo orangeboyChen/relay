@@ -11,7 +11,8 @@ extension AppModel {
         devices: [DeviceLineIdentity] = PreviewFixtures.devices,
         keyRecoveryState: KeyRecoveryState = .available,
         onboardingCompleted: Bool = true,
-        activeCall: ActiveCallSession? = nil
+        activeCall: ActiveCallSession? = nil,
+        slotSettings: SlotSettings = .enabled
     ) -> AppModel {
         let serverConnection = ServerConnectionManager(
             network: PreviewServerNetworking(),
@@ -50,7 +51,7 @@ extension AppModel {
             ),
             installationBootstrapper: PreviewInstallationBootstrapper(),
             messageTransport: PreviewMessageTransport(),
-            slotSettingsTransport: PreviewSlotSettingsTransport(),
+            slotSettingsTransport: PreviewSlotSettingsTransport(settings: slotSettings),
             onboardingStore: PreviewOnboardingStore(isCompleted: onboardingCompleted),
             passkeyAuthorizer: PreviewPasskeyAuthorizer(),
             contactStore: PreviewContactStore(contacts: PreviewContactFixtures.contacts),
@@ -87,10 +88,17 @@ private final class PreviewMessageTransport: MessageTransport {
 
 @MainActor
 private final class PreviewSlotSettingsTransport: SlotSettingsTransport {
-    func load(line: DeviceLineIdentity) async throws -> SlotSettings { .enabled }
+    private var settings: SlotSettings
+
+    init(settings: SlotSettings) {
+        self.settings = settings
+    }
+
+    func load(line: DeviceLineIdentity) async throws -> SlotSettings { settings }
 
     func update(_ settings: SlotSettings, line: DeviceLineIdentity) async throws -> SlotSettings {
-        settings
+        self.settings = settings
+        return settings
     }
 
     func restartModem(line: DeviceLineIdentity) async throws {}

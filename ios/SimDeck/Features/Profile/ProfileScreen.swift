@@ -7,9 +7,15 @@ import SwiftUI
 struct ProfileScreen: View {
     let model: AppModel
 
+    @State private var serviceStates: [UUID: ProfileSIMServiceState] = [:]
+
     var body: some View {
         List {
-            SIMCardsSection(lines: model.devices)
+            SIMCardsSection(
+                model: model,
+                lines: model.devices.filter { $0.simID != nil },
+                serviceStates: serviceStates
+            )
 
             Section {
                 NavigationLink {
@@ -32,13 +38,50 @@ struct ProfileScreen: View {
         .navigationTitle("Me")
         .refreshable {
             await model.refreshDevices()
+            await refreshSIMServiceStates()
+        }
+        .task { await refreshSIMServiceStates() }
+        .onChange(of: model.devices) { _, _ in
+            Task { await refreshSIMServiceStates() }
         }
         .scrollEdgeEffectStyle(.soft, for: .all)
+    }
+
+    private func refreshSIMServiceStates() async {
+        let lines = model.devices.filter { $0.simID != nil }
+        let currentIDs = Set(lines.map(\.id))
+        serviceStates = serviceStates.filter { currentIDs.contains($0.key) }
+
+        var tasks: [Task<(UUID, ProfileSIMServiceState), Never>] = []
+        for line in lines {
+            guard line.isOnline else {
+                serviceStates[line.id] = .offline
+                continue
+            }
+
+            serviceStates[line.id] = nil
+            tasks.append(
+                Task { @MainActor in
+                    do {
+                        return (line.id, .loaded(try await model.loadSlotSettings(line: line)))
+                    } catch {
+                        return (line.id, .unavailable)
+                    }
+                }
+            )
+        }
+
+        for task in tasks {
+            let (lineID, state) = await task.value
+            serviceStates[lineID] = state
+        }
     }
 }
 
 private struct SIMCardsSection: View {
+    let model: AppModel
     let lines: [DeviceLineIdentity]
+    let serviceStates: [UUID: ProfileSIMServiceState]
 
     var body: some View {
         Section("SIM Cards") {
@@ -46,7 +89,14 @@ private struct SIMCardsSection: View {
                 EmptySIMCardsRow()
             } else {
                 ForEach(lines) { line in
-                    SIMRadioStatusRow(line: line)
+                    NavigationLink {
+                        SIMSettingsScreen(model: model, line: line)
+                    } label: {
+                        SIMRadioStatusRow(
+                            line: line,
+                            serviceState: serviceStates[line.id]
+                        )
+                    }
                 }
             }
         }
@@ -73,30 +123,16 @@ private struct EmptySIMCardsRow: View {
 
 struct SIMRadioStatusRow: View {
     let line: DeviceLineIdentity
-
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let serviceState: ProfileSIMServiceState?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 12) {
-                SIMLineDescription(line: line)
-
-                if !dynamicTypeSize.isAccessibilitySize {
-                    Spacer(minLength: 12)
-                    SIMRadioStatusSummary(
-                        isOnline: line.isOnline,
-                        status: line.radioStatus
-                    )
-                }
-            }
-
-            if dynamicTypeSize.isAccessibilitySize {
-                SIMRadioStatusSummary(
-                    isOnline: line.isOnline,
-                    status: line.radioStatus
-                )
-                .padding(.leading, 32)
-            }
+        HStack(spacing: 12) {
+            SIMLineDescription(line: line, serviceState: serviceState)
+            Spacer(minLength: 12)
+            SIMRadioStatusSummary(
+                isOnline: line.isOnline,
+                status: line.radioStatus
+            )
         }
         .frame(minHeight: 44)
         .accessibilityElement(children: .ignore)
@@ -104,22 +140,29 @@ struct SIMRadioStatusRow: View {
     }
 
     private var accessibilityLabel: Text {
-        Text("SIM \(line.numericID), \(line.displayName), \(line.radioAccessibilityDescription)")
+        Text(
+            "SIM \(line.numericID), \(line.displayName), \(servicePresentation.title), \(line.radioAccessibilityDescription)"
+        )
+    }
+
+    private var servicePresentation: ProfileSIMServicePresentation {
+        ProfileSIMServicePresentation(line: line, state: serviceState)
     }
 }
 
 private struct SIMLineDescription: View {
     let line: DeviceLineIdentity
+    let serviceState: ProfileSIMServiceState?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            SIMLabel(line: line, size: 20)
-            if !line.deviceName.isEmpty {
-                Text(line.deviceName)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+        VStack(alignment: .leading, spacing: 4) {
+            SIMLabel(line: line, size: 22)
+            ProfileSIMServiceStatus(
+                presentation: ProfileSIMServicePresentation(
+                    line: line,
+                    state: serviceState
+                )
+            )
         }
     }
 }
@@ -129,29 +172,90 @@ private struct SIMRadioStatusSummary: View {
     let status: CellularRadioStatus?
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 2) {
-            if !isOnline {
-                Text("Offline")
-                    .foregroundStyle(.secondary)
-            } else if let status {
+        Group {
+            if isOnline, let status, let signalBars = status.signalBars {
+                HStack(spacing: 5) {
+                    CellularSignalIndicator(bars: signalBars)
+                    Text(status.technology.displayName)
+                }
+                .font(.subheadline.weight(.semibold))
+            } else if isOnline, let status {
                 Text(status.technology.displayName)
                     .font(.subheadline.weight(.semibold))
-                if let signalBars = status.signalBars {
-                    CellularSignalIndicator(bars: signalBars)
-                } else {
-                    Text("Signal unavailable")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                Text("Online")
+            } else if isOnline {
                 Text("Signal unavailable")
-                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Offline")
                     .foregroundStyle(.secondary)
             }
         }
+        .font(.subheadline)
         .multilineTextAlignment(.trailing)
         .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+enum ProfileSIMServiceState: Equatable {
+    case loaded(SlotSettings)
+    case offline
+    case unavailable
+}
+
+private struct ProfileSIMServicePresentation {
+    let title: String
+    let color: Color
+
+    init(line: DeviceLineIdentity, state: ProfileSIMServiceState?) {
+        guard line.isOnline else {
+            title = String(localized: "Offline")
+            color = .secondary
+            return
+        }
+
+        switch state {
+        case .loaded(let settings):
+            if settings.airplaneModeEnabled {
+                title = String(localized: "Airplane Mode")
+                color = .yellow
+            } else {
+                let services = [
+                    settings.incomingCallsEnabled ? String(localized: "Calls") : nil,
+                    settings.incomingSMSEnabled ? String(localized: "SMS") : nil,
+                    settings.dataEnabled ? String(localized: "Data") : nil,
+                ].compactMap { $0 }
+                title = services.isEmpty
+                    ? String(localized: "No Services Enabled")
+                    : services.joined(separator: " · ")
+                color = .green
+            }
+        case .offline:
+            title = String(localized: "Offline")
+            color = .secondary
+        case .unavailable:
+            title = String(localized: "Unavailable")
+            color = .secondary
+        case nil:
+            title = String(localized: "Checking")
+            color = .secondary
+        }
+    }
+}
+
+private struct ProfileSIMServiceStatus: View {
+    let presentation: ProfileSIMServicePresentation
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(presentation.color)
+                .frame(width: 7, height: 7)
+                .accessibilityHidden(true)
+            Text(presentation.title)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
     }
 }
 
@@ -237,6 +341,38 @@ private struct ProfileStatusValue: View {
         )
     }
     .preferredColorScheme(.dark)
+}
+
+#Preview("Me - Airplane Mode") {
+    NavigationStack {
+        ProfileScreen(
+            model: .preview(
+                selectedTab: .profile,
+                slotSettings: SlotSettings(
+                    dataEnabled: true,
+                    airplaneModeEnabled: true,
+                    incomingCallsEnabled: true,
+                    incomingSMSEnabled: true
+                )
+            )
+        )
+    }
+}
+
+#Preview("Me - No Enabled Services") {
+    NavigationStack {
+        ProfileScreen(
+            model: .preview(
+                selectedTab: .profile,
+                slotSettings: SlotSettings(
+                    dataEnabled: false,
+                    airplaneModeEnabled: false,
+                    incomingCallsEnabled: false,
+                    incomingSMSEnabled: false
+                )
+            )
+        )
+    }
 }
 
 #Preview("Me - Accessibility Chinese") {

@@ -46,7 +46,6 @@ struct ContactsScreen: View {
                 failedContent
             }
         }
-        .navigationTitle("Contacts")
         .task {
             guard startsSynchronization else { return }
             await contactModel.run()
@@ -94,9 +93,14 @@ struct ContactsScreen: View {
                                 }
                             }
                         } header: {
-                            HStack {
-                                Text(section.title)
-                                Spacer(minLength: 0)
+                            VStack(spacing: 0) {
+                                HStack {
+                                    Text(section.title)
+                                        .font(.body.weight(.regular))
+                                    Spacer(minLength: 0)
+                                }
+
+                                Divider()
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .id(section.id)
@@ -119,6 +123,7 @@ struct ContactsScreen: View {
                     }
                 }
                 .listStyle(.plain)
+                .scrollIndicators(.hidden)
                 .scrollContentBackground(.hidden)
                 .background(Color(uiColor: .systemBackground))
             }
@@ -189,7 +194,7 @@ private struct ContactSectionIndex: View {
                 VStack(spacing: 0) {
                     ForEach(Array(ContactSectionIndexResolver.titles.enumerated()), id: \.offset) { index, title in
                         Text(title)
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: 11, weight: .regular))
                             .foregroundStyle(.tint)
                             .frame(height: ContactSectionIndexResolver.visibleItemHeight)
                             .opacity(activeIndex == nil || activeIndex == index ? 1 : 0.7)

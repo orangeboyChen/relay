@@ -45,6 +45,8 @@ struct DialerScreen: View {
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
+                Spacer(minLength: 0)
+
                 Grid(horizontalSpacing: 16, verticalSpacing: 18) {
                     GridRow {
                         Color.clear
@@ -96,14 +98,16 @@ struct DialerScreen: View {
                     .padding(.top, 8)
                 }
                 .frame(maxWidth: 288)
-
-                Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(.horizontal, 28)
-            .padding(.bottom, 8)
+            .safeAreaPadding(.bottom, 42)
 
             if isShowingAllContactResults {
+                Color(uiColor: .systemBackground)
+                    .ignoresSafeArea()
+                    .transition(.identity)
+
                 DialerContactResultsScreen(
                     number: $number,
                     contacts: contacts,
@@ -111,7 +115,6 @@ struct DialerScreen: View {
                     onCall: callContactMatch,
                     onClose: { isShowingAllContactResults = false }
                 )
-                .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -120,8 +123,7 @@ struct DialerScreen: View {
                 HStack {
                     LinePicker(
                         lines: onlineLines,
-                        selection: $selectedLineID,
-                        isCompact: number.isEmpty
+                        selection: $selectedLineID
                     )
                     Spacer()
                     if !number.isEmpty {
@@ -145,11 +147,9 @@ struct DialerScreen: View {
             }
         }
         .animation(.snappy, value: number.isEmpty)
-        .animation(.snappy, value: isShowingAllContactResults)
         .sheet(item: $unknownContactNumber) { item in
             SystemUnknownContactView(phoneNumber: item.number)
         }
-        .toolbar(.hidden, for: .navigationBar)
         .onChange(of: externalRequest, initial: true) { _, request in
             apply(request)
         }
@@ -206,7 +206,7 @@ struct DialerScreen: View {
                     }
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(DialerContactMatchButtonStyle())
+                .buttonStyle(.plain)
             }
         } else if let firstMatch = partialMatches.first {
             contactMatchPanel {
@@ -217,7 +217,7 @@ struct DialerScreen: View {
                         contactMatchRow(firstMatch)
                             .contentShape(Rectangle())
                     }
-                    .buttonStyle(DialerContactMatchButtonStyle())
+                    .buttonStyle(.plain)
 
                     if partialMatches.count > 1 {
                         Divider()
@@ -234,7 +234,7 @@ struct DialerScreen: View {
                             .frame(minHeight: 30)
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(DialerContactMatchButtonStyle())
+                        .buttonStyle(.plain)
                     }
                 }
             }

@@ -21,7 +21,8 @@ struct DialerContactResultsScreen: View {
             searchHeader
             results
         }
-        .background(Color(uiColor: .systemBackground))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Color(uiColor: .systemBackground).ignoresSafeArea())
         .task {
             refreshMatches()
             isSearchFocused = true
@@ -96,7 +97,7 @@ struct DialerContactResultsScreen: View {
                         .font(.title3)
                     }
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 16)
                 .padding(.top, 20)
                 .padding(.bottom, 12)
 
@@ -114,8 +115,8 @@ struct DialerContactResultsScreen: View {
 
                         if match.id != visibleMatches.last?.id {
                             Divider()
-                                .padding(.leading, 88)
-                                .padding(.trailing, 20)
+                                .padding(.leading, 70)
+                                .padding(.trailing, 16)
                         }
                     }
                 }
@@ -145,51 +146,54 @@ private struct DialerContactResultRow: View {
     let onCall: () -> Void
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 0) {
             Button {
                 onSelect()
             } label: {
-                HStack(spacing: 14) {
+                HStack(spacing: 8) {
                     PersonAvatar(
                         imageData: match.contact.thumbnailImageData,
                         displayName: match.contact.displayName,
                         organizationName: match.contact.organizationName,
-                        size: 54
+                        size: 46
                     )
 
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 3) {
                         Text(match.contact.displayName)
-                            .font(.title3.weight(.semibold))
+                            .font(.headline)
                             .foregroundStyle(.primary)
+                            .lineLimit(1)
                         DialerHighlightedPhoneNumberText(
                             phoneNumber: match.phoneNumber.displayValue,
                             query: query
                         )
-                        .font(.body)
+                        .font(.subheadline)
+                        .lineLimit(1)
                     }
 
                     Spacer(minLength: 0)
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(DialerContactMatchButtonStyle())
+            .buttonStyle(.plain)
 
             Button {
                 onCall()
             } label: {
                 Image(systemName: "phone.fill")
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(.tint)
-                    .frame(width: 54, height: 54)
-                    .background(Color(uiColor: .secondarySystemBackground), in: Circle())
+                    .frame(width: 42, height: 42)
+                    .background(Color(uiColor: .systemGray6), in: Circle())
             }
             .buttonStyle(.plain)
+            .frame(width: 62, height: 56)
             .accessibilityLabel("Call")
             .accessibilityValue(Text(verbatim: match.contact.displayName))
         }
-        .padding(.leading, 20)
-        .padding(.trailing, 20)
-        .padding(.vertical, 10)
+        .frame(minHeight: 74)
+        .padding(.leading, 16)
+        .padding(.trailing, 8)
     }
 }
 
@@ -216,22 +220,12 @@ struct DialerHighlightedPhoneNumberText: View {
         prefix.foregroundColor = .secondary
 
         var match = AttributedString(highlighted.match)
-        match.foregroundColor = .accentColor
+        match.foregroundColor = .primary
         match.inlinePresentationIntent = .stronglyEmphasized
 
         var suffix = AttributedString(highlighted.suffix)
         suffix.foregroundColor = .secondary
         return prefix + match + suffix
-    }
-}
-
-struct DialerContactMatchButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(
-                configuration.isPressed ? Color.secondary.opacity(0.14) : .clear,
-                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-            )
     }
 }
 

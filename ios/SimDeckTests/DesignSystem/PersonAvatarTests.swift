@@ -41,4 +41,18 @@ struct PersonAvatarTests {
             ) == .placeholder
         )
     }
+
+    @Test func usesPlaceholderForNumericCallerIdentity() {
+        #expect(
+            PersonAvatarFallback.resolve(
+                displayName: "10086",
+                organizationName: nil
+            ) == .placeholder
+        )
+    }
+
+    @Test func notificationFallbackRendererAlwaysProducesAnImage() {
+        #expect(PersonAvatarImageRenderer.pngData(displayName: "Alice Brown") != nil)
+        #expect(PersonAvatarImageRenderer.pngData(displayName: "10086") != nil)
+    }
 }

@@ -31,6 +31,7 @@ final class AppModel {
         }
     }
     var pendingExternalDialRequest: ExternalDialRequest?
+    var pendingNavigationRequest: AppNavigationRequest?
     var selectedTab: AppTab
     private(set) var isOnboardingPresented: Bool
     var keyRecoveryState: KeyRecoveryState
@@ -60,6 +61,7 @@ final class AppModel {
     @ObservationIgnored private var contactUpdatesTask: Task<Void, Never>?
     @ObservationIgnored private var networkPathObserver: NetworkPathObserver?
     @ObservationIgnored private let networkDiagnostics = ServerNetworkDiagnostics()
+    @ObservationIgnored private var pendingMessageNotificationConversationIdentifier: String?
 
     var canEditDeviceProfiles: Bool { recoveredVaultKey != nil }
 
@@ -98,6 +100,7 @@ final class AppModel {
         self.defaultCallLineID = defaultCallLineID ?? resolvedDefaultLineStore.callLineID
         self.defaultMessageLineID = defaultMessageLineID ?? resolvedDefaultLineStore.messageLineID
         self.pendingExternalDialRequest = nil
+        self.pendingNavigationRequest = nil
         self.selectedTab = selectedTab
         let resolvedOnboardingStore = onboardingStore ?? UserDefaultsOnboardingStore()
         let resolvedCommandSigner = InstallationCommandSigner()
@@ -183,6 +186,7 @@ final class AppModel {
     }
 
     func refreshDevices() async {
+        defer { resolvePendingMessageNotificationSelection() }
         guard remoteDeviceRefreshEnabled else { return }
         reconcileLineHistory(using: devices)
         guard serverConnection.isSignedIn else {
@@ -228,6 +232,7 @@ final class AppModel {
         reconcileLineHistory(using: devices)
         callCoordinator.updateLineRoutes(devices)
         messageTransport.updateLineRoutes(devices)
+        resolvePendingMessageNotificationSelection()
         if voipPushCoordinator != nil || alertPushCoordinator != nil {
             startVoIPPushes()
         }
@@ -264,10 +269,7 @@ final class AppModel {
         if alertPushCoordinator == nil {
             alertPushCoordinator = AlertPushCoordinator(
                 tokenRegistrar: serverConnection,
-                environment: Self.pushEnvironment,
-                onNotificationActivity: { [weak self] in
-                    await self?.refreshMessages()
-                }
+                environment: Self.pushEnvironment
             )
         }
         alertPushCoordinator?.start(installationID: installationIdentity.id)
@@ -326,7 +328,11 @@ final class AppModel {
     }
 
     func refreshMessages() async {
-        guard serverConnection.isSignedIn else { return }
+        guard serverConnection.isSignedIn else {
+            resolvePendingMessageNotificationSelection()
+            return
+        }
+        defer { resolvePendingMessageNotificationSelection() }
         do {
             try await synchronizeMessages()
         } catch {
@@ -337,6 +343,23 @@ final class AppModel {
             }
             messages = .failed
         }
+    }
+
+    func handleMessageNotificationSelection(conversationIdentifier: String) async {
+        pendingMessageNotificationConversationIdentifier = conversationIdentifier
+        await refreshMessages()
+        resolvePendingMessageNotificationSelection()
+    }
+
+    func handleCallNotificationSelection(recordID: UUID) {
+        guard case .loaded(let records) = callHistory,
+              records.contains(where: { $0.id == recordID }) else { return }
+        pendingNavigationRequest = .call(recordID: recordID)
+    }
+
+    func consumeNavigationRequest(_ request: AppNavigationRequest) {
+        guard pendingNavigationRequest == request else { return }
+        pendingNavigationRequest = nil
     }
 
     func startMessageRealtimeUpdates() {
@@ -566,6 +589,16 @@ final class AppModel {
             deviceUUID: line.deviceID,
             remoteNumber: id.remoteNumber
         )
+    }
+
+    private func resolvePendingMessageNotificationSelection() {
+        guard let conversationIdentifier = pendingMessageNotificationConversationIdentifier,
+              case .loaded(let conversations) = messages,
+              let conversation = conversations.first(where: {
+                  notificationConversationIdentifier(for: $0.id) == conversationIdentifier
+              }) else { return }
+        pendingMessageNotificationConversationIdentifier = nil
+        pendingNavigationRequest = .conversation(conversation.id)
     }
 
     func deleteMessages(ids: Set<UUID>) throws {
@@ -1038,6 +1071,7 @@ final class AppModel {
             Self.logger.error("Restoring encrypted call history failed: \(String(reflecting: error), privacy: .public)")
         }
         reconcileLineHistory(using: devices)
+        resolvePendingMessageNotificationSelection()
     }
 
     private func deleteEncryptedHistory() throws {
@@ -1291,4 +1325,9 @@ enum AppTab: Hashable {
     case contacts
     case profile
     case keypad
+}
+
+enum AppNavigationRequest: Equatable {
+    case conversation(ConversationID)
+    case call(recordID: UUID)
 }

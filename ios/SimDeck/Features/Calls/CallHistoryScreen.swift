@@ -92,8 +92,6 @@ struct CallHistoryScreen: View {
                 )
             }
         }
-        .navigationTitle("Calls")
-        .navigationBarTitleDisplayMode(.inline)
         .scrollEdgeEffectStyle(.soft, for: .all)
         .contentMargins(.bottom, editMode.isEditing ? 64 : 0, for: .scrollContent)
         .environment(\.editMode, $editMode)

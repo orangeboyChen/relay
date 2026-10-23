@@ -142,7 +142,12 @@ struct SIMSettingsScreen: View {
     @State private var lineName: String
     @State private var phoneNumber: String
     @State private var errorDescription: String?
+    @State private var controlErrorDescription: String?
+    @State private var slotSettings: SlotSettings?
+    @State private var originalSlotSettings: SlotSettings?
+    @State private var isLoadingControls = true
     @State private var isWorking = false
+    @State private var showsVoLTERestartConfirmation = false
 
     init(model: AppModel, line: DeviceLineIdentity) {
         self.model = model
@@ -163,6 +168,27 @@ struct SIMSettingsScreen: View {
                     .textContentType(.telephoneNumber)
                     .keyboardType(.numbersAndPunctuation)
             }
+            if let slotSettings {
+                SlotControlSection(settings: slotSettingsBinding(for: slotSettings))
+            } else if isLoadingControls {
+                Section("Slot Controls") {
+                    HStack {
+                        ProgressView()
+                        Text("Loading slot controls…")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } else if !line.isOnline {
+                Section("Slot Controls") {
+                    Label("This SIM is offline.", systemImage: "wifi.slash")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if let controlErrorDescription {
+                SlotControlErrorSection(message: controlErrorDescription) {
+                    Task { await loadSlotSettings() }
+                }
+            }
             Section("MMS") {
                 NavigationLink("MMS Configuration") { MMSSettingsScreen() }
             }
@@ -174,18 +200,78 @@ struct SIMSettingsScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("Save") { save() }
-                    .disabled(isWorking || !model.canEditDeviceProfiles)
+                if isWorking {
+                    ProgressView()
+                } else {
+                    Button("Save") {
+                        if slotSettings?.volteEnabled != originalSlotSettings?.volteEnabled {
+                            showsVoLTERestartConfirmation = true
+                        } else {
+                            save(restartModem: false)
+                        }
+                    }
+                    .disabled(!canSave)
+                }
             }
+        }
+        .task { await loadSlotSettings() }
+        .interactiveDismissDisabled(isWorking)
+        .confirmationDialog(
+            "Restart Modem to Apply VoLTE?",
+            isPresented: $showsVoLTERestartConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Save and Restart") { save(restartModem: true) }
+            Button("Save Without Restart") { save(restartModem: false) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("VoLTE changes require a modem restart. Restarting temporarily takes this SIM offline.")
         }
         .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
-    private func save() {
+    private var canSave: Bool {
+        guard model.canEditDeviceProfiles, !isWorking else { return false }
+        let identityChanged = numericID != line.numericID
+            || lineName != line.lineName
+            || phoneNumber != line.phoneNumber
+        let controlsChanged = slotSettings != nil && slotSettings != originalSlotSettings
+        return identityChanged || controlsChanged
+    }
+
+    private func slotSettingsBinding(for value: SlotSettings) -> Binding<SlotSettings> {
+        Binding(
+            get: { slotSettings ?? value },
+            set: { slotSettings = $0 }
+        )
+    }
+
+    private func loadSlotSettings() async {
+        isLoadingControls = line.isOnline
+        controlErrorDescription = nil
+        guard line.isOnline else { return }
+        do {
+            let loaded = try await model.loadSlotSettings(line: line)
+            slotSettings = loaded
+            originalSlotSettings = loaded
+        } catch {
+            controlErrorDescription = error.localizedDescription
+        }
+        isLoadingControls = false
+    }
+
+    private func save(restartModem: Bool) {
         Task {
             isWorking = true
+            errorDescription = nil
             do {
                 try await model.saveSIM(line: line, numericID: numericID, lineName: lineName, phoneNumber: phoneNumber)
+                if let slotSettings, slotSettings != originalSlotSettings {
+                    _ = try await model.saveSlotSettings(slotSettings, line: line)
+                    if restartModem {
+                        try await model.restartSlotModem(line: line)
+                    }
+                }
                 dismiss()
             } catch {
                 errorDescription = error.localizedDescription

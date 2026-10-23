@@ -4,13 +4,12 @@
 
 import Intents
 import SwiftUI
+import SwiftUIIntrospect
 
 struct RootTabView: View {
     @Bindable var model: AppModel
 
-    @State private var callNavigationPath = NavigationPath()
-    @State private var messageNavigationPath = NavigationPath()
-    @State private var contactNavigationPath = NavigationPath()
+    @State private var navigationPath = NavigationPath()
     @State private var callEditMode: EditMode = .inactive
     @State private var selectedCallEntryIDs: Set<UUID> = []
     @State private var callFilter: CallHistoryFilter = .all
@@ -19,6 +18,8 @@ struct RootTabView: View {
     @State private var messageLineID: UUID?
     @State private var messageEditMode: EditMode = .inactive
     @State private var contactSearchText = ""
+    @State private var rootSearchText = ""
+    @State private var navigationBarAdapter = RootNavigationBarAdapter()
     @State private var isMessageComposerPresented = false
     @State private var isClearAllCallsConfirmationPresented = false
     @State private var isClearAllCallsErrorPresented = false
@@ -50,6 +51,16 @@ struct RootTabView: View {
                 callEditMode = .inactive
                 selectedCallEntryIDs.removeAll()
                 messageEditMode = .inactive
+            }
+            .onChange(of: model.selectedTab, initial: true) { _, selectedTab in
+                synchronizeRootSearchText(for: selectedTab)
+            }
+            .onChange(of: rootSearchText) { _, searchText in
+                synchronizeSelectedSearchText(searchText)
+            }
+            .onChange(of: model.pendingNavigationRequest, initial: true) { _, request in
+                guard let request else { return }
+                navigate(to: request)
             }
             .confirmationDialog(
                 "Clear All Calls?",
@@ -83,7 +94,8 @@ struct RootTabView: View {
 
     private var rootContent: some View {
         ZStack {
-            tabs
+            navigationContainer
+                .accessibilityHidden(model.callCoordinator.activeCall != nil)
 
             if model.callCoordinator.activeCall != nil {
                 InCallScreen(
@@ -96,6 +108,116 @@ struct RootTabView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: model.callCoordinator.activeCall != nil)
+    }
+
+    private var navigationContainer: some View {
+        NavigationStack(path: $navigationPath) {
+            navigationRoot
+                .navigationDestination(for: CallDetailRoute.self) { route in
+                    callDetailDestination(for: route)
+                }
+                .navigationDestination(for: ConversationID.self) { conversationID in
+                    conversationDestination(for: conversationID)
+                }
+                .navigationDestination(for: ContactRecord.self) { contact in
+                    contactDetailDestination(for: contact)
+                }
+        }
+    }
+
+    private var navigationRoot: some View {
+        ZStack {
+            tabs
+        }
+        .navigationTitle(rootTitleResource)
+        .navigationBarTitleDisplayMode(.inline)
+        .introspect(
+            .navigationStack,
+            on: .iOS(.v26, .v27),
+            scope: .ancestor
+        ) { navigationController in
+            guard navigationPath.isEmpty else { return }
+            navigationBarAdapter.configure(
+                navigationController: navigationController,
+                title: String(localized: rootTitleResource),
+                usesLargeTitle: false,
+                showsSearch: showsRootSearch,
+                searchText: $rootSearchText
+            )
+        }
+        .toolbar(
+            model.selectedTab == .keypad ? .hidden : .visible,
+            for: .navigationBar
+        )
+        .toolbar {
+            if navigationPath.isEmpty {
+                rootToolbar
+            }
+        }
+    }
+
+    private var showsRootSearch: Bool {
+        switch model.selectedTab {
+        case .messages where !messageEditMode.isEditing, .contacts:
+            true
+        case .calls, .messages, .profile, .keypad:
+            false
+        }
+    }
+
+    private var rootTitleResource: LocalizedStringResource {
+        switch model.selectedTab {
+        case .calls:
+            "Calls"
+        case .messages:
+            "Messages"
+        case .contacts:
+            "Contacts"
+        case .profile:
+            "Me"
+        case .keypad:
+            ""
+        }
+    }
+
+    private func synchronizeRootSearchText(for tab: AppTab) {
+        switch tab {
+        case .messages:
+            rootSearchText = messageSearchText
+        case .contacts:
+            rootSearchText = contactSearchText
+        case .calls, .profile, .keypad:
+            rootSearchText = ""
+        }
+    }
+
+    private func synchronizeSelectedSearchText(_ searchText: String) {
+        switch model.selectedTab {
+        case .messages:
+            messageSearchText = searchText
+        case .contacts:
+            contactSearchText = searchText
+        case .calls, .profile, .keypad:
+            break
+        }
+    }
+
+    private func navigate(to request: AppNavigationRequest) {
+        callEditMode = .inactive
+        selectedCallEntryIDs.removeAll()
+        messageEditMode = .inactive
+        withAnimation(.snappy) {
+            navigationPath = NavigationPath()
+            switch request {
+            case .conversation(let conversationID):
+                model.selectedTab = .messages
+                navigationPath.append(conversationID)
+            case .call(let recordID):
+                model.selectedTab = .calls
+                navigationPath.append(CallDetailRoute(recordID: recordID))
+            }
+        }
+        model.consumeNavigationRequest(request)
     }
 
     @ViewBuilder
@@ -135,32 +257,6 @@ struct RootTabView: View {
     @TabContentBuilder<AppTab>
     private var standardTabs: some TabContent<AppTab> {
         Tab("Calls", systemImage: "phone.fill", value: AppTab.calls) {
-            callsNavigation
-        }
-
-        Tab("Messages", systemImage: "message.fill", value: AppTab.messages) {
-            messagesNavigation
-        }
-
-        Tab("Contacts", systemImage: "person.2.fill", value: AppTab.contacts) {
-            contactsNavigation
-        }
-
-        Tab("Me", systemImage: "person.crop.circle.fill", value: AppTab.profile) {
-            NavigationStack {
-                ProfileScreen(model: model)
-            }
-        }
-    }
-
-    private var keypadContent: some View {
-        NavigationStack {
-            KeypadTabScreen(model: model)
-        }
-    }
-
-    private var callsNavigation: some View {
-        NavigationStack(path: $callNavigationPath) {
             CallsTabScreen(
                 model: model,
                 historyEditMode: $callEditMode,
@@ -168,60 +264,38 @@ struct RootTabView: View {
                 filter: $callFilter,
                 selectedLineID: $callLineID
             )
-            .navigationTitle("Calls")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if callNavigationPath.isEmpty {
-                    callRootToolbar
-                }
-            }
-            .navigationDestination(for: CallDetailRoute.self) { route in
-                callDetailDestination(for: route)
-            }
         }
-    }
 
-    private var messagesNavigation: some View {
-        NavigationStack(path: $messageNavigationPath) {
+        Tab("Messages", systemImage: "message.fill", value: AppTab.messages) {
             MessagesTabScreen(
                 model: model,
                 searchText: $messageSearchText,
                 selectedLineID: $messageLineID,
                 editMode: $messageEditMode
             )
-            .navigationTitle("Messages")
-            .navigationBarTitleDisplayMode(.inline)
-            .searchable(
-                text: $messageSearchText,
-                placement: .navigationBarDrawer(
-                    displayMode: messageEditMode.isEditing ? .automatic : .always
-                ),
-                prompt: "Search"
-            )
-            .toolbar {
-                if messageNavigationPath.isEmpty {
-                    messageRootToolbar
-                }
-            }
-            .navigationDestination(for: ConversationID.self) { conversationID in
-                conversationDestination(for: conversationID)
-            }
+        }
+
+        Tab("Contacts", systemImage: "person.2.fill", value: AppTab.contacts) {
+            ContactsScreen(model: model, searchText: $contactSearchText)
+        }
+
+        Tab("Me", systemImage: "person.crop.circle.fill", value: AppTab.profile) {
+            ProfileScreen(model: model)
         }
     }
 
-    private var contactsNavigation: some View {
-        NavigationStack(path: $contactNavigationPath) {
-            ContactsScreen(model: model, searchText: $contactSearchText)
-                .navigationTitle("Contacts")
-                .navigationBarTitleDisplayMode(.large)
-                .searchable(
-                    text: $contactSearchText,
-                    placement: .navigationBarDrawer(displayMode: .always),
-                    prompt: "Search"
-                )
-                .navigationDestination(for: ContactRecord.self) { contact in
-                    contactDetailDestination(for: contact)
-                }
+    private var keypadContent: some View {
+        KeypadTabScreen(model: model)
+    }
+
+    @ToolbarContentBuilder
+    private var rootToolbar: some ToolbarContent {
+        if model.selectedTab == .calls {
+            callRootToolbar
+        }
+
+        if model.selectedTab == .messages {
+            messageRootToolbar
         }
     }
 

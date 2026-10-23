@@ -35,7 +35,6 @@ struct ProfileScreen: View {
                 }
             }
         }
-        .navigationTitle("Me")
         .refreshable {
             await model.refreshDevices()
             await refreshSIMServiceStates()

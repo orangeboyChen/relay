@@ -3,11 +3,38 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import Foundation
+import UserNotifications
 import XCTest
 @testable import SimDeck
 
 @MainActor
 final class AlertPushCoordinatorTests: XCTestCase {
+    func testDefaultNotificationActionPrefersTargetConversationIdentifier() {
+        let content = UNMutableNotificationContent()
+        content.threadIdentifier = "thread"
+        content.targetContentIdentifier = "target"
+
+        XCTAssertEqual(
+            AlertNotificationMetadata.conversationIdentifier(
+                content: content,
+                actionIdentifier: UNNotificationDefaultActionIdentifier
+            ),
+            "target"
+        )
+    }
+
+    func testNotificationActionsOtherThanOpeningDoNotNavigate() {
+        let content = UNMutableNotificationContent()
+        content.threadIdentifier = "thread"
+
+        XCTAssertNil(
+            AlertNotificationMetadata.conversationIdentifier(
+                content: content,
+                actionIdentifier: AlertNotificationMetadata.copyCodeActionIdentifier
+            )
+        )
+    }
+
     func testEnablingRequestsRegistrationAndUploadsReceivedToken() async throws {
         let registrar = AlertPushTokenRegistrar()
         let installationID = UUID()

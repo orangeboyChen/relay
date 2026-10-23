@@ -51,32 +51,6 @@ struct PersonAvatar: View {
     }
 }
 
-enum PersonAvatarFallback: Equatable {
-    case organization
-    case monogram(String)
-    case placeholder
-
-    static func resolve(
-        displayName: String?,
-        organizationName: String?
-    ) -> PersonAvatarFallback {
-        if let organizationName,
-           !organizationName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return .organization
-        }
-
-        guard let displayName = displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !displayName.isEmpty else {
-            return .placeholder
-        }
-
-        let parts = displayName.split(whereSeparator: \Character.isWhitespace)
-        let monogram = parts.prefix(2).compactMap(\.first)
-        guard !monogram.isEmpty else { return .placeholder }
-        return .monogram(String(monogram).uppercased())
-    }
-}
-
 private struct PersonAvatarFallbackView: View {
     let fallback: PersonAvatarFallback
     let size: CGFloat
@@ -91,10 +65,10 @@ private struct PersonAvatarFallbackView: View {
                     .font(.system(size: size * 0.43, weight: .medium))
                     .foregroundStyle(.white)
             case .monogram(let monogram):
-                Color(uiColor: .systemGray5)
+                avatarGradient
                 Text(monogram)
                     .font(.system(size: size * 0.4, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white)
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
                     .padding(size * 0.16)
@@ -114,16 +88,8 @@ private struct PersonAvatarFallbackView: View {
     private var avatarGradient: LinearGradient {
         LinearGradient(
             colors: [
-                Color(
-                    red: 183.0 / 255.0,
-                    green: 200.0 / 255.0,
-                    blue: 225.0 / 255.0
-                ),
-                Color(
-                    red: 143.0 / 255.0,
-                    green: 154.0 / 255.0,
-                    blue: 198.0 / 255.0
-                ),
+                Color(uiColor: PersonAvatarPalette.top),
+                Color(uiColor: PersonAvatarPalette.bottom),
             ],
             startPoint: .top,
             endPoint: .bottom
@@ -150,6 +116,7 @@ private struct PersonAvatarShape: Shape {
     HStack(spacing: 16) {
         PersonAvatar(displayName: "Zhang San", size: 56)
         PersonAvatar(displayName: "张三", size: 56)
+        PersonAvatar(displayName: "10086", size: 56)
         PersonAvatar(displayName: nil, organizationName: "Apple", size: 56)
         PersonAvatar(displayName: nil, size: 56)
     }

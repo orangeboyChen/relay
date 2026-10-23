@@ -60,6 +60,21 @@ class NotificationService: UNNotificationServiceExtension {
             )
         }
 
+        let communicationContent = communicationBuilder.update(
+            bestAttemptContent,
+            using: intent,
+            remoteNumber: payload.remoteNumber,
+            numericID: payload.numericID,
+            conversationIdentifier: conversationIdentifier
+        )
+        if let verificationCode {
+            var userInfo = communicationContent.userInfo
+            userInfo[NotificationPayloadDecoder.otpKey] = verificationCode
+            communicationContent.userInfo = userInfo
+            communicationContent.categoryIdentifier = AlertNotificationMetadata.otpCategoryIdentifier
+        }
+        self.bestAttemptContent = communicationContent
+
         let interaction = INInteraction(intent: intent, response: nil)
         interaction.direction = .incoming
         interaction.donate { [weak self] error in
@@ -67,20 +82,6 @@ class NotificationService: UNNotificationServiceExtension {
             if let error {
                 logger.error("Unable to donate incoming SMS interaction: \(error.localizedDescription, privacy: .public)")
             }
-            let communicationContent = communicationBuilder.update(
-                bestAttemptContent,
-                using: intent,
-                remoteNumber: payload.remoteNumber,
-                numericID: payload.numericID,
-                conversationIdentifier: conversationIdentifier
-            )
-            if let verificationCode {
-                var userInfo = communicationContent.userInfo
-                userInfo[NotificationPayloadDecoder.otpKey] = verificationCode
-                communicationContent.userInfo = userInfo
-                communicationContent.categoryIdentifier = "simdeck.sms.otp"
-            }
-            self.bestAttemptContent = communicationContent
             deliver(communicationContent)
         }
     }

@@ -95,8 +95,6 @@ struct MessagesScreen: View {
                 )
             }
         }
-        .navigationTitle("Messages")
-        .navigationBarTitleDisplayMode(.inline)
         .environment(\.editMode, $editMode)
         .toolbar(editMode.isEditing ? .hidden : .visible, for: .tabBar)
         .task {

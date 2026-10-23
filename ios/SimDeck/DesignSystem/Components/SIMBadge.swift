@@ -9,17 +9,19 @@ struct SIMBadge: View {
     let number: Int?
     let accessibilityLabel: Text
     private let baseSide: CGFloat
+    private let color: Color
 
     @ScaledMetric(relativeTo: .caption) private var scale = 1.0
 
-    init(line: DeviceLineIdentity, size: CGFloat = 18) {
+    init(line: DeviceLineIdentity, size: CGFloat = 18, color: Color = .secondary) {
         let presentation = SIMLabelPresentation(line: line, titleStyle: .identifier)
         number = presentation.number
         accessibilityLabel = Text(verbatim: presentation.accessibilityLabel)
         baseSide = size
+        self.color = color
     }
 
-    init(number: Int, size: CGFloat = 18) {
+    init(number: Int, size: CGFloat = 18, color: Color = .secondary) {
         let presentation = SIMLabelPresentation(
             number: number,
             displayName: nil,
@@ -30,19 +32,21 @@ struct SIMBadge: View {
         self.number = presentation.number
         accessibilityLabel = Text(verbatim: presentation.accessibilityLabel)
         baseSide = size
+        self.color = color
     }
 
-    init(snapshot: LineHistorySnapshot?, size: CGFloat = 18) {
+    init(snapshot: LineHistorySnapshot?, size: CGFloat = 18, color: Color = .secondary) {
         let presentation = SIMLabelPresentation(snapshot: snapshot, titleStyle: .identifier)
         number = presentation.number
         accessibilityLabel = Text(verbatim: presentation.accessibilityLabel)
         baseSide = size
+        self.color = color
     }
 
     var body: some View {
         let badgeSide = min(baseSide * scale, baseSide + 4)
 
-        SIMNumberSymbol(number: number, side: badgeSide)
+        SIMNumberSymbol(number: number, side: badgeSide, color: color)
             .frame(width: badgeSide, height: badgeSide)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityLabel)
@@ -52,6 +56,7 @@ struct SIMBadge: View {
 private struct SIMNumberSymbol: View {
     let number: Int?
     let side: CGFloat
+    let color: Color
 
     var body: some View {
         Group {
@@ -72,7 +77,7 @@ private struct SIMNumberSymbol: View {
                     .font(.system(size: side))
             }
         }
-        .foregroundStyle(.secondary)
+        .foregroundStyle(color)
     }
 
     private var symbolName: String? {

@@ -11,7 +11,7 @@ final class PreviewCallAudioRouteSource: CallAudioRouteSource {
     private var currentOutput: CallAudioPortSnapshot
     private let inputs: [CallAudioPortSnapshot]
 
-    init(currentDeviceName: String = "AirPods Pro") {
+    init(currentDeviceName: String = "iPhone") {
         inputs = [
             CallAudioPortSnapshot(
                 id: "preview-built-in",
@@ -30,9 +30,11 @@ final class PreviewCallAudioRouteSource: CallAudioRouteSource {
             )
         ]
         currentOutput = CallAudioPortSnapshot(
-            id: "preview-airpods-pro",
+            id: currentDeviceName == "iPhone" ? "preview-receiver" : "preview-airpods-pro",
             name: currentDeviceName,
-            typeRawValue: AVAudioSession.Port.bluetoothHFP.rawValue
+            typeRawValue: currentDeviceName == "iPhone"
+                ? AVAudioSession.Port.builtInReceiver.rawValue
+                : AVAudioSession.Port.bluetoothHFP.rawValue
         )
     }
 

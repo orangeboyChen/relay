@@ -11,6 +11,7 @@
 		200000000000000000000004 /* MarsRSNet in Frameworks */ = {isa = PBXBuildFile; productRef = 200000000000000000000005 /* MarsRSNet */; };
 		200000000000000000000007 /* libPhoneNumberSwiftCore in Frameworks */ = {isa = PBXBuildFile; productRef = 200000000000000000000008 /* libPhoneNumberSwiftCore */; };
 		200000000000000000000009 /* libPhoneNumberSwiftGeocoding in Frameworks */ = {isa = PBXBuildFile; productRef = 20000000000000000000000A /* libPhoneNumberSwiftGeocoding */; };
+		20000000000000000000000E /* SwiftUIIntrospect in Frameworks */ = {isa = PBXBuildFile; productRef = 20000000000000000000000D /* SwiftUIIntrospect */; };
 		6483377B30858A3600B91620 /* SMSNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 6483377430858A3600B91620 /* SMSNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		64833A4E3085B93F00B91620 /* AuthenticationServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 64833A4D3085B93F00B91620 /* AuthenticationServices.framework */; };
 		64833A593085B93F00B91620 /* SimDeckAutoFill.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 64833A4B3085B93F00B91620 /* SimDeckAutoFill.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -104,6 +105,7 @@
 				200000000000000000000004 /* MarsRSNet in Frameworks */,
 				200000000000000000000007 /* libPhoneNumberSwiftCore in Frameworks */,
 				200000000000000000000009 /* libPhoneNumberSwiftGeocoding in Frameworks */,
+				20000000000000000000000E /* SwiftUIIntrospect in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -192,6 +194,7 @@
 				200000000000000000000005 /* MarsRSNet */,
 				200000000000000000000008 /* libPhoneNumberSwiftCore */,
 				20000000000000000000000A /* libPhoneNumberSwiftGeocoding */,
+				20000000000000000000000D /* SwiftUIIntrospect */,
 			);
 			productName = SimDeck;
 			productReference = 100000000000000000000001 /* SimDeck.app */;
@@ -303,6 +306,7 @@
 				200000000000000000000003 /* XCRemoteSwiftPackageReference "WebRTC" */,
 				200000000000000000000006 /* XCRemoteSwiftPackageReference "mars-rs" */,
 				20000000000000000000000B /* XCRemoteSwiftPackageReference "libPhoneNumber-iOS" */,
+				20000000000000000000000C /* XCRemoteSwiftPackageReference "swiftui-introspect" */,
 			);
 			productRefGroup = 100000000000000000000031 /* Products */;
 			projectDirPath = "";
@@ -877,6 +881,14 @@
 				version = 2.1.2;
 			};
 		};
+		20000000000000000000000C /* XCRemoteSwiftPackageReference "swiftui-introspect" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/siteline/swiftui-introspect.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 27.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -899,6 +911,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 20000000000000000000000B /* XCRemoteSwiftPackageReference "libPhoneNumber-iOS" */;
 			productName = libPhoneNumberSwiftGeocoding;
+		};
+		20000000000000000000000D /* SwiftUIIntrospect */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 20000000000000000000000C /* XCRemoteSwiftPackageReference "swiftui-introspect" */;
+			productName = SwiftUIIntrospect;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

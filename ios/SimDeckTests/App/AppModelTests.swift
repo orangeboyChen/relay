@@ -51,6 +51,16 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(call.duration, 119)
     }
 
+    @MainActor
+    func testCallNotificationSelectionUsesExistingCallDetailRoute() {
+        let record = Self.callRecord()
+        let model = AppModel(callHistory: .loaded([record]), remoteDeviceRefreshEnabled: false)
+
+        model.handleCallNotificationSelection(recordID: record.id)
+
+        XCTAssertEqual(model.pendingNavigationRequest, .call(recordID: record.id))
+    }
+
     func testDialStringNormalizationAndValidation() {
         XCTAssertEqual(DialString.normalized("+86 135 0000 0000"), "+8613500000000")
         XCTAssertTrue(DialString.isValid("+86 135 0000 0000"))

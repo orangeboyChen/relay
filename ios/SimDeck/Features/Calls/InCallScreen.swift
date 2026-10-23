@@ -25,9 +25,7 @@ struct InCallScreen: View {
                         line: line(for: call),
                         referenceDate: referenceDate
                     )
-                        .padding(.top, 40)
-
-                    Spacer(minLength: 40)
+                    .padding(.top, 53)
 
                     if isKeypadVisible {
                         InCallKeypad { digit in
@@ -35,26 +33,27 @@ struct InCallScreen: View {
                                 try await coordinator.playDTMF(digit)
                             }
                         }
-                        .transition(keypadTransition)
+                        .padding(.top, 105)
+                        .transition(inCallContentTransition)
 
-                        Spacer(minLength: 24)
-
-                        InCallEndButton {
-                            Task {
-                                try? await coordinator.endCall()
+                        InCallKeypadFooter(
+                            onEnd: {
+                                Task {
+                                    try? await coordinator.endCall()
+                                }
+                            },
+                            onHide: {
+                                withAnimation(motionAnimation) {
+                                    isKeypadVisible = false
+                                }
                             }
-                        }
+                        )
+                        .padding(.top, 48.5)
 
-                        Button("Hide Keypad") {
-                            withAnimation(motionAnimation) {
-                                isKeypadVisible = false
-                            }
-                        }
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                        .frame(minHeight: 44)
-                        .padding(.top, 10)
+                        Spacer(minLength: 0)
                     } else {
+                        Spacer(minLength: 40)
+
                         InCallControls(
                             call: call,
                             capabilities: coordinator.capabilities,
@@ -89,11 +88,11 @@ struct InCallScreen: View {
                                 }
                             }
                         )
-                        .transition(keypadTransition)
+                        .transition(inCallContentTransition)
                     }
                 }
                 .padding(.horizontal, 24)
-                .padding(.bottom, 18)
+                .padding(.bottom, 16)
             }
         }
         .interactiveDismissDisabled()
@@ -116,6 +115,7 @@ struct InCallScreen: View {
                 endsFailedCall: true
             )
         }
+        .preferredColorScheme(.dark)
         .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
@@ -127,8 +127,10 @@ struct InCallScreen: View {
         reduceMotion ? nil : .easeInOut(duration: 0.18)
     }
 
-    private var keypadTransition: AnyTransition {
-        reduceMotion ? .identity : .opacity
+    private var inCallContentTransition: AnyTransition {
+        reduceMotion
+            ? .identity
+            : .asymmetric(insertion: .opacity, removal: .identity)
     }
 
     private func perform(_ operation: @escaping @MainActor () async throws -> Void) {
@@ -162,11 +164,12 @@ private struct CallIdentityHeader: View {
             .foregroundStyle(.white.opacity(0.68))
 
             Text(call.title)
-                .font(.system(size: 40, weight: .regular))
+                .font(.system(size: 35, weight: .regular))
                 .foregroundStyle(.white)
                 .lineLimit(2)
                 .minimumScaleFactor(0.65)
                 .multilineTextAlignment(.center)
+                .offset(y: -4)
                 .accessibilityLabel(call.title)
 
         }
@@ -176,15 +179,24 @@ private struct CallIdentityHeader: View {
 private struct InCallBackdrop: View {
     var body: some View {
         LinearGradient(
-            colors: [
-                Color(red: 0.43, green: 0.34, blue: 0.33),
-                Color(red: 0.26, green: 0.36, blue: 0.32),
-                Color(red: 0.06, green: 0.27, blue: 0.21),
+            stops: [
+                .init(color: Color(red: 0.318, green: 0.420, blue: 0.588), location: 0.00),
+                .init(color: Color(red: 0.345, green: 0.439, blue: 0.576), location: 0.13),
+                .init(color: Color(red: 0.376, green: 0.447, blue: 0.557), location: 0.25),
+                .init(color: Color(red: 0.392, green: 0.443, blue: 0.529), location: 0.31),
+                .init(color: Color(red: 0.345, green: 0.396, blue: 0.494), location: 0.38),
+                .init(color: Color(red: 0.302, green: 0.349, blue: 0.451), location: 0.44),
+                .init(color: Color(red: 0.282, green: 0.329, blue: 0.424), location: 0.50),
+                .init(color: Color(red: 0.192, green: 0.251, blue: 0.353), location: 0.56),
+                .init(color: Color(red: 0.145, green: 0.180, blue: 0.278), location: 0.63),
+                .init(color: Color(red: 0.133, green: 0.169, blue: 0.251), location: 0.69),
+                .init(color: Color(red: 0.137, green: 0.173, blue: 0.243), location: 0.75),
+                .init(color: Color(red: 0.137, green: 0.161, blue: 0.220), location: 0.82),
+                .init(color: Color(red: 0.137, green: 0.153, blue: 0.204), location: 1.00),
             ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
+            startPoint: .top,
+            endPoint: .bottom
         )
-        .overlay(.ultraThinMaterial.opacity(0.12))
     }
 }
 
@@ -255,7 +267,7 @@ private struct InCallControls: View {
     let onEnd: () -> Void
 
     var body: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 21) {
             HStack(spacing: 36) {
                 CallAudioRouteMenu(
                     controller: audioRoutes,
@@ -263,7 +275,8 @@ private struct InCallControls: View {
                 )
                 CallControlButton(
                     title: "FaceTime",
-                    systemImage: "video.fill",
+                    systemImage: "video.badge.questionmark.fill",
+                    symbolSize: 22,
                     isSelected: false,
                     isEnabled: false,
                     action: {}
@@ -271,6 +284,7 @@ private struct InCallControls: View {
                 CallControlButton(
                     title: "Mute",
                     systemImage: call.isMuted ? "mic.slash.fill" : "mic.slash",
+                    symbolSize: 26,
                     isSelected: call.isMuted,
                     isEnabled: capabilities.supportsMuting,
                     action: onMute
@@ -290,6 +304,7 @@ private struct InCallControls: View {
                 CallControlButton(
                     title: "Keypad",
                     systemImage: "circle.grid.3x3.fill",
+                    symbolSize: 25.5,
                     isSelected: false,
                     isEnabled: capabilities.supportsDTMF,
                     action: onKeypad
@@ -315,6 +330,7 @@ private struct InCallMoreMenu: View {
             CallControlLabel(
                 title: "More",
                 systemImage: "ellipsis",
+                symbolSize: 26,
                 foregroundStyle: .white,
                 backgroundStyle: .white.opacity(0.16)
             )
@@ -364,8 +380,13 @@ private struct InCallEndButton: View {
             CallControlLabel(
                 title: "End",
                 systemImage: "phone.down.fill",
+                symbolSize: 26,
                 foregroundStyle: .white,
-                backgroundStyle: .red
+                backgroundStyle: Color(
+                    red: 212.0 / 255.0,
+                    green: 8.0 / 255.0,
+                    blue: 9.0 / 255.0
+                )
             )
         }
         .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
@@ -441,6 +462,7 @@ private struct CallAudioRouteMenu: View {
             CallControlLabel(
                 title: "Audio",
                 systemImage: controller.currentRoute.controlSystemImage,
+                symbolSize: 25.5,
                 foregroundStyle: controller.currentRoute.isControlSelected ? .black : .white,
                 backgroundStyle: controller.currentRoute.isControlSelected
                     ? .white
@@ -463,6 +485,7 @@ private struct CallAudioRouteMenu: View {
 private struct CallControlButton: View {
     let title: LocalizedStringKey
     let systemImage: String
+    var symbolSize: CGFloat = 26
     let isSelected: Bool
     let isEnabled: Bool
     let action: () -> Void
@@ -474,6 +497,7 @@ private struct CallControlButton: View {
             CallControlLabel(
                 title: title,
                 systemImage: systemImage,
+                symbolSize: symbolSize,
                 foregroundStyle: isSelected ? .black : .white,
                 backgroundStyle: isSelected ? .white : .white.opacity(0.16),
                 isEnabled: isEnabled
@@ -492,29 +516,70 @@ private struct CallControlButton: View {
 private struct CallControlLabel: View {
     let title: LocalizedStringKey
     let systemImage: String
+    var symbolSize: CGFloat = 26
     let foregroundStyle: Color
     let backgroundStyle: Color
     var isEnabled = true
 
     var body: some View {
         VStack(spacing: 8) {
-            ZStack {
-                Circle()
-                    .fill(backgroundStyle)
-
-                Image(systemName: systemImage)
-                    .font(.system(size: 29, weight: .medium))
-                    .foregroundStyle(foregroundStyle)
-            }
-            .frame(width: 80, height: 80)
-            .opacity(isEnabled ? 1 : 0.35)
+            CallControlCircle(
+                systemImage: systemImage,
+                symbolSize: symbolSize,
+                foregroundStyle: foregroundStyle,
+                tint: backgroundStyle,
+                isEnabled: isEnabled
+            )
 
             Text(title)
                 .font(.callout)
                 .foregroundStyle(.white)
                 .lineLimit(1)
+                .offset(y: -3)
         }
         .frame(width: 84)
+    }
+}
+
+private struct CallControlCircle: View {
+    let systemImage: String
+    var symbolSize: CGFloat = 26
+    let foregroundStyle: Color
+    let tint: Color
+    var isEnabled = true
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(tint)
+                .overlay {
+                    Circle()
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [
+                                    Color(
+                                        red: 0.80,
+                                        green: 0.87,
+                                        blue: 0.99
+                                    )
+                                    .opacity(0.82),
+                                    .white.opacity(0.18),
+                                    .white.opacity(0.10),
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            lineWidth: 1
+                        )
+                }
+
+            Image(systemName: systemImage)
+                .font(.system(size: symbolSize, weight: .medium))
+                .foregroundStyle(foregroundStyle)
+        }
+        .frame(width: 80, height: 80)
+        .contentShape(Circle())
+            .opacity(isEnabled ? 1 : 0.55)
     }
 }
 
@@ -533,32 +598,129 @@ private struct InCallControlButtonStyle: ButtonStyle {
 
 private struct InCallKeypad: View {
     let onDigit: (String) -> Void
-    private let keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"]
+    private let rows = [
+        [InCallKey(symbol: "1", letters: ""), InCallKey(symbol: "2", letters: "ABC"), InCallKey(symbol: "3", letters: "DEF")],
+        [InCallKey(symbol: "4", letters: "GHI"), InCallKey(symbol: "5", letters: "JKL"), InCallKey(symbol: "6", letters: "MNO")],
+        [InCallKey(symbol: "7", letters: "PQRS"), InCallKey(symbol: "8", letters: "TUV"), InCallKey(symbol: "9", letters: "WXYZ")],
+        [InCallKey(symbol: "*", letters: ""), InCallKey(symbol: "0", letters: "+"), InCallKey(symbol: "#", letters: "")],
+    ]
 
     @State private var feedbackTrigger = 0
 
     var body: some View {
-        LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(), spacing: 18), count: 3),
-            spacing: 14
-        ) {
-            ForEach(keys, id: \.self) { key in
-                Button {
-                    onDigit(key)
-                    feedbackTrigger += 1
-                } label: {
-                    Text(verbatim: key)
-                        .font(.system(size: 30, weight: .regular, design: .rounded))
-                        .foregroundStyle(.white)
-                        .frame(width: 66, height: 66)
-                        .background(.white.opacity(0.16), in: Circle())
+        VStack(spacing: 18.5) {
+            ForEach(rows, id: \.self) { row in
+                HStack(spacing: 40) {
+                    ForEach(row, id: \.self) { key in
+                        Button {
+                            onDigit(key.symbol)
+                            feedbackTrigger += 1
+                        } label: {
+                            InCallKeyLabel(key: key)
+                        }
+                        .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
+                        .accessibilityLabel(Text(verbatim: key.accessibilityLabel))
+                    }
                 }
-                .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
-                .accessibilityLabel(Text(verbatim: key))
             }
         }
-        .frame(maxWidth: 300)
+        .frame(maxWidth: .infinity)
         .sensoryFeedback(.selection, trigger: feedbackTrigger)
+    }
+}
+
+private struct InCallKey: Hashable {
+    let symbol: String
+    let letters: String
+
+    var symbolFontSize: CGFloat {
+        switch symbol {
+        case "*": 58
+        case "#": 32
+        default: 38
+        }
+    }
+
+    var accessibilityLabel: String {
+        letters.isEmpty ? symbol : "\(symbol), \(letters)"
+    }
+}
+
+private struct InCallKeyLabel: View {
+    let key: InCallKey
+
+    var body: some View {
+        VStack(spacing: -5) {
+            Text(verbatim: key.symbol)
+                .font(.system(size: key.symbolFontSize, weight: .regular))
+                .scaleEffect(x: 1, y: key.symbol == "*" ? 1.19 : 1)
+                .offset(y: key.symbol == "*" ? 20 : 0)
+
+            Text(verbatim: key.letters)
+                .font(.system(size: 9, weight: .bold))
+                .tracking(key.letters.count > 1 ? 4 : 0)
+                .frame(height: 11)
+                .opacity(key.letters.isEmpty ? 0 : 1)
+                .accessibilityHidden(true)
+        }
+        .foregroundStyle(.white)
+        .offset(y: -3)
+        .frame(width: 80, height: 80)
+        .background(
+            Color(red: 0.82, green: 0.96, blue: 1).opacity(0.20),
+            in: Circle()
+        )
+        .overlay {
+            Circle()
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            Color(
+                                red: 232.0 / 255.0,
+                                green: 250.0 / 255.0,
+                                blue: 1
+                            ),
+                            .white.opacity(0.24),
+                            .white.opacity(0.12),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 1.25
+                )
+        }
+        .contentShape(Circle())
+    }
+}
+
+private struct InCallKeypadFooter: View {
+    let onEnd: () -> Void
+    let onHide: () -> Void
+
+    var body: some View {
+        ZStack {
+            Button(action: onEnd) {
+                CallControlCircle(
+                    systemImage: "phone.down.fill",
+                    symbolSize: 26,
+                    foregroundStyle: .white,
+                    tint: Color(
+                        red: 183.0 / 255.0,
+                        green: 21.0 / 255.0,
+                        blue: 24.0 / 255.0
+                    )
+                )
+            }
+            .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
+            .accessibilityLabel("End call")
+
+            Button("Hide Keypad", action: onHide)
+                .font(.body)
+                .foregroundStyle(.white)
+                .frame(minWidth: 96, minHeight: 44)
+                .offset(x: 114)
+        }
+        .frame(height: 80)
     }
 }
 

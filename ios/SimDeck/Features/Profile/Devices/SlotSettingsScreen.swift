@@ -130,7 +130,7 @@ private struct SlotIdentitySection: View {
     }
 }
 
-private struct SlotControlSection: View {
+struct SlotControlSection: View {
     @Binding var settings: SlotSettings
 
     var body: some View {
@@ -156,7 +156,7 @@ private struct SlotControlSection: View {
     }
 }
 
-private struct SlotControlErrorSection: View {
+struct SlotControlErrorSection: View {
     let message: String
     let retry: () -> Void
 

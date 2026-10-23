@@ -55,10 +55,30 @@ final class CommunicationNotificationTests: XCTestCase {
 
         XCTAssertEqual(intent.sender?.displayName, "13500000000")
         XCTAssertNil(intent.sender?.contactIdentifier)
-        XCTAssertNil(intent.sender?.image)
+        XCTAssertNotNil(intent.sender?.image)
         XCTAssertEqual(result.subtitle, "13500000000 · SIM 2")
         XCTAssertEqual(result.threadIdentifier, "device-2:13500000000")
         XCTAssertEqual(result.targetContentIdentifier, "device-2:13500000000")
+    }
+
+    func testBuildsMonogramAvatarWhenContactHasNoPhoto() {
+        let builder = CommunicationNotificationContentBuilder(
+            contacts: ContactResolverStub(
+                identity: CommunicationNotificationIdentity(
+                    displayName: "Alice Brown",
+                    contactIdentifier: "contact-2",
+                    avatarData: nil
+                )
+            )
+        )
+
+        let intent = builder.makeIntent(
+            remoteNumber: "13500000000",
+            messageBody: "Hello",
+            conversationIdentifier: "conversation-2"
+        )
+
+        XCTAssertNotNil(intent.sender?.image)
     }
 }
 

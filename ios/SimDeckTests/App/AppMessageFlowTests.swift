@@ -420,6 +420,71 @@ final class AppMessageFlowTests: XCTestCase {
         XCTAssertTrue(model.messageItems.isEmpty)
     }
 
+    func testMessageNotificationSelectionRoutesToItsConversation() async {
+        let conversation = MessageConversation(
+            lineID: firstLine.id,
+            remoteNumber: "10086",
+            contactName: nil,
+            unreadCount: 1,
+            messages: [
+                MessageItem(
+                    id: UUID(),
+                    direction: .received,
+                    body: "Hello",
+                    attachment: nil,
+                    sentAt: Date(),
+                    status: .delivered
+                )
+            ]
+        )
+        let model = makeModel(
+            transport: MessageTransportFake(),
+            messages: .loaded([conversation])
+        )
+        let identifier = MessageNotificationConversationIdentifier.make(
+            simID: firstLine.simID,
+            slotID: firstLine.slotID,
+            deviceUUID: firstLine.deviceID,
+            remoteNumber: conversation.remoteNumber
+        )
+
+        await model.handleMessageNotificationSelection(conversationIdentifier: identifier)
+
+        XCTAssertEqual(model.pendingNavigationRequest, .conversation(conversation.id))
+        model.consumeNavigationRequest(.conversation(conversation.id))
+        XCTAssertNil(model.pendingNavigationRequest)
+    }
+
+    func testColdLaunchNotificationSelectionWaitsForLineMetadata() async {
+        let conversation = MessageConversation(
+            lineID: firstLine.id,
+            remoteNumber: "10086",
+            contactName: nil,
+            unreadCount: 1,
+            messages: []
+        )
+        let model = makeModel(
+            transport: MessageTransportFake(),
+            devices: [],
+            messages: .loaded([conversation]),
+            remoteDeviceRefreshEnabled: false
+        )
+        let identifier = MessageNotificationConversationIdentifier.make(
+            simID: firstLine.simID,
+            slotID: firstLine.slotID,
+            deviceUUID: firstLine.deviceID,
+            remoteNumber: conversation.remoteNumber
+        )
+
+        await model.handleMessageNotificationSelection(conversationIdentifier: identifier)
+        XCTAssertNil(model.pendingNavigationRequest)
+
+        model.devices = [firstLine]
+        await model.refreshDevices()
+
+        XCTAssertEqual(model.pendingNavigationRequest, .conversation(conversation.id))
+    }
+
     private func makeModel(
         transport: MessageTransportFake,
         devices: [DeviceLineIdentity]? = nil,

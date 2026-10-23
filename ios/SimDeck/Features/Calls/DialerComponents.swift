@@ -8,7 +8,6 @@ import UIKit
 struct LinePicker: View {
     let lines: [DeviceLineIdentity]
     @Binding var selection: UUID?
-    var isCompact = false
 
     var body: some View {
         if let selectedLine = lines.first(where: { $0.id == selection }) {
@@ -26,27 +25,20 @@ struct LinePicker: View {
                     }
                 }
             } label: {
-                HStack(spacing: 8) {
-                    SIMLabel(
-                        line: selectedLine,
-                        size: 22,
-                        titleStyle: isCompact ? .identifier : .displayName
-                    )
-                        .font(.body)
+                HStack(spacing: 6) {
+                    SIMBadge(line: selectedLine, size: 24, color: .accentColor)
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal, 12)
-                .frame(minHeight: 44)
-                .contentShape(Capsule())
-                .glassEffect(.regular.interactive(), in: Capsule())
+                .frame(height: 44)
+                .contentShape(.rect)
             }
             .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .buttonStyle(.plain)
         } else if lines.isEmpty {
             Image(systemName: "simcard")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.accentColor)
                 .frame(width: 44, height: 44)
                 .accessibilityLabel("No online SIM")
         } else {
@@ -59,11 +51,16 @@ struct LinePicker: View {
                     }
                 }
             } label: {
-                Image(systemName: "simcard")
-                    .foregroundStyle(.primary)
-                    .frame(width: 44, height: 44)
-                    .contentShape(.rect)
-                    .accessibilityLabel("Select SIM")
+                HStack(spacing: 6) {
+                    Image(systemName: "simcard")
+                        .foregroundStyle(Color.accentColor)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(height: 44)
+                .contentShape(.rect)
+                .accessibilityLabel("Select SIM")
             }
             .buttonStyle(.plain)
         }

@@ -10,6 +10,7 @@ struct CommunicationNotificationIdentity: Equatable {
     let displayName: String
     let contactIdentifier: String?
     let avatarData: Data?
+    var organizationName: String? = nil
 }
 
 protocol CommunicationNotificationContactResolving {
@@ -31,6 +32,7 @@ struct SystemCommunicationNotificationContactResolver: CommunicationNotification
             CNContactIdentifierKey as CNKeyDescriptor,
             CNContactFormatter.descriptorForRequiredKeys(for: .fullName),
             CNContactThumbnailImageDataKey as CNKeyDescriptor,
+            CNContactOrganizationNameKey as CNKeyDescriptor,
         ]
         guard let contact = try? store.unifiedContacts(
             matching: CNContact.predicateForContacts(matching: CNPhoneNumber(stringValue: phoneNumber)),
@@ -48,7 +50,8 @@ struct SystemCommunicationNotificationContactResolver: CommunicationNotification
         return CommunicationNotificationIdentity(
             displayName: displayName,
             contactIdentifier: contact.identifier,
-            avatarData: contact.thumbnailImageData
+            avatarData: contact.thumbnailImageData,
+            organizationName: contact.organizationName
         )
     }
 }
@@ -66,11 +69,15 @@ struct CommunicationNotificationContentBuilder {
         conversationIdentifier: String
     ) -> INSendMessageIntent {
         let identity = contacts.identity(for: remoteNumber)
+        let avatarData = identity?.avatarData ?? PersonAvatarImageRenderer.pngData(
+            displayName: identity?.displayName ?? remoteNumber,
+            organizationName: identity?.organizationName
+        )
         let sender = INPerson(
             personHandle: INPersonHandle(value: remoteNumber, type: .phoneNumber),
             nameComponents: nil,
             displayName: identity?.displayName ?? remoteNumber,
-            image: identity?.avatarData.map(INImage.init(imageData:)),
+            image: avatarData.map(INImage.init(imageData:)),
             contactIdentifier: identity?.contactIdentifier,
             customIdentifier: remoteNumber,
             isMe: false,

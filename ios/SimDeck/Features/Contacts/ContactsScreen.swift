@@ -77,35 +77,36 @@ struct ContactsScreen: View {
             ScrollViewReader { proxy in
                 List {
                     ForEach(sections) { section in
-                        Section {
-                            ForEach(section.contacts) { contact in
-                                NavigationLink(value: contact) {
-                                    ContactRow(contact: contact)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .contentShape(Rectangle())
-                                }
-                                .listRowInsets(
-                                    EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 44)
-                                )
-                                .listRowBackground(Color(uiColor: .systemBackground))
-                                .alignmentGuide(.listRowSeparatorLeading) { dimensions in
-                                    dimensions[.leading] + 56
-                                }
-                            }
-                        } header: {
-                            VStack(spacing: 0) {
-                                HStack {
-                                    Text(section.title)
-                                        .font(.body.weight(.regular))
-                                    Spacer(minLength: 0)
-                                }
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(section.title)
+                                .font(.body.weight(.regular))
 
-                                Divider()
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .id(section.id)
+                            Divider()
+                                .padding(.top, 10)
                         }
-                        .listSectionSeparator(.hidden, edges: .top)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .id(section.id)
+                        .listRowInsets(
+                            EdgeInsets(top: 8, leading: 20, bottom: 0, trailing: 44)
+                        )
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color(uiColor: .systemBackground))
+
+                        ForEach(section.contacts) { contact in
+                            NavigationLink(value: contact) {
+                                ContactRow(contact: contact)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .listRowInsets(
+                                EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 44)
+                            )
+                            .listRowBackground(Color(uiColor: .systemBackground))
+                            .alignmentGuide(.listRowSeparatorLeading) { dimensions in
+                                dimensions[.leading] + 56
+                            }
+                        }
                     }
                     Color.clear
                         .frame(height: 96)

@@ -1831,7 +1831,24 @@
       }
     },
     "Mark as Read" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "标记为已读"
+          }
+        }
+      }
+    },
+    "Mark as Unread" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "标记为未读"
+          }
+        }
+      }
     },
     "Me" : {
       "localizations" : {
@@ -2490,6 +2507,26 @@
     },
     "Photos" : {
 
+    },
+    "Pin" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "置顶"
+          }
+        }
+      }
+    },
+    "Pinned" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已置顶"
+          }
+        }
+      }
     },
     "Preview image" : {
       "localizations" : {
@@ -3897,6 +3934,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未命名设备"
+          }
+        }
+      }
+    },
+    "Unpin" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消置顶"
           }
         }
       }

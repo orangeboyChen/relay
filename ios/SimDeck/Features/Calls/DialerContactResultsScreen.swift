@@ -23,13 +23,16 @@ struct DialerContactResultsScreen: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .task {
             refreshMatches()
             isSearchFocused = true
         }
         .onChange(of: number) { _, _ in
-            isShowingAllResults = false
-            refreshMatches()
+            withAnimation(.snappy) {
+                isShowingAllResults = false
+                refreshMatches()
+            }
         }
         .onChange(of: contacts) { _, _ in
             refreshMatches()
@@ -52,7 +55,9 @@ struct DialerContactResultsScreen: View {
 
                 if !number.isEmpty {
                     Button {
-                        number = ""
+                        withAnimation(.snappy) {
+                            number = ""
+                        }
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 20))
@@ -69,7 +74,9 @@ struct DialerContactResultsScreen: View {
             .glassEffect(.regular, in: Capsule())
 
             Button {
-                onClose()
+                withAnimation(.snappy) {
+                    onClose()
+                }
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 20, weight: .semibold))
@@ -88,18 +95,20 @@ struct DialerContactResultsScreen: View {
             LazyVStack(spacing: 0) {
                 HStack(alignment: .firstTextBaseline) {
                     Text("Phone Numbers")
-                        .font(.title2.bold())
+                        .font(.title3.bold())
                     Spacer()
                     if matches.count > initialResultLimit, !isShowingAllResults {
                         Button("See All") {
-                            isShowingAllResults = true
+                            withAnimation(.snappy) {
+                                isShowingAllResults = true
+                            }
                         }
-                        .font(.title3)
+                        .font(.body)
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 20)
-                .padding(.bottom, 12)
+                .padding(.top, 14)
+                .padding(.bottom, 10)
 
                 if visibleMatches.isEmpty {
                     ContentUnavailableView.search(text: number)
@@ -161,7 +170,7 @@ private struct DialerContactResultRow: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(match.contact.displayName)
                             .font(.headline)
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.secondary)
                             .lineLimit(1)
                         DialerHighlightedPhoneNumberText(
                             phoneNumber: match.phoneNumber.displayValue,

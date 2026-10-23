@@ -104,17 +104,23 @@ struct DialerScreen: View {
             .safeAreaPadding(.bottom, 42)
 
             if isShowingAllContactResults {
-                Color(uiColor: .systemBackground)
-                    .ignoresSafeArea()
-                    .transition(.identity)
+                ZStack {
+                    Color(uiColor: .systemBackground)
+                        .ignoresSafeArea()
 
-                DialerContactResultsScreen(
-                    number: $number,
-                    contacts: contacts,
-                    onSelect: selectContactMatch,
-                    onCall: callContactMatch,
-                    onClose: { isShowingAllContactResults = false }
-                )
+                    DialerContactResultsScreen(
+                        number: $number,
+                        contacts: contacts,
+                        onSelect: selectContactMatch,
+                        onCall: callContactMatch,
+                        onClose: {
+                            withAnimation(.snappy) {
+                                isShowingAllContactResults = false
+                            }
+                        }
+                    )
+                }
+                .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -222,7 +228,9 @@ struct DialerScreen: View {
                     if partialMatches.count > 1 {
                         Divider()
                         Button {
-                            isShowingAllContactResults = true
+                            withAnimation(.snappy) {
+                                isShowingAllContactResults = true
+                            }
                         } label: {
                             HStack(spacing: 8) {
                                 Image(systemName: "magnifyingglass")
@@ -261,6 +269,7 @@ struct DialerScreen: View {
                 size: 24
             )
             Text(match.contact.displayName)
+                .foregroundStyle(.secondary)
                 .lineLimit(1)
             DialerHighlightedPhoneNumberText(
                 phoneNumber: match.phoneNumber.displayValue,
@@ -306,14 +315,18 @@ struct DialerScreen: View {
     }
 
     private func selectContactMatch(_ match: DialerContactMatch) {
-        number = DialString.normalized(match.phoneNumber.value)
-        isShowingAllContactResults = false
+        withAnimation(.snappy) {
+            number = DialString.normalized(match.phoneNumber.value)
+            isShowingAllContactResults = false
+        }
     }
 
     private func callContactMatch(_ match: DialerContactMatch) {
         let selectedNumber = DialString.normalized(match.phoneNumber.value)
-        number = selectedNumber
-        isShowingAllContactResults = false
+        withAnimation(.snappy) {
+            number = selectedNumber
+            isShowingAllContactResults = false
+        }
         startCall(to: selectedNumber)
     }
 

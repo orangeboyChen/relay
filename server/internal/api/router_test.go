@@ -544,7 +544,7 @@ var _ = Describe("HTTP API", func() {
 		var body map[string]any
 		Expect(json.Unmarshal(discovery.Body.Bytes(), &body)).To(Succeed())
 		Expect(body["api_version"]).To(Equal("v1"))
-		Expect(body["websocket_url"]).To(Equal("wss://deck.example/v1/events/ws"))
+		Expect(body).NotTo(HaveKey("websocket_url"))
 		Expect(body["media"]).To(Equal(map[string]any{"transport": "webrtc", "relay": "turn"}))
 
 		association := perform(http.MethodGet, "/.well-known/apple-app-site-association", "", "")
@@ -656,15 +656,6 @@ var _ = Describe("HTTP API", func() {
 		response := perform(http.MethodGet, "/v1/devices/01900000-0000-7000-8000-000000000001/media/turn-credentials", "", "")
 		Expect(response.Code).To(Equal(http.StatusUnauthorized))
 	})
-
-	DescribeTable("maps public API schemes to WebSocket schemes",
-		func(baseURL string, expected string) {
-			Expect(websocketBaseURL(baseURL)).To(Equal(expected))
-		},
-		Entry("secure", "https://deck.example", "wss://deck.example"),
-		Entry("local plaintext", "http://127.0.0.1:8080", "ws://127.0.0.1:8080"),
-		Entry("unspecified", "deck.example", "deck.example"),
-	)
 
 	DescribeTable("validates and normalizes public API URLs",
 		func(value string, expected string) {

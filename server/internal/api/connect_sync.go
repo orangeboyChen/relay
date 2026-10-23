@@ -17,6 +17,8 @@ import (
 	"sim-deck-server/internal/e2ee"
 )
 
+const eventStreamPollInterval = 500 * time.Millisecond
+
 type rpcOwnerContextKey struct{}
 
 type historyRepository interface {

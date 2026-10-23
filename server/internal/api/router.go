@@ -115,9 +115,6 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("POST /v1/device-pairings", router.pairDevice)
 	mux.HandleFunc("POST /v1/device-discoveries", router.submitDeviceDiscovery)
 	mux.HandleFunc("GET /v1/device-discoveries/{deviceID}/status", router.deviceDiscoveryStatus)
-	mux.HandleFunc("POST /v1/events", router.insertEvent)
-	mux.HandleFunc("GET /v1/events", router.requireOwner(router.listEvents))
-	mux.HandleFunc("GET /v1/events/ws", router.requireOwner(router.streamEvents))
 	mux.HandleFunc("POST /v1/devices/{deviceID}/commands", router.requireOwner(router.enqueueCommand))
 	mux.HandleFunc("GET /v1/devices/{deviceID}/commands/{commandID}", router.requireOwner(router.commandStatus))
 	mux.HandleFunc("GET /v1/device-commands/next", router.claimCommand)
@@ -384,10 +381,8 @@ func (router *router) health(writer http.ResponseWriter, _ *http.Request) {
 }
 
 func (router *router) discovery(writer http.ResponseWriter, _ *http.Request) {
-	baseURL := strings.TrimRight(router.config.PublicBaseURL, "/")
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"api_version":   "v1",
-		"websocket_url": websocketBaseURL(baseURL) + "/v1/events/ws",
 		"media":         map[string]any{"transport": "webrtc", "relay": "turn"},
 	})
 }
@@ -430,17 +425,6 @@ func (router *router) writeTURNCredentials(writer http.ResponseWriter, authentic
 	}
 	credentials := NewTURNCredentials(router.config.TURNURL, router.config.TURNSecret, router.now(), ttl)
 	writeJSON(writer, http.StatusOK, credentials)
-}
-
-func websocketBaseURL(baseURL string) string {
-	switch {
-	case strings.HasPrefix(baseURL, "https://"):
-		return "wss://" + strings.TrimPrefix(baseURL, "https://")
-	case strings.HasPrefix(baseURL, "http://"):
-		return "ws://" + strings.TrimPrefix(baseURL, "http://")
-	default:
-		return baseURL
-	}
 }
 
 // ParsePublicBaseURL validates and normalizes the externally reachable HTTP API URL.
@@ -694,93 +678,6 @@ func (router *router) pairDevice(writer http.ResponseWriter, request *http.Reque
 	writeJSON(writer, http.StatusCreated, map[string]any{
 		"device": record,
 	})
-}
-
-func (router *router) insertEvent(writer http.ResponseWriter, request *http.Request) {
-	var body struct {
-		Envelope domain.EventEnvelope `json:"envelope"`
-	}
-	if err := decodeJSON(request, &body); err != nil {
-		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-	token, ok := bearerToken(request.Header.Get("Authorization"))
-	if !ok {
-		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is required.")
-		return
-	}
-	publicKey, err := router.repository.AuthenticateDevice(request.Context(), body.Envelope.DeviceUUID, token, router.now())
-	if err != nil {
-		writeError(writer, http.StatusUnauthorized, "invalid_device_credential", "Device credential is invalid or revoked.")
-		return
-	}
-	if err := e2ee.VerifyEnvelope(ed25519.PublicKey(publicKey), body.Envelope); err != nil {
-		if errors.Is(err, e2ee.ErrInvalidEnvelope) {
-			writeError(writer, http.StatusUnprocessableEntity, "invalid_event", err.Error())
-			return
-		}
-		writeError(writer, http.StatusUnauthorized, "invalid_event_signature", "Event signature is invalid.")
-		return
-	}
-	now := router.now()
-	if body.Envelope.OccurredAt.After(now.Add(maxEventFutureSkew)) {
-		writeError(writer, http.StatusUnprocessableEntity, "invalid_event_time", "Event timestamp is too far in the future.")
-		return
-	}
-	expiresAt := body.Envelope.OccurredAt.Add(eventRetention)
-	if !expiresAt.After(now) {
-		writeError(writer, http.StatusUnprocessableEntity, "event_expired", "Event is outside the retention window.")
-		return
-	}
-	body.Envelope.Sequence = 0
-	sequence, created, err := router.repository.InsertEvent(request.Context(), body.Envelope, expiresAt)
-	if err != nil {
-		if errors.Is(err, domain.ErrIdempotencyConflict) {
-			writeError(writer, http.StatusConflict, "idempotency_conflict", err.Error())
-			return
-		}
-		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to store the event.")
-		return
-	}
-	status := http.StatusOK
-	if created {
-		status = http.StatusCreated
-	}
-	writeJSON(writer, status, map[string]any{"sequence": sequence, "created": created})
-}
-
-func (router *router) listEvents(writer http.ResponseWriter, request *http.Request) {
-	afterSequence, err := queryInt64(request, "after_sequence", 0)
-	if err != nil || afterSequence < 0 {
-		writeError(writer, http.StatusBadRequest, "invalid_cursor", "Event cursor must be a non-negative integer.")
-		return
-	}
-	limit, err := queryInt(request, "limit", defaultEventPageSize)
-	if err != nil || limit < 1 || limit > maxEventPageSize {
-		writeError(writer, http.StatusBadRequest, "invalid_limit", "Event page size must be between 1 and 500.")
-		return
-	}
-	events, err := router.repository.ListEvents(request.Context(), afterSequence, limit, router.now())
-	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to read encrypted events.")
-		return
-	}
-	nextSequence := afterSequence
-	if len(events) > 0 {
-		nextSequence = events[len(events)-1].Sequence
-	}
-	writeJSON(writer, http.StatusOK, map[string]any{
-		"events":        events,
-		"next_sequence": nextSequence,
-	})
-}
-
-func queryInt64(request *http.Request, name string, fallback int64) (int64, error) {
-	value := request.URL.Query().Get(name)
-	if value == "" {
-		return fallback, nil
-	}
-	return strconv.ParseInt(value, 10, 64)
 }
 
 func queryInt(request *http.Request, name string, fallback int) (int, error) {

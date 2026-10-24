@@ -11,6 +11,7 @@ struct InCallScreen: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isKeypadVisible = false
+    @State private var enteredDTMFDigits = ""
     @State private var presentedError: InCallPresentedError?
 
     var body: some View {
@@ -23,12 +24,14 @@ struct InCallScreen: View {
                     CallIdentityHeader(
                         call: call,
                         line: line(for: call),
-                        referenceDate: referenceDate
+                        referenceDate: referenceDate,
+                        enteredDTMFDigits: enteredDTMFDigits
                     )
                     .padding(.top, 53)
 
                     if isKeypadVisible {
                         InCallKeypad { digit in
+                            enteredDTMFDigits.append(contentsOf: digit)
                             perform {
                                 try await coordinator.playDTMF(digit)
                             }
@@ -115,6 +118,9 @@ struct InCallScreen: View {
                 endsFailedCall: true
             )
         }
+        .onChange(of: coordinator.activeCall?.id, initial: true) { _, _ in
+            enteredDTMFDigits = ""
+        }
         .preferredColorScheme(.dark)
         .scrollEdgeEffectStyle(.soft, for: .all)
     }
@@ -150,6 +156,7 @@ private struct CallIdentityHeader: View {
     let call: ActiveCallSession
     let line: DeviceLineIdentity?
     let referenceDate: Date?
+    let enteredDTMFDigits: String
 
     var body: some View {
         VStack(spacing: 6) {
@@ -160,11 +167,11 @@ private struct CallIdentityHeader: View {
 
                 CallStatusText(status: call.status, referenceDate: referenceDate)
             }
-            .font(.title3)
+            .font(.title3.weight(.semibold))
             .foregroundStyle(.white.opacity(0.68))
 
-            Text(call.title)
-                .font(.system(size: 35, weight: .regular))
+            Text(call.title + enteredDTMFDigits)
+                .font(.system(size: 35, weight: .semibold))
                 .foregroundStyle(.white)
                 .lineLimit(2)
                 .minimumScaleFactor(0.65)

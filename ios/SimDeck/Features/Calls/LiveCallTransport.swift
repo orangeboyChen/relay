@@ -237,6 +237,9 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
                 hasConnected: false
             )
             installMediaSession(mediaSession, for: callID)
+            if exchange.result.callState == "active" {
+                markConnected(callID: callID, at: now())
+            }
             startCallLeaseRenewal(callID: callID)
             if automaticallyPollEvents {
                 startEventLoopIfNeeded()
@@ -273,6 +276,9 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
             }
             try await mediaSession.applyAnswer(answer)
             installMediaSession(mediaSession, for: callID)
+            if exchange.result.callState == "active" {
+                markConnected(callID: callID, at: now())
+            }
             startCallLeaseRenewal(callID: callID)
         } catch {
             mediaSession.close()
@@ -778,11 +784,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
             case "ringing":
                 eventHandler?(.ringing(callID: callID))
             case "active":
-                guard !context.hasConnected else { return }
-                context.hasConnected = true
-                callEvents[callID] = context
-                startMediaHealthMonitoring(callID: callID)
-                eventHandler?(.connected(callID: callID, at: envelope.occurredAt))
+                markConnected(callID: callID, at: envelope.occurredAt)
             case "ended":
                 let reason: CallEndReason = context.hasConnected ? .remoteEnded : .unanswered
                 stopCallLeaseRenewal(callID: callID)
@@ -799,6 +801,14 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
             }
             return
         }
+    }
+
+    private func markConnected(callID: UUID, at date: Date) {
+        guard var context = callEvents[callID], !context.hasConnected else { return }
+        context.hasConnected = true
+        callEvents[callID] = context
+        startMediaHealthMonitoring(callID: callID)
+        eventHandler?(.connected(callID: callID, at: date))
     }
 
     private func failCallAfterMediaRecovery(callID: UUID, reason: String) async {

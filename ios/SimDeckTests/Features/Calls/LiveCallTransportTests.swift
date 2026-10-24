@@ -282,6 +282,34 @@ final class LiveCallTransportTests: XCTestCase {
         }
     }
 
+    func testActiveCommandResultReportsConnectedWithoutWaitingForEvent() async throws {
+        let api = try DeviceCommandAPIFake(
+            deviceID: deviceID,
+            outcome: .success,
+            callState: "active"
+        )
+        let media = CallMediaSessionFake()
+        let connectedAt = Date(timeIntervalSince1970: 1_792_108_923)
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: api.commandSigner,
+            now: { connectedAt },
+            makeMediaSession: { media },
+            waitBeforePollingAgain: {},
+            automaticallyPollEvents: false
+        )
+        var events: [CallTransportEvent] = []
+        transport.setEventHandler { events.append($0) }
+
+        try await transport.startOutgoingCall(
+            callID: callID,
+            number: "10086",
+            lineID: deviceID
+        )
+
+        XCTAssertEqual(events, [.connected(callID: callID, at: connectedAt)])
+    }
+
     func testFailedMediaConnectionRestartsICEThroughEncryptedDeviceCommand() async throws {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
         let media = CallMediaSessionFake()
@@ -1273,9 +1301,10 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
         InstallationCommandSigner(identity: installationIdentity)
     }
 
-    init(deviceID: UUID, outcome: Outcome) throws {
+    init(deviceID: UUID, outcome: Outcome, callState: String = "dialing") throws {
         self.deviceID = deviceID
         self.outcome = outcome
+        self.callState = callState
         devicePrivateKey = try Curve25519.KeyAgreement.PrivateKey(
             rawRepresentation: Data((1...32).map(UInt8.init))
         )
@@ -1289,6 +1318,8 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
             pendingRevocationIDs: []
         )
     }
+
+    private let callState: String
 
     func commandRecipient(deviceID: UUID) async throws -> Data {
         XCTAssertEqual(deviceID, self.deviceID)
@@ -1361,7 +1392,7 @@ private final class DeviceCommandAPIFake: EncryptedCallCommandAPI {
             version: 1,
             success: outcome != .modemRejected,
             errorCode: outcome == .modemRejected ? "modem_rejected" : nil,
-            callState: "dialing",
+            callState: callState,
             mediaAnswer: ["call.start", "call.answer", "call.media.restart"].contains(payload.operation) && !omitMediaAnswer
                 ? CallMediaSessionFake.answer
                 : nil

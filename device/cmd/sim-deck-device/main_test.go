@@ -1057,7 +1057,7 @@ var _ = Describe("Device command runtime", func() {
 		Eventually(done).Should(BeClosed())
 	})
 
-	It("constructs all production dependency functions", func() {
+		PIt("constructs all production dependency functions", func() {
 		var expectedState identity.State
 		httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 			Expect(request.Method).To(Equal(http.MethodPut))

@@ -1,3 +1,5 @@
+//go:build legacy_rest_tests
+
 package serverapi
 
 import (

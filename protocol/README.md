@@ -2,6 +2,11 @@
 
 Shared protobuf and Connect RPC contracts for encrypted communication synchronization.
 
+All application and device operations use generated Connect RPC clients. The
+transport is HTTPS with HTTP/2; `CommunicationSyncService.WatchEvents` is a
+true bidirectional stream, so clients send durable cursor acknowledgements on
+the same stream instead of relying on a second REST or WebSocket protocol.
+
 The schema and generator configuration are the source of truth. Generated Go and Swift sources are not committed to this repository.
 
 ## Validate and build the SDK

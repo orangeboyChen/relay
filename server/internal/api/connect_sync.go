@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -11,6 +12,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	communicationv1 "github.com/orangeboyChen/relay-sdk/gen/go/relay/communication/v1"
 	communicationv1connect "github.com/orangeboyChen/relay-sdk/gen/go/relay/communication/v1/communicationv1connect"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/dynamicpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"sim-deck-server/internal/domain"
@@ -20,6 +24,14 @@ import (
 const eventStreamPollInterval = 500 * time.Millisecond
 
 type rpcOwnerContextKey struct{}
+
+func ownerIDFromRPC(ctx context.Context) (string, error) {
+	ownerID, ok := ctx.Value(rpcOwnerContextKey{}).(string)
+	if !ok || ownerID == "" {
+		return "", connect.NewError(connect.CodeUnauthenticated, "owner credential is required")
+	}
+	return ownerID, nil
+}
 
 type historyRepository interface {
 	GetHistorySnapshot(context.Context, string, int) (domain.HistorySnapshot, error)
@@ -47,6 +59,12 @@ func rpcAuthInterceptor(router *router) connect.ServerInterceptor {
 			if isPublicAuthProcedure(spec.Procedure) {
 				return next(ctx, spec, stream)
 			}
+			if isDeviceProcedure(spec.Procedure) {
+				if deviceProcedureUsesCeremonyCredential(spec.Procedure) {
+					return next(ctx, spec, stream)
+				}
+				return authenticateDeviceRPC(ctx, spec, stream, router, next)
+			}
 			token, ok := bearerToken(info.RequestHeader().Get("Authorization"))
 			if !ok {
 				return connect.NewError(connect.CodeUnauthenticated, "bearer credential is required")
@@ -61,6 +79,85 @@ func rpcAuthInterceptor(router *router) connect.ServerInterceptor {
 			return next(context.WithValue(ctx, rpcOwnerContextKey{}, ownerID), spec, stream)
 		}
 	}
+}
+
+func isDeviceProcedure(procedure string) bool {
+	const prefix = "/relay.communication.v1.DeviceService/"
+	return len(procedure) >= len(prefix) && procedure[:len(prefix)] == prefix
+}
+
+func deviceProcedureUsesCeremonyCredential(procedure string) bool {
+	switch procedure {
+	case communicationv1connect.DeviceServicePairDeviceProcedure,
+		communicationv1connect.DeviceServiceSubmitDiscoveryProcedure,
+		communicationv1connect.DeviceServiceGetDiscoveryStatusProcedure:
+		return true
+	default:
+		return false
+	}
+}
+
+type replayServerStream struct {
+	connect.ServerStream
+	request  proto.Message
+	consumed bool
+}
+
+func (stream *replayServerStream) Receive(message any) error {
+	if stream.consumed {
+		return stream.ServerStream.Receive(message)
+	}
+	stream.consumed = true
+	target, ok := message.(proto.Message)
+	if !ok {
+		return connect.NewError(connect.CodeInternal, "RPC request is not a protobuf message")
+	}
+	proto.Merge(target, stream.request)
+	return nil
+}
+
+func authenticateDeviceRPC(ctx context.Context, spec connect.Spec, stream connect.ServerStream, router *router, next connect.ServerFunc) error {
+	info, ok := connect.CallInfoForServerContext(ctx)
+	if !ok {
+		return connect.NewError(connect.CodeUnauthenticated, "missing request metadata")
+	}
+	token, ok := bearerToken(info.RequestHeader().Get("Authorization"))
+	if !ok {
+		return connect.NewError(connect.CodeUnauthenticated, "device credential is required")
+	}
+	method, ok := spec.Schema.(protoreflect.MethodDescriptor)
+	if !ok {
+		return connect.NewError(connect.CodeInternal, "device RPC schema is unavailable")
+	}
+	input := dynamicpb.NewMessage(method.Input())
+	if err := stream.Receive(input); err != nil {
+		return err
+	}
+	deviceUUID := requestDeviceUUID(input)
+	if deviceUUID == "" {
+		return connect.NewError(connect.CodeInvalidArgument, "device UUID is required")
+	}
+	if _, err := router.repository.AuthenticateDevice(ctx, deviceUUID, token, router.now()); err != nil {
+		return connect.NewError(connect.CodeUnauthenticated, "device credential is invalid or revoked")
+	}
+	return next(ctx, spec, &replayServerStream{ServerStream: stream, request: input})
+}
+
+func requestDeviceUUID(message protoreflect.Message) string {
+	field := message.Descriptor().Fields().ByName("device_uuid")
+	if field != nil {
+		return message.Get(field).String()
+	}
+	notificationField := message.Descriptor().Fields().ByName("notification")
+	if notificationField == nil || !message.Has(notificationField) {
+		return ""
+	}
+	notification := message.Get(notificationField).Message()
+	field = notification.Descriptor().Fields().ByName("device_uuid")
+	if field == nil {
+		return ""
+	}
+	return notification.Get(field).String()
 }
 
 func isPublicAuthProcedure(procedure string) bool {
@@ -132,33 +229,83 @@ func (service *syncService) PullEvents(ctx context.Context, request *communicati
 	return &communicationv1.PullEventsResponse{Events: eventProtos(events), NextSequence: nextSequence(after, events)}, nil
 }
 
-func (service *syncService) WatchEvents(ctx context.Context, request *communicationv1.WatchEventsRequest, stream communicationv1connect.CommunicationSyncServiceWatchEventsServerStream) error {
-	after := int64(0)
-	if request != nil {
-		after = request.GetAfterSequence()
+type watchEventsStream interface {
+	Receive() (*communicationv1.WatchEventsRequest, error)
+	Send(*communicationv1.WatchEventsResponse) error
+}
+
+func (service *syncService) WatchEvents(ctx context.Context, stream communicationv1connect.CommunicationSyncServiceWatchEventsServerStream) error {
+	return service.watchEvents(ctx, stream)
+}
+
+func (service *syncService) watchEvents(ctx context.Context, stream watchEventsStream) error {
+	initial, err := stream.Receive()
+	if err != nil {
+		return err
 	}
-	if after < 0 {
+	if initial == nil {
+		return connect.NewError(connect.CodeInvalidArgument, "initial event cursor is required")
+	}
+	cursor := initial.GetAfterSequence()
+	if cursor < 0 || initial.GetAcknowledgedSequence() != 0 {
 		return connect.NewError(connect.CodeInvalidArgument, "event cursor must be non-negative")
 	}
+	acknowledged := cursor
+	streamContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	requests := make(chan watchEventsRequestResult, 1)
+	go func() {
+		for {
+			request, receiveErr := stream.Receive()
+			select {
+			case requests <- watchEventsRequestResult{request: request, err: receiveErr}:
+			case <-streamContext.Done():
+				return
+			}
+			if receiveErr != nil {
+				return
+			}
+		}
+	}()
 	ticker := time.NewTicker(eventStreamPollInterval)
 	defer ticker.Stop()
 	for {
-		events, err := service.router.repository.ListEvents(ctx, after, defaultEventPageSize, service.router.now())
-		if err != nil {
-			return connect.NewError(connect.CodeInternal, "unable to read encrypted events")
-		}
-		if len(events) > 0 {
-			after = nextSequence(after, events)
-			if err := stream.Send(&communicationv1.WatchEventsResponse{Events: eventProtos(events), NextSequence: after}); err != nil {
-				return err
+		if cursor == acknowledged {
+			events, listErr := service.router.repository.ListEvents(ctx, cursor, defaultEventPageSize, service.router.now())
+			if listErr != nil {
+				return connect.NewError(connect.CodeInternal, "unable to read encrypted events")
+			}
+			if len(events) > 0 {
+				next := nextSequence(cursor, events)
+				if sendErr := stream.Send(&communicationv1.WatchEventsResponse{Events: eventProtos(events), NextSequence: next}); sendErr != nil {
+					return sendErr
+				}
+				cursor = next
 			}
 		}
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-streamContext.Done():
+			return streamContext.Err()
+		case result := <-requests:
+			if errors.Is(result.err, io.EOF) {
+				return nil
+			}
+			if result.err != nil {
+				return result.err
+			}
+			request := result.request
+			if request.GetAfterSequence() != 0 || request.GetAcknowledgedSequence() != cursor || cursor < acknowledged {
+				return connect.NewError(connect.CodeInvalidArgument, "event acknowledgement does not match the delivered cursor")
+			}
+			acknowledged = cursor
 		case <-ticker.C:
 		}
 	}
+}
+
+type watchEventsRequestResult struct {
+	request *communicationv1.WatchEventsRequest
+	err     error
 }
 
 func (service *syncService) GetHistorySnapshot(ctx context.Context, request *communicationv1.GetHistorySnapshotRequest) (*communicationv1.GetHistorySnapshotResponse, error) {

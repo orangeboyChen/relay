@@ -4,7 +4,9 @@
 
 import Foundation
 import XCTest
+import Connect
 import RelayProtocol
+import SwiftProtobuf
 @testable import SimDeck
 
 @MainActor
@@ -1226,6 +1228,116 @@ private final class TestCommunicationSyncClientFactory: CommunicationSyncClientC
 }
 
 @MainActor
+final class NetworkOwnerRPCClientFactory: OwnerRPCClientCreating {
+    private let network: any ServerNetworking
+
+    init(network: any ServerNetworking) { self.network = network }
+
+    func makeClient(baseURL: URL) -> any OwnerRPCClient {
+        NetworkOwnerRPCClient(network: network, baseURL: baseURL)
+    }
+}
+
+@MainActor
+private final class NetworkOwnerRPCClient: OwnerRPCClient {
+    let service: Relay_Communication_V1_OwnerServiceClientInterface
+
+    init(network: any ServerNetworking, baseURL: URL) {
+        let httpClient = NetworkOwnerHTTPClient(network: network, baseURL: baseURL)
+        let config = ProtocolClientConfig(host: baseURL.absoluteString, codec: ProtoCodec())
+        service = Relay_Communication_V1_OwnerServiceClient(
+            client: ProtocolClient(httpClient: httpClient, config: config)
+        )
+    }
+}
+
+private final class NetworkOwnerHTTPClient: HTTPClientInterface, @unchecked Sendable {
+    private let network: any ServerNetworking
+
+    init(network: any ServerNetworking, baseURL: URL) {
+        self.network = network
+    }
+
+    @discardableResult
+    func unary(
+        request: HTTPRequest<Data?>,
+        onMetrics: @escaping @Sendable (HTTPMetrics) -> Void,
+        onResponse: @escaping @Sendable (HTTPResponse) -> Void
+    ) -> Cancelable {
+        let task = Task {
+            do {
+                let requestPath = request.url.path
+                var scriptedRequest = URLRequest(url: request.url)
+                scriptedRequest.httpMethod = "POST"
+                scriptedRequest.httpBody = request.message
+                for (name, values) in request.headers {
+                    scriptedRequest.setValue(values.joined(separator: ","), forHTTPHeaderField: name)
+                }
+                let (data, response) = try await network.data(for: scriptedRequest)
+                onMetrics(HTTPMetrics(taskMetrics: nil))
+                let responseData = response.statusCode < 300 ? try Self.responseProtoData(for: requestPath, json: data.isEmpty ? Data("{}".utf8) : data) : nil
+                onResponse(HTTPResponse(
+                    code: response.statusCode < 300 ? .ok : .fromHTTPStatus(response.statusCode),
+                    headers: response.statusCode < 300 ? ["content-type": ["application/proto"]] : [:],
+                    message: responseData,
+                    trailers: [:],
+                    error: nil,
+                    tracingInfo: .init(httpStatus: response.statusCode)
+                ))
+            } catch {
+                onMetrics(HTTPMetrics(taskMetrics: nil))
+                onResponse(HTTPResponse(
+                    code: .unavailable,
+                    headers: [:],
+                    message: nil,
+                    trailers: [:],
+                    error: error,
+                    tracingInfo: nil
+                ))
+            }
+        }
+        return Cancelable(cancel: { task.cancel() })
+    }
+
+    func stream(request: HTTPRequest<Data?>, responseCallbacks: ResponseCallbacks) -> RequestCallbacks<Data> {
+        fatalError("Owner RPC test transport does not support streams")
+    }
+
+    private static func responseProtoData(for path: String, json: Data) throws -> Data {
+        let method = path.components(separatedBy: "/").last ?? ""
+        var options = JSONDecodingOptions()
+        options.ignoreUnknownFields = true
+        let response: any SwiftProtobuf.Message = switch method {
+        case "ListDevices": try Relay_Communication_V1_ListDevicesResponse(jsonUTF8Data: json, options: options)
+        case "ListSimCards": try Relay_Communication_V1_ListSimCardsResponse(jsonUTF8Data: json, options: options)
+        case "RetireSimCard": try Relay_Communication_V1_RetireSimCardResponse(jsonUTF8Data: json, options: options)
+        case "UpdateDeviceNumericId": try Relay_Communication_V1_UpdateDeviceNumericIdResponse(jsonUTF8Data: json, options: options)
+        case "UpdateDeviceProfile": try Relay_Communication_V1_UpdateDeviceProfileResponse(jsonUTF8Data: json, options: options)
+        case "UpdateSimNumericId": try Relay_Communication_V1_UpdateSimNumericIdResponse(jsonUTF8Data: json, options: options)
+        case "UpdateSimProfile": try Relay_Communication_V1_UpdateSimProfileResponse(jsonUTF8Data: json, options: options)
+        case "RevokeDevice": try Relay_Communication_V1_RevokeDeviceResponse(jsonUTF8Data: json, options: options)
+        case "OpenDeviceDiscovery": try Relay_Communication_V1_OpenDeviceDiscoveryResponse(jsonUTF8Data: json, options: options)
+        case "GetDeviceDiscoverySession": try Relay_Communication_V1_GetDeviceDiscoverySessionResponse(jsonUTF8Data: json, options: options)
+        case "CloseDeviceDiscovery": try Relay_Communication_V1_CloseDeviceDiscoveryResponse(jsonUTF8Data: json, options: options)
+        case "ListDeviceDiscoveries": try Relay_Communication_V1_ListDeviceDiscoveriesResponse(jsonUTF8Data: json, options: options)
+        case "ApproveDeviceDiscovery": try Relay_Communication_V1_ApproveDeviceDiscoveryResponse(jsonUTF8Data: json, options: options)
+        case "RejectDeviceDiscovery": try Relay_Communication_V1_RejectDeviceDiscoveryResponse(jsonUTF8Data: json, options: options)
+        case "RegisterAppInstallation": try Relay_Communication_V1_RegisterAppInstallationResponse(jsonUTF8Data: json, options: options)
+        case "UpsertPushToken": try Relay_Communication_V1_UpsertPushTokenResponse(jsonUTF8Data: json, options: options)
+        case "DeletePushToken": try Relay_Communication_V1_DeletePushTokenResponse(jsonUTF8Data: json, options: options)
+        case "ClaimIncomingCall": try Relay_Communication_V1_ClaimIncomingCallResponse(jsonUTF8Data: json, options: options)
+        case "EnqueueCommand": try Relay_Communication_V1_EnqueueCommandResponse(jsonUTF8Data: json, options: options)
+        case "GetCommandStatus": try Relay_Communication_V1_GetCommandStatusResponse(jsonUTF8Data: json, options: options)
+        case "GetCommandRecipient": try Relay_Communication_V1_GetCommandRecipientResponse(jsonUTF8Data: json, options: options)
+        case "GetTurnCredentials": try Relay_Communication_V1_GetTurnCredentialsResponse(jsonUTF8Data: json, options: options)
+        default: fatalError("Unknown owner RPC method: \(method)")
+        }
+        return try response.serializedData()
+    }
+
+}
+
+@MainActor
 private final class ScriptedServerNetwork: ServerNetworking {
     private(set) var requests: [URLRequest] = []
     private let handler: (URLRequest) async throws -> (Data, HTTPURLResponse)
@@ -1237,6 +1349,13 @@ private final class ScriptedServerNetwork: ServerNetworking {
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         requests.append(request)
         return try await handler(request)
+    }
+
+}
+
+extension ServerNetworking {
+    func ownerRPCClientFactory() -> (any OwnerRPCClientCreating)? {
+        NetworkOwnerRPCClientFactory(network: self)
     }
 }
 

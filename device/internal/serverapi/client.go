@@ -1,16 +1,13 @@
 package serverapi
 
 import (
-	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/binary"
-	"encoding/json"
+	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -29,17 +26,37 @@ import (
 	"sim-deck-device/internal/radio"
 )
 
-const maxResponseBytes = 1 << 20
-
 // Client talks to the server's device endpoints without exposing identity secrets in logs.
 type Client struct {
-	baseURL     string
-	httpClient  *http.Client
-	eventClient eventPublisher
+	baseURL      string
+	httpClient   *http.Client
+	eventClient  eventPublisher
+	deviceClient deviceRPCClient
 }
 
 type eventPublisher interface {
 	PublishEvent(context.Context, *communicationv1.PublishEventRequest) (*communicationv1.PublishEventResponse, error)
+}
+
+type deviceRPCClient interface {
+	FetchTurnCredentials(context.Context, *communicationv1.FetchTurnCredentialsRequest) (*communicationv1.FetchTurnCredentialsResponse, error)
+	UpdateRadioStatus(context.Context, *communicationv1.UpdateRadioStatusRequest) (*communicationv1.UpdateRadioStatusResponse, error)
+	UpdateSimIdentity(context.Context, *communicationv1.UpdateSimIdentityRequest) (*communicationv1.UpdateSimIdentityResponse, error)
+	ListInstallationRecipients(context.Context, *communicationv1.ListInstallationRecipientsRequest) (*communicationv1.ListInstallationRecipientsResponse, error)
+	UploadIncomingCall(context.Context, *communicationv1.UploadIncomingCallRequest) (*communicationv1.UploadIncomingCallResponse, error)
+	ClaimCommand(context.Context, *communicationv1.ClaimCommandRequest) (*communicationv1.ClaimCommandResponse, error)
+	CompleteCommand(context.Context, *communicationv1.CompleteCommandRequest) (*communicationv1.CompleteCommandResponse, error)
+	UpdateCommandKey(context.Context, *communicationv1.UpdateCommandKeyRequest) (*communicationv1.UpdateCommandKeyResponse, error)
+	SubmitDiscovery(context.Context, *communicationv1.SubmitDiscoveryRequest) (*communicationv1.SubmitDiscoveryResponse, error)
+	GetDiscoveryStatus(context.Context, *communicationv1.GetDiscoveryStatusRequest) (*communicationv1.GetDiscoveryStatusResponse, error)
+}
+
+func (client *Client) deviceContext(ctx context.Context, credential string) context.Context {
+	requestContext, callInfo := connect.NewClientContext(ctx)
+	if credential != "" {
+		callInfo.RequestHeader().Set("Authorization", "Bearer "+credential)
+	}
+	return requestContext
 }
 
 // FetchTURNCredentials obtains short-lived relay credentials for one bound device.
@@ -47,59 +64,26 @@ func (client *Client) FetchTURNCredentials(ctx context.Context, state identity.S
 	if !validUUID(state.DeviceUUID) || strings.TrimSpace(state.Credential) == "" {
 		return nil, errors.New("bound device identity is required")
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+"/v1/devices/"+url.PathEscape(state.DeviceUUID)+"/media/turn-credentials", nil)
-	if err != nil {
-		return nil, fmt.Errorf("create TURN credentials request: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+state.Credential)
-	response, err := client.httpClient.Do(request)
+	response, err := client.deviceClient.FetchTurnCredentials(client.deviceContext(ctx, state.Credential), &communicationv1.FetchTurnCredentialsRequest{DeviceUuid: state.DeviceUUID})
 	if err != nil {
 		return nil, fmt.Errorf("fetch TURN credentials: %w", err)
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, responseError("fetch TURN credentials", response.StatusCode, io.LimitReader(response.Body, maxResponseBytes))
-	}
-	var body struct {
-		URLs       []string  `json:"urls"`
-		Username   string    `json:"username"`
-		Credential string    `json:"credential"`
-		ExpiresAt  time.Time `json:"expires_at"`
-	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, maxResponseBytes)).Decode(&body); err != nil {
-		return nil, fmt.Errorf("decode TURN credentials: %w", err)
-	}
-	if len(body.URLs) == 0 || body.Username == "" || body.Credential == "" || body.ExpiresAt.Before(time.Now().UTC()) {
+	if response == nil || len(response.Urls) == 0 || response.Username == "" || response.Credential == "" || response.ExpiresAt == nil || response.ExpiresAt.AsTime().Before(time.Now().UTC()) {
 		return nil, errors.New("server returned invalid TURN credentials")
 	}
-	return []media.ICEServer{{URLs: body.URLs, Username: body.Username, Credential: body.Credential}}, nil
+	return []media.ICEServer{{URLs: response.Urls, Username: response.Username, Credential: response.Credential}}, nil
 }
 
 // UpdateRadioStatus publishes the current modem registration and signal level.
 func (client *Client) UpdateRadioStatus(ctx context.Context, state identity.State, status radio.Status) error {
-	body, err := json.Marshal(map[string]any{
-		"device_uuid":             state.DeviceUUID,
-		"slot_key":                state.SlotKey,
-		"slot_index":              state.SlotIndex,
-		"radio_access_technology": status.RadioAccessTechnology,
-		"signal_bars":             status.SignalBars,
-	})
-	if err != nil {
-		return fmt.Errorf("encode radio status: %w", err)
+	var signalBars *int32
+	if status.SignalBars != nil {
+		value := int32(*status.SignalBars)
+		signalBars = &value
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPut, client.baseURL+"/v1/device-radio-status", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create radio status request: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+state.Credential)
-	request.Header.Set("Content-Type", "application/json")
-	response, err := client.httpClient.Do(request)
+	_, err := client.deviceClient.UpdateRadioStatus(client.deviceContext(ctx, state.Credential), &communicationv1.UpdateRadioStatusRequest{DeviceUuid: state.DeviceUUID, SlotKey: state.SlotKey, SlotIndex: int32(state.SlotIndex), RadioAccessTechnology: status.RadioAccessTechnology, SignalBars: signalBars})
 	if err != nil {
 		return fmt.Errorf("update radio status: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusNoContent {
-		return responseError("update radio status", response.StatusCode, io.LimitReader(response.Body, maxResponseBytes))
 	}
 	return nil
 }
@@ -116,32 +100,15 @@ func (client *Client) UpdateSIMIdentity(ctx context.Context, state identity.Stat
 	if state.Credential == "" || state.SIMFingerprint == "" || state.SlotKey == "" || state.SlotIndex < 1 {
 		return SIMAssignment{}, errors.New("bound slot and SIM fingerprint are required")
 	}
-	body, err := json.Marshal(map[string]any{
-		"device_uuid": state.DeviceUUID, "slot_key": state.SlotKey,
-		"slot_index": state.SlotIndex, "sim_fingerprint": state.SIMFingerprint,
-	})
+	fingerprint, err := hex.DecodeString(state.SIMFingerprint)
 	if err != nil {
-		return SIMAssignment{}, fmt.Errorf("encode SIM identity: %w", err)
+		return SIMAssignment{}, fmt.Errorf("decode SIM identity: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPut, client.baseURL+"/v1/device-sim-identity", bytes.NewReader(body))
-	if err != nil {
-		return SIMAssignment{}, fmt.Errorf("create SIM identity request: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+state.Credential)
-	request.Header.Set("Content-Type", "application/json")
-	response, err := client.httpClient.Do(request)
+	response, err := client.deviceClient.UpdateSimIdentity(client.deviceContext(ctx, state.Credential), &communicationv1.UpdateSimIdentityRequest{DeviceUuid: state.DeviceUUID, SlotKey: state.SlotKey, SlotIndex: int32(state.SlotIndex), SimFingerprint: fingerprint})
 	if err != nil {
 		return SIMAssignment{}, fmt.Errorf("synchronize SIM identity: %w", err)
 	}
-	defer response.Body.Close()
-	limitedBody := io.LimitReader(response.Body, maxResponseBytes)
-	if response.StatusCode != http.StatusOK {
-		return SIMAssignment{}, responseError("synchronize SIM identity", response.StatusCode, limitedBody)
-	}
-	var result SIMAssignment
-	if err := json.NewDecoder(limitedBody).Decode(&result); err != nil {
-		return SIMAssignment{}, fmt.Errorf("decode SIM identity response: %w", err)
-	}
+	result := SIMAssignment{SlotID: response.SlotId, SIMID: response.SimId, NumericID: int(response.NumericId)}
 	if !validUUID(result.SlotID) || !validUUID(result.SIMID) || result.NumericID < 1 || result.NumericID > 99 {
 		return SIMAssignment{}, errors.New("server returned an invalid SIM assignment")
 	}
@@ -153,41 +120,19 @@ type InstallationRecipient = incomingcall.Recipient
 
 // ListInstallationRecipients returns the approved iPhones that can decrypt device events.
 func (client *Client) ListInstallationRecipients(ctx context.Context, deviceID string, credential string) ([]InstallationRecipient, error) {
-	request, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodGet,
-		client.baseURL+"/v1/device-installations?device_uuid="+url.QueryEscape(deviceID),
-		nil,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("create installation recipient request: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+credential)
-	response, err := client.httpClient.Do(request)
+	response, err := client.deviceClient.ListInstallationRecipients(client.deviceContext(ctx, credential), &communicationv1.ListInstallationRecipientsRequest{DeviceUuid: deviceID})
 	if err != nil {
 		return nil, fmt.Errorf("list installation recipients: %w", err)
 	}
-	defer response.Body.Close()
-
-	limitedBody := io.LimitReader(response.Body, maxResponseBytes)
-	if response.StatusCode != http.StatusOK {
-		return nil, responseError("list installation recipients", response.StatusCode, limitedBody)
-	}
-	var body struct {
-		Installations []InstallationRecipient `json:"installations"`
-	}
-	if err := json.NewDecoder(limitedBody).Decode(&body); err != nil {
-		return nil, fmt.Errorf("decode installation recipients: %w", err)
-	}
-	for _, recipient := range body.Installations {
+	installations := make([]InstallationRecipient, 0, len(response.Installations))
+	for _, item := range response.Installations {
+		recipient := InstallationRecipient{InstallationID: item.InstallationId, IdentityPublicKey: item.IdentityPublicKey, KeyAgreementPublicKey: item.KeyAgreementPublicKey}
 		if !validUUID(recipient.InstallationID) || len(recipient.IdentityPublicKey) != ed25519.PublicKeySize || len(recipient.KeyAgreementPublicKey) != 32 {
 			return nil, errors.New("server returned an invalid installation recipient")
 		}
+		installations = append(installations, recipient)
 	}
-	if body.Installations == nil {
-		return []InstallationRecipient{}, nil
-	}
-	return body.Installations, nil
+	return installations, nil
 }
 
 // UploadIncomingCall queues independently encrypted VoIP deliveries for approved iPhones.
@@ -195,23 +140,13 @@ func (client *Client) UploadIncomingCall(ctx context.Context, deviceID string, c
 	if notification.DeviceUUID != deviceID {
 		return errors.New("incoming call device does not match the authenticated device")
 	}
-	body, err := json.Marshal(map[string]any{"notification": notification})
-	if err != nil {
-		return fmt.Errorf("encode incoming call notification: %w", err)
+	recipients := make([]*communicationv1.IncomingCallRecipient, 0, len(notification.Recipients))
+	for _, item := range notification.Recipients {
+		recipients = append(recipients, &communicationv1.IncomingCallRecipient{InstallationId: item.InstallationID, SenderPublicKey: item.SenderPublicKey, Nonce: item.Nonce, Ciphertext: item.Ciphertext, Signature: item.Signature})
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+"/v1/incoming-calls", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create incoming call request: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+credential)
-	request.Header.Set("Content-Type", "application/json")
-	response, err := client.httpClient.Do(request)
+	_, err := client.deviceClient.UploadIncomingCall(client.deviceContext(ctx, credential), &communicationv1.UploadIncomingCallRequest{Notification: &communicationv1.IncomingCallNotification{Id: notification.ID, Type: notification.Type, DeviceUuid: notification.DeviceUUID, OccurredAt: timestamppb.New(notification.OccurredAt), KeyEpoch: int32(notification.KeyEpoch), Recipients: recipients}})
 	if err != nil {
 		return fmt.Errorf("upload incoming call: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusCreated && response.StatusCode != http.StatusOK {
-		return responseError("upload incoming call", response.StatusCode, io.LimitReader(response.Body, maxResponseBytes))
 	}
 	return nil
 }
@@ -259,113 +194,36 @@ func (client *Client) UploadEvent(ctx context.Context, deviceID string, credenti
 
 // Claim leases the next encrypted command for an authenticated device.
 func (client *Client) Claim(ctx context.Context, deviceID string, credential string) (*command.Envelope, error) {
-	request, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodGet,
-		client.baseURL+"/v1/device-commands/next?device_uuid="+url.QueryEscape(deviceID),
-		nil,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("create command claim request: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+credential)
-	response, err := client.httpClient.Do(request)
+	response, err := client.deviceClient.ClaimCommand(client.deviceContext(ctx, credential), &communicationv1.ClaimCommandRequest{DeviceUuid: deviceID})
 	if err != nil {
 		return nil, fmt.Errorf("claim encrypted command: %w", err)
 	}
-	defer response.Body.Close()
-	if response.StatusCode == http.StatusNoContent {
+	if response == nil || !response.HasCommand || response.Command == nil {
 		return nil, nil
 	}
-	limitedBody := io.LimitReader(response.Body, maxResponseBytes)
-	if response.StatusCode != http.StatusOK {
-		return nil, responseError("claim encrypted command", response.StatusCode, limitedBody)
+	item := response.Command
+	if item.CreatedAt == nil || item.ExpiresAt == nil {
+		return nil, errors.New("server returned an invalid encrypted command")
 	}
-	var body struct {
-		Command command.Envelope `json:"command"`
-	}
-	if err := json.NewDecoder(limitedBody).Decode(&body); err != nil {
-		return nil, fmt.Errorf("decode encrypted command: %w", err)
-	}
-	return &body.Command, nil
+	return &command.Envelope{ID: item.Id, DeviceUUID: item.DeviceUuid, SenderInstallationID: item.SenderInstallationId, SenderPublicKey: item.SenderPublicKey, Nonce: item.Nonce, Ciphertext: item.Ciphertext, Signature: item.Signature, CreatedAt: item.CreatedAt.AsTime(), ExpiresAt: item.ExpiresAt.AsTime()}, nil
 }
 
 // Complete uploads an opaque encrypted command result.
 func (client *Client) Complete(ctx context.Context, deviceID string, credential string, commandID string, result command.EncryptedResult) error {
-	body, err := json.Marshal(map[string]any{"device_uuid": deviceID, "result": result})
-	if err != nil {
-		return fmt.Errorf("encode command completion: %w", err)
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+"/v1/device-commands/"+url.PathEscape(commandID)+"/complete", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create command completion request: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+credential)
-	request.Header.Set("Content-Type", "application/json")
-	response, err := client.httpClient.Do(request)
+	_, err := client.deviceClient.CompleteCommand(client.deviceContext(ctx, credential), &communicationv1.CompleteCommandRequest{DeviceUuid: deviceID, CommandId: commandID, Nonce: result.Nonce, Ciphertext: result.Ciphertext})
 	if err != nil {
 		return fmt.Errorf("complete encrypted command: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusNoContent {
-		return responseError("complete encrypted command", response.StatusCode, io.LimitReader(response.Body, maxResponseBytes))
 	}
 	return nil
 }
 
 // UpdateCommandKey registers the device's current X25519 public key after migration or restore.
 func (client *Client) UpdateCommandKey(ctx context.Context, state identity.State) error {
-	body, err := json.Marshal(map[string]any{
-		"device_uuid":        state.DeviceUUID,
-		"command_public_key": state.CommandPublicKey(),
-	})
-	if err != nil {
-		return fmt.Errorf("encode command key update: %w", err)
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPut, client.baseURL+"/v1/device-command-key", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create command key update request: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+state.Credential)
-	request.Header.Set("Content-Type", "application/json")
-	response, err := client.httpClient.Do(request)
+	_, err := client.deviceClient.UpdateCommandKey(client.deviceContext(ctx, state.Credential), &communicationv1.UpdateCommandKeyRequest{DeviceUuid: state.DeviceUUID, CommandPublicKey: state.CommandPublicKey()})
 	if err != nil {
 		return fmt.Errorf("update device command key: %w", err)
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusNoContent {
-		return responseError("update device command key", response.StatusCode, io.LimitReader(response.Body, maxResponseBytes))
-	}
 	return nil
-}
-
-func responseError(operation string, statusCode int, body io.Reader) error {
-	var failure struct {
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
-	}
-	_ = json.NewDecoder(body).Decode(&failure)
-	if failure.Error.Code == "" {
-		failure.Error.Code = "unexpected_response"
-	}
-	message := fmt.Sprintf("%s: server returned %d (%s)", operation, statusCode, failure.Error.Code)
-	if failure.Error.Code == "device_discovery_closed" {
-		return discoveryUnavailableError{message: message}
-	}
-	return errors.New(message)
-}
-
-type discoveryUnavailableError struct {
-	message string
-}
-
-func (err discoveryUnavailableError) Error() string {
-	return err.message
-}
-
-func (err discoveryUnavailableError) Unwrap() error {
-	return ErrDiscoveryUnavailable
 }
 
 // DiscoveryResult is the app-controlled admission state returned by the server.
@@ -390,13 +248,21 @@ var ErrDiscoveryUnavailable = errors.New("device discovery request is unavailabl
 // NewClient creates a server API client with an injected transport for testing.
 func NewClient(baseURL string, httpClient *http.Client) *Client {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 15 * time.Second}
+		httpClient = &http.Client{
+			Timeout: 15 * time.Second,
+			Transport: &http.Transport{
+				ForceAttemptHTTP2: true,
+				MaxIdleConns:      16,
+				IdleConnTimeout:   90 * time.Second,
+			},
+		}
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 	transport := connecthttp.NewTransport(httpClient, baseURL)
 	return &Client{
 		baseURL: baseURL, httpClient: httpClient,
-		eventClient: communicationv1connect.NewCommunicationSyncServiceClient(connect.NewClient(transport)),
+		eventClient:  communicationv1connect.NewCommunicationSyncServiceClient(connect.NewClient(transport)),
+		deviceClient: communicationv1connect.NewDeviceServiceClient(connect.NewClient(transport)),
 	}
 }
 
@@ -426,31 +292,19 @@ func (client *Client) SubmitDiscovery(ctx context.Context, pendingCredential str
 	if state.SlotIndex > 0 || state.SIMFingerprint != "" {
 		proof = discoverySignedDataWithSlot(state.DeviceUUID, publicKey, commandPublicKey, pendingCredential, state.SlotKey, state.SlotIndex, state.SIMFingerprint)
 	}
-	body, err := json.Marshal(map[string]any{
-		"device_uuid": state.DeviceUUID, "identity_public_key": publicKey,
-		"command_public_key": commandPublicKey, "pending_credential": pendingCredential,
-		"slot_key": state.SlotKey, "slot_index": state.SlotIndex,
-		"sim_fingerprint": state.SIMFingerprint,
-		"signature":       ed25519.Sign(state.IdentityPrivateKey, proof),
+	fingerprint, err := hex.DecodeString(state.SIMFingerprint)
+	if err != nil && state.SIMFingerprint != "" {
+		return DiscoveryResult{}, fmt.Errorf("decode SIM fingerprint: %w", err)
+	}
+	response, err := client.deviceClient.SubmitDiscovery(ctx, &communicationv1.SubmitDiscoveryRequest{
+		DeviceUuid: state.DeviceUUID, SlotKey: state.SlotKey, SlotIndex: int32(state.SlotIndex), SimFingerprint: hex.EncodeToString(fingerprint),
+		IdentityPublicKey: publicKey, CommandPublicKey: commandPublicKey, PendingCredential: pendingCredential,
+		Signature: ed25519.Sign(state.IdentityPrivateKey, proof),
 	})
-	if err != nil {
-		return DiscoveryResult{}, fmt.Errorf("encode device discovery: %w", err)
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+"/v1/device-discoveries", bytes.NewReader(body))
-	if err != nil {
-		return DiscoveryResult{}, fmt.Errorf("create device discovery request: %w", err)
-	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err := client.httpClient.Do(request)
 	if err != nil {
 		return DiscoveryResult{}, fmt.Errorf("submit device discovery: %w", err)
 	}
-	defer response.Body.Close()
-	limitedBody := io.LimitReader(response.Body, maxResponseBytes)
-	if response.StatusCode != http.StatusAccepted {
-		return DiscoveryResult{}, responseError("submit device discovery", response.StatusCode, limitedBody)
-	}
-	return decodeDiscoveryResult(limitedBody, state.DeviceUUID)
+	return discoveryResultFromProto(response.DeviceUuid, response.Status, response.NumericId, response.SlotId, response.SimId, response.SlotKey, int(response.SlotIndex), state.DeviceUUID)
 }
 
 // GetDiscoveryStatus polls the approval result with the private pending credential.
@@ -458,37 +312,18 @@ func (client *Client) GetDiscoveryStatus(ctx context.Context, deviceID string, p
 	if !validUUID(deviceID) || strings.TrimSpace(pendingCredential) == "" {
 		return DiscoveryResult{}, errors.New("device UUID and pending credential are required")
 	}
-	request, err := http.NewRequestWithContext(
-		ctx, http.MethodGet, client.baseURL+"/v1/device-discoveries/"+url.PathEscape(deviceID)+"/status", nil,
-	)
+	response, err := client.deviceClient.GetDiscoveryStatus(client.deviceContext(ctx, pendingCredential), &communicationv1.GetDiscoveryStatusRequest{DeviceUuid: deviceID})
 	if err != nil {
-		return DiscoveryResult{}, fmt.Errorf("create discovery status request: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+pendingCredential)
-	response, err := client.httpClient.Do(request)
-	if err != nil {
+		if connect.CodeOf(err) == connect.CodeUnauthenticated || connect.CodeOf(err) == connect.CodeNotFound {
+			return DiscoveryResult{}, ErrDiscoveryUnavailable
+		}
 		return DiscoveryResult{}, fmt.Errorf("get device discovery status: %w", err)
 	}
-	defer response.Body.Close()
-	limitedBody := io.LimitReader(response.Body, maxResponseBytes)
-	if response.StatusCode == http.StatusUnauthorized {
-		_, _ = io.Copy(io.Discard, limitedBody)
-		return DiscoveryResult{}, ErrDiscoveryUnavailable
-	}
-	if response.StatusCode != http.StatusOK {
-		return DiscoveryResult{}, responseError("get device discovery status", response.StatusCode, limitedBody)
-	}
-	return decodeDiscoveryResult(limitedBody, deviceID)
+	return discoveryResultFromProto(response.DeviceUuid, response.Status, response.NumericId, response.SlotId, response.SimId, response.SlotKey, int(response.SlotIndex), deviceID)
 }
 
-func decodeDiscoveryResult(body io.Reader, expectedDeviceID string) (DiscoveryResult, error) {
-	var response struct {
-		Discovery DiscoveryResult `json:"discovery"`
-	}
-	if err := json.NewDecoder(body).Decode(&response); err != nil {
-		return DiscoveryResult{}, fmt.Errorf("decode device discovery response: %w", err)
-	}
-	result := response.Discovery
+func discoveryResultFromProto(deviceID, status string, numericID int32, slotID, simID *string, slotKey string, slotIndex int, expectedDeviceID string) (DiscoveryResult, error) {
+	result := DiscoveryResult{DeviceUUID: deviceID, Status: status, NumericID: int(numericID), SlotID: optionalStringValue(slotID), SIMID: optionalStringValue(simID), SlotKey: slotKey, SlotIndex: slotIndex}
 	if result.DeviceUUID != expectedDeviceID {
 		return DiscoveryResult{}, errors.New("server returned an invalid device discovery result for a different device")
 	}
@@ -508,6 +343,13 @@ func decodeDiscoveryResult(body io.Reader, expectedDeviceID string) (DiscoveryRe
 		return DiscoveryResult{}, errors.New("server returned an invalid device discovery result")
 	}
 	return result, nil
+}
+
+func optionalStringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func discoverySignedData(deviceUUID string, identityPublicKey []byte, commandPublicKey []byte, credential string) []byte {

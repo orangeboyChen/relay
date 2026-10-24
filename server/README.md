@@ -128,15 +128,10 @@ need to be copied between the app and Docker:
    one stable device mapping and one private state volume per modem.
 6. Turn off **Device Discovery** when the intended devices have joined.
 
-The owner APIs are:
-
-- `POST /v1/device-discovery-session` to open or replace the ten-minute window.
-- `GET /v1/device-discovery-session` to read its current state.
-- `DELETE /v1/device-discovery-session` to close it immediately.
-- `GET /v1/device-discoveries` to list pending candidates.
-- `POST /v1/device-discoveries/{device_uuid}/approve` to admit a candidate and
-  atomically allocate the smallest free SIM numeric ID.
-- `DELETE /v1/device-discoveries/{device_uuid}` to reject a candidate.
+Device discovery uses generated Connect RPC methods over HTTP/2. The owner
+operations are `OpenDeviceDiscovery`, `GetDeviceDiscoverySession`,
+`CloseDeviceDiscovery`, `ListDeviceDiscoveries`, `ApproveDeviceDiscovery`, and
+`RejectDeviceDiscovery`; there is no legacy REST business API.
 
 The modem submits a signed proof of possession and polls its result with a
 private pending credential. The server stores only the credential hash. An

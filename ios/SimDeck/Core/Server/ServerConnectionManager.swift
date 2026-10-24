@@ -373,6 +373,11 @@ struct ManagedSIM: Identifiable, Equatable, Sendable {
 @MainActor
 protocol ServerNetworking: Sendable {
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse)
+    func ownerRPCClientFactory() -> (any OwnerRPCClientCreating)?
+}
+
+extension ServerNetworking {
+    func ownerRPCClientFactory() -> (any OwnerRPCClientCreating)? { nil }
 }
 
 struct URLSessionServerNetworking: ServerNetworking {
@@ -401,6 +406,29 @@ struct HistorySnapshotPayload: Equatable, Sendable {
 @MainActor
 protocol CommunicationSyncClientCreating: AnyObject {
     func makeClient(baseURL: URL) -> any CommunicationSyncClient
+}
+
+@MainActor
+protocol OwnerRPCClient: AnyObject {
+    var service: Relay_Communication_V1_OwnerServiceClientInterface { get }
+}
+
+@MainActor
+protocol OwnerRPCClientCreating: AnyObject { func makeClient(baseURL: URL) -> any OwnerRPCClient }
+
+@MainActor
+private final class ConnectOwnerRPCClientFactory: OwnerRPCClientCreating {
+    func makeClient(baseURL: URL) -> any OwnerRPCClient { ConnectOwnerRPCClient(baseURL: baseURL) }
+}
+
+@MainActor
+private final class ConnectOwnerRPCClient: OwnerRPCClient {
+    let service: Relay_Communication_V1_OwnerServiceClientInterface
+
+    init(baseURL: URL) {
+        let config = ProtocolClientConfig(host: baseURL.absoluteString, codec: ProtoCodec())
+        service = Relay_Communication_V1_OwnerServiceClient(client: ProtocolClient(httpClient: URLSessionHTTPClient(), config: config))
+    }
 }
 
 struct PasskeyOptionsPayload: Equatable, Sendable {
@@ -603,6 +631,7 @@ final class ServerConnectionManager {
     @ObservationIgnored private let sessionStore: any SecureValueStoring
     @ObservationIgnored private let communicationSyncClientFactory: any CommunicationSyncClientCreating
     @ObservationIgnored private let passkeyRPCClientFactory: any PasskeyRPCClientCreating
+    @ObservationIgnored private let ownerRPCClientFactory: any OwnerRPCClientCreating
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var session: ServerSession?
     @ObservationIgnored private var refreshTask: Task<ServerSession, Error>?
@@ -615,13 +644,15 @@ final class ServerConnectionManager {
         sessionStore: any SecureValueStoring,
         defaults: UserDefaults,
         communicationSyncClientFactory: any CommunicationSyncClientCreating = URLSessionCommunicationSyncClientFactory(),
-        passkeyRPCClientFactory: any PasskeyRPCClientCreating = ConnectPasskeyRPCClientFactory()
+        passkeyRPCClientFactory: any PasskeyRPCClientCreating = ConnectPasskeyRPCClientFactory(),
+        ownerRPCClientFactory: (any OwnerRPCClientCreating)? = nil
     ) {
         self.network = network
         self.sessionStore = sessionStore
         self.defaults = defaults
         self.communicationSyncClientFactory = communicationSyncClientFactory
         self.passkeyRPCClientFactory = passkeyRPCClientFactory
+        self.ownerRPCClientFactory = ownerRPCClientFactory ?? network.ownerRPCClientFactory() ?? ConnectOwnerRPCClientFactory()
         address = defaults.string(forKey: Self.addressKey) ?? ""
         session = try? sessionStore.read().map { data in
             try Self.decoder.decode(ServerSession.self, from: data)
@@ -643,6 +674,12 @@ final class ServerConnectionManager {
     }
 
     var isSignedIn: Bool { session != nil }
+
+    private func ownerService() async throws -> (Relay_Communication_V1_OwnerServiceClientInterface, String) {
+        let baseURL = try validatedBaseURL()
+        let session = try await validSession(baseURL: baseURL)
+        return (ownerRPCClientFactory.makeClient(baseURL: baseURL).service, session.accessToken)
+    }
 
     func markRequestFailed(_ error: Error) {
         state = .failed
@@ -806,41 +843,41 @@ final class ServerConnectionManager {
 
     func loadDevices(profileKey: VaultKey? = nil, now: Date = .now) async throws -> [DeviceLineIdentity] {
         do {
-            let (data, response) = try await authenticatedRequest(path: "v1/devices", method: "GET")
-            guard response.statusCode == 200 else {
-                throw ServerConnectionError.requestFailed(response.statusCode)
-            }
-            let body = try Self.decoder.decode(DeviceListResponse.self, from: data)
+            let (service, token) = try await ownerService()
+            let body = try await service.listDevices(request: .init(), headers: ["authorization": ["Bearer \(token)"]]).result.get()
             deviceIdentityKeys = Dictionary(
                 uniqueKeysWithValues: body.devices.compactMap { device in
-                    guard device.identityPublicKey.count == 32 else { return nil }
-                    return (device.deviceUUID, device.identityPublicKey)
+                    guard device.identityPublicKey.count == 32, let uuid = UUID(uuidString: device.deviceUuid) else { return nil }
+                    return (uuid, device.identityPublicKey)
                 }
             )
             NotificationSharedState.cacheDeviceKeys(
                 body.devices.reduce(into: [UUID: CachedDeviceKeys]()) { result, device in
                     guard device.identityPublicKey.count == 32,
-                          let commandKey = device.commandPublicKey,
-                          commandKey.count == 32 else { return }
-                    result[device.deviceUUID] = CachedDeviceKeys(
+                          device.commandPublicKey.count == 32,
+                          let uuid = UUID(uuidString: device.deviceUuid) else { return }
+                    result[uuid] = CachedDeviceKeys(
                         verificationKey: device.identityPublicKey,
-                        commandKey: commandKey
+                        commandKey: device.commandPublicKey
                     )
                 }
             )
             let devices = try body.devices.flatMap { device in
-                let recentlySeen = Self.isFresh(device.lastSeenAt, now: now)
-                let isOnline = recentlySeen && device.commandPublicKey?.count == 32
-                let hasFreshRadioStatus = Self.isFresh(device.radioStatusUpdatedAt, now: now)
+                guard let deviceUUID = UUID(uuidString: device.deviceUuid) else { throw ServerConnectionError.invalidResponse }
+                let lastSeenAt = device.hasLastSeenAt ? device.lastSeenAt.date : nil
+                let recentlySeen = Self.isFresh(lastSeenAt, now: now)
+                let isOnline = recentlySeen && device.commandPublicKey.count == 32
+                let radioUpdatedAt = device.hasRadioStatusUpdatedAt ? device.radioStatusUpdatedAt.date : nil
+                let hasFreshRadioStatus = Self.isFresh(radioUpdatedAt, now: now)
                 let radioStatus: CellularRadioStatus? = if isOnline && hasFreshRadioStatus {
                     CellularRadioStatus(
-                        technology: device.radioAccessTechnology ?? .unknown,
-                        signalBars: device.signalBars
+                        technology: CellularRadioAccessTechnology(rawValue: device.radioAccessTechnology) ?? .unknown,
+                        signalBars: device.hasSignalBars ? Int(device.signalBars) : nil
                     )
                 } else {
                     nil
                 }
-                let profileCiphertext = device.profileCiphertext ?? Data()
+                let profileCiphertext = device.profileCiphertext
                 let profile: DeviceProfile
                 if profileCiphertext.isEmpty {
                     profile = .empty
@@ -849,7 +886,7 @@ final class ServerConnectionManager {
                 } else {
                     profile = .empty
                 }
-                let slots = device.slots.isEmpty ? [ServerDeviceSlot(slotID: nil, simID: nil, numericID: device.numericID, profileCiphertext: nil, radioAccessTechnology: device.radioAccessTechnology, signalBars: device.signalBars, radioStatusUpdatedAt: device.radioStatusUpdatedAt)] : device.slots
+                let slots = device.slots.isEmpty ? [ServerDeviceSlot(slotID: nil, simID: nil, numericID: Int(device.numericID), profileCiphertext: nil, radioAccessTechnology: CellularRadioAccessTechnology(rawValue: device.radioAccessTechnology), signalBars: device.hasSignalBars ? Int(device.signalBars) : nil, radioStatusUpdatedAt: radioUpdatedAt)] : device.slots.map { ServerDeviceSlot(slotID: UUID(uuidString: $0.slotID), simID: $0.hasSimID ? UUID(uuidString: $0.simID) : nil, numericID: $0.hasSimNumericID ? Int($0.simNumericID) : nil, profileCiphertext: $0.profileCiphertext, radioAccessTechnology: CellularRadioAccessTechnology(rawValue: $0.radioAccessTechnology), signalBars: $0.hasSignalBars ? Int($0.signalBars) : nil, radioStatusUpdatedAt: $0.hasRadioStatusUpdatedAt ? $0.radioStatusUpdatedAt.date : nil, slotKey: $0.slotKey, slotIndex: Int($0.slotIndex)) }
                 return try slots.map { slot in
                     let slotProfile: DeviceProfile
                     if let ciphertext = slot.profileCiphertext, !ciphertext.isEmpty, let profileKey {
@@ -863,11 +900,11 @@ final class ServerConnectionManager {
                     } else { radioStatus }
                     return DeviceLineIdentity(
                         // Commands still target the modem device; the line identity targets its slot.
-                        id: slot.slotID ?? slot.simID ?? device.deviceUUID,
-                        deviceID: device.deviceUUID,
+                        id: slot.slotID ?? slot.simID ?? deviceUUID,
+                        deviceID: deviceUUID,
                         slotID: slot.slotID,
                         simID: slot.simID,
-                        numericID: slot.numericID ?? device.numericID,
+                        numericID: slot.numericID ?? Int(device.numericID),
                         slotKey: slot.slotKey,
                         slotIndex: slot.slotIndex,
                         deviceName: profile.deviceName,
@@ -890,21 +927,21 @@ final class ServerConnectionManager {
     }
 
     func loadSIMCards(profileKey: VaultKey? = nil) async throws -> [ManagedSIM] {
-        let (data, response) = try await authenticatedRequest(path: "v1/sims", method: "GET")
-        guard response.statusCode == 200 else { throw ServerConnectionError.requestFailed(response.statusCode) }
-        let body = try Self.decoder.decode(SIMListResponse.self, from: data)
-        return try body.sims.map {
-            let profile = if let profileKey, !$0.profileCiphertext.isEmpty {
-                try DeviceProfileCodec.open($0.profileCiphertext, using: profileKey)
+        let (service, token) = try await ownerService()
+        let body = try await service.listSimCards(request: .init(), headers: ["authorization": ["Bearer \(token)"]]).result.get()
+        return try body.sims.map { sim in
+            guard let id = UUID(uuidString: sim.simID) else { throw ServerConnectionError.invalidResponse }
+            let profile = if let profileKey, !sim.profileCiphertext.isEmpty {
+                try DeviceProfileCodec.open(sim.profileCiphertext, using: profileKey)
             } else {
                 DeviceProfile.empty
             }
             return ManagedSIM(
-                id: $0.id,
-                numericID: $0.numericID,
-                assignedDeviceID: $0.assignedDeviceID,
-                assignedSlotID: $0.assignedSlotID,
-                lastSeenAt: $0.lastSeenAt,
+                id: id,
+                numericID: Int(sim.numericID),
+                assignedDeviceID: sim.hasAssignedDeviceUuid ? UUID(uuidString: sim.assignedDeviceUuid) : nil,
+                assignedSlotID: sim.hasAssignedSlotID ? UUID(uuidString: sim.assignedSlotID) : nil,
+                lastSeenAt: sim.lastSeenAt.date,
                 lineName: profile.lineName,
                 phoneNumber: profile.phoneNumber
             )
@@ -912,146 +949,135 @@ final class ServerConnectionManager {
     }
 
     func retireSIMCard(simID: UUID) async throws {
-        let (_, response) = try await authenticatedRequest(path: "v1/sims/\(simID.uuidString.lowercased())", method: "DELETE")
-        guard response.statusCode == 204 else { throw ServerConnectionError.requestFailed(response.statusCode) }
+        let (service, token) = try await ownerService()
+        _ = try await service.retireSimCard(
+            request: .with { $0.simID = simID.uuidString.lowercased() },
+            headers: ["authorization": ["Bearer \(token)"]]
+        ).result.get()
     }
 
     func openDeviceDiscovery() async throws -> DeviceDiscoverySessionState {
-        let (data, response) = try await authenticatedRequest(
-            path: "v1/device-discovery-session",
-            method: "POST"
-        )
-        guard response.statusCode == 201 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
-        }
-        return try Self.decoder.decode(DeviceDiscoverySessionState.self, from: data)
+        let (service, token) = try await ownerService()
+        let response = try await service.openDeviceDiscovery(request: .init(), headers: ["authorization": ["Bearer \(token)"]]).result.get()
+        return Self.discoverySessionState(active: response.active, session: response.hasSession ? response.session : nil)
     }
 
     func deviceDiscoverySession() async throws -> DeviceDiscoverySessionState {
-        let (data, response) = try await authenticatedRequest(
-            path: "v1/device-discovery-session",
-            method: "GET"
-        )
-        guard response.statusCode == 200 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
-        }
-        return try Self.decoder.decode(DeviceDiscoverySessionState.self, from: data)
+        let (service, token) = try await ownerService()
+        let response = try await service.getDeviceDiscoverySession(request: .init(), headers: ["authorization": ["Bearer \(token)"]]).result.get()
+        return Self.discoverySessionState(active: response.active, session: response.hasSession ? response.session : nil)
     }
 
     func closeDeviceDiscovery() async throws {
-        let (_, response) = try await authenticatedRequest(
-            path: "v1/device-discovery-session",
-            method: "DELETE"
-        )
-        guard response.statusCode == 204 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
-        }
+        let (service, token) = try await ownerService()
+        _ = try await service.closeDeviceDiscovery(request: .init(), headers: ["authorization": ["Bearer \(token)"]]).result.get()
     }
 
     func discoveredDevices() async throws -> [DiscoveredDevice] {
-        let (data, response) = try await authenticatedRequest(
-            path: "v1/device-discoveries",
-            method: "GET"
-        )
-        guard response.statusCode == 200 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
+        let (service, token) = try await ownerService()
+        let response = try await service.listDeviceDiscoveries(request: .init(), headers: ["authorization": ["Bearer \(token)"]]).result.get()
+        return try response.discoveries.map { item in
+            guard let id = UUID(uuidString: item.deviceUuid), let first = item.hasFirstSeenAt ? Optional(item.firstSeenAt.date) : nil, let last = item.hasLastSeenAt ? Optional(item.lastSeenAt.date) : nil, let expires = item.hasExpiresAt ? Optional(item.expiresAt.date) : nil, let status = DeviceDiscoveryStatus(rawValue: item.status) else { throw ServerConnectionError.invalidResponse }
+            return DiscoveredDevice(deviceUUID: id, identityPublicKey: item.identityPublicKey, commandPublicKey: item.commandPublicKey, status: status, firstSeenAt: first, lastSeenAt: last, expiresAt: expires)
         }
-        return try Self.decoder.decode(DeviceDiscoveriesResponse.self, from: data).discoveries
     }
 
     func approveDiscoveredDevice(id: UUID) async throws -> ApprovedDevice {
-        let (data, response) = try await authenticatedRequest(
-            path: "v1/device-discoveries/\(id.uuidString.lowercased())/approve",
-            method: "POST"
-        )
-        guard response.statusCode == 200 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
-        }
-        return try Self.decoder.decode(DeviceApprovalResponse.self, from: data).device
+        let (service, token) = try await ownerService()
+        let response = try await service.approveDeviceDiscovery(request: .with { $0.deviceUuid = id.uuidString.lowercased() }, headers: ["authorization": ["Bearer \(token)"]]).result.get()
+        guard response.hasDevice, let deviceID = UUID(uuidString: response.device.deviceUuid) else { throw ServerConnectionError.invalidResponse }
+        return ApprovedDevice(deviceUUID: deviceID, numericID: Int(response.device.numericID))
     }
 
     func rejectDiscoveredDevice(id: UUID) async throws {
-        let (_, response) = try await authenticatedRequest(
-            path: "v1/device-discoveries/\(id.uuidString.lowercased())",
-            method: "DELETE"
-        )
-        guard response.statusCode == 204 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
+        let (service, token) = try await ownerService()
+        _ = try await service.rejectDeviceDiscovery(request: .with { $0.deviceUuid = id.uuidString.lowercased() }, headers: ["authorization": ["Bearer \(token)"]]).result.get()
+    }
+
+    private static func discoverySessionState(active: Bool, session: Relay_Communication_V1_DeviceDiscoverySession?) -> DeviceDiscoverySessionState {
+        guard let session else { return DeviceDiscoverySessionState(active: active, session: nil) }
+        return DeviceDiscoverySessionState(active: active, session: DeviceDiscoverySession(openedAt: session.openedAt.date, expiresAt: session.expiresAt.date, closedAt: session.hasClosedAt ? session.closedAt.date : nil))
+    }
+
+    private static func appInstallationTrust(
+        from installation: Relay_Communication_V1_AppInstallation
+    ) throws -> AppInstallationTrust {
+        guard let installationID = UUID(uuidString: installation.installationID), installation.hasCreatedAt else {
+            throw ServerConnectionError.invalidResponse
         }
+        return AppInstallationTrust(
+            id: installationID,
+            identityPublicKey: installation.identityPublicKey,
+            keyAgreementPublicKey: installation.keyAgreementPublicKey,
+            wrappedVaultKey: installation.wrappedVaultKey.isEmpty ? nil : installation.wrappedVaultKey,
+            approvedAt: installation.hasApprovedAt ? installation.approvedAt.date : nil,
+            revokedAt: installation.hasRevokedAt ? installation.revokedAt.date : nil,
+            createdAt: installation.createdAt.date
+        )
     }
 
     func updateDeviceNumericID(deviceID: UUID, numericID: Int) async throws {
         guard (1...99).contains(numericID) else {
             throw ServerConnectionError.invalidResponse
         }
-        let body = try Self.encoder.encode(DeviceNumericIDRequest(numericID: numericID))
-        let (_, response) = try await authenticatedRequest(
-            path: "v1/devices/\(deviceID.uuidString.lowercased())/numeric-id",
-            method: "PATCH",
-            body: body
-        )
-        guard response.statusCode == 204 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
-        }
+        let (service, token) = try await ownerService()
+        _ = try await service.updateDeviceNumericID(
+            request: .with {
+                $0.id = deviceID.uuidString.lowercased()
+                $0.numericID = Int32(numericID)
+            },
+            headers: ["authorization": ["Bearer \(token)"]]
+        ).result.get()
     }
 
     func updateDeviceProfile(deviceID: UUID, profileCiphertext: Data) async throws {
         guard !profileCiphertext.isEmpty else {
             throw ServerConnectionError.invalidResponse
         }
-        let body = try Self.encoder.encode(
-            DeviceProfileRequest(profileCiphertext: profileCiphertext)
-        )
-        let (_, response) = try await authenticatedRequest(
-            path: "v1/devices/\(deviceID.uuidString.lowercased())/profile",
-            method: "PUT",
-            body: body
-        )
-        guard response.statusCode == 204 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
-        }
+        let (service, token) = try await ownerService()
+        _ = try await service.updateDeviceProfile(
+            request: .with {
+                $0.id = deviceID.uuidString.lowercased()
+                $0.profileCiphertext = profileCiphertext
+            },
+            headers: ["authorization": ["Bearer \(token)"]]
+        ).result.get()
     }
 
     func updateSIMNumericID(simID: UUID, numericID: Int) async throws {
         guard (1...99).contains(numericID) else {
             throw ServerConnectionError.invalidResponse
         }
-        let body = try Self.encoder.encode(DeviceNumericIDRequest(numericID: numericID))
-        let (_, response) = try await authenticatedRequest(
-            path: "v1/sims/\(simID.uuidString.lowercased())/numeric-id",
-            method: "PATCH",
-            body: body
-        )
-        guard response.statusCode == 204 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
-        }
+        let (service, token) = try await ownerService()
+        _ = try await service.updateSimNumericID(
+            request: .with {
+                $0.id = simID.uuidString.lowercased()
+                $0.numericID = Int32(numericID)
+            },
+            headers: ["authorization": ["Bearer \(token)"]]
+        ).result.get()
     }
 
     func updateSIMProfile(simID: UUID, profileCiphertext: Data) async throws {
         guard !profileCiphertext.isEmpty else {
             throw ServerConnectionError.invalidResponse
         }
-        let body = try Self.encoder.encode(
-            DeviceProfileRequest(profileCiphertext: profileCiphertext)
-        )
-        let (_, response) = try await authenticatedRequest(
-            path: "v1/sims/\(simID.uuidString.lowercased())/profile",
-            method: "PUT",
-            body: body
-        )
-        guard response.statusCode == 204 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
-        }
+        let (service, token) = try await ownerService()
+        _ = try await service.updateSimProfile(
+            request: .with {
+                $0.id = simID.uuidString.lowercased()
+                $0.profileCiphertext = profileCiphertext
+            },
+            headers: ["authorization": ["Bearer \(token)"]]
+        ).result.get()
     }
 
     func revokeDevice(deviceID: UUID) async throws {
-        let (_, response) = try await authenticatedRequest(
-            path: "v1/devices/\(deviceID.uuidString.lowercased())",
-            method: "DELETE"
-        )
-        guard response.statusCode == 204 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
-        }
+        let (service, token) = try await ownerService()
+        _ = try await service.revokeDevice(
+            request: .with { $0.deviceUuid = deviceID.uuidString.lowercased() },
+            headers: ["authorization": ["Bearer \(token)"]]
+        ).result.get()
     }
 
     private static func isFresh(_ date: Date?, now: Date) -> Bool {
@@ -1061,13 +1087,10 @@ final class ServerConnectionManager {
     }
 
     func commandRecipient(deviceID: UUID) async throws -> Data {
-        guard let recipient = try await loadDevices().first(where: { $0.deviceID == deviceID }),
-              recipient.isOnline,
-              let publicKey = recipient.commandPublicKey,
-              publicKey.count == 32 else {
-            throw ServerConnectionError.deviceUnavailable
-        }
-        return publicKey
+        let (service, token) = try await ownerService()
+        let response = try await service.getCommandRecipient(request: .with { $0.deviceUuid = deviceID.uuidString.lowercased() }, headers: ["authorization": ["Bearer \(token)"]]).result.get()
+        guard response.commandPublicKey.count == 32 else { throw ServerConnectionError.deviceUnavailable }
+        return response.commandPublicKey
     }
 
     func commandTarget(for line: DeviceLineIdentity) async throws -> EncryptedCommandTarget {
@@ -1099,14 +1122,9 @@ final class ServerConnectionManager {
     }
 
     func turnCredentials() async throws -> CallTURNCredentials {
-        let (data, response) = try await authenticatedRequest(
-            path: "v1/media/turn-credentials",
-            method: "GET"
-        )
-        guard response.statusCode == 200 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
-        }
-        let credentials = try Self.decoder.decode(CallTURNCredentials.self, from: data)
+        let (service, token) = try await ownerService()
+        let response = try await service.getTurnCredentials(request: .init(), headers: ["authorization": ["Bearer \(token)"]]).result.get()
+        let credentials = CallTURNCredentials(urls: response.urls, username: response.username, credential: response.credential, expiresAt: response.expiresAt.date)
         guard !credentials.urls.isEmpty,
               credentials.urls.allSatisfy({ url in
                   guard let scheme = URLComponents(string: url)?.scheme else { return false }
@@ -1132,26 +1150,47 @@ final class ServerConnectionManager {
     }
 
     func enqueueCommand(deviceID: UUID, command: EncryptedCallCommandRequest) async throws {
-        let body = try Self.encoder.encode(command)
-        let (_, response) = try await authenticatedRequest(
-            path: "v1/devices/\(deviceID.uuidString.lowercased())/commands",
-            method: "POST",
-            body: body
-        )
-        guard response.statusCode == 200 || response.statusCode == 201 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
+        guard command.senderPublicKey.count == 32, command.nonce.count == 12,
+              !command.ciphertext.isEmpty, command.ciphertext.count <= 64 * 1024,
+              command.signature.count == 64,
+              command.expiresAt > Date(),
+              command.expiresAt <= command.createdAt.addingTimeInterval(5 * 60) else {
+            throw ServerConnectionError.invalidResponse
         }
+        let (service, token) = try await ownerService()
+        let response = try await service.enqueueCommand(
+            request: .with {
+                $0.command = .with {
+                    $0.id = command.id.uuidString.lowercased()
+                    $0.deviceUuid = deviceID.uuidString.lowercased()
+                    $0.senderInstallationID = command.senderInstallationID.uuidString.lowercased()
+                    $0.senderPublicKey = command.senderPublicKey
+                    $0.nonce = command.nonce
+                    $0.ciphertext = command.ciphertext
+                    $0.signature = command.signature
+                    $0.createdAt = Google_Protobuf_Timestamp(date: command.createdAt)
+                    $0.expiresAt = Google_Protobuf_Timestamp(date: command.expiresAt)
+                }
+            },
+            headers: ["authorization": ["Bearer \(token)"]]
+        ).result.get()
+        guard UUID(uuidString: response.commandID) == command.id else { throw ServerConnectionError.invalidResponse }
     }
 
     func commandStatus(deviceID: UUID, commandID: UUID) async throws -> EncryptedCallCommandStatus {
-        let (data, response) = try await authenticatedRequest(
-            path: "v1/devices/\(deviceID.uuidString.lowercased())/commands/\(commandID.uuidString.lowercased())",
-            method: "GET"
-        )
-        guard response.statusCode == 200 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
-        }
-        return try Self.decoder.decode(CommandStatusResponse.self, from: data).command
+        let (service, token) = try await ownerService()
+        let response = try await service.getCommandStatus(
+            request: .with {
+                $0.deviceUuid = deviceID.uuidString.lowercased()
+                $0.commandID = commandID.uuidString.lowercased()
+            },
+            headers: ["authorization": ["Bearer \(token)"]]
+        ).result.get()
+        guard let id = UUID(uuidString: response.commandID), let returnedDevice = UUID(uuidString: response.deviceUuid), returnedDevice == deviceID else { throw ServerConnectionError.invalidResponse }
+        let result: EncryptedCallCommandResult? = if response.hasResultNonce && response.hasResultCiphertext {
+            EncryptedCallCommandResult(nonce: response.resultNonce, ciphertext: response.resultCiphertext)
+        } else { nil }
+        return EncryptedCallCommandStatus(id: id, deviceUUID: returnedDevice, state: response.state, result: result)
     }
 
     func encryptedEvents(afterSequence: Int64) async throws -> EncryptedEventPage {
@@ -1195,42 +1234,38 @@ final class ServerConnectionManager {
               registration.keyAgreementPublicKey.count == 32 else {
             throw ServerConnectionError.invalidResponse
         }
-        let body = try Self.encoder.encode(
-            AppInstallationRegistrationRequest(
-                installationID: registration.id,
-                identityPublicKey: registration.identityPublicKey,
-                keyAgreementPublicKey: registration.keyAgreementPublicKey,
-                wrappedVaultKey: registration.wrappedVaultKey
-            )
-        )
-        let (data, response) = try await authenticatedRequest(
-            path: "v1/app-installations",
-            method: "POST",
-            body: body
-        )
-        guard response.statusCode == 200 || response.statusCode == 201 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
-        }
-        return try Self.decoder.decode(AppInstallationRegistrationResponse.self, from: data)
-            .installation
+        let (service, token) = try await ownerService()
+        let response = try await service.registerAppInstallation(
+            request: .with {
+                $0.installationID = registration.id.uuidString.lowercased()
+                $0.identityPublicKey = registration.identityPublicKey
+                $0.keyAgreementPublicKey = registration.keyAgreementPublicKey
+                $0.wrappedVaultKey = registration.wrappedVaultKey ?? Data()
+            },
+            headers: ["authorization": ["Bearer \(token)"]]
+        ).result.get()
+        guard response.hasInstallation else { throw ServerConnectionError.invalidResponse }
+        return try Self.appInstallationTrust(from: response.installation)
     }
 
     func claimIncomingCall(
         notificationID: UUID,
         installationID: UUID
     ) async throws -> IncomingCallClaim {
-        let body = try Self.encoder.encode(
-            IncomingCallClaimRequest(installationID: installationID)
-        )
-        let (data, response) = try await authenticatedRequest(
-            path: "v1/incoming-calls/\(notificationID.uuidString.lowercased())/claim",
-            method: "POST",
-            body: body
-        )
-        guard response.statusCode == 200 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
+        let (service, token) = try await ownerService()
+        let response = try await service.claimIncomingCall(
+            request: .with {
+                $0.notificationID = notificationID.uuidString.lowercased()
+                $0.installationID = installationID.uuidString.lowercased()
+            },
+            headers: ["authorization": ["Bearer \(token)"]]
+        ).result.get()
+        guard response.hasClaimedAt,
+              response.notificationID == notificationID.uuidString.lowercased(),
+              response.installationID == installationID.uuidString.lowercased() else {
+            throw ServerConnectionError.invalidResponse
         }
-        return try Self.decoder.decode(IncomingCallClaimResponse.self, from: data).claim
+        return IncomingCallClaim(notificationID: notificationID, installationID: installationID, claimedAt: response.claimedAt.date, won: response.won)
     }
 
     func registerPushToken(
@@ -1242,17 +1277,16 @@ final class ServerConnectionManager {
         guard !token.isEmpty, token.count <= 256 else {
             throw ServerConnectionError.invalidResponse
         }
-        let body = try Self.encoder.encode(
-            PushTokenRegistrationRequest(environment: environment.rawValue, token: token)
-        )
-        let (_, response) = try await authenticatedRequest(
-            path: "v1/app-installations/\(installationID.uuidString.lowercased())/push-tokens/\(kind.rawValue)",
-            method: "PUT",
-            body: body
-        )
-        guard response.statusCode == 204 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
-        }
+        let (service, accessToken) = try await ownerService()
+        _ = try await service.upsertPushToken(
+            request: .with {
+                $0.installationID = installationID.uuidString.lowercased()
+                $0.kind = kind.rawValue
+                $0.environment = environment.rawValue
+                $0.token = token
+            },
+            headers: ["authorization": ["Bearer \(accessToken)"]]
+        ).result.get()
     }
 
     func unregisterPushToken(
@@ -1260,65 +1294,18 @@ final class ServerConnectionManager {
         environment: PushEnvironment,
         installationID: UUID
     ) async throws {
-        let (_, response) = try await authenticatedRequest(
-            path: "v1/app-installations/\(installationID.uuidString.lowercased())/push-tokens/\(kind.rawValue)",
-            method: "DELETE",
-            queryItems: [URLQueryItem(name: "environment", value: environment.rawValue)]
-        )
-        guard response.statusCode == 204 || response.statusCode == 404 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
-        }
-    }
-
-    private func authenticatedRequest(
-        path: String,
-        method: String,
-        body: Data? = nil,
-        queryItems: [URLQueryItem] = []
-    ) async throws -> (Data, HTTPURLResponse) {
+        let (service, accessToken) = try await ownerService()
         do {
-            let baseURL = try validatedBaseURL()
-            var activeSession = try await validSession(baseURL: baseURL)
-            var urlRequest = request(
-                baseURL: baseURL,
-                path: path,
-                method: method,
-                body: body,
-                queryItems: queryItems,
-                accessToken: activeSession.accessToken
-            )
-            var result = try await network.data(for: urlRequest)
-            if result.1.statusCode == 401 {
-                Self.logger.notice("Access token rejected; refreshing session for \(method, privacy: .public) \(path, privacy: .public)")
-                activeSession = try await refresh(baseURL: baseURL, session: activeSession)
-                urlRequest = request(
-                    baseURL: baseURL,
-                    path: path,
-                    method: method,
-                    body: body,
-                    queryItems: queryItems,
-                    accessToken: activeSession.accessToken
-                )
-                result = try await network.data(for: urlRequest)
-            }
-            let requestID = result.1.value(forHTTPHeaderField: "X-Request-ID") ?? "missing"
-            if result.1.statusCode >= 400 {
-                Self.logger.error(
-                    "Server request failed: \(method, privacy: .public) \(path, privacy: .public), status \(result.1.statusCode, privacy: .public), request ID \(requestID, privacy: .public)"
-                )
-            } else {
-                Self.logger.info(
-                    "Server request completed: \(method, privacy: .public) \(path, privacy: .public), status \(result.1.statusCode, privacy: .public), request ID \(requestID, privacy: .public)"
-                )
-            }
-            return result
-        } catch {
-            state = .failed
-            lastErrorDescription = error.localizedDescription
-            Self.logger.error(
-                "Server request transport failed: \(method, privacy: .public) \(path, privacy: .public), error \(String(reflecting: error), privacy: .public)"
-            )
-            throw error
+            _ = try await service.deletePushToken(
+                request: .with {
+                    $0.installationID = installationID.uuidString.lowercased()
+                    $0.kind = kind.rawValue
+                    $0.environment = environment.rawValue
+                },
+                headers: ["authorization": ["Bearer \(accessToken)"]]
+            ).result.get()
+        } catch let error where error.code == .notFound {
+            return
         }
     }
 
@@ -1408,26 +1395,6 @@ final class ServerConnectionManager {
         )
     }
 
-    private func request(
-        baseURL: URL,
-        path: String,
-        method: String,
-        body: Data?,
-        queryItems: [URLQueryItem],
-        accessToken: String
-    ) -> URLRequest {
-        let url = baseURL.appending(path: path)
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        components?.queryItems = queryItems.isEmpty ? nil : queryItems
-        var request = URLRequest(url: components?.url ?? url)
-        request.httpMethod = method
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        if let body {
-            request.httpBody = body
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        }
-        return request
-    }
 
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
@@ -1513,141 +1480,6 @@ private struct PasskeyAssertionFinishResponse: Encodable {
     let authenticatorData: String
     let signature: String
     let userHandle: String?
-}
-
-private struct AppInstallationRegistrationRequest: Encodable {
-    let installationID: UUID
-    let identityPublicKey: Data
-    let keyAgreementPublicKey: Data
-    let wrappedVaultKey: Data?
-
-    enum CodingKeys: String, CodingKey {
-        case installationID = "installation_id"
-        case identityPublicKey = "identity_public_key"
-        case keyAgreementPublicKey = "key_agreement_public_key"
-        case wrappedVaultKey = "wrapped_vault_key"
-    }
-}
-
-private struct AppInstallationRegistrationResponse: Decodable {
-    let installation: AppInstallationTrust
-}
-
-private struct IncomingCallClaimRequest: Encodable {
-    let installationID: UUID
-
-    enum CodingKeys: String, CodingKey {
-        case installationID = "installation_id"
-    }
-}
-
-private struct IncomingCallClaimResponse: Decodable {
-    let claim: IncomingCallClaim
-}
-
-private struct PushTokenRegistrationRequest: Encodable {
-    let environment: String
-    let token: Data
-}
-
-private struct DeviceNumericIDRequest: Encodable {
-    let numericID: Int
-
-    enum CodingKeys: String, CodingKey {
-        case numericID = "numeric_id"
-    }
-}
-
-private struct DeviceProfileRequest: Encodable {
-    let profileCiphertext: Data
-
-    enum CodingKeys: String, CodingKey {
-        case profileCiphertext = "profile_ciphertext"
-    }
-}
-
-private struct DeviceListResponse: Decodable {
-    let devices: [ServerDeviceRecord]
-}
-
-private struct SIMListResponse: Decodable {
-    let sims: [ServerSIMRecord]
-}
-
-private struct ServerSIMRecord: Decodable {
-    let id: UUID
-    let numericID: Int
-    let assignedDeviceID: UUID?
-    let assignedSlotID: UUID?
-    let lastSeenAt: Date
-    let profileCiphertext: Data
-
-    enum CodingKeys: String, CodingKey {
-        case id = "sim_id"
-        case numericID = "numeric_id"
-        case assignedDeviceID = "assigned_device_uuid"
-        case assignedSlotID = "assigned_slot_id"
-        case lastSeenAt = "last_seen_at"
-        case profileCiphertext = "profile_ciphertext"
-    }
-
-    init(from decoder: Swift.Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        id = try values.decode(UUID.self, forKey: .id)
-        numericID = try values.decode(Int.self, forKey: .numericID)
-        assignedDeviceID = try values.decodeIfPresent(UUID.self, forKey: .assignedDeviceID)
-        assignedSlotID = try values.decodeIfPresent(UUID.self, forKey: .assignedSlotID)
-        lastSeenAt = try values.decode(Date.self, forKey: .lastSeenAt)
-        profileCiphertext = try values.decodeIfPresent(Data.self, forKey: .profileCiphertext) ?? Data()
-    }
-}
-
-private struct DeviceDiscoveriesResponse: Decodable {
-    let discoveries: [DiscoveredDevice]
-}
-
-private struct DeviceApprovalResponse: Decodable {
-    let device: ApprovedDevice
-}
-
-private struct ServerDeviceRecord: Decodable {
-    let deviceUUID: UUID
-    let numericID: Int
-    let profileCiphertext: Data?
-    let identityPublicKey: Data
-    let commandPublicKey: Data?
-    let lastSeenAt: Date?
-    let radioAccessTechnology: CellularRadioAccessTechnology?
-    let signalBars: Int?
-    let radioStatusUpdatedAt: Date?
-    let slots: [ServerDeviceSlot]
-
-    enum CodingKeys: String, CodingKey {
-        case deviceUUID = "device_uuid"
-        case numericID = "numeric_id"
-        case profileCiphertext = "profile_ciphertext"
-        case identityPublicKey = "identity_public_key"
-        case commandPublicKey = "command_public_key"
-        case lastSeenAt = "last_seen_at"
-        case radioAccessTechnology = "radio_access_technology"
-        case signalBars = "signal_bars"
-        case radioStatusUpdatedAt = "radio_status_updated_at"
-        case slots
-    }
-
-    init(from decoder: Swift.Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        deviceUUID = try values.decode(UUID.self, forKey: .deviceUUID)
-        numericID = try values.decode(Int.self, forKey: .numericID)
-        profileCiphertext = try values.decodeIfPresent(Data.self, forKey: .profileCiphertext)
-        identityPublicKey = try values.decode(Data.self, forKey: .identityPublicKey)
-        commandPublicKey = try values.decodeIfPresent(Data.self, forKey: .commandPublicKey)
-        lastSeenAt = try values.decodeIfPresent(Date.self, forKey: .lastSeenAt)
-        radioAccessTechnology = try values.decodeIfPresent(CellularRadioAccessTechnology.self, forKey: .radioAccessTechnology)
-        signalBars = try values.decodeIfPresent(Int.self, forKey: .signalBars)
-        radioStatusUpdatedAt = try values.decodeIfPresent(Date.self, forKey: .radioStatusUpdatedAt)
-        slots = try values.decodeIfPresent([ServerDeviceSlot].self, forKey: .slots) ?? []
-    }
 }
 
 private struct ServerDeviceSlot: Decodable {

@@ -135,7 +135,8 @@ final class AppModelTests: XCTestCase {
         let connection = ServerConnectionManager(
             network: network,
             sessionStore: sessionStore,
-            defaults: defaults
+            defaults: defaults,
+            passkeyRPCClientFactory: AppModelPasskeyRPCClientFactory()
         )
         let model = AppModel(serverConnection: connection)
 
@@ -264,7 +265,8 @@ final class AppModelTests: XCTestCase {
         let connection = ServerConnectionManager(
             network: AppModelLogoutNetwork(),
             sessionStore: AppModelSessionStore(value: Self.activeSession),
-            defaults: defaults
+            defaults: defaults,
+            passkeyRPCClientFactory: AppModelPasskeyRPCClientFactory()
         )
         let model = AppModel(
             callHistory: .loaded([Self.callRecord()]),
@@ -296,7 +298,8 @@ final class AppModelTests: XCTestCase {
         let connection = ServerConnectionManager(
             network: network,
             sessionStore: AppModelSessionStore(value: Self.activeSession),
-            defaults: defaults
+            defaults: defaults,
+            passkeyRPCClientFactory: AppModelPasskeyRPCClientFactory()
         )
         let model = AppModel(
             serverConnection: connection,
@@ -812,4 +815,33 @@ private final class AppModelSignInNetwork: ServerNetworking {
         )!
         return (body, response)
     }
+}
+
+@MainActor
+private final class AppModelPasskeyRPCClientFactory: PasskeyRPCClientCreating {
+    func makeClient(baseURL: URL) -> any PasskeyRPCClient {
+        AppModelPasskeyRPCClient()
+    }
+}
+
+@MainActor
+private final class AppModelPasskeyRPCClient: PasskeyRPCClient {
+    private let session = ServerSession(
+        accessToken: "access",
+        refreshToken: "refresh",
+        accessExpiresAt: Date(timeIntervalSince1970: 4_000_000_000),
+        refreshExpiresAt: Date(timeIntervalSince1970: 4_100_000_000)
+    )
+
+    func bootstrap(username: String, password: String) async throws -> ServerSession { session }
+    func refresh(refreshToken: String) async throws -> ServerSession { session }
+    func logout(accessToken: String) async throws {}
+    func beginRegistration(accessToken: String) async throws -> PasskeyOptionsPayload {
+        PasskeyOptionsPayload(ceremonyID: "registration", optionsJSON: Data())
+    }
+    func finishRegistration(ceremonyID: String, credentialJSON: Data, accessToken: String) async throws {}
+    func beginLogin() async throws -> PasskeyOptionsPayload {
+        PasskeyOptionsPayload(ceremonyID: "login", optionsJSON: Data())
+    }
+    func finishLogin(ceremonyID: String, credentialJSON: Data) async throws -> ServerSession { session }
 }

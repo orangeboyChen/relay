@@ -19,7 +19,7 @@ protocol EncryptedEventStreamOpening: AnyObject {
 }
 @MainActor
 final class ServerConnectEncryptedEventStream: EncryptedEventStream {
-    private let stream: any Connect.ServerOnlyAsyncStreamInterface<
+    private let stream: any Connect.BidirectionalAsyncStreamInterface<
         Relay_Communication_V1_WatchEventsRequest,
         Relay_Communication_V1_WatchEventsResponse
     >
@@ -27,7 +27,7 @@ final class ServerConnectEncryptedEventStream: EncryptedEventStream {
     private var pendingAcknowledgement: Int64?
 
     init(
-        stream: any Connect.ServerOnlyAsyncStreamInterface<
+        stream: any Connect.BidirectionalAsyncStreamInterface<
             Relay_Communication_V1_WatchEventsRequest,
             Relay_Communication_V1_WatchEventsResponse
         >,
@@ -79,12 +79,15 @@ final class ServerConnectEncryptedEventStream: EncryptedEventStream {
         guard pendingAcknowledgement == sequence else {
             throw ServerConnectionError.invalidResponse
         }
+        try stream.send(Relay_Communication_V1_WatchEventsRequest.with {
+            $0.acknowledgedSequence = sequence
+        })
         cursor = sequence
         pendingAcknowledgement = nil
     }
 
     func close() {
-        stream.cancel()
+        stream.close()
     }
 }
 @MainActor

@@ -7,7 +7,7 @@ USB path, pairing token, or SIM ICCID.
 ## Topology
 
 ```text
-iPhone  -- HTTPS / WebSocket / TURN -->  relay-control host
+iPhone  -- HTTPS Connect RPC / TURN -->  relay-control host
                                           |-- PostgreSQL
                                           |-- coturn
 Linux modem host -- HTTPS ------------->  |
@@ -72,9 +72,10 @@ Replace the example values in `.env`:
 Set `POSTGRES_PASSWORD` in `.env` to the generated database password. The
 Compose file uses it to construct the private PostgreSQL connection string.
 
-The base stack intentionally does not publish server HTTP on a public
+The base stack intentionally does not publish the server transport on a public
 interface. Put a TLS reverse proxy on the same host and forward its upstream to
-`127.0.0.1:${SERVER_PORT}`. The proxy must preserve WebSocket upgrade headers.
+`127.0.0.1:${SERVER_PORT}`. The proxy must preserve HTTP/2 and streaming request
+bodies; no WebSocket upgrade is required.
 Set `PUBLIC_BASE_URL` to the proxy's HTTPS URL, not the loopback upstream.
 
 ## Start the control plane
@@ -193,7 +194,7 @@ attachments, and device credentials.
 
 | Symptom | Check |
 | --- | --- |
-| App cannot sign in | `PUBLIC_BASE_URL` DNS/TLS, reverse-proxy WebSocket upgrade, and `docker compose logs server`. |
+| App cannot sign in | `PUBLIC_BASE_URL` DNS/TLS, reverse-proxy HTTP/2 streaming support, and `docker compose logs server`. |
 | Modem candidate never appears | Discovery switch still on, modem host can reach the HTTPS URL, and the device container log has no TLS or `device_discovery_closed` error. |
 | TURN call setup fails | DNS for `TURN_URL`, firewall for 3478 TCP/UDP and the whole relay range, and `TURN_EXTERNAL_IP` matching the address coturn advertises. |
 | Server is healthy but app is offline | The proxy may point at the wrong loopback `SERVER_PORT`; verify `curl` locally and the proxy upstream. |

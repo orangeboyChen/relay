@@ -67,9 +67,6 @@ jobs:
 
   build:
     needs: prepare
-    permissions:
-      contents: read
-      packages: write
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -115,9 +112,6 @@ jobs:
 
   manifest:
     needs: [prepare, build]
-    permissions:
-      contents: read
-      packages: write
     runs-on: ubuntu-24.04
     strategy:
       matrix:
@@ -145,8 +139,6 @@ jobs:
 
   release:
     needs: [prepare, manifest]
-    permissions:
-      contents: write
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5

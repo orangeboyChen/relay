@@ -310,7 +310,7 @@
 				200000000000000000000006 /* XCRemoteSwiftPackageReference "mars-rs" */,
 				20000000000000000000000B /* XCRemoteSwiftPackageReference "libPhoneNumber-iOS" */,
 				20000000000000000000000C /* XCRemoteSwiftPackageReference "swiftui-introspect" */,
-				200000000000000000000010 /* XCRemoteSwiftPackageReference "relay-sdk" */,
+				200000000000000000000010 /* XCLocalSwiftPackageReference "relay-sdk" */,
 			);
 			productRefGroup = 100000000000000000000031 /* Products */;
 			projectDirPath = "";
@@ -860,6 +860,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		200000000000000000000010 /* XCLocalSwiftPackageReference "relay-sdk" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../protocol/sdk;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		200000000000000000000003 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -893,14 +900,6 @@
 				minimumVersion = 27.0.0;
 			};
 		};
-		200000000000000000000010 /* XCRemoteSwiftPackageReference "relay-sdk" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/orangeboyChen/relay-sdk.git";
-			requirement = {
-				kind = exactVersion;
-				version = 0.1.0;
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -931,7 +930,7 @@
 		};
 		200000000000000000000011 /* RelayProtocol */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 200000000000000000000010 /* XCRemoteSwiftPackageReference "relay-sdk" */;
+			package = 200000000000000000000010 /* XCLocalSwiftPackageReference "relay-sdk" */;
 			productName = RelayProtocol;
 		};
 /* End XCSwiftPackageProductDependency section */

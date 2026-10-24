@@ -85,6 +85,7 @@ func Handler(repository Repository, config Config) http.Handler {
 	}
 	mux := http.NewServeMux()
 	mountSyncService(mux, router)
+	mountAuthenticationService(mux, router)
 	mux.HandleFunc("GET /healthz", router.health)
 	mux.HandleFunc("GET /v1/auth/passkey", router.passkeyPage)
 	mux.HandleFunc("GET /.well-known/sim-deck", router.discovery)
@@ -122,13 +123,6 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("PUT /v1/device-command-key", router.updateDeviceCommandKey)
 	mux.HandleFunc("PUT /v1/device-radio-status", router.updateDeviceRadioStatus)
 	mux.HandleFunc("PUT /v1/device-sim-identity", router.updateDeviceSIMIdentity)
-	mux.HandleFunc("POST /v1/auth/bootstrap", router.bootstrapLogin)
-	mux.HandleFunc("POST /v1/auth/refresh", router.refreshSession)
-	mux.HandleFunc("POST /v1/auth/logout", router.logout)
-	mux.HandleFunc("POST /v1/auth/passkey/registration/options", router.requireOwner(router.passkeyRegistrationOptions))
-	mux.HandleFunc("POST /v1/auth/passkey/registration/finish", router.requireOwner(router.passkeyRegistrationFinish))
-	mux.HandleFunc("POST /v1/auth/passkey/login/options", router.passkeyLoginOptions)
-	mux.HandleFunc("POST /v1/auth/passkey/login/finish", router.passkeyLoginFinish)
 	return withRequestLogging(withJSONContentType(mux), config.Logger)
 }
 
@@ -382,8 +376,8 @@ func (router *router) health(writer http.ResponseWriter, _ *http.Request) {
 
 func (router *router) discovery(writer http.ResponseWriter, _ *http.Request) {
 	writeJSON(writer, http.StatusOK, map[string]any{
-		"api_version":   "v1",
-		"media":         map[string]any{"transport": "webrtc", "relay": "turn"},
+		"api_version": "v1",
+		"media":       map[string]any{"transport": "webrtc", "relay": "turn"},
 	})
 }
 
@@ -950,134 +944,6 @@ func validRadioAccessTechnology(value string) bool {
 	default:
 		return false
 	}
-}
-
-func (router *router) bootstrapLogin(writer http.ResponseWriter, request *http.Request) {
-	var body struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	if err := decodeJSON(request, &body); err != nil {
-		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-	credential, err := router.repository.OwnerCredentialByUsername(request.Context(), body.Username)
-	if err != nil || credential.PasswordDisabledAt != nil || credential.PasswordHash == "" {
-		writeError(writer, http.StatusUnauthorized, "invalid_credentials", "Invalid credentials.")
-		return
-	}
-	valid, err := auth.VerifyPassword(body.Password, credential.PasswordHash)
-	if err != nil || !valid {
-		writeError(writer, http.StatusUnauthorized, "invalid_credentials", "Invalid credentials.")
-		return
-	}
-	pair, err := auth.NewTokenPair(time.Now())
-	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "authentication_error", "Unable to create a session.")
-		return
-	}
-	if err := router.repository.CreateSession(request.Context(), credential.ID, pair); err != nil {
-		writeError(writer, http.StatusInternalServerError, "storage_error", "Unable to store the session.")
-		return
-	}
-	writeJSON(writer, http.StatusCreated, pair)
-}
-
-func (router *router) passkeyRegistrationOptions(writer http.ResponseWriter, request *http.Request) {
-	ownerID, ok := request.Context().Value(ownerContextKey{}).(string)
-	if !ok || router.webAuthn == nil {
-		writeError(writer, http.StatusNotImplemented, "passkey_unavailable", "Passkey authentication is unavailable.")
-		return
-	}
-	ceremonyID, options, err := router.webAuthn.BeginRegistration(request.Context(), ownerID)
-	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "passkey_error", "Unable to start passkey registration.")
-		return
-	}
-	writeJSON(writer, http.StatusOK, map[string]any{"ceremony_id": ceremonyID, "options": json.RawMessage(options)})
-}
-
-func (router *router) passkeyRegistrationFinish(writer http.ResponseWriter, request *http.Request) {
-	ownerID, ok := request.Context().Value(ownerContextKey{}).(string)
-	ceremonyID := strings.TrimSpace(request.URL.Query().Get("ceremony_id"))
-	if !ok || router.webAuthn == nil || ceremonyID == "" {
-		writeError(writer, http.StatusBadRequest, "invalid_passkey_ceremony", "A passkey ceremony is required.")
-		return
-	}
-	if err := router.webAuthn.FinishRegistration(request.Context(), ownerID, ceremonyID, request); err != nil {
-		writeError(writer, http.StatusUnauthorized, "passkey_failed", "Passkey registration failed.")
-		return
-	}
-	writer.WriteHeader(http.StatusNoContent)
-}
-
-func (router *router) passkeyLoginOptions(writer http.ResponseWriter, request *http.Request) {
-	if router.webAuthn == nil {
-		writeError(writer, http.StatusNotImplemented, "passkey_unavailable", "Passkey authentication is unavailable.")
-		return
-	}
-	ceremonyID, options, err := router.webAuthn.BeginLogin()
-	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "passkey_error", "Unable to start passkey login.")
-		return
-	}
-	writeJSON(writer, http.StatusOK, map[string]any{"ceremony_id": ceremonyID, "options": json.RawMessage(options)})
-}
-
-func (router *router) passkeyLoginFinish(writer http.ResponseWriter, request *http.Request) {
-	if router.webAuthn == nil {
-		writeError(writer, http.StatusNotImplemented, "passkey_unavailable", "Passkey authentication is unavailable.")
-		return
-	}
-	ceremonyID := strings.TrimSpace(request.URL.Query().Get("ceremony_id"))
-	if ceremonyID == "" {
-		writeError(writer, http.StatusBadRequest, "invalid_passkey_ceremony", "A passkey ceremony is required.")
-		return
-	}
-	ownerID, err := router.webAuthn.FinishLogin(request.Context(), ceremonyID, request)
-	if err != nil {
-		writeError(writer, http.StatusUnauthorized, "passkey_failed", "Passkey login failed.")
-		return
-	}
-	pair, err := auth.NewTokenPair(router.now())
-	if err != nil || router.repository.CreateSession(request.Context(), ownerID, pair) != nil {
-		writeError(writer, http.StatusInternalServerError, "session_error", "Unable to create a session.")
-		return
-	}
-	writeJSON(writer, http.StatusCreated, pair)
-}
-
-func (router *router) refreshSession(writer http.ResponseWriter, request *http.Request) {
-	var body struct {
-		RefreshToken string `json:"refresh_token"`
-	}
-	if err := decodeJSON(request, &body); err != nil {
-		writeError(writer, http.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-	pair, err := auth.NewTokenPair(time.Now())
-	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "authentication_error", "Unable to refresh the session.")
-		return
-	}
-	if err := router.repository.RotateSession(request.Context(), body.RefreshToken, pair, time.Now()); err != nil {
-		writeError(writer, http.StatusUnauthorized, "invalid_refresh_token", "Refresh token is invalid or expired.")
-		return
-	}
-	writeJSON(writer, http.StatusOK, pair)
-}
-
-func (router *router) logout(writer http.ResponseWriter, request *http.Request) {
-	token, ok := bearerToken(request.Header.Get("Authorization"))
-	if !ok {
-		writeError(writer, http.StatusUnauthorized, "invalid_access_token", "Access token is required.")
-		return
-	}
-	if err := router.repository.RevokeSession(request.Context(), token, time.Now()); err != nil {
-		writeError(writer, http.StatusUnauthorized, "invalid_access_token", "Access token is invalid or expired.")
-		return
-	}
-	writer.WriteHeader(http.StatusNoContent)
 }
 
 func (router *router) requireOwner(next http.HandlerFunc) http.HandlerFunc {

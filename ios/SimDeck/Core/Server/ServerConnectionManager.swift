@@ -403,6 +403,134 @@ protocol CommunicationSyncClientCreating: AnyObject {
     func makeClient(baseURL: URL) -> any CommunicationSyncClient
 }
 
+struct PasskeyOptionsPayload: Equatable, Sendable {
+    let ceremonyID: String
+    let optionsJSON: Data
+}
+
+@MainActor
+protocol PasskeyRPCClient: AnyObject {
+    func bootstrap(username: String, password: String) async throws -> ServerSession
+    func refresh(refreshToken: String) async throws -> ServerSession
+    func logout(accessToken: String) async throws
+    func beginRegistration(accessToken: String) async throws -> PasskeyOptionsPayload
+    func finishRegistration(ceremonyID: String, credentialJSON: Data, accessToken: String) async throws
+    func beginLogin() async throws -> PasskeyOptionsPayload
+    func finishLogin(ceremonyID: String, credentialJSON: Data) async throws -> ServerSession
+}
+
+@MainActor
+protocol PasskeyRPCClientCreating: AnyObject {
+    func makeClient(baseURL: URL) -> any PasskeyRPCClient
+}
+
+@MainActor
+private final class ConnectPasskeyRPCClientFactory: PasskeyRPCClientCreating {
+    func makeClient(baseURL: URL) -> any PasskeyRPCClient {
+        ConnectPasskeyRPCClient(baseURL: baseURL)
+    }
+}
+
+@MainActor
+private final class ConnectPasskeyRPCClient: PasskeyRPCClient {
+    private let client: Relay_Communication_V1_AuthenticationServiceClient
+
+    init(baseURL: URL) {
+        let config = ProtocolClientConfig(host: baseURL.absoluteString, codec: ProtoCodec())
+        client = Relay_Communication_V1_AuthenticationServiceClient(
+            client: ProtocolClient(httpClient: URLSessionHTTPClient(), config: config)
+        )
+    }
+
+    func bootstrap(username: String, password: String) async throws -> ServerSession {
+        let response = await client.bootstrap(
+            request: Relay_Communication_V1_BootstrapRequest.with {
+                $0.username = username
+                $0.password = password
+            }
+        )
+        return Self.session(from: try response.result.get())
+    }
+
+    func refresh(refreshToken: String) async throws -> ServerSession {
+        let response = await client.refresh(
+            request: Relay_Communication_V1_RefreshRequest.with { $0.refreshToken = refreshToken }
+        )
+        return Self.session(from: try response.result.get())
+    }
+
+    func logout(accessToken: String) async throws {
+        let response = await client.logout(
+            request: Relay_Communication_V1_LogoutRequest(),
+            headers: ["authorization": ["Bearer \(accessToken)"]]
+        )
+        _ = try response.result.get()
+    }
+
+    func beginRegistration(accessToken: String) async throws -> PasskeyOptionsPayload {
+        let response = await client.beginPasskeyRegistration(
+            request: Relay_Communication_V1_BeginPasskeyRegistrationRequest(),
+            headers: ["authorization": ["Bearer \(accessToken)"]]
+        )
+        let result = try response.result.get()
+        return PasskeyOptionsPayload(ceremonyID: result.ceremonyID, optionsJSON: result.optionsJson)
+    }
+
+    func finishRegistration(ceremonyID: String, credentialJSON: Data, accessToken: String) async throws {
+        let response = await client.finishPasskeyRegistration(
+            request: Relay_Communication_V1_FinishPasskeyRegistrationRequest.with {
+                $0.ceremonyID = ceremonyID
+                $0.credentialJson = credentialJSON
+            },
+            headers: ["authorization": ["Bearer \(accessToken)"]]
+        )
+        _ = try response.result.get()
+    }
+
+    func beginLogin() async throws -> PasskeyOptionsPayload {
+        let response = await client.beginPasskeyLogin(request: Relay_Communication_V1_BeginPasskeyLoginRequest())
+        let result = try response.result.get()
+        return PasskeyOptionsPayload(ceremonyID: result.ceremonyID, optionsJSON: result.optionsJson)
+    }
+
+    func finishLogin(ceremonyID: String, credentialJSON: Data) async throws -> ServerSession {
+        let response = await client.finishPasskeyLogin(
+            request: Relay_Communication_V1_FinishPasskeyLoginRequest.with {
+                $0.ceremonyID = ceremonyID
+                $0.credentialJson = credentialJSON
+            }
+        )
+        return Self.session(from: try response.result.get())
+    }
+
+    private static func session(from response: Relay_Communication_V1_FinishPasskeyLoginResponse) -> ServerSession {
+        ServerSession(
+            accessToken: response.accessToken,
+            refreshToken: response.refreshToken,
+            accessExpiresAt: response.accessExpiresAt.date,
+            refreshExpiresAt: response.refreshExpiresAt.date
+        )
+    }
+
+    private static func session(from response: Relay_Communication_V1_BootstrapResponse) -> ServerSession {
+        ServerSession(
+            accessToken: response.accessToken,
+            refreshToken: response.refreshToken,
+            accessExpiresAt: response.accessExpiresAt.date,
+            refreshExpiresAt: response.refreshExpiresAt.date
+        )
+    }
+
+    private static func session(from response: Relay_Communication_V1_RefreshResponse) -> ServerSession {
+        ServerSession(
+            accessToken: response.accessToken,
+            refreshToken: response.refreshToken,
+            accessExpiresAt: response.accessExpiresAt.date,
+            refreshExpiresAt: response.refreshExpiresAt.date
+        )
+    }
+}
+
 @MainActor
 final class URLSessionCommunicationSyncClientFactory: CommunicationSyncClientCreating {
     func makeClient(baseURL: URL) -> any CommunicationSyncClient {
@@ -474,6 +602,7 @@ final class ServerConnectionManager {
     @ObservationIgnored private let network: any ServerNetworking
     @ObservationIgnored private let sessionStore: any SecureValueStoring
     @ObservationIgnored private let communicationSyncClientFactory: any CommunicationSyncClientCreating
+    @ObservationIgnored private let passkeyRPCClientFactory: any PasskeyRPCClientCreating
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var session: ServerSession?
     @ObservationIgnored private var refreshTask: Task<ServerSession, Error>?
@@ -485,12 +614,14 @@ final class ServerConnectionManager {
         network: any ServerNetworking,
         sessionStore: any SecureValueStoring,
         defaults: UserDefaults,
-        communicationSyncClientFactory: any CommunicationSyncClientCreating = URLSessionCommunicationSyncClientFactory()
+        communicationSyncClientFactory: any CommunicationSyncClientCreating = URLSessionCommunicationSyncClientFactory(),
+        passkeyRPCClientFactory: any PasskeyRPCClientCreating = ConnectPasskeyRPCClientFactory()
     ) {
         self.network = network
         self.sessionStore = sessionStore
         self.defaults = defaults
         self.communicationSyncClientFactory = communicationSyncClientFactory
+        self.passkeyRPCClientFactory = passkeyRPCClientFactory
         address = defaults.string(forKey: Self.addressKey) ?? ""
         session = try? sessionStore.read().map { data in
             try Self.decoder.decode(ServerSession.self, from: data)
@@ -527,15 +658,8 @@ final class ServerConnectionManager {
         lastErrorDescription = nil
         do {
             let baseURL = try validatedBaseURL()
-            var request = URLRequest(url: baseURL.appending(path: "v1/auth/bootstrap"))
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONEncoder().encode(BootstrapRequest(username: "admin", password: password))
-            let (data, response) = try await network.data(for: request)
-            guard response.statusCode == 201 else {
-                throw ServerConnectionError.requestFailed(response.statusCode)
-            }
-            let session = try Self.decoder.decode(ServerSession.self, from: data)
+            let session = try await passkeyRPCClientFactory.makeClient(baseURL: baseURL)
+                .bootstrap(username: "admin", password: password)
             try save(session)
             defaults.set(address.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Self.addressKey)
             state = .connected
@@ -548,23 +672,22 @@ final class ServerConnectionManager {
     }
 
     func beginPasskeyRegistration() async throws -> PasskeyRegistrationCeremony {
-        let (data, response) = try await authenticatedRequest(
-            path: "v1/auth/passkey/registration/options",
-            method: "POST"
-        )
-        guard response.statusCode == 200,
-              let options = try? Self.decoder.decode(PasskeyOptionsResponse.self, from: data),
-              let relyingPartyID = options.options.publicKey.relyingParty?.id,
-              let user = options.options.publicKey.user,
-              let challenge = Base64URL.decode(options.options.publicKey.challenge),
+        let baseURL = try validatedBaseURL()
+        let session = try await validSession(baseURL: baseURL)
+        let result = try await passkeyRPCClientFactory.makeClient(baseURL: baseURL)
+            .beginRegistration(accessToken: session.accessToken)
+        guard let options = try? Self.decoder.decode(PasskeyOptions.self, from: result.optionsJSON),
+              let relyingPartyID = options.publicKey.relyingParty?.id,
+              let user = options.publicKey.user,
+              let challenge = Base64URL.decode(options.publicKey.challenge),
               let userID = Base64URL.decode(user.id),
-              !options.ceremonyID.isEmpty,
+              !result.ceremonyID.isEmpty,
               !relyingPartyID.isEmpty,
               !user.name.isEmpty else {
             throw ServerConnectionError.invalidResponse
         }
         return PasskeyRegistrationCeremony(
-            id: options.ceremonyID,
+            id: result.ceremonyID,
             challenge: PasskeyRegistrationChallenge(
                 relyingPartyID: relyingPartyID,
                 challenge: challenge,
@@ -585,7 +708,7 @@ final class ServerConnectionManager {
             throw ServerConnectionError.invalidResponse
         }
         let credentialID = Base64URL.encode(credential.credentialID)
-        let body = try Self.encoder.encode(PasskeyRegistrationFinishRequest(
+        let credentialJSON = try Self.encoder.encode(PasskeyRegistrationFinishRequest(
             id: credentialID,
             rawID: credentialID,
             type: "public-key",
@@ -594,15 +717,10 @@ final class ServerConnectionManager {
                 attestationObject: Base64URL.encode(credential.attestationObject)
             )
         ))
-        let (_, response) = try await authenticatedRequest(
-            path: "v1/auth/passkey/registration/finish",
-            method: "POST",
-            body: body,
-            queryItems: [URLQueryItem(name: "ceremony_id", value: ceremonyID)]
-        )
-        guard response.statusCode == 204 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
-        }
+        let baseURL = try validatedBaseURL()
+        let session = try await validSession(baseURL: baseURL)
+        try await passkeyRPCClientFactory.makeClient(baseURL: baseURL)
+            .finishRegistration(ceremonyID: ceremonyID, credentialJSON: credentialJSON, accessToken: session.accessToken)
     }
 
     func beginPasskeyLogin() async throws -> PasskeyAssertionCeremony {
@@ -610,19 +728,16 @@ final class ServerConnectionManager {
         lastErrorDescription = nil
         do {
             let baseURL = try validatedBaseURL()
-            var request = URLRequest(url: baseURL.appending(path: "v1/auth/passkey/login/options"))
-            request.httpMethod = "POST"
-            let (data, response) = try await network.data(for: request)
-            guard response.statusCode == 200,
-                  let options = try? Self.decoder.decode(PasskeyOptionsResponse.self, from: data),
-                  let relyingPartyID = options.options.publicKey.relyingPartyID,
-                  let challenge = Base64URL.decode(options.options.publicKey.challenge),
-                  !options.ceremonyID.isEmpty,
+            let result = try await passkeyRPCClientFactory.makeClient(baseURL: baseURL).beginLogin()
+            guard let options = try? Self.decoder.decode(PasskeyOptions.self, from: result.optionsJSON),
+                  let relyingPartyID = options.publicKey.relyingPartyID,
+                  let challenge = Base64URL.decode(options.publicKey.challenge),
+                  !result.ceremonyID.isEmpty,
                   !relyingPartyID.isEmpty else {
                 throw ServerConnectionError.invalidResponse
             }
             return PasskeyAssertionCeremony(
-                id: options.ceremonyID,
+                id: result.ceremonyID,
                 challenge: PasskeyAssertionChallenge(
                     relyingPartyID: relyingPartyID,
                     challenge: challenge
@@ -648,9 +763,8 @@ final class ServerConnectionManager {
             throw ServerConnectionError.invalidResponse
         }
         do {
-            let baseURL = try validatedBaseURL()
             let credentialID = Base64URL.encode(credential.credentialID)
-            let body = try Self.encoder.encode(PasskeyAssertionFinishRequest(
+            let credentialJSON = try Self.encoder.encode(PasskeyAssertionFinishRequest(
                 id: credentialID,
                 rawID: credentialID,
                 type: "public-key",
@@ -661,23 +775,9 @@ final class ServerConnectionManager {
                     userHandle: credential.userID.map(Base64URL.encode)
                 )
             ))
-            var components = URLComponents(
-                url: baseURL.appending(path: "v1/auth/passkey/login/finish"),
-                resolvingAgainstBaseURL: false
-            )
-            components?.queryItems = [URLQueryItem(name: "ceremony_id", value: ceremonyID)]
-            guard let url = components?.url else {
-                throw ServerConnectionError.invalidAddress
-            }
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = body
-            let (data, response) = try await network.data(for: request)
-            guard response.statusCode == 201 else {
-                throw ServerConnectionError.requestFailed(response.statusCode)
-            }
-            let session = try Self.decoder.decode(ServerSession.self, from: data)
+            let baseURL = try validatedBaseURL()
+            let session = try await passkeyRPCClientFactory.makeClient(baseURL: baseURL)
+                .finishLogin(ceremonyID: ceremonyID, credentialJSON: credentialJSON)
             try save(session)
             defaults.set(address.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Self.addressKey)
             state = .connected
@@ -698,10 +798,9 @@ final class ServerConnectionManager {
     }
 
     func revokeCurrentSession() async throws {
-        let (_, response) = try await authenticatedRequest(path: "v1/auth/logout", method: "POST")
-        guard response.statusCode == 204 else {
-            throw ServerConnectionError.requestFailed(response.statusCode)
-        }
+        let baseURL = try validatedBaseURL()
+        let session = try await validSession(baseURL: baseURL)
+        try await passkeyRPCClientFactory.makeClient(baseURL: baseURL).logout(accessToken: session.accessToken)
         try signOut()
     }
 
@@ -1252,17 +1351,8 @@ final class ServerConnectionManager {
         guard session.refreshExpiresAt > .now else {
             throw ServerConnectionError.authenticationRequired
         }
-        var request = URLRequest(url: baseURL.appending(path: "v1/auth/refresh"))
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(RefreshRequest(refreshToken: session.refreshToken))
-        let (data, response) = try await network.data(for: request)
-        guard response.statusCode == 200 else {
-            let requestID = response.value(forHTTPHeaderField: "X-Request-ID") ?? "missing"
-            Self.logger.error("Session refresh failed with status \(response.statusCode, privacy: .public), request ID \(requestID, privacy: .public)")
-            throw ServerConnectionError.authenticationRequired
-        }
-        let replacement = try Self.decoder.decode(ServerSession.self, from: data)
+        let replacement = try await passkeyRPCClientFactory.makeClient(baseURL: baseURL)
+            .refresh(refreshToken: session.refreshToken)
         try save(replacement)
         return replacement
     }
@@ -1357,29 +1447,6 @@ extension ServerConnectionManager: EncryptedEventStreamOpening {}
 extension ServerConnectionManager: IncomingCallClaiming {}
 extension ServerConnectionManager: PushTokenRegistering {}
 extension ServerConnectionManager: DeviceDiscoveryAPI {}
-
-private struct BootstrapRequest: Encodable {
-    let username: String
-    let password: String
-}
-
-private struct RefreshRequest: Encodable {
-    let refreshToken: String
-
-    enum CodingKeys: String, CodingKey {
-        case refreshToken = "refresh_token"
-    }
-}
-
-private struct PasskeyOptionsResponse: Decodable {
-    let ceremonyID: String
-    let options: PasskeyOptions
-
-    enum CodingKeys: String, CodingKey {
-        case ceremonyID = "ceremony_id"
-        case options
-    }
-}
 
 private struct PasskeyOptions: Decodable {
     let publicKey: PasskeyPublicKeyOptions

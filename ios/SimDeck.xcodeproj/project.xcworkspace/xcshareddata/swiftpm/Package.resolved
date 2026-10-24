@@ -1,5 +1,5 @@
 {
-  "originHash" : "0e6c9d6ed7a6023ec23d53a83a2804f6c4c9536862c881db85fd4df285ad265e",
+  "originHash" : "783b742645113022cd1544e2f2b8010028648f26296b34414691e2b29841998f",
   "pins" : [
     {
       "identity" : "connect-swift",
@@ -26,15 +26,6 @@
       "state" : {
         "revision" : "7b07ce593c50504944d26a2de078eeca0f7a6d52",
         "version" : "0.1.0-alpha.4"
-      }
-    },
-    {
-      "identity" : "relay-sdk",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/orangeboyChen/relay-sdk.git",
-      "state" : {
-        "revision" : "57bbae810245e2b7649661426a3f19cfdcd8236a",
-        "version" : "0.1.0"
       }
     },
     {

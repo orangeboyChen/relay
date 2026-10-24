@@ -8,6 +8,83 @@ import RelayProtocol
 @testable import SimDeck
 
 @MainActor
+private final class FakePasskeyRPCClient: PasskeyRPCClient {
+    var bootstrapSession = ServerSession(
+        accessToken: "bootstrap-access", refreshToken: "bootstrap-refresh",
+        accessExpiresAt: Date(timeIntervalSince1970: 1_900_000_000),
+        refreshExpiresAt: Date(timeIntervalSince1970: 2_000_000_000)
+    )
+    var refreshedSession = ServerSession(
+        accessToken: "fresh-access", refreshToken: "refresh-two",
+        accessExpiresAt: Date(timeIntervalSince1970: 1_900_000_000),
+        refreshExpiresAt: Date(timeIntervalSince1970: 2_000_000_000)
+    )
+    var bootstrapUsername = ""
+    var bootstrapPassword = ""
+    var refreshToken = ""
+    var logoutAccessToken = ""
+    var refreshHandler: ((String) async throws -> ServerSession)?
+    var registrationOptions = PasskeyOptionsPayload(ceremonyID: "registration-1", optionsJSON: Data())
+    var loginOptions = PasskeyOptionsPayload(ceremonyID: "login-1", optionsJSON: Data())
+    var loginSession = ServerSession(
+        accessToken: "passkey-access",
+        refreshToken: "passkey-refresh",
+        accessExpiresAt: Date(timeIntervalSince1970: 1_900_000_000),
+        refreshExpiresAt: Date(timeIntervalSince1970: 2_000_000_000)
+    )
+    var registeredCeremonyID = ""
+    var registeredCredentialJSON = Data()
+    var registrationAccessToken = ""
+    var loginCeremonyID = ""
+    var loginCredentialJSON = Data()
+
+    func bootstrap(username: String, password: String) async throws -> ServerSession {
+        bootstrapUsername = username
+        bootstrapPassword = password
+        return bootstrapSession
+    }
+
+    func refresh(refreshToken: String) async throws -> ServerSession {
+        self.refreshToken = refreshToken
+        if let refreshHandler { return try await refreshHandler(refreshToken) }
+        return refreshedSession
+    }
+
+    func logout(accessToken: String) async throws { logoutAccessToken = accessToken }
+
+    func beginRegistration(accessToken: String) async throws -> PasskeyOptionsPayload {
+        registrationAccessToken = accessToken
+        return registrationOptions
+    }
+
+    func finishRegistration(ceremonyID: String, credentialJSON: Data, accessToken: String) async throws {
+        registeredCeremonyID = ceremonyID
+        registeredCredentialJSON = credentialJSON
+        registrationAccessToken = accessToken
+    }
+
+    func beginLogin() async throws -> PasskeyOptionsPayload { loginOptions }
+
+    func finishLogin(ceremonyID: String, credentialJSON: Data) async throws -> ServerSession {
+        loginCeremonyID = ceremonyID
+        loginCredentialJSON = credentialJSON
+        return loginSession
+    }
+}
+
+@MainActor
+private final class FakePasskeyRPCClientFactory: PasskeyRPCClientCreating {
+    let client: FakePasskeyRPCClient
+
+    init(client: FakePasskeyRPCClient) { self.client = client }
+
+    func makeClient(baseURL: URL) -> any PasskeyRPCClient {
+        XCTAssertEqual(baseURL.host, "deck.example.test")
+        return client
+    }
+}
+
+@MainActor
 final class ServerConnectionManagerTests: XCTestCase {
     func testRegistersNativePasskeyWithAuthenticatedWebAuthnCeremony() async throws {
         let challengeData = Data([0xfb, 0xff, 0x00])
@@ -18,36 +95,21 @@ final class ServerConnectionManagerTests: XCTestCase {
         let store = MemoryServerSessionStore(
             value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
         )
-        let network = ScriptedServerNetwork { request in
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
-            switch request.url?.path {
-            case "/v1/auth/passkey/registration/options":
-                return Self.response(status: 200, body: """
-                {"ceremony_id":"registration-1","options":{"publicKey":{
-                  "challenge":"\(Base64URL.encode(challengeData))",
-                  "rp":{"id":"deck.example.test","name":"Sim Deck"},
-                  "user":{"id":"\(Base64URL.encode(userID))","name":"admin","displayName":"Owner"}
-                }}}
-                """)
-            case "/v1/auth/passkey/registration/finish":
-                XCTAssertEqual(request.url?.query, "ceremony_id=registration-1")
-                let body = try XCTUnwrap(
-                    JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
-                )
-                XCTAssertEqual(body["id"] as? String, Base64URL.encode(credentialID))
-                XCTAssertEqual(body["rawId"] as? String, Base64URL.encode(credentialID))
-                let response = try XCTUnwrap(body["response"] as? [String: String])
-                XCTAssertEqual(response["clientDataJSON"], Base64URL.encode(clientData))
-                XCTAssertEqual(response["attestationObject"], Base64URL.encode(attestation))
-                return Self.response(status: 204, body: "")
-            default:
-                XCTFail("Unexpected passkey request: \(request.url?.absoluteString ?? "")")
-                return Self.response(status: 500, body: "{}")
-            }
-        }
+        let passkeyClient = FakePasskeyRPCClient()
+        passkeyClient.registrationOptions = PasskeyOptionsPayload(
+            ceremonyID: "registration-1",
+            optionsJSON: Data("""
+            {"publicKey":{"challenge":"\(Base64URL.encode(challengeData))","rp":{"id":"deck.example.test","name":"Sim Deck"},"user":{"id":"\(Base64URL.encode(userID))","name":"admin","displayName":"Owner"}}}
+            """.utf8)
+        )
         let defaults = isolatedDefaults()
         defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
-        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+        let manager = ServerConnectionManager(
+            network: ScriptedServerNetwork { _ in Self.response(status: 500, body: "{}") },
+            sessionStore: store,
+            defaults: defaults,
+            passkeyRPCClientFactory: FakePasskeyRPCClientFactory(client: passkeyClient)
+        )
 
         let ceremony = try await manager.beginPasskeyRegistration()
         XCTAssertEqual(ceremony.id, "registration-1")
@@ -64,7 +126,14 @@ final class ServerConnectionManagerTests: XCTestCase {
                 attestationObject: attestation
             )
         )
-        XCTAssertEqual(network.requests.count, 2)
+        XCTAssertEqual(passkeyClient.registeredCeremonyID, "registration-1")
+        XCTAssertEqual(passkeyClient.registrationAccessToken, "access")
+        let credential = try XCTUnwrap(JSONSerialization.jsonObject(with: passkeyClient.registeredCredentialJSON) as? [String: Any])
+        XCTAssertEqual(credential["id"] as? String, Base64URL.encode(credentialID))
+        XCTAssertEqual(credential["rawId"] as? String, Base64URL.encode(credentialID))
+        let response = try XCTUnwrap(credential["response"] as? [String: String])
+        XCTAssertEqual(response["clientDataJSON"], Base64URL.encode(clientData))
+        XCTAssertEqual(response["attestationObject"], Base64URL.encode(attestation))
     }
 
     func testSignsInWithNativePasskeyAndPersistsSession() async throws {
@@ -75,37 +144,20 @@ final class ServerConnectionManagerTests: XCTestCase {
         let signature = Data("signature".utf8)
         let userID = Data([0x01, 0x02, 0x03])
         let store = MemoryServerSessionStore()
-        let network = ScriptedServerNetwork { request in
-            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
-            switch request.url?.path {
-            case "/v1/auth/passkey/login/options":
-                return Self.response(status: 200, body: """
-                {"ceremony_id":"login-1","options":{"publicKey":{
-                  "challenge":"\(Base64URL.encode(challengeData))",
-                  "rpId":"deck.example.test"
-                }}}
-                """)
-            case "/v1/auth/passkey/login/finish":
-                XCTAssertEqual(request.url?.query, "ceremony_id=login-1")
-                let body = try XCTUnwrap(
-                    JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
-                )
-                XCTAssertEqual(body["id"] as? String, Base64URL.encode(credentialID))
-                let response = try XCTUnwrap(body["response"] as? [String: String])
-                XCTAssertEqual(response["authenticatorData"], Base64URL.encode(authenticatorData))
-                XCTAssertEqual(response["signature"], Base64URL.encode(signature))
-                XCTAssertEqual(response["userHandle"], Base64URL.encode(userID))
-                return Self.response(
-                    status: 201,
-                    body: Self.sessionJSON(accessToken: "passkey-access", refreshToken: "passkey-refresh")
-                )
-            default:
-                XCTFail("Unexpected passkey request: \(request.url?.absoluteString ?? "")")
-                return Self.response(status: 500, body: "{}")
-            }
-        }
+        let passkeyClient = FakePasskeyRPCClient()
+        passkeyClient.loginOptions = PasskeyOptionsPayload(
+            ceremonyID: "login-1",
+            optionsJSON: Data("""
+            {"publicKey":{"challenge":"\(Base64URL.encode(challengeData))","rpId":"deck.example.test"}}
+            """.utf8)
+        )
         let defaults = isolatedDefaults()
-        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+        let manager = ServerConnectionManager(
+            network: ScriptedServerNetwork { _ in Self.response(status: 500, body: "{}") },
+            sessionStore: store,
+            defaults: defaults,
+            passkeyRPCClientFactory: FakePasskeyRPCClientFactory(client: passkeyClient)
+        )
         manager.address = "https://deck.example.test:54443"
 
         let ceremony = try await manager.beginPasskeyLogin()
@@ -126,27 +178,35 @@ final class ServerConnectionManagerTests: XCTestCase {
         XCTAssertEqual(manager.state, .connected)
         XCTAssertTrue(String(decoding: try XCTUnwrap(store.value), as: UTF8.self).contains("passkey-access"))
         XCTAssertEqual(defaults.string(forKey: "sim-deck.server-address.v1"), manager.address)
+        XCTAssertEqual(passkeyClient.loginCeremonyID, "login-1")
+        let credential = try XCTUnwrap(JSONSerialization.jsonObject(with: passkeyClient.loginCredentialJSON) as? [String: Any])
+        XCTAssertEqual(credential["id"] as? String, Base64URL.encode(credentialID))
+        let credentialResponse = try XCTUnwrap(credential["response"] as? [String: String])
+        XCTAssertEqual(credentialResponse["authenticatorData"], Base64URL.encode(authenticatorData))
+        XCTAssertEqual(credentialResponse["signature"], Base64URL.encode(signature))
+        XCTAssertEqual(credentialResponse["userHandle"], Base64URL.encode(userID))
     }
 
     func testRevokeCurrentSessionCallsLogoutAndClearsLocalSession() async throws {
         let store = MemoryServerSessionStore(
             value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
         )
-        let network = ScriptedServerNetwork { request in
-            XCTAssertEqual(request.httpMethod, "POST")
-            XCTAssertEqual(request.url?.path, "/v1/auth/logout")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
-            return Self.response(status: 204, body: "")
-        }
+        let passkeyClient = FakePasskeyRPCClient()
         let defaults = isolatedDefaults()
         defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
-        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+        let manager = ServerConnectionManager(
+            network: ScriptedServerNetwork { _ in Self.response(status: 500, body: "{}") },
+            sessionStore: store,
+            defaults: defaults,
+            passkeyRPCClientFactory: FakePasskeyRPCClientFactory(client: passkeyClient)
+        )
 
         try await manager.revokeCurrentSession()
 
         XCTAssertFalse(manager.isSignedIn)
         XCTAssertEqual(manager.state, .disconnected)
         XCTAssertNil(store.value)
+        XCTAssertEqual(passkeyClient.logoutAccessToken, "access")
     }
 
     func testSignInPersistsSessionAndLoadsEncryptedCommandMetadata() async throws {
@@ -154,15 +214,14 @@ final class ServerConnectionManagerTests: XCTestCase {
         let futureDeviceID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-ffffffffffff")!
         let commandKey = Data(repeating: 7, count: 32)
         let identityKey = Data(repeating: 8, count: 32)
+        let passkeyClient = FakePasskeyRPCClient()
+        passkeyClient.bootstrapSession = ServerSession(
+            accessToken: "access-one", refreshToken: "refresh-one",
+            accessExpiresAt: Date(timeIntervalSince1970: 1_900_000_000),
+            refreshExpiresAt: Date(timeIntervalSince1970: 2_000_000_000)
+        )
         let network = ScriptedServerNetwork { request in
             switch (request.httpMethod, request.url?.path) {
-            case ("POST", "/v1/auth/bootstrap"):
-                XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
-                XCTAssertTrue(String(decoding: request.httpBody ?? Data(), as: UTF8.self).contains("correct horse"))
-                return Self.response(
-                    status: 201,
-                    body: Self.sessionJSON(accessToken: "access-one", refreshToken: "refresh-one")
-                )
             case ("GET", "/v1/devices"):
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access-one")
                 return Self.response(
@@ -197,7 +256,12 @@ final class ServerConnectionManagerTests: XCTestCase {
         }
         let store = MemoryServerSessionStore()
         let defaults = isolatedDefaults()
-        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+        let manager = ServerConnectionManager(
+            network: network,
+            sessionStore: store,
+            defaults: defaults,
+            passkeyRPCClientFactory: FakePasskeyRPCClientFactory(client: passkeyClient)
+        )
         manager.address = "https://deck.example.test"
 
         try await manager.signIn(password: "correct horse")
@@ -210,6 +274,8 @@ final class ServerConnectionManagerTests: XCTestCase {
         XCTAssertEqual(defaults.string(forKey: "sim-deck.server-address.v1"), manager.address)
         XCTAssertEqual(devices.count, 2)
         XCTAssertEqual(devices[0].id, deviceID)
+        XCTAssertEqual(passkeyClient.bootstrapUsername, "admin")
+        XCTAssertEqual(passkeyClient.bootstrapPassword, "correct horse")
         XCTAssertEqual(devices[0].numericID, 2)
         XCTAssertEqual(devices[0].commandPublicKey, commandKey)
         XCTAssertEqual(
@@ -631,17 +697,9 @@ final class ServerConnectionManagerTests: XCTestCase {
                 refreshExpiresAt: "2099-01-01T00:00:00Z"
             ).utf8)
         )
+        let passkeyClient = FakePasskeyRPCClient()
         let network = ScriptedServerNetwork { request in
             switch (request.httpMethod, request.url?.path) {
-            case ("POST", "/v1/auth/refresh"):
-                XCTAssertEqual(
-                    String(decoding: request.httpBody ?? Data(), as: UTF8.self),
-                    "{\"refresh_token\":\"refresh-one\"}"
-                )
-                return Self.response(
-                    status: 200,
-                    body: Self.sessionJSON(accessToken: "fresh-access", refreshToken: "refresh-two")
-                )
             case ("GET", "/v1/devices"):
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fresh-access")
                 return Self.response(status: 200, body: "{\"devices\":[]}")
@@ -652,12 +710,18 @@ final class ServerConnectionManagerTests: XCTestCase {
         }
         let defaults = isolatedDefaults()
         defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
-        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+        let manager = ServerConnectionManager(
+            network: network,
+            sessionStore: store,
+            defaults: defaults,
+            passkeyRPCClientFactory: FakePasskeyRPCClientFactory(client: passkeyClient)
+        )
 
         let devices = try await manager.loadDevices()
 
         XCTAssertTrue(devices.isEmpty)
-        XCTAssertEqual(network.requests.map(\.url?.path), ["/v1/auth/refresh", "/v1/devices"])
+        XCTAssertEqual(network.requests.map(\.url?.path), ["/v1/devices"])
+        XCTAssertEqual(passkeyClient.refreshToken, "refresh-one")
         XCTAssertTrue(String(decoding: try XCTUnwrap(store.value), as: UTF8.self).contains("fresh-access"))
     }
 
@@ -672,15 +736,19 @@ final class ServerConnectionManagerTests: XCTestCase {
         )
         let refreshGate = AsyncRequestGate()
         let refreshStarted = expectation(description: "Refresh request started")
+        let passkeyClient = FakePasskeyRPCClient()
+        passkeyClient.refreshHandler = { refreshToken in
+            XCTAssertEqual(refreshToken, "refresh-one")
+            refreshStarted.fulfill()
+            await refreshGate.wait()
+            return ServerSession(
+                accessToken: "fresh-access", refreshToken: "refresh-two",
+                accessExpiresAt: Date(timeIntervalSince1970: 1_900_000_000),
+                refreshExpiresAt: Date(timeIntervalSince1970: 2_000_000_000)
+            )
+        }
         let network = ScriptedServerNetwork { request in
             switch (request.httpMethod, request.url?.path) {
-            case ("POST", "/v1/auth/refresh"):
-                refreshStarted.fulfill()
-                await refreshGate.wait()
-                return Self.response(
-                    status: 200,
-                    body: Self.sessionJSON(accessToken: "fresh-access", refreshToken: "refresh-two")
-                )
             case ("GET", "/v1/devices"):
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fresh-access")
                 return Self.response(status: 200, body: "{\"devices\":[]}")
@@ -691,7 +759,12 @@ final class ServerConnectionManagerTests: XCTestCase {
         }
         let defaults = isolatedDefaults()
         defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
-        let manager = ServerConnectionManager(network: network, sessionStore: store, defaults: defaults)
+        let manager = ServerConnectionManager(
+            network: network,
+            sessionStore: store,
+            defaults: defaults,
+            passkeyRPCClientFactory: FakePasskeyRPCClientFactory(client: passkeyClient)
+        )
 
         let firstRequest = Task { try await manager.loadDevices() }
         await fulfillment(of: [refreshStarted], timeout: 1)
@@ -704,8 +777,7 @@ final class ServerConnectionManagerTests: XCTestCase {
         _ = try await firstRequest.value
         _ = try await secondRequest.value
         XCTAssertEqual(
-            network.requests.filter { $0.url?.path == "/v1/auth/refresh" }.count,
-            1
+            network.requests.filter { $0.url?.path == "/v1/auth/refresh" }.count, 0
         )
         XCTAssertEqual(
             network.requests.filter { $0.url?.path == "/v1/devices" }.count,

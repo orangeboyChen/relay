@@ -44,6 +44,9 @@ func rpcAuthInterceptor(router *router) connect.ServerInterceptor {
 			if !ok {
 				return connect.NewError(connect.CodeUnauthenticated, "missing request metadata")
 			}
+			if isPublicAuthProcedure(spec.Procedure) {
+				return next(ctx, spec, stream)
+			}
 			token, ok := bearerToken(info.RequestHeader().Get("Authorization"))
 			if !ok {
 				return connect.NewError(connect.CodeUnauthenticated, "bearer credential is required")
@@ -57,6 +60,18 @@ func rpcAuthInterceptor(router *router) connect.ServerInterceptor {
 			}
 			return next(context.WithValue(ctx, rpcOwnerContextKey{}, ownerID), spec, stream)
 		}
+	}
+}
+
+func isPublicAuthProcedure(procedure string) bool {
+	switch procedure {
+	case communicationv1connect.AuthenticationServiceBootstrapProcedure,
+		communicationv1connect.AuthenticationServiceRefreshProcedure,
+		communicationv1connect.AuthenticationServiceBeginPasskeyLoginProcedure,
+		communicationv1connect.AuthenticationServiceFinishPasskeyLoginProcedure:
+		return true
+	default:
+		return false
 	}
 }
 

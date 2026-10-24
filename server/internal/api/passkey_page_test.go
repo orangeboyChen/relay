@@ -25,17 +25,17 @@ func TestPasskeyPage(t *testing.T) {
 	}
 	page := response.Body.String()
 	for _, endpoint := range []string{
-		"'/v1/auth/passkey/'+operation+'/options'",
-		"'/v1/auth/passkey/'+operation+'/finish?ceremony_id='",
+		"/relay.communication.v1.AuthenticationService/",
+		"Begin'+operation",
+		"Finish'+operation",
+		"optionsJson",
+		"credentialJson",
 	} {
 		if !strings.Contains(page, endpoint) {
 			t.Fatalf("expected passkey page to construct endpoint %q", endpoint)
 		}
 	}
-	if !strings.Contains(page, "operation=mode==='register'?'registration':'login'") {
-		t.Fatal("expected register mode to use the registration API operation")
-	}
-	if strings.Contains(page, "'/v1/auth/passkey/'+mode+'/options'") || strings.Contains(page, "'/v1/auth/passkey/'+mode+'/finish") {
-		t.Fatal("passkey page must not use the unsupported register API path")
+	if strings.Contains(page, "/v1/auth/passkey/") {
+		t.Fatal("passkey page must use Auth RPC, not REST ceremony routes")
 	}
 }

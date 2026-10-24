@@ -533,6 +533,16 @@ var _ = Describe("HTTP API", func() {
 		handler.ServeHTTP(response, request)
 		return response
 	}
+	rpc := func(procedure string, body string, accessToken string) *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/relay.communication.v1.AuthenticationService/"+procedure, bytes.NewBufferString(body))
+		request.Header.Set("Content-Type", "application/json")
+		if accessToken != "" {
+			request.Header.Set("Authorization", "Bearer "+accessToken)
+		}
+		handler.ServeHTTP(response, request)
+		return response
+	}
 
 	It("reports health and discovery metadata", func() {
 		health := perform(http.MethodGet, "/healthz", "", "")
@@ -553,48 +563,39 @@ var _ = Describe("HTTP API", func() {
 		Expect(association.Body.String()).To(MatchJSON(`{"webcredentials":{"apps":["97YACL9S6W.com.nowcent.simdeck"]}}`))
 	})
 
-	It("starts passkey ceremonies and validates missing ceremony identifiers", func() {
-		login := perform(http.MethodPost, "/v1/auth/passkey/login/options", "", "")
+	It("starts passkey ceremonies through RPC and validates missing ceremony identifiers", func() {
+		login := rpc("BeginPasskeyLogin", `{}`, "")
 		Expect(login.Code).To(Equal(http.StatusOK))
-		Expect(login.Body.String()).To(ContainSubstring("ceremony_id"))
+		Expect(login.Body.String()).To(ContainSubstring("ceremonyId"))
 
-		registration := perform(http.MethodPost, "/v1/auth/passkey/registration/options", "", "access-token")
+		registration := rpc("BeginPasskeyRegistration", `{}`, "access-token")
 		Expect(registration.Code).To(Equal(http.StatusOK))
-		Expect(registration.Body.String()).To(ContainSubstring("ceremony_id"))
+		Expect(registration.Body.String()).To(ContainSubstring("ceremonyId"))
 
-		missing := perform(http.MethodPost, "/v1/auth/passkey/login/finish", "{}", "")
+		missing := rpc("FinishPasskeyLogin", `{}`, "")
 		Expect(missing.Code).To(Equal(http.StatusBadRequest))
-		Expect(missing.Body.String()).To(ContainSubstring("invalid_passkey_ceremony"))
 
-		failedLogin := perform(http.MethodPost, "/v1/auth/passkey/login/finish?ceremony_id=missing", "{}", "")
+		failedLogin := rpc("FinishPasskeyLogin", `{"ceremonyId":"missing","credentialJson":"e30="}`, "")
 		Expect(failedLogin.Code).To(Equal(http.StatusUnauthorized))
-		failedRegistration := perform(http.MethodPost, "/v1/auth/passkey/registration/finish?ceremony_id=missing", "{}", "access-token")
+		failedRegistration := rpc("FinishPasskeyRegistration", `{"ceremonyId":"missing","credentialJson":"e30="}`, "access-token")
 		Expect(failedRegistration.Code).To(Equal(http.StatusUnauthorized))
+		Expect(perform(http.MethodPost, "/v1/auth/passkey/login/options", `{}`, "").Code).To(Equal(http.StatusNotFound))
 	})
 
 	It("reports passkeys as unavailable when the public origin is not configured", func() {
 		handler = Handler(repository, Config{})
 
-		loginOptions := perform(http.MethodPost, "/v1/auth/passkey/login/options", "", "")
+		loginOptions := rpc("BeginPasskeyLogin", `{}`, "")
 		Expect(loginOptions.Code).To(Equal(http.StatusNotImplemented))
-		Expect(loginOptions.Body.String()).To(ContainSubstring("passkey_unavailable"))
 
-		loginFinish := perform(http.MethodPost, "/v1/auth/passkey/login/finish?ceremony_id=ceremony", "{}", "")
+		loginFinish := rpc("FinishPasskeyLogin", `{"ceremonyId":"ceremony","credentialJson":"e30="}`, "")
 		Expect(loginFinish.Code).To(Equal(http.StatusNotImplemented))
-		Expect(loginFinish.Body.String()).To(ContainSubstring("passkey_unavailable"))
 
-		registrationOptions := perform(http.MethodPost, "/v1/auth/passkey/registration/options", "", "access-token")
+		registrationOptions := rpc("BeginPasskeyRegistration", `{}`, "access-token")
 		Expect(registrationOptions.Code).To(Equal(http.StatusNotImplemented))
-		Expect(registrationOptions.Body.String()).To(ContainSubstring("passkey_unavailable"))
 
-		registrationFinish := perform(
-			http.MethodPost,
-			"/v1/auth/passkey/registration/finish?ceremony_id=ceremony",
-			"{}",
-			"access-token",
-		)
-		Expect(registrationFinish.Code).To(Equal(http.StatusBadRequest))
-		Expect(registrationFinish.Body.String()).To(ContainSubstring("invalid_passkey_ceremony"))
+		registrationFinish := rpc("FinishPasskeyRegistration", `{}`, "access-token")
+		Expect(registrationFinish.Code).To(Equal(http.StatusNotImplemented))
 	})
 
 	It("keeps owner-only handlers protected without authentication middleware", func() {
@@ -860,23 +861,24 @@ var _ = Describe("HTTP API", func() {
 		Entry("storage failure", "/v1/devices/01900000-0000-7000-8000-000000000001", errors.New("database unavailable"), http.StatusInternalServerError, "storage_error"),
 	)
 
-	It("creates a bootstrap session", func() {
+	It("creates a bootstrap session through RPC", func() {
 		passwordHash, err := auth.HashPassword("correct horse battery staple")
 		Expect(err).NotTo(HaveOccurred())
 		repository.credential = store.OwnerCredential{ID: "owner-1", PasswordHash: passwordHash}
 
-		response := perform(http.MethodPost, "/v1/auth/bootstrap", `{"username":"admin","password":"correct horse battery staple"}`, "")
+		response := rpc("Bootstrap", `{"username":"admin","password":"correct horse battery staple"}`, "")
 
-		Expect(response.Code).To(Equal(http.StatusCreated))
+		Expect(response.Code).To(Equal(http.StatusOK))
 		Expect(repository.sessionPair.AccessToken).NotTo(BeEmpty())
 		Expect(repository.sessionPair.RefreshToken).NotTo(BeEmpty())
+		Expect(perform(http.MethodPost, "/v1/auth/bootstrap", `{}`, "").Code).To(Equal(http.StatusNotFound))
 	})
 
 	DescribeTable("rejects invalid bootstrap logins",
 		func(credential store.OwnerCredential, credentialError error, requestBody string) {
 			repository.credential = credential
 			repository.credentialError = credentialError
-			response := perform(http.MethodPost, "/v1/auth/bootstrap", requestBody, "")
+			response := rpc("Bootstrap", requestBody, "")
 			Expect(response.Code).To(Equal(http.StatusUnauthorized))
 			Expect(repository.sessionPair.AccessToken).To(BeEmpty())
 		},
@@ -890,37 +892,36 @@ var _ = Describe("HTTP API", func() {
 		}(), nil, `{"username":"admin","password":"password"}`),
 	)
 
-	It("rejects malformed bootstrap JSON and session storage failures", func() {
-		Expect(perform(http.MethodPost, "/v1/auth/bootstrap", `{`, "").Code).To(Equal(http.StatusBadRequest))
+	It("rejects invalid bootstrap RPC messages and session storage failures", func() {
+		Expect(rpc("Bootstrap", `{`, "").Code).To(Equal(http.StatusBadRequest))
 		passwordHash, err := auth.HashPassword("correct horse battery staple")
 		Expect(err).NotTo(HaveOccurred())
 		repository.credential = store.OwnerCredential{ID: "owner-1", PasswordHash: passwordHash}
 		repository.createSessionError = errors.New("database unavailable")
-		Expect(perform(http.MethodPost, "/v1/auth/bootstrap", `{"username":"admin","password":"correct horse battery staple"}`, "").Code).To(Equal(http.StatusInternalServerError))
+		Expect(rpc("Bootstrap", `{"username":"admin","password":"correct horse battery staple"}`, "").Code).To(Equal(http.StatusInternalServerError))
 	})
 
-	It("refreshes and revokes session credentials", func() {
-		refresh := perform(http.MethodPost, "/v1/auth/refresh", `{"refresh_token":"old-refresh"}`, "")
+	It("refreshes and revokes session credentials through RPC", func() {
+		refresh := rpc("Refresh", `{"refreshToken":"old-refresh"}`, "")
 		Expect(refresh.Code).To(Equal(http.StatusOK))
 		Expect(repository.rotatedRefresh).To(Equal("old-refresh"))
 
-		logout := perform(http.MethodPost, "/v1/auth/logout", "", "access-token")
-		Expect(logout.Code).To(Equal(http.StatusNoContent))
+		logout := rpc("Logout", `{}`, "access-token")
+		Expect(logout.Code).To(Equal(http.StatusOK))
 		Expect(repository.revokedAccess).To(Equal("access-token"))
 	})
 
 	It("rejects malformed or failed session refreshes", func() {
-		Expect(perform(http.MethodPost, "/v1/auth/refresh", `{`, "").Code).To(Equal(http.StatusBadRequest))
+		Expect(rpc("Refresh", `{`, "").Code).To(Equal(http.StatusBadRequest))
 		repository.rotateSessionError = pgx.ErrNoRows
-		response := perform(http.MethodPost, "/v1/auth/refresh", `{"refresh_token":"expired"}`, "")
+		response := rpc("Refresh", `{"refreshToken":"expired"}`, "")
 		Expect(response.Code).To(Equal(http.StatusUnauthorized))
-		Expect(response.Body.String()).To(ContainSubstring("invalid_refresh_token"))
 	})
 
 	It("requires a valid access token for logout", func() {
-		Expect(perform(http.MethodPost, "/v1/auth/logout", "", "").Code).To(Equal(http.StatusUnauthorized))
+		Expect(rpc("Logout", `{}`, "").Code).To(Equal(http.StatusUnauthorized))
 		repository.revokeSessionError = pgx.ErrNoRows
-		Expect(perform(http.MethodPost, "/v1/auth/logout", "", "expired").Code).To(Equal(http.StatusUnauthorized))
+		Expect(rpc("Logout", `{}`, "expired").Code).To(Equal(http.StatusUnauthorized))
 	})
 
 	DescribeTable("parses configured ports",

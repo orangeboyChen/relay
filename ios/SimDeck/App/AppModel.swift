@@ -54,6 +54,7 @@ final class AppModel {
     @ObservationIgnored private let commandSigner: InstallationCommandSigner
     @ObservationIgnored private let messageTransport: any MessageTransport
     @ObservationIgnored private let slotSettingsTransport: any SlotSettingsTransport
+    @ObservationIgnored private let esimProfileManager: any ESIMProfileManaging
     @ObservationIgnored private let messageHistoryStore: EncryptedMessageHistoryStore
     @ObservationIgnored private let callHistoryStore: EncryptedCallHistoryStore
     @ObservationIgnored private let remoteDeviceRefreshEnabled: Bool
@@ -82,6 +83,7 @@ final class AppModel {
         installationBootstrapper: any InstallationBootstrapping = InstallationBootstrapper.live(),
         messageTransport: (any MessageTransport)? = nil,
         slotSettingsTransport: (any SlotSettingsTransport)? = nil,
+        esimProfileManager: (any ESIMProfileManaging)? = nil,
         defaultLineStore: (any DefaultLineStoring)? = nil,
         recentCallLineStore: (any RecentCallLineStoring)? = nil,
         onboardingStore: (any OnboardingStoring)? = nil,
@@ -139,6 +141,7 @@ final class AppModel {
             api: resolvedServerConnection,
             commandSigner: resolvedCommandSigner
         )
+        self.esimProfileManager = esimProfileManager ?? UnavailableESIMProfileManager()
         self.remoteDeviceRefreshEnabled = remoteDeviceRefreshEnabled
         self.messageEventMonitor = nil
         reconcileLineHistory(using: devices)
@@ -750,6 +753,34 @@ final class AppModel {
 
     func restartSlotModem(line: DeviceLineIdentity) async throws {
         try await slotSettingsTransport.restartModem(line: line)
+    }
+
+    func loadESIMProfiles(line: DeviceLineIdentity) async throws -> [ESIMProfile] {
+        try await esimProfileManager.loadProfiles(line: line)
+    }
+
+    func setESIMProfileEnabled(
+        _ enabled: Bool,
+        profile: ESIMProfile,
+        line: DeviceLineIdentity
+    ) async throws -> ESIMProfile {
+        try await esimProfileManager.setEnabled(enabled, profile: profile, line: line)
+    }
+
+    func renameESIMProfile(
+        _ name: String,
+        profile: ESIMProfile,
+        line: DeviceLineIdentity
+    ) async throws -> ESIMProfile {
+        try await esimProfileManager.rename(name, profile: profile, line: line)
+    }
+
+    func deleteESIMProfile(profile: ESIMProfile, line: DeviceLineIdentity) async throws {
+        try await esimProfileManager.delete(profile: profile, line: line)
+    }
+
+    func addESIMActivationCode(_ code: String, line: DeviceLineIdentity) async throws -> ESIMProfile {
+        try await esimProfileManager.addActivationCode(code, line: line)
     }
 
     func removeDevice(line: DeviceLineIdentity) async throws {

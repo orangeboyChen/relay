@@ -156,6 +156,12 @@ struct SimDeckApp: App {
         } else if ProcessInfo.processInfo.arguments.contains("--preview-profile") {
             _model = State(initialValue: .preview(selectedTab: .profile))
             shouldStartLiveServices = false
+        } else if ProcessInfo.processInfo.arguments.contains("--preview-esim") {
+            _model = State(initialValue: .preview(
+                selectedTab: .profile,
+                devices: [PreviewFixtures.esimLine]
+            ))
+            shouldStartLiveServices = false
         } else if ProcessInfo.processInfo.arguments.contains("--preview-fixtures") {
             _model = State(initialValue: .preview(selectedTab: .messages))
             shouldStartLiveServices = false
@@ -219,6 +225,7 @@ enum LiveServiceLaunchPolicy {
     private static let previewArguments: Set<String> = [
         "--preview-onboarding",
         "--preview-profile",
+        "--preview-esim",
         "--preview-fixtures",
         "--preview-active-call",
     ]

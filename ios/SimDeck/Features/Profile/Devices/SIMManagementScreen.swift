@@ -12,6 +12,21 @@ struct SIMManagementScreen: View {
 
     var body: some View {
         List {
+            if !esimLines.isEmpty {
+                Section("eSIM") {
+                    ForEach(esimLines) { line in
+                        NavigationLink {
+                            ESIMManagementScreen(model: model, line: line)
+                        } label: {
+                            Label(
+                                "eSIM Management · SIM \(line.numericID)",
+                                systemImage: "simcard.2"
+                            )
+                        }
+                    }
+                }
+            }
+
             if model.managedSIMs.isEmpty {
                 ContentUnavailableView("No SIM Cards", systemImage: "simcard", description: Text("SIM cards appear after a modem reports its ICCID."))
             } else {
@@ -47,6 +62,10 @@ struct SIMManagementScreen: View {
             Text("The SIM identity and its encrypted profile will be removed from this account. A future insertion creates a new managed record.")
         }
         .scrollEdgeEffectStyle(.soft, for: .all)
+    }
+
+    private var esimLines: [DeviceLineIdentity] {
+        model.devices.filter { $0.simKind == .eSIM && $0.simID != nil }
     }
 }
 

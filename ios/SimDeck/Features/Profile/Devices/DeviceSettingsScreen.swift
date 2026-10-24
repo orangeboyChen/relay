@@ -167,6 +167,14 @@ struct SIMSettingsScreen: View {
                 TextField("Phone number", text: $phoneNumber)
                     .textContentType(.telephoneNumber)
                     .keyboardType(.numbersAndPunctuation)
+
+                if line.simKind == .eSIM {
+                    NavigationLink {
+                        ESIMManagementScreen(model: model, line: line)
+                    } label: {
+                        Label("eSIM Management", systemImage: "simcard.2")
+                    }
+                }
             }
             if let slotSettings {
                 SlotControlSection(settings: slotSettingsBinding(for: slotSettings))

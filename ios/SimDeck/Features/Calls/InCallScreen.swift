@@ -29,70 +29,65 @@ struct InCallScreen: View {
                     )
                     .padding(.top, 53)
 
-                    if isKeypadVisible {
-                        InCallKeypad { digit in
-                            enteredDTMFDigits.append(contentsOf: digit)
-                            perform {
-                                try await coordinator.playDTMF(digit)
+                    ZStack(alignment: .top) {
+                        if isKeypadVisible {
+                            InCallKeypad { digit in
+                                enteredDTMFDigits.append(contentsOf: digit)
+                                perform {
+                                    try await coordinator.playDTMF(digit)
+                                }
+                            }
+                            .padding(.top, 105)
+                            .transition(inCallContentTransition)
+                        } else {
+                            InCallControls(
+                                call: call,
+                                capabilities: coordinator.capabilities,
+                                audioRoutes: coordinator.audioRoutes,
+                                onMute: {
+                                    perform {
+                                        try await coordinator.setMuted(!call.isMuted)
+                                    }
+                                },
+                                onKeypad: {
+                                    withAnimation(motionAnimation) {
+                                        isKeypadVisible = true
+                                    }
+                                },
+                                onAudioRoute: { route in
+                                    do {
+                                        try coordinator.audioRoutes.select(route)
+                                    } catch {
+                                        presentedError = InCallPresentedError(
+                                            message: "Could not change the audio route."
+                                        )
+                                    }
+                                },
+                                onHold: {
+                                    perform {
+                                        try await coordinator.setHeld(!call.status.isHeld)
+                                    }
+                                }
+                            )
+                            .padding(.top, 40)
+                            .transition(inCallContentTransition)
+                        }
+                    }
+                    .frame(maxHeight: .infinity, alignment: .top)
+
+                    InCallKeypadFooter(
+                        keypadVisible: isKeypadVisible,
+                        onEnd: {
+                            Task {
+                                try? await coordinator.endCall()
+                            }
+                        },
+                        onHide: {
+                            withAnimation(motionAnimation) {
+                                isKeypadVisible = false
                             }
                         }
-                        .padding(.top, 105)
-                        .transition(inCallContentTransition)
-
-                        InCallKeypadFooter(
-                            onEnd: {
-                                Task {
-                                    try? await coordinator.endCall()
-                                }
-                            },
-                            onHide: {
-                                withAnimation(motionAnimation) {
-                                    isKeypadVisible = false
-                                }
-                            }
-                        )
-                        .padding(.top, 48.5)
-
-                        Spacer(minLength: 0)
-                    } else {
-                        Spacer(minLength: 40)
-
-                        InCallControls(
-                            call: call,
-                            capabilities: coordinator.capabilities,
-                            audioRoutes: coordinator.audioRoutes,
-                            onMute: {
-                                perform {
-                                    try await coordinator.setMuted(!call.isMuted)
-                                }
-                            },
-                            onKeypad: {
-                                withAnimation(motionAnimation) {
-                                    isKeypadVisible = true
-                                }
-                            },
-                            onAudioRoute: { route in
-                                do {
-                                    try coordinator.audioRoutes.select(route)
-                                } catch {
-                                    presentedError = InCallPresentedError(
-                                        message: "Could not change the audio route."
-                                    )
-                                }
-                            },
-                            onHold: {
-                                perform {
-                                    try await coordinator.setHeld(!call.status.isHeld)
-                                }
-                            },
-                            onEnd: {
-                                Task {
-                                    try? await coordinator.endCall()
-                                }
-                            }
-                        )
-                        .transition(inCallContentTransition)
-                    }
+                    )
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 16)
@@ -170,16 +165,51 @@ private struct CallIdentityHeader: View {
             .font(.title3.weight(.semibold))
             .foregroundStyle(.white.opacity(0.68))
 
-            Text(call.title + enteredDTMFDigits)
-                .font(.system(size: 35, weight: .semibold))
-                .foregroundStyle(.white)
-                .lineLimit(2)
-                .minimumScaleFactor(0.65)
-                .multilineTextAlignment(.center)
-                .offset(y: -4)
-                .accessibilityLabel(call.title)
+            CallNumberDisplay(
+                originalNumber: call.title,
+                enteredDigits: enteredDTMFDigits
+            )
+            .offset(y: -4)
 
         }
+    }
+}
+
+enum CallNumberDisplayValue {
+    static func text(originalNumber: String, enteredDigits: String) -> String {
+        enteredDigits.isEmpty ? originalNumber : enteredDigits
+    }
+}
+
+private struct CallNumberDisplay: View {
+    let originalNumber: String
+    let enteredDigits: String
+
+    private let fontSizes: [CGFloat] = [35, 32, 29, 26, 23, 20]
+
+    var body: some View {
+        let value = CallNumberDisplayValue.text(
+            originalNumber: originalNumber,
+            enteredDigits: enteredDigits
+        )
+
+        ViewThatFits(in: .horizontal) {
+            ForEach(fontSizes, id: \.self) { size in
+                Text(verbatim: value)
+                    .font(.system(size: size, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+
+            Text(verbatim: value)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .accessibilityLabel(Text(verbatim: value))
     }
 }
 
@@ -271,7 +301,6 @@ private struct InCallControls: View {
     let onKeypad: () -> Void
     let onAudioRoute: (CallAudioRoute) -> Void
     let onHold: () -> Void
-    let onEnd: () -> Void
 
     var body: some View {
         VStack(spacing: 21) {
@@ -306,7 +335,8 @@ private struct InCallControls: View {
                     onHold: onHold
                 )
 
-                InCallEndButton(action: onEnd)
+                Color.clear
+                    .frame(width: 84, height: 80)
 
                 CallControlButton(
                     title: "Keypad",
@@ -701,6 +731,7 @@ private struct InCallKeyLabel: View {
 }
 
 private struct InCallKeypadFooter: View {
+    let keypadVisible: Bool
     let onEnd: () -> Void
     let onHide: () -> Void
 
@@ -721,11 +752,13 @@ private struct InCallKeypadFooter: View {
             .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
             .accessibilityLabel("End call")
 
-            Button("Hide Keypad", action: onHide)
-                .font(.body)
-                .foregroundStyle(.white)
-                .frame(minWidth: 96, minHeight: 44)
-                .offset(x: 114)
+            if keypadVisible {
+                Button("Hide Keypad", action: onHide)
+                    .font(.body)
+                    .foregroundStyle(.white)
+                    .frame(minWidth: 96, minHeight: 44)
+                    .offset(x: 114)
+            }
         }
         .frame(height: 80)
     }

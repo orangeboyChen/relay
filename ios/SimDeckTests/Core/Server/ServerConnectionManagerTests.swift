@@ -224,7 +224,7 @@ final class ServerConnectionManagerTests: XCTestCase {
         )
         let network = ScriptedServerNetwork { request in
             switch (request.httpMethod, request.url?.path) {
-            case ("GET", "/v1/devices"):
+            case ("POST", "/relay.communication.v1.OwnerService/ListDevices"):
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access-one")
                 return Self.response(
                     status: 200,
@@ -300,7 +300,7 @@ final class ServerConnectionManagerTests: XCTestCase {
             value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
         )
         let network = ScriptedServerNetwork { request in
-            XCTAssertEqual(request.url?.path, "/v1/devices")
+            XCTAssertEqual(request.url?.path, "/relay.communication.v1.OwnerService/ListDevices")
             return Self.response(
                 status: 200,
                 body: """
@@ -387,7 +387,7 @@ final class ServerConnectionManagerTests: XCTestCase {
             value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
         )
         let network = ScriptedServerNetwork { request in
-            XCTAssertEqual(request.url?.path, "/v1/devices")
+            XCTAssertEqual(request.url?.path, "/relay.communication.v1.OwnerService/ListDevices")
             return Self.response(status: 200, body: """
             {"devices":[{
               "device_uuid":"\(deviceID.uuidString.lowercased())",
@@ -477,9 +477,9 @@ final class ServerConnectionManagerTests: XCTestCase {
         let commandKey = Data(repeating: 5, count: 32)
         let network = ScriptedServerNetwork { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
-            let discoveryPath = "/v1/device-discoveries/\(deviceID.uuidString.lowercased())"
+            let discoveryPath = "/relay.communication.v1.OwnerService/RejectDeviceDiscovery"
             switch (request.httpMethod, request.url?.path) {
-            case ("POST", "/v1/device-discovery-session"):
+            case ("POST", "/relay.communication.v1.OwnerService/OpenDeviceDiscovery"):
                 return Self.response(
                     status: 201,
                     body: """
@@ -489,7 +489,7 @@ final class ServerConnectionManagerTests: XCTestCase {
                     }}
                     """
                 )
-            case ("GET", "/v1/device-discovery-session"):
+            case ("POST", "/relay.communication.v1.OwnerService/GetDeviceDiscoverySession"):
                 return Self.response(
                     status: 200,
                     body: """
@@ -499,7 +499,7 @@ final class ServerConnectionManagerTests: XCTestCase {
                     }}
                     """
                 )
-            case ("GET", "/v1/device-discoveries"):
+            case ("POST", "/relay.communication.v1.OwnerService/ListDeviceDiscoveries"):
                 return Self.response(
                     status: 200,
                     body: """
@@ -514,14 +514,14 @@ final class ServerConnectionManagerTests: XCTestCase {
                     }]}
                     """
                 )
-            case ("POST", "\(discoveryPath)/approve"):
+            case ("POST", "/relay.communication.v1.OwnerService/ApproveDeviceDiscovery"):
                 return Self.response(
                     status: 200,
                     body: """
                     {"device":{"device_uuid":"\(deviceID.uuidString.lowercased())","numeric_id":2}}
                     """
                 )
-            case ("DELETE", discoveryPath), ("DELETE", "/v1/device-discovery-session"):
+            case ("POST", discoveryPath), ("POST", "/relay.communication.v1.OwnerService/CloseDeviceDiscovery"):
                 return Self.response(status: 204, body: "")
             default:
                 XCTFail("Unexpected request: \(request.httpMethod ?? "") \(request.url?.path ?? "")")
@@ -549,12 +549,12 @@ final class ServerConnectionManagerTests: XCTestCase {
         XCTAssertEqual(
             network.requests.map { "\($0.httpMethod ?? "") \($0.url?.path ?? "")" },
             [
-                "POST /v1/device-discovery-session",
-                "GET /v1/device-discovery-session",
-                "GET /v1/device-discoveries",
-                "POST /v1/device-discoveries/\(deviceID.uuidString.lowercased())/approve",
-                "DELETE /v1/device-discoveries/\(deviceID.uuidString.lowercased())",
-                "DELETE /v1/device-discovery-session",
+                "POST /relay.communication.v1.OwnerService/OpenDeviceDiscovery",
+                "POST /relay.communication.v1.OwnerService/GetDeviceDiscoverySession",
+                "POST /relay.communication.v1.OwnerService/ListDeviceDiscoveries",
+                "POST /relay.communication.v1.OwnerService/ApproveDeviceDiscovery",
+                "POST /relay.communication.v1.OwnerService/RejectDeviceDiscovery",
+                "POST /relay.communication.v1.OwnerService/CloseDeviceDiscovery",
             ]
         )
     }
@@ -564,7 +564,7 @@ final class ServerConnectionManagerTests: XCTestCase {
             value: Data(Self.sessionJSON(accessToken: "access", refreshToken: "refresh").utf8)
         )
         let network = ScriptedServerNetwork { request in
-            if request.url?.path == "/v1/device-discovery-session" {
+            if request.url?.path == "/relay.communication.v1.OwnerService/GetDeviceDiscoverySession" {
                 return Self.response(status: 200, body: "{\"active\":false}")
             }
             return Self.response(status: 410, body: "{}")
@@ -581,7 +581,7 @@ final class ServerConnectionManagerTests: XCTestCase {
             _ = try await manager.approveDiscoveredDevice(id: UUID())
             XCTFail("Expected an expired discovery to fail")
         } catch {
-            XCTAssertEqual(error as? ServerConnectionError, .requestFailed(410))
+            XCTAssertNotNil(error as? Connect.ConnectError)
         }
     }
 
@@ -594,25 +594,22 @@ final class ServerConnectionManagerTests: XCTestCase {
         )
         let network = ScriptedServerNetwork { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
-            let expectedBase = "/v1/devices/\(deviceID.uuidString.lowercased())"
-            let expectedSIMBase = "/v1/sims/\(simID.uuidString.lowercased())"
+            let deviceProfile = "/relay.communication.v1.OwnerService/UpdateDeviceProfile"
+            let deviceNumericID = "/relay.communication.v1.OwnerService/UpdateDeviceNumericId"
+            let simProfile = "/relay.communication.v1.OwnerService/UpdateSimProfile"
+            let simNumericID = "/relay.communication.v1.OwnerService/UpdateSimNumericId"
+            let revokeDevice = "/relay.communication.v1.OwnerService/RevokeDevice"
             switch (request.httpMethod, request.url?.path) {
-            case ("PUT", "\(expectedBase)/profile"), ("PUT", "\(expectedSIMBase)/profile"):
-                let object = try XCTUnwrap(
-                    JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
-                )
-                XCTAssertEqual(
-                    object["profile_ciphertext"] as? String,
-                    ciphertext.base64EncodedString()
-                )
-                XCTAssertEqual(object.count, 1)
-            case ("PATCH", "\(expectedBase)/numeric-id"), ("PATCH", "\(expectedSIMBase)/numeric-id"):
-                let object = try XCTUnwrap(
-                    JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
-                )
-                XCTAssertEqual(object["numeric_id"] as? Int, 7)
-            case ("DELETE", expectedBase):
-                XCTAssertNil(request.httpBody)
+            case ("POST", deviceProfile), ("POST", simProfile):
+                let body = try XCTUnwrap(request.httpBody)
+                let decoded = try Relay_Communication_V1_UpdateDeviceProfileRequest(serializedBytes: body)
+                XCTAssertEqual(decoded.profileCiphertext, ciphertext)
+            case ("POST", deviceNumericID), ("POST", simNumericID):
+                let body = try XCTUnwrap(request.httpBody)
+                let decoded = try Relay_Communication_V1_UpdateDeviceNumericIdRequest(serializedBytes: body)
+                XCTAssertEqual(decoded.numericID, 7)
+            case ("POST", revokeDevice):
+                XCTAssertEqual(request.url?.path, revokeDevice)
             default:
                 XCTFail("Unexpected request: \(request.httpMethod ?? "") \(request.url?.path ?? "")")
             }
@@ -631,11 +628,11 @@ final class ServerConnectionManagerTests: XCTestCase {
         XCTAssertEqual(
             network.requests.compactMap(\.url?.path),
             [
-                "/v1/devices/\(deviceID.uuidString.lowercased())/profile",
-                "/v1/devices/\(deviceID.uuidString.lowercased())/numeric-id",
-                "/v1/sims/\(simID.uuidString.lowercased())/profile",
-                "/v1/sims/\(simID.uuidString.lowercased())/numeric-id",
-                "/v1/devices/\(deviceID.uuidString.lowercased())"
+                "/relay.communication.v1.OwnerService/UpdateDeviceProfile",
+                "/relay.communication.v1.OwnerService/UpdateDeviceNumericId",
+                "/relay.communication.v1.OwnerService/UpdateSimProfile",
+                "/relay.communication.v1.OwnerService/UpdateSimNumericId",
+                "/relay.communication.v1.OwnerService/RevokeDevice"
             ]
         )
     }
@@ -647,7 +644,7 @@ final class ServerConnectionManagerTests: XCTestCase {
         )
         let network = ScriptedServerNetwork { request in
             switch (request.httpMethod, request.url?.path) {
-            case ("GET", "/v1/sims"):
+            case ("POST", "/relay.communication.v1.OwnerService/ListSimCards"):
                 return Self.response(status: 200, body: """
                 {"sims":[{
                   "sim_id":"\(simID.uuidString.lowercased())",
@@ -655,7 +652,7 @@ final class ServerConnectionManagerTests: XCTestCase {
                   "last_seen_at":"2026-10-16T00:00:00Z"
                 }]}
                 """)
-            case ("DELETE", "/v1/sims/\(simID.uuidString.lowercased())"):
+            case ("POST", "/relay.communication.v1.OwnerService/RetireSimCard"):
                 return Self.response(status: 204, body: "")
             default:
                 XCTFail("Unexpected request: \(request.httpMethod ?? "") \(request.url?.path ?? "")")
@@ -686,7 +683,7 @@ final class ServerConnectionManagerTests: XCTestCase {
             try await manager.updateDeviceNumericID(deviceID: UUID(), numericID: 2)
             XCTFail("Expected the duplicate SIM ID to fail")
         } catch {
-            XCTAssertEqual(error as? ServerConnectionError, .requestFailed(409))
+            XCTAssertEqual((error as? Connect.ConnectError)?.code, .unknown)
         }
     }
 
@@ -702,7 +699,7 @@ final class ServerConnectionManagerTests: XCTestCase {
         let passkeyClient = FakePasskeyRPCClient()
         let network = ScriptedServerNetwork { request in
             switch (request.httpMethod, request.url?.path) {
-            case ("GET", "/v1/devices"):
+            case ("POST", "/relay.communication.v1.OwnerService/ListDevices"):
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fresh-access")
                 return Self.response(status: 200, body: "{\"devices\":[]}")
             default:
@@ -722,7 +719,7 @@ final class ServerConnectionManagerTests: XCTestCase {
         let devices = try await manager.loadDevices()
 
         XCTAssertTrue(devices.isEmpty)
-        XCTAssertEqual(network.requests.map(\.url?.path), ["/v1/devices"])
+        XCTAssertEqual(network.requests.map(\.url?.path), ["/relay.communication.v1.OwnerService/ListDevices"])
         XCTAssertEqual(passkeyClient.refreshToken, "refresh-one")
         XCTAssertTrue(String(decoding: try XCTUnwrap(store.value), as: UTF8.self).contains("fresh-access"))
     }
@@ -751,7 +748,7 @@ final class ServerConnectionManagerTests: XCTestCase {
         }
         let network = ScriptedServerNetwork { request in
             switch (request.httpMethod, request.url?.path) {
-            case ("GET", "/v1/devices"):
+            case ("POST", "/relay.communication.v1.OwnerService/ListDevices"):
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fresh-access")
                 return Self.response(status: 200, body: "{\"devices\":[]}")
             default:
@@ -779,10 +776,10 @@ final class ServerConnectionManagerTests: XCTestCase {
         _ = try await firstRequest.value
         _ = try await secondRequest.value
         XCTAssertEqual(
-            network.requests.filter { $0.url?.path == "/v1/auth/refresh" }.count, 0
+            network.requests.filter { $0.url?.path == "/relay.communication.v1.AuthenticationService/Refresh" }.count, 0
         )
         XCTAssertEqual(
-            network.requests.filter { $0.url?.path == "/v1/devices" }.count,
+            network.requests.filter { $0.url?.path == "/relay.communication.v1.OwnerService/ListDevices" }.count,
             2
         )
     }
@@ -843,7 +840,7 @@ final class ServerConnectionManagerTests: XCTestCase {
             _ = try await manager.loadDevices()
             XCTFail("Expected the device request to fail")
         } catch {
-            XCTAssertEqual(error as? ServerConnectionError, .requestFailed(503))
+            XCTAssertEqual((error as? Connect.ConnectError)?.code, .unavailable)
         }
 
         XCTAssertEqual(manager.state, .failed)
@@ -901,31 +898,27 @@ final class ServerConnectionManagerTests: XCTestCase {
         let wrappedKey = Data("wrapped vault key".utf8)
         let network = ScriptedServerNetwork { request in
             XCTAssertEqual(request.httpMethod, "POST")
-            XCTAssertEqual(request.url?.path, "/v1/app-installations")
+            XCTAssertEqual(request.url?.path, "/relay.communication.v1.OwnerService/RegisterAppInstallation")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
-            let object = try XCTUnwrap(
-                JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
-            )
+            let body = try XCTUnwrap(request.httpBody)
+            let object = try Relay_Communication_V1_RegisterAppInstallationRequest(serializedBytes: body)
             XCTAssertEqual(
-                (object["installation_id"] as? String).flatMap(UUID.init(uuidString:)),
+                UUID(uuidString: object.installationID),
                 installationID
             )
-            XCTAssertEqual(object["identity_public_key"] as? String, publicKey.base64EncodedString())
-            XCTAssertEqual(
-                object["key_agreement_public_key"] as? String,
-                keyAgreementPublicKey.base64EncodedString()
-            )
-            XCTAssertEqual(object["wrapped_vault_key"] as? String, wrappedKey.base64EncodedString())
+            XCTAssertEqual(object.identityPublicKey, publicKey)
+            XCTAssertEqual(object.keyAgreementPublicKey, keyAgreementPublicKey)
+            XCTAssertEqual(object.wrappedVaultKey, wrappedKey)
             return Self.response(
                 status: 201,
                 body: """
                 {"installation":{
-                  "installation_id":"\(installationID.uuidString.lowercased())",
-                  "identity_public_key":"\(publicKey.base64EncodedString())",
-                  "key_agreement_public_key":"\(keyAgreementPublicKey.base64EncodedString())",
-                  "wrapped_vault_key":"\(wrappedKey.base64EncodedString())",
-                  "approved_at":"2026-10-16T13:00:00Z",
-                  "created_at":"2026-10-16T13:00:00Z"
+                  "installationId":"\(installationID.uuidString.lowercased())",
+                  "identityPublicKey":"\(publicKey.base64EncodedString())",
+                  "keyAgreementPublicKey":"\(keyAgreementPublicKey.base64EncodedString())",
+                  "wrappedVaultKey":"\(wrappedKey.base64EncodedString())",
+                  "approvedAt":"2026-10-16T13:00:00Z",
+                  "createdAt":"2026-10-16T13:00:00Z"
                 },"created":true}
                 """
             )
@@ -1003,25 +996,23 @@ final class ServerConnectionManagerTests: XCTestCase {
             XCTAssertEqual(request.httpMethod, "POST")
             XCTAssertEqual(
                 request.url?.path,
-                "/v1/incoming-calls/\(notificationID.uuidString.lowercased())/claim"
+                "/relay.communication.v1.OwnerService/ClaimIncomingCall"
             )
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
-            let object = try XCTUnwrap(
-                JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
-            )
+            let body = try XCTUnwrap(request.httpBody)
+            let object = try Relay_Communication_V1_ClaimIncomingCallRequest(serializedBytes: body)
             XCTAssertEqual(
-                (object["installation_id"] as? String).flatMap(UUID.init(uuidString:)),
+                UUID(uuidString: object.installationID),
                 installationID
             )
             return Self.response(
                 status: 200,
                 body: """
-                {"claim":{
-                  "notification_id":"\(notificationID.uuidString.lowercased())",
-                  "installation_id":"\(installationID.uuidString.lowercased())",
-                  "claimed_at":"2026-10-16T13:00:00Z",
+                {"notificationId":"\(notificationID.uuidString.lowercased())",
+                  "installationId":"\(installationID.uuidString.lowercased())",
+                  "claimedAt":"2026-10-16T13:00:00Z",
                   "won":true
-                }}
+                }
                 """
             )
         }
@@ -1057,7 +1048,7 @@ final class ServerConnectionManagerTests: XCTestCase {
             )
             XCTFail("Expected the unavailable call to fail")
         } catch {
-            XCTAssertEqual(error as? ServerConnectionError, .requestFailed(404))
+            XCTAssertEqual((error as? Connect.ConnectError)?.code, .unimplemented)
         }
     }
 
@@ -1068,17 +1059,16 @@ final class ServerConnectionManagerTests: XCTestCase {
         let installationID = UUID(uuidString: "01900000-0000-7000-8000-000000000101")!
         let token = Data((0..<32).map(UInt8.init))
         let network = ScriptedServerNetwork { request in
-            XCTAssertEqual(request.httpMethod, "PUT")
+            XCTAssertEqual(request.httpMethod, "POST")
             XCTAssertEqual(
                 request.url?.path,
-                "/v1/app-installations/\(installationID.uuidString.lowercased())/push-tokens/voip"
+                "/relay.communication.v1.OwnerService/UpsertPushToken"
             )
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
-            let object = try XCTUnwrap(
-                JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
-            )
-            XCTAssertEqual(object["environment"] as? String, "sandbox")
-            XCTAssertEqual(object["token"] as? String, token.base64EncodedString())
+            let body = try XCTUnwrap(request.httpBody)
+            let object = try Relay_Communication_V1_UpsertPushTokenRequest(serializedBytes: body)
+            XCTAssertEqual(object.environment, "sandbox")
+            XCTAssertEqual(object.token, token)
             return Self.response(status: 204, body: "")
         }
         let defaults = isolatedDefaults()
@@ -1128,16 +1118,14 @@ final class ServerConnectionManagerTests: XCTestCase {
         )
         let installationID = UUID(uuidString: "01900000-0000-7000-8000-000000000101")!
         let network = ScriptedServerNetwork { request in
-            XCTAssertEqual(request.httpMethod, "DELETE")
+            XCTAssertEqual(request.httpMethod, "POST")
             XCTAssertEqual(
                 request.url?.path,
-                "/v1/app-installations/\(installationID.uuidString.lowercased())/push-tokens/voip"
+                "/relay.communication.v1.OwnerService/DeletePushToken"
             )
-            XCTAssertEqual(
-                URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?
-                    .queryItems,
-                [URLQueryItem(name: "environment", value: "sandbox")]
-            )
+            let body = try XCTUnwrap(request.httpBody)
+            let object = try Relay_Communication_V1_DeletePushTokenRequest(serializedBytes: body)
+            XCTAssertEqual(object.environment, "sandbox")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
             return Self.response(status: 204, body: "")
         }

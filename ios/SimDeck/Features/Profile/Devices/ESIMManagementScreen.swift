@@ -18,14 +18,24 @@ struct ESIMManagementScreen: View {
             if isLoading {
                 ProgressView("Loading profiles…")
             } else if profiles.isEmpty {
-                ContentUnavailableView(
-                    "No eSIM Profiles",
-                    systemImage: "simcard",
-                    description: Text("Add a profile by scanning a QR code or entering its activation code.")
-                )
+                VStack(spacing: 16) {
+                    ContentUnavailableView(
+                        "No eSIM Profiles",
+                        systemImage: "simcard",
+                        description: Text("Add a profile by scanning a QR code or entering its activation code.")
+                    )
+
+                    Button {
+                        isAddingProfile = true
+                    } label: {
+                        Label("Add Profile", systemImage: "plus")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
-                    Section {
+                    Section("Profiles") {
                         ForEach(profiles) { profile in
                             NavigationLink {
                                 ESIMProfileDetailScreen(
@@ -43,13 +53,17 @@ struct ESIMManagementScreen: View {
                                 ESIMProfileRow(profile: profile)
                             }
                         }
-                    } footer: {
-                        Text("Only installed profiles are shown. A profile can be enabled on one eSIM at a time.")
+                    }
+                    Section {
+                        Text("Only installed profiles are shown. One profile can be enabled at a time.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
         }
         .navigationTitle("eSIM Management")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -72,7 +86,8 @@ struct ESIMManagementScreen: View {
             ESIMAddProfileSheet(model: model, line: line) { profile in
                 profiles.append(profile)
             }
-            .presentationDetents([.medium, .large])
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
         .task { await loadProfiles() }
         .refreshable { await loadProfiles() }
@@ -107,7 +122,7 @@ private struct ESIMProfileRow: View {
         HStack(spacing: 12) {
             Image(systemName: profile.isEnabled ? "checkmark.circle.fill" : "circle")
                 .foregroundStyle(profile.isEnabled ? .green : .secondary)
-                .font(.title3)
+                .font(.body.weight(.semibold))
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -165,8 +180,13 @@ private struct ESIMProfileDetailScreen: View {
                     get: { profile.isEnabled },
                     set: { updateEnabled($0) }
                 ))
-                TextField("Profile name", text: $draftName)
+                TextField("Name", text: $draftName)
                     .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
+                    .textContentType(.name)
+            }
+
+            Section("Details") {
                 LabeledContent("Profile ID", value: profile.profileID)
                 if !profile.iccid.isEmpty {
                     LabeledContent("ICCID", value: profile.iccid)
@@ -183,9 +203,7 @@ private struct ESIMProfileDetailScreen: View {
                 }
             }
 
-            Section {
-                Button("Save Name") { saveName() }
-                    .disabled(isWorking || draftName == profile.name)
+            Section("Actions") {
                 Button("Delete Profile", role: .destructive) {
                     isConfirmingDelete = true
                 }
@@ -194,6 +212,12 @@ private struct ESIMProfileDetailScreen: View {
         }
         .navigationTitle(profile.displayName)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") { saveName() }
+                    .disabled(isWorking || draftName == profile.name)
+            }
+        }
         .confirmationDialog(
             "Delete this eSIM profile?",
             isPresented: $isConfirmingDelete,
@@ -293,7 +317,7 @@ private struct ESIMAddProfileSheet: View {
                 .pickerStyle(.segmented)
 
                 if method == .scan {
-                    Section {
+                    Section("Scan") {
                         Button {
                             isScannerPresented = true
                         } label: {
@@ -309,6 +333,7 @@ private struct ESIMAddProfileSheet: View {
                     TextField("LPA:1$…", text: $activationCode, axis: .vertical)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .lineLimit(1...3)
                 }
 
                 if let errorDescription {

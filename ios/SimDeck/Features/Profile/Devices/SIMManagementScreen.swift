@@ -13,17 +13,31 @@ struct SIMManagementScreen: View {
     var body: some View {
         List {
             if !esimLines.isEmpty {
-                Section("eSIM") {
+                Section {
                     ForEach(esimLines) { line in
                         NavigationLink {
                             ESIMManagementScreen(model: model, line: line)
                         } label: {
-                            Label(
-                                "eSIM Management · SIM \(line.numericID)",
-                                systemImage: "simcard.2"
-                            )
+                            HStack(spacing: 12) {
+                                Image(systemName: "simcard.2")
+                                    .font(.title3)
+                                    .symbolRenderingMode(.hierarchical)
+                                    .foregroundStyle(.tint)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("eSIM Management")
+                                    Text(lineSubtitle(for: line))
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .frame(minHeight: 44)
                         }
                     }
+                } header: {
+                    Text("eSIM")
+                } footer: {
+                    Text("Manage installed eSIM profiles for each eSIM line.")
                 }
             }
 
@@ -66,6 +80,11 @@ struct SIMManagementScreen: View {
 
     private var esimLines: [DeviceLineIdentity] {
         model.devices.filter { $0.simKind == .eSIM && $0.simID != nil }
+    }
+
+    private func lineSubtitle(for line: DeviceLineIdentity) -> String {
+        let number = line.phoneNumber.isEmpty ? String(localized: "No phone number") : line.phoneNumber
+        return "SIM \(line.numericID) · \(number)"
     }
 }
 

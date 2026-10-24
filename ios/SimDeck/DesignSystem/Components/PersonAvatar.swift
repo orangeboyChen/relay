@@ -25,11 +25,8 @@ struct PersonAvatar: View {
 
     var body: some View {
         Group {
-            if let imageData, let image = UIImage(data: imageData) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-            } else if let image = PersonAvatarImageRenderer.image(
+            if let image = PersonAvatarImageRenderer.image(
+                imageData: imageData,
                 displayName: displayName,
                 organizationName: organizationName,
                 size: size,
@@ -37,7 +34,7 @@ struct PersonAvatar: View {
             ) {
                 Image(uiImage: image)
                     .resizable()
-                    .scaledToFit()
+                    .scaledToFill()
             } else {
                 Color.clear
             }

@@ -69,14 +69,17 @@ struct CommunicationNotificationContentBuilder {
         conversationIdentifier: String
     ) -> INSendMessageIntent {
         let identity = contacts.identity(for: remoteNumber)
-        let avatarData = identity?.avatarData ?? PersonAvatarImageRenderer.pngData(
-            displayName: identity?.displayName ?? remoteNumber,
-            organizationName: identity?.organizationName
+        let displayName = identity?.displayName ?? remoteNumber
+        let avatarData = PersonAvatarImageRenderer.pngData(
+            imageData: identity?.avatarData,
+            displayName: displayName,
+            organizationName: identity?.organizationName,
+            size: 180
         )
         let sender = INPerson(
             personHandle: INPersonHandle(value: remoteNumber, type: .phoneNumber),
             nameComponents: nil,
-            displayName: identity?.displayName ?? remoteNumber,
+            displayName: displayName,
             image: avatarData.map(INImage.init(imageData:)),
             contactIdentifier: identity?.contactIdentifier,
             customIdentifier: remoteNumber,

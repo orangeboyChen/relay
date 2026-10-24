@@ -48,6 +48,7 @@ enum PersonAvatarPalette {
 
 enum PersonAvatarImageRenderer {
     static func image(
+        imageData: Data? = nil,
         displayName: String?,
         organizationName: String? = nil,
         size: CGFloat = 180,
@@ -71,10 +72,17 @@ enum PersonAvatarImageRenderer {
                 )
                 : UIBezierPath(ovalIn: bounds)
             context.cgContext.saveGState()
+            var renderedSourceImage = false
             shape.addClip()
-            drawGradient(in: context.cgContext, bounds: bounds)
+            if let imageData, let sourceImage = UIImage(data: imageData) {
+                drawImage(sourceImage, in: context.cgContext, bounds: bounds)
+                renderedSourceImage = true
+            } else {
+                drawGradient(in: context.cgContext, bounds: bounds)
+            }
             context.cgContext.restoreGState()
 
+            guard !renderedSourceImage else { return }
             switch fallback {
             case .organization:
                 drawSymbol("building.2.fill", in: bounds, size: size * 0.43)
@@ -87,11 +95,13 @@ enum PersonAvatarImageRenderer {
     }
 
     static func pngData(
+        imageData: Data? = nil,
         displayName: String?,
         organizationName: String? = nil,
         size: CGFloat = 180
     ) -> Data? {
         image(
+            imageData: imageData,
             displayName: displayName,
             organizationName: organizationName,
             size: size
@@ -110,6 +120,30 @@ enum PersonAvatarImageRenderer {
             end: CGPoint(x: bounds.midX, y: bounds.maxY),
             options: []
         )
+    }
+
+    private static func drawImage(
+        _ image: UIImage,
+        in context: CGContext,
+        bounds: CGRect
+    ) {
+        let imageSize = image.size
+        guard imageSize.width > 0, imageSize.height > 0 else { return }
+        let scale = max(
+            bounds.width / imageSize.width,
+            bounds.height / imageSize.height
+        )
+        let drawSize = CGSize(
+            width: imageSize.width * scale,
+            height: imageSize.height * scale
+        )
+        let drawRect = CGRect(
+            x: bounds.midX - drawSize.width / 2,
+            y: bounds.midY - drawSize.height / 2,
+            width: drawSize.width,
+            height: drawSize.height
+        )
+        image.draw(in: drawRect)
     }
 
     private static func drawMonogram(_ monogram: String, in bounds: CGRect, size: CGFloat) {

@@ -49,8 +49,6 @@ final class RootNavigationBarAdapter: NSObject, UISearchResultsUpdating {
 
         let item = viewController.navigationItem
         configuredItem = item
-        viewController.title = title
-        item.title = title
         navigationController.navigationBar.prefersLargeTitles = usesLargeTitle
         item.largeTitleDisplayMode = usesLargeTitle ? .always : .never
 

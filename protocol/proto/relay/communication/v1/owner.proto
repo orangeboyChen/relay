@@ -1,0 +1,282 @@
+syntax = "proto3";
+
+package relay.communication.v1;
+
+import "google/protobuf/timestamp.proto";
+import "relay/communication/v1/device.proto";
+
+option go_package = "github.com/orangeboyChen/relay-sdk/gen/go/relay/communication/v1;communicationv1";
+
+// OwnerService manages the owner's devices, SIMs, app installations, and commands.
+service OwnerService {
+  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
+  rpc ListSimCards(ListSimCardsRequest) returns (ListSimCardsResponse);
+  rpc RetireSimCard(RetireSimCardRequest) returns (RetireSimCardResponse);
+  rpc UpdateDeviceNumericId(UpdateDeviceNumericIdRequest) returns (UpdateDeviceNumericIdResponse);
+  rpc UpdateDeviceProfile(UpdateDeviceProfileRequest) returns (UpdateDeviceProfileResponse);
+  rpc UpdateSimNumericId(UpdateSimNumericIdRequest) returns (UpdateSimNumericIdResponse);
+  rpc UpdateSimProfile(UpdateSimProfileRequest) returns (UpdateSimProfileResponse);
+  rpc RevokeDevice(RevokeDeviceRequest) returns (RevokeDeviceResponse);
+  rpc CreatePairingToken(CreatePairingTokenRequest) returns (CreatePairingTokenResponse);
+  rpc OpenDeviceDiscovery(OpenDeviceDiscoveryRequest) returns (OpenDeviceDiscoveryResponse);
+  rpc GetDeviceDiscoverySession(GetDeviceDiscoverySessionRequest) returns (GetDeviceDiscoverySessionResponse);
+  rpc CloseDeviceDiscovery(CloseDeviceDiscoveryRequest) returns (CloseDeviceDiscoveryResponse);
+  rpc ListDeviceDiscoveries(ListDeviceDiscoveriesRequest) returns (ListDeviceDiscoveriesResponse);
+  rpc ApproveDeviceDiscovery(ApproveDeviceDiscoveryRequest) returns (ApproveDeviceDiscoveryResponse);
+  rpc RejectDeviceDiscovery(RejectDeviceDiscoveryRequest) returns (RejectDeviceDiscoveryResponse);
+  rpc RegisterAppInstallation(RegisterAppInstallationRequest) returns (RegisterAppInstallationResponse);
+  rpc UpsertPushToken(UpsertPushTokenRequest) returns (UpsertPushTokenResponse);
+  rpc DeletePushToken(DeletePushTokenRequest) returns (DeletePushTokenResponse);
+  rpc ClaimIncomingCall(ClaimIncomingCallRequest) returns (ClaimIncomingCallResponse);
+  rpc EnqueueCommand(EnqueueCommandRequest) returns (EnqueueCommandResponse);
+  rpc GetCommandStatus(GetCommandStatusRequest) returns (GetCommandStatusResponse);
+  rpc GetCommandRecipient(GetCommandRecipientRequest) returns (GetCommandRecipientResponse);
+  rpc GetTurnCredentials(GetTurnCredentialsRequest) returns (GetTurnCredentialsResponse);
+}
+
+message ListDevicesRequest {}
+
+message ListSimCardsRequest {}
+
+message RetireSimCardRequest {
+  string sim_id = 1;
+}
+
+message RetireSimCardResponse {}
+
+message UpdateDeviceNumericIdRequest {
+  string id = 1;
+  int32 numeric_id = 2;
+}
+
+message UpdateDeviceNumericIdResponse {}
+
+message UpdateDeviceProfileRequest {
+  string id = 1;
+  bytes profile_ciphertext = 2;
+}
+
+message UpdateDeviceProfileResponse {}
+
+message UpdateSimNumericIdRequest {
+  string id = 1;
+  int32 numeric_id = 2;
+}
+
+message UpdateSimNumericIdResponse {}
+
+message UpdateSimProfileRequest {
+  string id = 1;
+  bytes profile_ciphertext = 2;
+}
+
+message UpdateSimProfileResponse {}
+
+message RevokeDeviceRequest {
+  string device_uuid = 1;
+}
+
+message RevokeDeviceResponse {}
+
+message CreatePairingTokenRequest {}
+
+message ListDevicesResponse {
+  repeated DeviceRecord devices = 1;
+}
+
+message DeviceRecord {
+  string device_uuid = 1;
+  int32 numeric_id = 2;
+  bytes profile_ciphertext = 3;
+  bytes identity_public_key = 4;
+  bytes command_public_key = 5;
+  bytes wrapped_vault_key = 6;
+  google.protobuf.Timestamp paired_at = 7;
+  optional google.protobuf.Timestamp last_seen_at = 8;
+  string radio_access_technology = 9;
+  optional int32 signal_bars = 10;
+  optional google.protobuf.Timestamp radio_status_updated_at = 11;
+  repeated SlotRecord slots = 12;
+}
+
+message SlotRecord {
+  string slot_id = 1;
+  string slot_key = 2;
+  int32 slot_index = 3;
+  optional string sim_id = 4;
+  optional int32 sim_numeric_id = 5;
+  bytes profile_ciphertext = 6;
+  optional google.protobuf.Timestamp last_seen_at = 7;
+  string radio_access_technology = 8;
+  optional int32 signal_bars = 9;
+  optional google.protobuf.Timestamp radio_status_updated_at = 10;
+}
+
+message ListSimCardsResponse {
+  repeated SimRecord sims = 1;
+}
+
+message SimRecord {
+  string sim_id = 1;
+  int32 numeric_id = 2;
+  bytes profile_ciphertext = 3;
+  google.protobuf.Timestamp first_seen_at = 4;
+  google.protobuf.Timestamp last_seen_at = 5;
+  optional string assigned_device_uuid = 6;
+  optional string assigned_slot_id = 7;
+}
+
+message CreatePairingTokenResponse {
+  string pairing_token = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message OpenDeviceDiscoveryRequest {}
+
+message OpenDeviceDiscoveryResponse {
+  bool active = 1;
+  optional DeviceDiscoverySession session = 2;
+}
+
+message GetDeviceDiscoverySessionRequest {}
+
+message GetDeviceDiscoverySessionResponse {
+  bool active = 1;
+  optional DeviceDiscoverySession session = 2;
+}
+
+message CloseDeviceDiscoveryRequest {}
+
+message CloseDeviceDiscoveryResponse {}
+
+message ListDeviceDiscoveriesRequest {}
+
+message DeviceDiscoverySession {
+  google.protobuf.Timestamp opened_at = 1;
+  google.protobuf.Timestamp expires_at = 2;
+  optional google.protobuf.Timestamp closed_at = 3;
+}
+
+message ListDeviceDiscoveriesResponse {
+  repeated OwnerDeviceDiscovery discoveries = 1;
+}
+
+message ApproveDeviceDiscoveryRequest {
+  string device_uuid = 1;
+}
+
+message ApproveDeviceDiscoveryResponse {
+  OwnerDeviceDiscovery device = 1;
+}
+
+message RejectDeviceDiscoveryRequest {
+  string device_uuid = 1;
+}
+
+message RejectDeviceDiscoveryResponse {}
+
+message OwnerDeviceDiscovery {
+  string device_uuid = 1;
+  bytes identity_public_key = 2;
+  bytes command_public_key = 3;
+  string status = 4;
+  google.protobuf.Timestamp first_seen_at = 5;
+  google.protobuf.Timestamp last_seen_at = 6;
+  google.protobuf.Timestamp expires_at = 7;
+  int32 numeric_id = 8;
+  optional string slot_id = 9;
+  optional string sim_id = 10;
+  string slot_key = 11;
+  int32 slot_index = 12;
+}
+
+message RegisterAppInstallationRequest {
+  string installation_id = 1;
+  bytes identity_public_key = 2;
+  bytes key_agreement_public_key = 3;
+  bytes wrapped_vault_key = 4;
+}
+
+message RegisterAppInstallationResponse {
+  AppInstallation installation = 1;
+  bool created = 2;
+}
+
+message AppInstallation {
+  string installation_id = 1;
+  bytes identity_public_key = 2;
+  bytes key_agreement_public_key = 3;
+  bytes wrapped_vault_key = 4;
+  optional google.protobuf.Timestamp approved_at = 5;
+  optional google.protobuf.Timestamp revoked_at = 6;
+  google.protobuf.Timestamp created_at = 7;
+}
+
+message UpsertPushTokenRequest {
+  string installation_id = 1;
+  string kind = 2;
+  string environment = 3;
+  bytes token = 4;
+}
+
+message UpsertPushTokenResponse {}
+
+message DeletePushTokenRequest {
+  string installation_id = 1;
+  string kind = 2;
+  string environment = 3;
+}
+
+message DeletePushTokenResponse {}
+
+message ClaimIncomingCallRequest {
+  string notification_id = 1;
+  string installation_id = 2;
+}
+
+message ClaimIncomingCallResponse {
+  string notification_id = 1;
+  string installation_id = 2;
+  google.protobuf.Timestamp claimed_at = 3;
+  bool won = 4;
+}
+
+message EnqueueCommandRequest {
+  EncryptedCommand command = 1;
+}
+
+message EnqueueCommandResponse {
+  string command_id = 1;
+  bool created = 2;
+}
+
+message GetCommandStatusRequest {
+  string device_uuid = 1;
+  string command_id = 2;
+}
+
+message GetCommandStatusResponse {
+  string command_id = 1;
+  string device_uuid = 2;
+  string state = 3;
+  optional bytes result_nonce = 4;
+  optional bytes result_ciphertext = 5;
+  optional google.protobuf.Timestamp completed_at = 6;
+}
+
+message GetCommandRecipientRequest {
+  string device_uuid = 1;
+}
+
+message GetCommandRecipientResponse {
+  bytes command_public_key = 1;
+}
+
+message GetTurnCredentialsRequest {}
+
+message GetTurnCredentialsResponse {
+  repeated string urls = 1;
+  string username = 2;
+  string credential = 3;
+  google.protobuf.Timestamp expires_at = 4;
+}

@@ -1,0 +1,84 @@
+syntax = "proto3";
+
+package relay.communication.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/orangeboyChen/relay-sdk/gen/go/relay/communication/v1;communicationv1";
+
+// AuthenticationService handles owner sessions and WebAuthn ceremonies.
+service AuthenticationService {
+  rpc Bootstrap(BootstrapRequest) returns (BootstrapResponse);
+  rpc Refresh(RefreshRequest) returns (RefreshResponse);
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+  rpc BeginPasskeyRegistration(BeginPasskeyRegistrationRequest) returns (BeginPasskeyRegistrationResponse);
+  rpc FinishPasskeyRegistration(FinishPasskeyRegistrationRequest) returns (FinishPasskeyRegistrationResponse);
+  rpc BeginPasskeyLogin(BeginPasskeyLoginRequest) returns (BeginPasskeyLoginResponse);
+  rpc FinishPasskeyLogin(FinishPasskeyLoginRequest) returns (FinishPasskeyLoginResponse);
+}
+
+message BootstrapRequest {
+  string username = 1;
+  string password = 2;
+}
+
+message LogoutRequest {}
+
+message RefreshRequest {
+  string refresh_token = 1;
+}
+
+message BootstrapResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  google.protobuf.Timestamp access_expires_at = 3;
+  google.protobuf.Timestamp refresh_expires_at = 4;
+}
+
+message RefreshResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  google.protobuf.Timestamp access_expires_at = 3;
+  google.protobuf.Timestamp refresh_expires_at = 4;
+}
+
+message LogoutResponse {}
+
+message BeginPasskeyRegistrationRequest {}
+
+message BeginPasskeyRegistrationResponse {
+  string ceremony_id = 1;
+  bytes options_json = 2;
+}
+
+message FinishPasskeyRegistrationRequest {
+  string ceremony_id = 1;
+  bytes credential_json = 2;
+}
+
+message FinishPasskeyRegistrationResponse {}
+
+message BeginPasskeyLoginRequest {}
+
+message BeginPasskeyLoginResponse {
+  string ceremony_id = 1;
+  bytes options_json = 2;
+}
+
+message FinishPasskeyLoginRequest {
+  string ceremony_id = 1;
+  bytes credential_json = 2;
+}
+
+message FinishPasskeyLoginResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  google.protobuf.Timestamp access_expires_at = 3;
+  google.protobuf.Timestamp refresh_expires_at = 4;
+}
+
+message PasskeyOptionsResponse {
+  string ceremony_id = 1;
+  bytes options_json = 2;
+}
+

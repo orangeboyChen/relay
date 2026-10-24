@@ -1,0 +1,192 @@
+syntax = "proto3";
+
+package relay.communication.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/orangeboyChen/relay-sdk/gen/go/relay/communication/v1;communicationv1";
+
+// DeviceService exposes modem-agent operations and device-owned state.
+service DeviceService {
+  rpc FetchTurnCredentials(FetchTurnCredentialsRequest) returns (FetchTurnCredentialsResponse);
+  rpc UpdateRadioStatus(UpdateRadioStatusRequest) returns (UpdateRadioStatusResponse);
+  rpc UpdateSimIdentity(UpdateSimIdentityRequest) returns (UpdateSimIdentityResponse);
+  rpc ListInstallationRecipients(ListInstallationRecipientsRequest) returns (ListInstallationRecipientsResponse);
+  rpc UploadIncomingCall(UploadIncomingCallRequest) returns (UploadIncomingCallResponse);
+  rpc ClaimCommand(ClaimCommandRequest) returns (ClaimCommandResponse);
+  rpc CompleteCommand(CompleteCommandRequest) returns (CompleteCommandResponse);
+  rpc UpdateCommandKey(UpdateCommandKeyRequest) returns (UpdateCommandKeyResponse);
+  rpc SubmitDiscovery(SubmitDiscoveryRequest) returns (SubmitDiscoveryResponse);
+  rpc GetDiscoveryStatus(GetDiscoveryStatusRequest) returns (GetDiscoveryStatusResponse);
+  rpc PairDevice(PairDeviceRequest) returns (PairDeviceResponse);
+}
+
+message FetchTurnCredentialsRequest {
+  string device_uuid = 1;
+}
+
+message FetchTurnCredentialsResponse {
+  repeated string urls = 1;
+  string username = 2;
+  string credential = 3;
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+message UpdateRadioStatusResponse {}
+
+message UpdateRadioStatusRequest {
+  string device_uuid = 1;
+  string slot_key = 2;
+  int32 slot_index = 3;
+  string radio_access_technology = 4;
+  optional int32 signal_bars = 5;
+}
+
+message UpdateSimIdentityRequest {
+  string device_uuid = 1;
+  string slot_key = 2;
+  int32 slot_index = 3;
+  bytes sim_fingerprint = 4;
+}
+
+message UpdateSimIdentityResponse {
+  string slot_id = 1;
+  string sim_id = 2;
+  int32 numeric_id = 3;
+}
+
+message ListInstallationRecipientsRequest {
+  string device_uuid = 1;
+}
+
+message ListInstallationRecipientsResponse {
+  repeated InstallationRecipient installations = 1;
+}
+
+message InstallationRecipient {
+  string installation_id = 1;
+  bytes identity_public_key = 2;
+  bytes key_agreement_public_key = 3;
+}
+
+message UploadIncomingCallRequest {
+  IncomingCallNotification notification = 1;
+}
+
+message UploadIncomingCallResponse {}
+
+message IncomingCallNotification {
+  string id = 1;
+  string type = 2;
+  string device_uuid = 3;
+  google.protobuf.Timestamp occurred_at = 4;
+  int32 key_epoch = 5;
+  repeated IncomingCallRecipient recipients = 6;
+}
+
+message IncomingCallRecipient {
+  string installation_id = 1;
+  bytes sender_public_key = 2;
+  bytes nonce = 3;
+  bytes ciphertext = 4;
+  bytes signature = 5;
+}
+
+message ClaimCommandRequest {
+  string device_uuid = 1;
+}
+
+message ClaimCommandResponse {
+  EncryptedCommand command = 1;
+  bool has_command = 2;
+}
+
+message EncryptedCommand {
+  string id = 1;
+  string device_uuid = 2;
+  string sender_installation_id = 3;
+  bytes sender_public_key = 4;
+  bytes nonce = 5;
+  bytes ciphertext = 6;
+  bytes signature = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp expires_at = 9;
+}
+
+message CompleteCommandRequest {
+  string device_uuid = 1;
+  string command_id = 2;
+  bytes nonce = 3;
+  bytes ciphertext = 4;
+}
+
+message CompleteCommandResponse {}
+
+message UpdateCommandKeyRequest {
+  string device_uuid = 1;
+  bytes command_public_key = 2;
+}
+
+message UpdateCommandKeyResponse {}
+
+message SubmitDiscoveryRequest {
+  string device_uuid = 1;
+  string slot_key = 2;
+  int32 slot_index = 3;
+  string sim_fingerprint = 4;
+  bytes identity_public_key = 5;
+  bytes command_public_key = 6;
+  string pending_credential = 7;
+  bytes signature = 8;
+}
+
+message GetDiscoveryStatusRequest {
+  string device_uuid = 1;
+}
+
+message SubmitDiscoveryResponse {
+  string device_uuid = 1;
+  string status = 2;
+  int32 numeric_id = 3;
+  optional string slot_id = 4;
+  optional string sim_id = 5;
+  string slot_key = 6;
+  int32 slot_index = 7;
+  bytes identity_public_key = 8;
+  bytes command_public_key = 9;
+  google.protobuf.Timestamp first_seen_at = 10;
+  google.protobuf.Timestamp last_seen_at = 11;
+  google.protobuf.Timestamp expires_at = 12;
+  optional google.protobuf.Timestamp decided_at = 13;
+}
+
+message GetDiscoveryStatusResponse {
+  string device_uuid = 1;
+  string status = 2;
+  int32 numeric_id = 3;
+  optional string slot_id = 4;
+  optional string sim_id = 5;
+  string slot_key = 6;
+  int32 slot_index = 7;
+  bytes identity_public_key = 8;
+  bytes command_public_key = 9;
+  google.protobuf.Timestamp first_seen_at = 10;
+  google.protobuf.Timestamp last_seen_at = 11;
+  google.protobuf.Timestamp expires_at = 12;
+  optional google.protobuf.Timestamp decided_at = 13;
+}
+
+message PairDeviceRequest {
+  string pairing_token = 1;
+  string device_uuid = 2;
+  bytes profile_ciphertext = 3;
+  bytes identity_public_key = 4;
+  bytes command_public_key = 5;
+  bytes wrapped_vault_key = 6;
+  string device_credential = 7;
+}
+
+message PairDeviceResponse {
+  string device_uuid = 1;
+  int32 numeric_id = 2;
+}

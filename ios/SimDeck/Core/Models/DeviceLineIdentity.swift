@@ -4,6 +4,20 @@
 
 import Foundation
 
+enum SIMCardKind: String, Codable, Equatable, Sendable {
+    case physical
+    case eSIM
+
+    var displayName: String {
+        switch self {
+        case .physical:
+            String(localized: "Physical SIM")
+        case .eSIM:
+            String(localized: "eSIM")
+        }
+    }
+}
+
 enum CellularRadioAccessTechnology: String, Codable, Equatable, Sendable {
     case unknown
     case gsm
@@ -65,6 +79,7 @@ struct DeviceLineIdentity: Identifiable, Equatable, Sendable {
     var isOnline: Bool
     var radioStatus: CellularRadioStatus?
     var commandPublicKey: Data?
+    var simKind: SIMCardKind
 
     init(
         id: UUID,
@@ -75,7 +90,8 @@ struct DeviceLineIdentity: Identifiable, Equatable, Sendable {
         lineName: String,
         phoneNumber: String,
         isOnline: Bool,
-        radioStatus: CellularRadioStatus? = nil
+        radioStatus: CellularRadioStatus? = nil,
+        simKind: SIMCardKind = .physical
     ) {
         self.init(
             id: id,
@@ -90,7 +106,8 @@ struct DeviceLineIdentity: Identifiable, Equatable, Sendable {
             phoneNumber: phoneNumber,
             isOnline: isOnline,
             radioStatus: radioStatus,
-            commandPublicKey: nil
+            commandPublicKey: nil,
+            simKind: simKind
         )
     }
 
@@ -107,7 +124,8 @@ struct DeviceLineIdentity: Identifiable, Equatable, Sendable {
         phoneNumber: String,
         isOnline: Bool,
         radioStatus: CellularRadioStatus? = nil,
-        commandPublicKey: Data?
+        commandPublicKey: Data?,
+        simKind: SIMCardKind = .physical
     ) {
         // A slot is the stable routing identity for a physical modem position.
         // The SIM identity is independently managed and may be moved or replaced.
@@ -124,6 +142,7 @@ struct DeviceLineIdentity: Identifiable, Equatable, Sendable {
         self.isOnline = isOnline
         self.radioStatus = radioStatus
         self.commandPublicKey = commandPublicKey
+        self.simKind = simKind
     }
 
     var displayName: String {

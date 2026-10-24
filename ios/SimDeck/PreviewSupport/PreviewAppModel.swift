@@ -52,6 +52,7 @@ extension AppModel {
             installationBootstrapper: PreviewInstallationBootstrapper(),
             messageTransport: PreviewMessageTransport(),
             slotSettingsTransport: PreviewSlotSettingsTransport(settings: slotSettings),
+            esimProfileManager: PreviewESIMProfileManager(),
             onboardingStore: PreviewOnboardingStore(isCompleted: onboardingCompleted),
             passkeyAuthorizer: PreviewPasskeyAuthorizer(),
             contactStore: PreviewContactStore(contacts: PreviewContactFixtures.contacts),
@@ -102,6 +103,64 @@ private final class PreviewSlotSettingsTransport: SlotSettingsTransport {
     }
 
     func restartModem(line: DeviceLineIdentity) async throws {}
+}
+
+@MainActor
+private final class PreviewESIMProfileManager: ESIMProfileManaging {
+    private var profiles: [ESIMProfile] = [
+        ESIMProfile(
+            id: UUID(uuidString: "50000000-0000-0000-0000-000000000001")!,
+            profileID: "profile-work",
+            name: "Work line",
+            iccid: "8986000000000000001",
+            operatorName: "China Mobile",
+            isEnabled: true
+        ),
+        ESIMProfile(
+            id: UUID(uuidString: "50000000-0000-0000-0000-000000000002")!,
+            profileID: "profile-travel",
+            iccid: "8986000000000000002",
+            operatorName: "Travel eSIM"
+        )
+    ]
+
+    func loadProfiles(line: DeviceLineIdentity) async throws -> [ESIMProfile] {
+        profiles
+    }
+
+    func setEnabled(_ enabled: Bool, profile: ESIMProfile, line: DeviceLineIdentity) async throws -> ESIMProfile {
+        guard let index = profiles.firstIndex(where: { $0.id == profile.id }) else {
+            throw ESIMProfileManagerError.unavailable
+        }
+        if enabled {
+            for index in profiles.indices { profiles[index].isEnabled = false }
+        }
+        profiles[index].isEnabled = enabled
+        return profiles[index]
+    }
+
+    func rename(_ name: String, profile: ESIMProfile, line: DeviceLineIdentity) async throws -> ESIMProfile {
+        guard let index = profiles.firstIndex(where: { $0.id == profile.id }) else {
+            throw ESIMProfileManagerError.unavailable
+        }
+        profiles[index].name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return profiles[index]
+    }
+
+    func delete(profile: ESIMProfile, line: DeviceLineIdentity) async throws {
+        profiles.removeAll { $0.id == profile.id }
+    }
+
+    func addActivationCode(_ code: String, line: DeviceLineIdentity) async throws -> ESIMProfile {
+        let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCode.isEmpty else { throw ESIMProfileManagerError.invalidActivationCode }
+        let profile = ESIMProfile(
+            profileID: trimmedCode,
+            operatorName: "Pending activation"
+        )
+        profiles.append(profile)
+        return profile
+    }
 }
 
 @MainActor

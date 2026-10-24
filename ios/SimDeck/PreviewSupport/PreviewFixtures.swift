@@ -55,6 +55,12 @@ enum PreviewFixtures {
         )
     ]
 
+    static var esimLine: DeviceLineIdentity {
+        var line = devices[1]
+        line.simKind = .eSIM
+        return line
+    }
+
     static let deviceManagementDevices = [
         DeviceLineIdentity(
             id: UUID(uuidString: "40000000-0000-0000-0000-000000000001")!,

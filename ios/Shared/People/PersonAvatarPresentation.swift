@@ -89,7 +89,7 @@ enum PersonAvatarImageRenderer {
             case .monogram(let monogram):
                 drawMonogram(monogram, in: bounds, size: size)
             case .placeholder:
-                drawSymbol("person.fill", in: bounds, size: size * 0.46)
+                drawPlaceholderPerson(in: context.cgContext, bounds: bounds)
             }
         }
     }
@@ -175,5 +175,36 @@ enum PersonAvatarImageRenderer {
                 y: bounds.midY - image.size.height / 2
             )
         )
+    }
+
+    private static func drawPlaceholderPerson(in context: CGContext, bounds: CGRect) {
+        let size = min(bounds.width, bounds.height)
+        let centerX = bounds.midX
+        // The system placeholder keeps a generously sized head above the
+        // lower bust: approximately 36% of the avatar diameter.
+        let headDiameter = size * 0.36
+        let headRect = CGRect(
+            x: centerX - headDiameter / 2,
+            y: bounds.minY + size * 0.19,
+            width: headDiameter,
+            height: headDiameter
+        )
+
+        context.saveGState()
+        context.setFillColor(UIColor.white.cgColor)
+        context.fillEllipse(in: headRect)
+
+        let shoulderRect = CGRect(
+            x: bounds.minX + size * 0.20,
+            y: bounds.minY + size * 0.62,
+            width: size * 0.60,
+            height: size * 0.28
+        )
+        // Apple's default contact placeholder uses an oval bust rather than a
+        // rounded rectangle.  Keeping this as an ellipse gives the shoulder
+        // silhouette the same continuously curved top and bottom edges as the
+        // system avatar (and avoids the subtle flat segment a capsule creates).
+        context.fillEllipse(in: shoulderRect)
+        context.restoreGState()
     }
 }

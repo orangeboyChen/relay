@@ -72,6 +72,8 @@ type Payload struct {
 	IncomingCallsEnabled *bool              `json:"incoming_calls_enabled,omitempty"`
 	IncomingSMSEnabled   *bool              `json:"incoming_sms_enabled,omitempty"`
 	VoLTEEnabled         *bool              `json:"volte_enabled,omitempty"`
+	ESIMProfileID        string             `json:"esim_profile_id,omitempty"`
+	ESIMProfileName      string             `json:"esim_profile_name,omitempty"`
 	Attachment           *MessageAttachment `json:"attachment,omitempty"`
 }
 
@@ -90,6 +92,17 @@ type Result struct {
 	CallState    call.State           `json:"call_state"`
 	MediaAnswer  string               `json:"media_answer,omitempty"`
 	SlotSettings *slotpolicy.Settings `json:"slot_settings,omitempty"`
+	ESIMProfiles *[]ESIMProfile       `json:"esim_profiles,omitempty"`
+}
+
+// ESIMProfile is the modem-owned view of one installed eSIM profile.
+// Activation codes are intentionally never returned or persisted here.
+type ESIMProfile struct {
+	ProfileID string `json:"profile_id"`
+	ICCID     string `json:"iccid"`
+	Enabled   bool   `json:"enabled"`
+	Nickname  string `json:"nickname,omitempty"`
+	Provider  string `json:"provider,omitempty"`
 }
 
 // Remote provides authenticated opaque command delivery.
@@ -116,6 +129,16 @@ type Calls interface {
 // Messages is the modem SMS capability used by encrypted commands.
 type Messages interface {
 	SendSMS(context.Context, string, string, byte) error
+}
+
+// ESIMProfiles exposes only installed-profile operations. Provisioning a new
+// profile requires a modem-specific LPA flow and is deliberately not guessed.
+type ESIMProfiles interface {
+	ListESIMProfiles(context.Context) ([]ESIMProfile, error)
+	EnableESIMProfile(context.Context, string) error
+	DisableESIMProfile(context.Context, string) error
+	DeleteESIMProfile(context.Context, string) error
+	RenameESIMProfile(context.Context, string, string) error
 }
 
 type mmsMessages interface {
@@ -147,6 +170,7 @@ type Dependencies struct {
 	Events       CallEventRegistrar
 	Media        CallMedia
 	Messages     Messages
+	ESIMProfiles ESIMProfiles
 	SlotSettings SlotSettings
 	Logger       *slog.Logger
 }
@@ -161,6 +185,7 @@ type Runtime struct {
 	events          CallEventRegistrar
 	media           CallMedia
 	messages        Messages
+	esimProfiles    ESIMProfiles
 	slotSettings    SlotSettings
 	now             func() time.Time
 	logger          *slog.Logger
@@ -189,6 +214,7 @@ func NewRuntime(remote Remote, state identity.State, calls Calls, pollInterval t
 	return &Runtime{
 		remote: remote, identity: state, calls: calls, pollInterval: pollInterval,
 		random: rand.Reader, events: dependencies.Events, media: dependencies.Media, messages: dependencies.Messages,
+		esimProfiles: dependencies.ESIMProfiles,
 		slotSettings: dependencies.SlotSettings, now: time.Now,
 		logger: logger,
 	}, nil
@@ -309,6 +335,7 @@ func (runtime *Runtime) process(ctx context.Context, envelope Envelope) error {
 		result.CallState = runtime.calls.State()
 		result.MediaAnswer = execution.mediaAnswer
 		result.SlotSettings = execution.slotSettings
+		result.ESIMProfiles = execution.esimProfiles
 		runtime.updateCallLease(payload, envelope.SenderInstallationID)
 	}
 	encrypted, err := sealResult(runtime.random, sharedSecret, envelope, result)
@@ -334,6 +361,7 @@ func (runtime *Runtime) process(ctx context.Context, envelope Envelope) error {
 type executionResult struct {
 	mediaAnswer  string
 	slotSettings *slotpolicy.Settings
+	esimProfiles *[]ESIMProfile
 }
 
 func (runtime *Runtime) execute(ctx context.Context, payload Payload, senderInstallationID string) (executionResult, error) {
@@ -344,6 +372,38 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload, senderInst
 		return executionResult{}, errWrongSlot
 	}
 	switch payload.Operation {
+	case "esim.list":
+		if runtime.esimProfiles == nil {
+			return executionResult{}, errESIMUnavailable
+		}
+		profiles, err := runtime.esimProfiles.ListESIMProfiles(ctx)
+		if err != nil {
+			return executionResult{}, err
+		}
+		return executionResult{esimProfiles: &profiles}, nil
+	case "esim.enable", "esim.disable", "esim.delete", "esim.rename":
+		if runtime.esimProfiles == nil || strings.TrimSpace(payload.ESIMProfileID) == "" {
+			return executionResult{}, errESIMUnavailable
+		}
+		profileID := strings.TrimSpace(payload.ESIMProfileID)
+		var err error
+		switch payload.Operation {
+		case "esim.enable":
+			err = runtime.esimProfiles.EnableESIMProfile(ctx, profileID)
+		case "esim.disable":
+			err = runtime.esimProfiles.DisableESIMProfile(ctx, profileID)
+		case "esim.delete":
+			err = runtime.esimProfiles.DeleteESIMProfile(ctx, profileID)
+		case "esim.rename":
+			if strings.TrimSpace(payload.ESIMProfileName) == "" {
+				return executionResult{}, errInvalidCommand
+			}
+			err = runtime.esimProfiles.RenameESIMProfile(ctx, profileID, payload.ESIMProfileName)
+		}
+		if err != nil {
+			return executionResult{}, err
+		}
+		return executionResult{}, nil
 	case "slot.configure":
 		settings, err := runtime.slotSettings.Configure(ctx, slotpolicy.Update{
 			DataEnabled:          payload.DataEnabled,
@@ -596,6 +656,7 @@ var (
 	errWrongSlot        = errors.New("command targets another SIM slot")
 	errMediaUnavailable = errors.New("call media unavailable")
 	errMMSUnavailable   = errors.New("modem session does not support MMS")
+	errESIMUnavailable  = errors.New("modem session does not support eSIM profile management")
 )
 
 func commandErrorCode(err error) string {
@@ -610,6 +671,9 @@ func commandErrorCode(err error) string {
 	}
 	if errors.Is(err, errMMSUnavailable) {
 		return "mms_unavailable"
+	}
+	if errors.Is(err, errESIMUnavailable) {
+		return "esim_unavailable"
 	}
 	return "modem_rejected"
 }

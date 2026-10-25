@@ -172,6 +172,52 @@ type simProfileReader interface {
 	ReadSIMProfile(context.Context) (modem.SIMProfile, error)
 }
 
+type esimProfileCommandReader interface {
+	ListESIMProfiles(context.Context) ([]modem.ESIMProfile, error)
+	EnableESIMProfile(context.Context, string) error
+	DisableESIMProfile(context.Context, string) error
+	DeleteESIMProfile(context.Context, string) error
+	RenameESIMProfile(context.Context, string, string) error
+}
+
+type modemESIMProfiles struct {
+	reader esimProfileCommandReader
+}
+
+func (profiles modemESIMProfiles) ListESIMProfiles(ctx context.Context) ([]command.ESIMProfile, error) {
+	items, err := profiles.reader.ListESIMProfiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]command.ESIMProfile, 0, len(items))
+	for _, item := range items {
+		result = append(result, command.ESIMProfile{
+			ProfileID: item.ICCID,
+			ICCID:     item.ICCID,
+			Enabled:   item.Enabled,
+			Nickname:  item.Nickname,
+			Provider:  item.Provider,
+		})
+	}
+	return result, nil
+}
+
+func (profiles modemESIMProfiles) EnableESIMProfile(ctx context.Context, profileID string) error {
+	return profiles.reader.EnableESIMProfile(ctx, profileID)
+}
+
+func (profiles modemESIMProfiles) DisableESIMProfile(ctx context.Context, profileID string) error {
+	return profiles.reader.DisableESIMProfile(ctx, profileID)
+}
+
+func (profiles modemESIMProfiles) DeleteESIMProfile(ctx context.Context, profileID string) error {
+	return profiles.reader.DeleteESIMProfile(ctx, profileID)
+}
+
+func (profiles modemESIMProfiles) RenameESIMProfile(ctx context.Context, profileID, name string) error {
+	return profiles.reader.RenameESIMProfile(ctx, profileID, name)
+}
+
 type simProfilePublisher interface {
 	PublishSIMProfile(context.Context, messageevent.SIMProfile) error
 }
@@ -523,7 +569,11 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 		return fmt.Errorf("create call media runtime: %w", err)
 	}
 	defer callMedia.Close()
-	commands, err := dependencies.newCommands(config, deviceIdentity, session.Calls(), command.Dependencies{Events: events, Media: callMedia, Messages: session, SlotSettings: policy, Logger: logger})
+	var esimProfiles command.ESIMProfiles
+	if reader, ok := session.(esimProfileCommandReader); ok {
+		esimProfiles = modemESIMProfiles{reader: reader}
+	}
+	commands, err := dependencies.newCommands(config, deviceIdentity, session.Calls(), command.Dependencies{Events: events, Media: callMedia, Messages: session, ESIMProfiles: esimProfiles, SlotSettings: policy, Logger: logger})
 	if err != nil {
 		return fmt.Errorf("create encrypted command runtime: %w", err)
 	}

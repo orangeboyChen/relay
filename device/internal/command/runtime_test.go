@@ -188,6 +188,40 @@ type fakeSMSOnlyMessages struct{}
 
 func (fakeSMSOnlyMessages) SendSMS(context.Context, string, string, byte) error { return nil }
 
+type fakeESIMProfiles struct {
+	profiles  []ESIMProfile
+	operation string
+	profileID string
+	name      string
+	err       error
+}
+
+func (profiles *fakeESIMProfiles) ListESIMProfiles(context.Context) ([]ESIMProfile, error) {
+	return append([]ESIMProfile(nil), profiles.profiles...), profiles.err
+}
+
+func (profiles *fakeESIMProfiles) EnableESIMProfile(context.Context, string) error {
+	profiles.operation = "enable"
+	return profiles.err
+}
+
+func (profiles *fakeESIMProfiles) DisableESIMProfile(context.Context, string) error {
+	profiles.operation = "disable"
+	return profiles.err
+}
+
+func (profiles *fakeESIMProfiles) DeleteESIMProfile(context.Context, string) error {
+	profiles.operation = "delete"
+	return profiles.err
+}
+
+func (profiles *fakeESIMProfiles) RenameESIMProfile(_ context.Context, profileID, name string) error {
+	profiles.operation = "rename"
+	profiles.profileID = profileID
+	profiles.name = name
+	return profiles.err
+}
+
 type fakeSlotSettings struct {
 	settings  slotpolicy.Settings
 	update    slotpolicy.Update
@@ -307,6 +341,27 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(openResult(sharedSecret, envelope, remote.result).Success).To(BeTrue())
 		Expect(string(envelope.Ciphertext)).NotTo(ContainSubstring("13500000000"))
 		Expect(string(envelope.Ciphertext)).NotTo(ContainSubstring("你好"))
+	})
+
+	It("executes encrypted eSIM profile operations through the modem capability", func() {
+		profiles := &fakeESIMProfiles{profiles: []ESIMProfile{{ProfileID: "89000000000000000001", ICCID: "89000000000000000001", Enabled: true}}}
+		runtime.esimProfiles = profiles
+
+		result, err := runtime.execute(context.Background(), Payload{
+			Version: 1, Operation: "esim.list", SlotID: state.SlotID, SIMID: state.SIMID,
+		}, testInstallationID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.esimProfiles).NotTo(BeNil())
+		Expect(*result.esimProfiles).To(Equal(profiles.profiles))
+
+		_, err = runtime.execute(context.Background(), Payload{
+			Version: 1, Operation: "esim.rename", SlotID: state.SlotID, SIMID: state.SIMID,
+			ESIMProfileID: "89000000000000000001", ESIMProfileName: "Primary",
+		}, testInstallationID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(profiles.operation).To(Equal("rename"))
+		Expect(profiles.profileID).To(Equal("89000000000000000001"))
+		Expect(profiles.name).To(Equal("Primary"))
 	})
 
 	It("returns an encrypted modem error for a rejected SMS", func() {

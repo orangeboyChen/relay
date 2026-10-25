@@ -652,6 +652,7 @@ final class AppModel {
         guard let recoveredVaultKey else { return }
         do {
             try messageHistoryStore.save(conversations, using: recoveredVaultKey)
+            scheduleHistorySnapshotSync()
         } catch {
             messages = .loaded(previousConversations)
             throw error
@@ -971,6 +972,7 @@ final class AppModel {
         guard retainedRecords.count != records.count else { return }
         if let recoveredVaultKey {
             try callHistoryStore.save(retainedRecords, using: recoveredVaultKey)
+            scheduleHistorySnapshotSync()
         }
         callHistory = .loaded(retainedRecords)
         Self.logger.info(
@@ -992,6 +994,7 @@ final class AppModel {
         guard didChange else { return }
         if let recoveredVaultKey {
             try callHistoryStore.save(records, using: recoveredVaultKey)
+            scheduleHistorySnapshotSync()
         }
         callHistory = .loaded(records)
     }

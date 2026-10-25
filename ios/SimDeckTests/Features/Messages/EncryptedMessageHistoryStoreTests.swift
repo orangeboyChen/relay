@@ -105,4 +105,24 @@ final class EncryptedMessageHistoryStoreTests: XCTestCase {
         XCTAssertEqual(Set(merged[0].messages.map(\.body)), ["local", "remote"])
         XCTAssertEqual(merged[0].contactName, "Alex")
     }
+
+    func testMergePropagatesMessageDeletionWithoutResurrectingIt() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let localStore = EncryptedMessageHistoryStore(fileURL: directory.appending(path: "local.bin"))
+        let remoteStore = EncryptedMessageHistoryStore(fileURL: directory.appending(path: "remote.bin"))
+        let key = VaultKey.random()
+        let lineID = UUID()
+        let deleted = MessageItem(id: UUID(), direction: .received, body: "deleted", attachment: nil, sentAt: Date(timeIntervalSince1970: 1), status: .delivered)
+        let retained = MessageItem(id: UUID(), direction: .sent, body: "retained", attachment: nil, sentAt: Date(timeIntervalSince1970: 2), status: .sent)
+        let conversation = MessageConversation(lineID: lineID, remoteNumber: "5550100", contactName: nil, unreadCount: 0, messages: [deleted, retained])
+        try localStore.save([conversation], using: key)
+        try remoteStore.save([conversation], deleting: [deleted.id], using: key)
+
+        try localStore.merge(encryptedData: try XCTUnwrap(remoteStore.encryptedData()), using: key)
+        XCTAssertEqual(try localStore.load(using: key).flatMap(\.messages).map(\.id), [retained.id])
+
+        try remoteStore.merge(encryptedData: try XCTUnwrap(localStore.encryptedData()), using: key)
+        XCTAssertEqual(try remoteStore.load(using: key).flatMap(\.messages).map(\.id), [retained.id])
+    }
 }

@@ -24,7 +24,7 @@ struct MessagesScreen: View {
     @Binding private var searchText: String
     @Binding private var selectedLineID: UUID?
     @Binding private var editMode: EditMode
-    @State private var selectedConversationIDs: Set<ConversationID> = []
+    @Binding private var selectedConversationIDs: Set<ConversationID>
     @State private var conversationsPendingDeletion: [MessageConversation] = []
     @State private var deleteErrorMessage: String?
     @State private var mutedConversationIDs: Set<ConversationID> = []
@@ -36,6 +36,7 @@ struct MessagesScreen: View {
         searchText: Binding<String> = .constant(""),
         selectedLineID: Binding<UUID?> = .constant(nil),
         editMode: Binding<EditMode> = .constant(.inactive),
+        selectedConversationIDs: Binding<Set<ConversationID>> = .constant([]),
         contacts: [ContactRecord] = [],
         referenceDate: Date = .now,
         defaultLineID: UUID? = nil,
@@ -60,6 +61,7 @@ struct MessagesScreen: View {
         _searchText = searchText
         _selectedLineID = selectedLineID
         _editMode = editMode
+        _selectedConversationIDs = selectedConversationIDs
         self.contacts = contacts
         self.referenceDate = referenceDate
         self.defaultLineID = defaultLineID

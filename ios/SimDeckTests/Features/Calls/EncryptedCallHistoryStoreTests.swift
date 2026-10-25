@@ -80,10 +80,16 @@ final class EncryptedCallHistoryStoreTests: XCTestCase {
     func testMergeKeepsLocalAndRemoteCallRecords() throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let localStore = EncryptedCallHistoryStore(fileURL: directory.appending(path: "local.bin"))
-        let remoteStore = EncryptedCallHistoryStore(fileURL: directory.appending(path: "remote.bin"))
-        let key = VaultKey.random()
         let now = Date(timeIntervalSince1970: 40_000_000)
+        let localStore = EncryptedCallHistoryStore(
+            fileURL: directory.appending(path: "local.bin"),
+            now: { now }
+        )
+        let remoteStore = EncryptedCallHistoryStore(
+            fileURL: directory.appending(path: "remote.bin"),
+            now: { now }
+        )
+        let key = VaultKey.random()
         let local = makeRecord(remoteNumber: "13500000000", startedAt: now.addingTimeInterval(-60), endedAt: now)
         let remote = makeRecord(remoteNumber: "13800000000", startedAt: now.addingTimeInterval(-30), endedAt: now)
         try localStore.save([local], using: key)
@@ -92,6 +98,31 @@ final class EncryptedCallHistoryStoreTests: XCTestCase {
         try localStore.merge(encryptedData: try XCTUnwrap(remoteStore.encryptedData()), using: key)
 
         XCTAssertEqual(Set(try localStore.load(using: key).map(\.id)), [local.id, remote.id])
+    }
+
+    func testMergePropagatesCallDeletionWithoutResurrectingIt() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let key = VaultKey.random()
+        let now = Date(timeIntervalSince1970: 40_000_000)
+        let localStore = EncryptedCallHistoryStore(
+            fileURL: directory.appending(path: "local.bin"),
+            now: { now }
+        )
+        let remoteStore = EncryptedCallHistoryStore(
+            fileURL: directory.appending(path: "remote.bin"),
+            now: { now }
+        )
+        let deleted = makeRecord(remoteNumber: "5550100", startedAt: now.addingTimeInterval(-60), endedAt: now)
+        let retained = makeRecord(remoteNumber: "5550101", startedAt: now.addingTimeInterval(-30), endedAt: now)
+        try localStore.save([deleted, retained], using: key)
+        try remoteStore.save([deleted, retained], deleting: [deleted.id], using: key)
+
+        try localStore.merge(encryptedData: try XCTUnwrap(remoteStore.encryptedData()), using: key)
+        XCTAssertEqual(try localStore.load(using: key).map(\.id), [retained.id])
+
+        try remoteStore.merge(encryptedData: try XCTUnwrap(localStore.encryptedData()), using: key)
+        XCTAssertEqual(try remoteStore.load(using: key).map(\.id), [retained.id])
     }
 
     private func makeRecord(

@@ -16,7 +16,7 @@ struct CallHistoryScreen: View {
     @Binding var editMode: EditMode
     @Binding var filter: CallHistoryFilter
     @Binding var selectedLineID: UUID?
-    let refreshAction: () async -> Void = {}
+    var refreshAction: () async -> Void = {}
     let onDelete: (Set<UUID>) throws -> Void
     var onMarkRead: (Set<UUID>) throws -> Void = { _ in }
     var onSelectionChange: (Set<UUID>) -> Void = { _ in }
@@ -26,6 +26,40 @@ struct CallHistoryScreen: View {
     @State private var presentedError: CallHistoryPresentedError?
     @State private var selectedEntryIDs: Set<UUID> = []
     @State private var isDeleteConfirmationPresented = false
+
+    init(
+        state: CallHistoryState,
+        lines: [DeviceLineIdentity],
+        contacts: [ContactRecord] = [],
+        referenceDate: Date,
+        callStarter: any CallStarting,
+        defaultMessageLineID: UUID?,
+        sendMessage: @escaping (UUID, String, String) async throws -> Void,
+        editMode: Binding<EditMode>,
+        filter: Binding<CallHistoryFilter>,
+        selectedLineID: Binding<UUID?>,
+        refreshAction: @escaping () async -> Void = {},
+        onDelete: @escaping (Set<UUID>) throws -> Void,
+        onMarkRead: @escaping (Set<UUID>) throws -> Void = { _ in },
+        onSelectionChange: @escaping (Set<UUID>) -> Void = { _ in },
+        onStarted: @escaping (UUID) -> Void
+    ) {
+        self.state = state
+        self.lines = lines
+        self.contacts = contacts
+        self.referenceDate = referenceDate
+        self.callStarter = callStarter
+        self.defaultMessageLineID = defaultMessageLineID
+        self.sendMessage = sendMessage
+        self._editMode = editMode
+        self._filter = filter
+        self._selectedLineID = selectedLineID
+        self.refreshAction = refreshAction
+        self.onDelete = onDelete
+        self.onMarkRead = onMarkRead
+        self.onSelectionChange = onSelectionChange
+        self.onStarted = onStarted
+    }
 
     var body: some View {
         Group {

@@ -651,7 +651,11 @@ final class AppModel {
 
         guard let recoveredVaultKey else { return }
         do {
-            try messageHistoryStore.save(conversations, using: recoveredVaultKey)
+            try messageHistoryStore.save(
+                conversations,
+                deleting: ids,
+                using: recoveredVaultKey
+            )
             scheduleHistorySnapshotSync()
         } catch {
             messages = .loaded(previousConversations)
@@ -971,7 +975,11 @@ final class AppModel {
         let retainedRecords = records.filter { !recordIDs.contains($0.id) }
         guard retainedRecords.count != records.count else { return }
         if let recoveredVaultKey {
-            try callHistoryStore.save(retainedRecords, using: recoveredVaultKey)
+            try callHistoryStore.save(
+                retainedRecords,
+                deleting: recordIDs,
+                using: recoveredVaultKey
+            )
             scheduleHistorySnapshotSync()
         }
         callHistory = .loaded(retainedRecords)
@@ -1034,7 +1042,11 @@ final class AppModel {
 
     private func mergeIncomingMessages(_ incoming: [IncomingMessageDelivery]) {
         var conversations = loadedConversations
+        let deletedMessageIDs = recoveredVaultKey.map {
+            messageHistoryStore.deletedMessageIDs(using: $0)
+        } ?? []
         for delivery in incoming {
+            guard !deletedMessageIDs.contains(delivery.id) else { continue }
             if let numericID = devices.first(where: { $0.id == delivery.lineID })?.numericID {
                 VerificationCodeDetector.explicitCode(in: delivery.body).map {
                     NotificationOTPStore.append(

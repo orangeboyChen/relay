@@ -20,6 +20,7 @@ struct RootTabView: View {
     @State private var messageSearchText = ""
     @State private var messageLineID: UUID?
     @State private var messageEditMode: EditMode = .inactive
+    @State private var selectedMessageConversationIDs: Set<ConversationID> = []
     @State private var contactSearchText = ""
     @State private var rootSearchText = ""
     @State private var navigationBarAdapter = RootNavigationBarAdapter()
@@ -54,6 +55,7 @@ struct RootTabView: View {
                 callEditMode = .inactive
                 selectedCallEntryIDs.removeAll()
                 messageEditMode = .inactive
+                selectedMessageConversationIDs.removeAll()
             }
             .onChange(of: model.selectedTab, initial: true) { _, selectedTab in
                 synchronizeRootSearchText(for: selectedTab)
@@ -273,7 +275,8 @@ struct RootTabView: View {
                 model: model,
                 searchText: $messageSearchText,
                 selectedLineID: $messageLineID,
-                editMode: $messageEditMode
+                editMode: $messageEditMode,
+                selectedConversationIDs: $selectedMessageConversationIDs
             )
         }
 

@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import Foundation
+import RelayProtocol
 import XCTest
 @testable import SimDeck
 
@@ -223,7 +224,8 @@ final class AppMessageFlowTests: XCTestCase {
             fileURL: remoteDirectory.appending(path: "messages.bin")
         )
         let remoteCalls = EncryptedCallHistoryStore(
-            fileURL: remoteDirectory.appending(path: "calls.bin")
+            fileURL: remoteDirectory.appending(path: "calls.bin"),
+            now: { Date(timeIntervalSince1970: 1_000) }
         )
         let remoteMessage = MessageItem(
             id: UUID(),
@@ -275,7 +277,8 @@ final class AppMessageFlowTests: XCTestCase {
                 fileURL: localDirectory.appending(path: "messages.bin")
             ),
             callHistoryStore: EncryptedCallHistoryStore(
-                fileURL: localDirectory.appending(path: "calls.bin")
+                fileURL: localDirectory.appending(path: "calls.bin"),
+                now: { Date(timeIntervalSince1970: 1_000) }
             ),
             remoteDeviceRefreshEnabled: false
         )
@@ -284,7 +287,9 @@ final class AppMessageFlowTests: XCTestCase {
         try await model.clearLocalHistoryCacheAndRestoreFromServer()
 
         XCTAssertEqual(model.messageItems.map(\.body), ["restored message"])
-        XCTAssertEqual(model.callHistory, .loaded([remoteCall]))
+        var expectedRemoteCall = remoteCall
+        expectedRemoteCall.lineSnapshot = LineHistorySnapshot(line: firstLine)
+        XCTAssertEqual(model.callHistory, .loaded([expectedRemoteCall]))
         XCTAssertEqual(syncClient.requestedKinds, [.messages, .calls])
     }
 

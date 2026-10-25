@@ -33,10 +33,11 @@ struct CallsTabScreen: View {
             },
             onDelete: model.deleteCallHistoryRecords(withIDs:),
             onMarkRead: model.markCallHistoryRecordsRead(withIDs:),
-            onSelectionChange: { selectedHistoryEntryIDs = $0 }
-        ) { lineID in
-            model.lastSuccessfulDialLineID = lineID
-        }
+            onSelectionChange: { selectedHistoryEntryIDs = $0 },
+            onStarted: { lineID in
+                model.lastSuccessfulDialLineID = lineID
+            }
+        )
         .task {
             refreshContacts()
             for await _ in model.contactStore.changes() {

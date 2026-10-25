@@ -10,6 +10,19 @@ enum CallHistoryStoreError: Error, Equatable {
 }
 
 struct EncryptedCallHistoryStore {
+    private struct Snapshot: Codable {
+        var records: [CallRecord]
+        var deletedRecordIDs: Set<UUID>
+
+        init(
+            records: [CallRecord] = [],
+            deletedRecordIDs: Set<UUID> = []
+        ) {
+            self.records = records
+            self.deletedRecordIDs = deletedRecordIDs
+        }
+    }
+
     private static let retentionInterval: TimeInterval = 365 * 24 * 60 * 60
 
     private let fileURL: URL
@@ -46,6 +59,17 @@ struct EncryptedCallHistoryStore {
     }
 
     func load(encryptedData: Data, using vaultKey: VaultKey) throws -> [CallRecord] {
+        try loadSnapshot(encryptedData: encryptedData, using: vaultKey).records
+    }
+
+    func loadSnapshot(using vaultKey: VaultKey) throws -> (records: [CallRecord], deletedRecordIDs: Set<UUID>) {
+        guard fileManager.fileExists(atPath: fileURL.path) else {
+            return ([], [])
+        }
+        return try loadSnapshot(encryptedData: Data(contentsOf: fileURL), using: vaultKey)
+    }
+
+    func loadSnapshot(encryptedData: Data, using vaultKey: VaultKey) throws -> (records: [CallRecord], deletedRecordIDs: Set<UUID>) {
         do {
             let box = try AES.GCM.SealedBox(combined: encryptedData)
             let plaintext = try AES.GCM.open(
@@ -53,22 +77,85 @@ struct EncryptedCallHistoryStore {
                 using: SymmetricKey(data: vaultKey.data),
                 authenticating: Data("sim-deck-call-history-v1".utf8)
             )
-            return try JSONDecoder().decode([CallRecord].self, from: plaintext)
+            let decoder = JSONDecoder()
+            if let snapshot = try? decoder.decode(Snapshot.self, from: plaintext) {
+                return (
+                    snapshot.records.filter { !snapshot.deletedRecordIDs.contains($0.id) },
+                    snapshot.deletedRecordIDs
+                )
+            }
+            // Read snapshots written before deletion tombstones were introduced.
+            return (try decoder.decode([CallRecord].self, from: plaintext), [])
         } catch {
             throw CallHistoryStoreError.invalidData
         }
     }
 
     func merge(encryptedData: Data, using vaultKey: VaultKey) throws {
-        var records = Dictionary(uniqueKeysWithValues: try load(using: vaultKey).map { ($0.id, $0) })
-        for remote in try load(encryptedData: encryptedData, using: vaultKey) where records[remote.id] == nil {
-            records[remote.id] = remote
+        let local = try loadSnapshot(using: vaultKey)
+        let remote = try loadSnapshot(encryptedData: encryptedData, using: vaultKey)
+        let deletedRecordIDs = local.deletedRecordIDs.union(remote.deletedRecordIDs)
+        var records = Dictionary(
+            uniqueKeysWithValues: local.records
+                .filter { !deletedRecordIDs.contains($0.id) }
+                .map { ($0.id, $0) }
+        )
+        for remoteRecord in remote.records where !deletedRecordIDs.contains(remoteRecord.id) {
+            if records[remoteRecord.id] == nil {
+                records[remoteRecord.id] = remoteRecord
+            }
         }
-        try save(records.values.sorted { $0.startedAt > $1.startedAt }, using: vaultKey)
+        try saveSnapshot(
+            Snapshot(
+                records: retainedRecords(from: records.values.sorted { $0.startedAt > $1.startedAt }),
+                deletedRecordIDs: deletedRecordIDs
+            ),
+            using: vaultKey
+        )
     }
 
     func save(_ records: [CallRecord], using vaultKey: VaultKey) throws {
-        let plaintext = try JSONEncoder().encode(retainedRecords(from: records))
+        let deletedRecordIDs = (try? loadSnapshot(using: vaultKey).deletedRecordIDs) ?? []
+        try save(
+            records,
+            deleting: [],
+            existingDeletedRecordIDs: deletedRecordIDs,
+            using: vaultKey
+        )
+    }
+
+    func save(
+        _ records: [CallRecord],
+        deleting recordIDs: Set<UUID>,
+        using vaultKey: VaultKey
+    ) throws {
+        let existingDeletedRecordIDs = (try? loadSnapshot(using: vaultKey).deletedRecordIDs) ?? []
+        try save(
+            records,
+            deleting: recordIDs,
+            existingDeletedRecordIDs: existingDeletedRecordIDs,
+            using: vaultKey
+        )
+    }
+
+    private func save(
+        _ records: [CallRecord],
+        deleting recordIDs: Set<UUID>,
+        existingDeletedRecordIDs: Set<UUID>,
+        using vaultKey: VaultKey
+    ) throws {
+        let deletedRecordIDs = existingDeletedRecordIDs.union(recordIDs)
+        let snapshot = Snapshot(
+            records: retainedRecords(
+                from: records.filter { !deletedRecordIDs.contains($0.id) }
+            ),
+            deletedRecordIDs: deletedRecordIDs
+        )
+        try saveSnapshot(snapshot, using: vaultKey)
+    }
+
+    private func saveSnapshot(_ snapshot: Snapshot, using vaultKey: VaultKey) throws {
+        let plaintext = try JSONEncoder().encode(snapshot)
         let box = try AES.GCM.seal(
             plaintext,
             using: SymmetricKey(data: vaultKey.data),

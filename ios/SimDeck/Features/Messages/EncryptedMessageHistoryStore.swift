@@ -10,6 +10,19 @@ enum MessageHistoryStoreError: Error, Equatable {
 }
 
 struct EncryptedMessageHistoryStore {
+    private struct Snapshot: Codable {
+        var conversations: [MessageConversation]
+        var deletedMessageIDs: Set<UUID>
+
+        init(
+            conversations: [MessageConversation] = [],
+            deletedMessageIDs: Set<UUID> = []
+        ) {
+            self.conversations = conversations
+            self.deletedMessageIDs = deletedMessageIDs
+        }
+    }
+
     private let fileURL: URL
     private let fileManager: FileManager
 
@@ -27,13 +40,24 @@ struct EncryptedMessageHistoryStore {
     func load(using vaultKey: VaultKey) throws -> [MessageConversation] {
         guard fileManager.fileExists(atPath: fileURL.path) else { return [] }
         do {
-            return try load(encryptedData: Data(contentsOf: fileURL), using: vaultKey)
+            return try loadSnapshot(using: vaultKey).conversations
         } catch {
             throw MessageHistoryStoreError.invalidData
         }
     }
 
     func load(encryptedData: Data, using vaultKey: VaultKey) throws -> [MessageConversation] {
+        try loadSnapshot(encryptedData: encryptedData, using: vaultKey).conversations
+    }
+
+    func loadSnapshot(using vaultKey: VaultKey) throws -> (conversations: [MessageConversation], deletedMessageIDs: Set<UUID>) {
+        guard fileManager.fileExists(atPath: fileURL.path) else {
+            return ([], [])
+        }
+        return try loadSnapshot(encryptedData: Data(contentsOf: fileURL), using: vaultKey)
+    }
+
+    func loadSnapshot(encryptedData: Data, using vaultKey: VaultKey) throws -> (conversations: [MessageConversation], deletedMessageIDs: Set<UUID>) {
         do {
             let box = try AES.GCM.SealedBox(combined: encryptedData)
             let plaintext = try AES.GCM.open(
@@ -41,15 +65,43 @@ struct EncryptedMessageHistoryStore {
                 using: SymmetricKey(data: vaultKey.data),
                 authenticating: Data("sim-deck-message-history-v1".utf8)
             )
-            return try JSONDecoder().decode([MessageConversation].self, from: plaintext)
+            let decoder = JSONDecoder()
+            if let snapshot = try? decoder.decode(Snapshot.self, from: plaintext) {
+                let conversations = snapshot.conversations.compactMap { conversation in
+                    let filteredConversation = filtered(
+                        conversation,
+                        deleting: snapshot.deletedMessageIDs
+                    )
+                    return filteredConversation.messages.isEmpty ? nil : filteredConversation
+                }
+                return (conversations, snapshot.deletedMessageIDs)
+            }
+            // Read snapshots written before deletion tombstones were introduced.
+            return (try decoder.decode([MessageConversation].self, from: plaintext), [])
         } catch {
             throw MessageHistoryStoreError.invalidData
         }
     }
 
+    func deletedMessageIDs(using vaultKey: VaultKey) -> Set<UUID> {
+        (try? loadSnapshot(using: vaultKey).deletedMessageIDs) ?? []
+    }
+
     func merge(encryptedData: Data, using vaultKey: VaultKey) throws {
-        var conversations = Dictionary(uniqueKeysWithValues: try load(using: vaultKey).map { ($0.id, $0) })
-        for remote in try load(encryptedData: encryptedData, using: vaultKey) {
+        let local = try loadSnapshot(using: vaultKey)
+        let remote = try loadSnapshot(encryptedData: encryptedData, using: vaultKey)
+        let deletedMessageIDs = local.deletedMessageIDs.union(remote.deletedMessageIDs)
+        var conversations = Dictionary(
+            uniqueKeysWithValues: local.conversations.compactMap { conversation in
+                let filteredConversation = filtered(conversation, deleting: deletedMessageIDs)
+                return filteredConversation.messages.isEmpty
+                    ? nil
+                    : (filteredConversation.id, filteredConversation)
+            }
+        )
+        for remoteConversation in remote.conversations {
+            let remote = filtered(remoteConversation, deleting: deletedMessageIDs)
+            guard !remote.messages.isEmpty else { continue }
             guard var local = conversations[remote.id] else {
                 conversations[remote.id] = remote
                 continue
@@ -68,15 +120,64 @@ struct EncryptedMessageHistoryStore {
             local.unreadCount = max(local.unreadCount, remote.unreadCount)
             if local.contactName == nil { local.contactName = remote.contactName }
             if local.lineSnapshot == nil { local.lineSnapshot = remote.lineSnapshot }
-            conversations[remote.id] = local
+            local.messages = local.messages.filter { !deletedMessageIDs.contains($0.id) }
+            if local.messages.isEmpty {
+                conversations.removeValue(forKey: remote.id)
+            } else {
+                conversations[remote.id] = local
+            }
         }
-        try save(conversations.values.sorted {
+        try saveSnapshot(Snapshot(
+            conversations: conversations.values.filter { !$0.messages.isEmpty }.sorted {
             ($0.messages.last?.sentAt ?? .distantPast) > ($1.messages.last?.sentAt ?? .distantPast)
-        }, using: vaultKey)
+            },
+            deletedMessageIDs: deletedMessageIDs
+        ), using: vaultKey)
     }
 
     func save(_ conversations: [MessageConversation], using vaultKey: VaultKey) throws {
-        let plaintext = try JSONEncoder().encode(conversations)
+        let deletedMessageIDs = (try? loadSnapshot(using: vaultKey).deletedMessageIDs) ?? []
+        try save(
+            conversations,
+            deleting: [],
+            existingDeletedMessageIDs: deletedMessageIDs,
+            using: vaultKey
+        )
+    }
+
+    func save(
+        _ conversations: [MessageConversation],
+        deleting messageIDs: Set<UUID>,
+        using vaultKey: VaultKey
+    ) throws {
+        let existingDeletedMessageIDs = (try? loadSnapshot(using: vaultKey).deletedMessageIDs) ?? []
+        try save(
+            conversations,
+            deleting: messageIDs,
+            existingDeletedMessageIDs: existingDeletedMessageIDs,
+            using: vaultKey
+        )
+    }
+
+    private func save(
+        _ conversations: [MessageConversation],
+        deleting messageIDs: Set<UUID>,
+        existingDeletedMessageIDs: Set<UUID>,
+        using vaultKey: VaultKey
+    ) throws {
+        let deletedMessageIDs = existingDeletedMessageIDs.union(messageIDs)
+        let snapshot = Snapshot(
+            conversations: conversations.compactMap { conversation in
+                let filteredConversation = filtered(conversation, deleting: deletedMessageIDs)
+                return filteredConversation.messages.isEmpty ? nil : filteredConversation
+            },
+            deletedMessageIDs: deletedMessageIDs
+        )
+        try saveSnapshot(snapshot, using: vaultKey)
+    }
+
+    private func saveSnapshot(_ snapshot: Snapshot, using vaultKey: VaultKey) throws {
+        let plaintext = try JSONEncoder().encode(snapshot)
         let box = try AES.GCM.seal(
             plaintext,
             using: SymmetricKey(data: vaultKey.data),
@@ -96,6 +197,16 @@ struct EncryptedMessageHistoryStore {
             [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
             ofItemAtPath: fileURL.path
         )
+    }
+
+    private func filtered(
+        _ conversation: MessageConversation,
+        deleting messageIDs: Set<UUID>
+    ) -> MessageConversation {
+        var conversation = conversation
+        conversation.messages.removeAll { messageIDs.contains($0.id) }
+        conversation.unreadCount = min(conversation.unreadCount, conversation.messages.count)
+        return conversation
     }
 
     func encryptedData() throws -> Data? {

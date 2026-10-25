@@ -9,6 +9,7 @@ struct MessagesTabScreen: View {
     @Binding var searchText: String
     @Binding var selectedLineID: UUID?
     @Binding var editMode: EditMode
+    @Binding var selectedConversationIDs: Set<ConversationID>
 
     @State private var contacts: [ContactRecord] = []
 
@@ -19,6 +20,7 @@ struct MessagesTabScreen: View {
             searchText: $searchText,
             selectedLineID: $selectedLineID,
             editMode: $editMode,
+            selectedConversationIDs: $selectedConversationIDs,
             contacts: contacts,
             defaultLineID: model.defaultMessageLineID,
             refreshAction: {

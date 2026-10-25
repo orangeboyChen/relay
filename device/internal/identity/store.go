@@ -59,6 +59,22 @@ func (state State) FingerprintSIM(iccid string) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
+// FingerprintEUICC returns a stable opaque fingerprint for the modem's eUICC.
+// The EID is never persisted or sent to the server in plaintext.
+func (state State) FingerprintEUICC(eid string) (string, error) {
+	eid = strings.TrimSpace(eid)
+	if len(eid) != 32 {
+		return "", fmt.Errorf("eUICC EID has an invalid length")
+	}
+	for _, digit := range eid {
+		if !((digit >= '0' && digit <= '9') || (digit >= 'a' && digit <= 'f') || (digit >= 'A' && digit <= 'F')) {
+			return "", fmt.Errorf("eUICC EID must contain only hexadecimal digits")
+		}
+	}
+	digest := sha256.Sum256([]byte("sim-deck-sim-eid-v1\x00" + strings.ToUpper(eid)))
+	return hex.EncodeToString(digest[:]), nil
+}
+
 // CommandPublicKey derives the X25519 key advertised for encrypted device commands.
 func (state State) CommandPublicKey() []byte {
 	privateKey, err := ecdh.X25519().NewPrivateKey(state.CommandPrivateKey)

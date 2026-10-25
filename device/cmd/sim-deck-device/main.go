@@ -483,7 +483,24 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	} else if !errors.Is(slotError, modem.ErrSIMSlotUnsupported) {
 		logger.Warn("SIM slot status unavailable", "error", slotError)
 	}
-	if iccid, iccidError := session.ReadSIMICCID(ctx); iccidError == nil {
+	if iccid, iccidError := session.ReadSIMICCID(ctx); eSIMSupported {
+		// An eUICC remains the same SIM identity while its active profile changes.
+		// Use its EID for server assignment so an empty profile list can still be
+		// managed through encrypted eSIM commands.
+		fingerprint, fingerprintError := deviceIdentity.FingerprintEUICC(eSIMEID)
+		if fingerprintError != nil {
+			return fmt.Errorf("fingerprint eUICC identity: %w", fingerprintError)
+		}
+		deviceIdentity, err = identityStore.SetSIMFingerprint(deviceIdentity, fingerprint)
+		if err != nil {
+			return fmt.Errorf("persist eUICC identity fingerprint: %w", err)
+		}
+		if iccidError == nil {
+			logger.Info("active eSIM profile identity detected", "slot_key", deviceIdentity.SlotKey, "slot_index", deviceIdentity.SlotIndex)
+		} else {
+			logger.Info("eUICC identity detected without an active profile", "slot_key", deviceIdentity.SlotKey, "slot_index", deviceIdentity.SlotIndex, "error", iccidError)
+		}
+	} else if iccidError == nil {
 		fingerprint, fingerprintError := deviceIdentity.FingerprintSIM(iccid)
 		if fingerprintError != nil {
 			return fmt.Errorf("fingerprint SIM identity: %w", fingerprintError)

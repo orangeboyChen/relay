@@ -90,6 +90,22 @@ var _ = Describe("Device identity store", func() {
 		Expect(err).To(MatchError(ContainSubstring("only digits")))
 	})
 
+	It("derives a stable eUICC fingerprint from the EID", func() {
+		store := NewStore(GinkgoT().TempDir(), testDeviceUUID)
+		state, err := store.LoadOrCreate()
+		Expect(err).NotTo(HaveOccurred())
+		first, err := state.FingerprintEUICC("89086030202200000026000455069085")
+		Expect(err).NotTo(HaveOccurred())
+		second, err := state.FingerprintEUICC("89086030202200000026000455069085")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(first).To(Equal(second))
+		Expect(first).To(HaveLen(64))
+		_, err = state.FingerprintEUICC("not-an-eid")
+		Expect(err).To(MatchError(ContainSubstring("invalid length")))
+		_, err = state.FingerprintEUICC("8908603020220000002600045506908x")
+		Expect(err).To(MatchError(ContainSubstring("hexadecimal")))
+	})
+
 	It("atomically persists a SIM fingerprint and server assignment", func() {
 		directory := GinkgoT().TempDir()
 		store := NewStore(directory, testDeviceUUID)

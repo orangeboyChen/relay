@@ -16,6 +16,7 @@ struct CallHistoryScreen: View {
     @Binding var editMode: EditMode
     @Binding var filter: CallHistoryFilter
     @Binding var selectedLineID: UUID?
+    let refreshAction: () async -> Void = {}
     let onDelete: (Set<UUID>) throws -> Void
     var onMarkRead: (Set<UUID>) throws -> Void = { _ in }
     var onSelectionChange: (Set<UUID>) -> Void = { _ in }
@@ -96,6 +97,12 @@ struct CallHistoryScreen: View {
         .contentMargins(.bottom, editMode.isEditing ? 64 : 0, for: .scrollContent)
         .environment(\.editMode, $editMode)
         .toolbar(editMode.isEditing ? .hidden : .visible, for: .tabBar)
+        .task {
+            await refreshAction()
+        }
+        .refreshable {
+            await refreshAction()
+        }
         .onChange(of: editMode) { _, newMode in
             if !newMode.isEditing {
                 selectedEntryIDs.removeAll()

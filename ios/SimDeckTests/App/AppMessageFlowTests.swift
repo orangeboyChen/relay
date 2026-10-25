@@ -208,6 +208,86 @@ final class AppMessageFlowTests: XCTestCase {
         XCTAssertEqual(transport.synchronizedLineIDs, [[firstLine.id, secondLine.id]])
     }
 
+    func testClearingLocalHistoryRestoresEncryptedServerSnapshots() async throws {
+        let vaultKey = try VaultKey(data: Data(repeating: 7, count: VaultKey.length))
+        let remoteDirectory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let localDirectory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer {
+            try? FileManager.default.removeItem(at: remoteDirectory)
+            try? FileManager.default.removeItem(at: localDirectory)
+        }
+
+        let remoteMessages = EncryptedMessageHistoryStore(
+            fileURL: remoteDirectory.appending(path: "messages.bin")
+        )
+        let remoteCalls = EncryptedCallHistoryStore(
+            fileURL: remoteDirectory.appending(path: "calls.bin")
+        )
+        let remoteMessage = MessageItem(
+            id: UUID(),
+            direction: .received,
+            body: "restored message",
+            attachment: nil,
+            sentAt: Date(timeIntervalSince1970: 100),
+            status: .delivered
+        )
+        try remoteMessages.save([
+            MessageConversation(
+                lineID: firstLine.id,
+                remoteNumber: "10086",
+                contactName: nil,
+                unreadCount: 1,
+                messages: [remoteMessage]
+            ),
+        ], using: vaultKey)
+        let remoteCall = CallRecord(
+            id: UUID(),
+            lineID: firstLine.id,
+            remoteNumber: "10086",
+            contactName: nil,
+            direction: .outgoing,
+            result: .answered,
+            startedAt: Date(timeIntervalSince1970: 101),
+            endedAt: Date(timeIntervalSince1970: 106)
+        )
+        try remoteCalls.save([remoteCall], using: vaultKey)
+
+        let syncClient = HistorySnapshotClient(
+            messages: try XCTUnwrap(remoteMessages.encryptedData()),
+            calls: try XCTUnwrap(remoteCalls.encryptedData())
+        )
+        let defaults = UserDefaults(suiteName: "AppHistoryRestoreTests.\(UUID().uuidString)")!
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let connection = ServerConnectionManager(
+            network: MessageServerNetwork(),
+            sessionStore: MessageSessionStore(value: Self.activeSession),
+            defaults: defaults,
+            communicationSyncClientFactory: HistorySnapshotClientFactory(client: syncClient)
+        )
+        let model = AppModel(
+            devices: [firstLine],
+            serverConnection: connection,
+            installationBootstrapper: MessageInstallationBootstrapper(vaultKey: vaultKey),
+            messageTransport: MessageTransportFake(),
+            messageHistoryStore: EncryptedMessageHistoryStore(
+                fileURL: localDirectory.appending(path: "messages.bin")
+            ),
+            callHistoryStore: EncryptedCallHistoryStore(
+                fileURL: localDirectory.appending(path: "calls.bin")
+            ),
+            remoteDeviceRefreshEnabled: false
+        )
+        model.bootstrapInstallation()
+
+        try await model.clearLocalHistoryCacheAndRestoreFromServer()
+
+        XCTAssertEqual(model.messageItems.map(\.body), ["restored message"])
+        XCTAssertEqual(model.callHistory, .loaded([remoteCall]))
+        XCTAssertEqual(syncClient.requestedKinds, [.messages, .calls])
+    }
+
     func testRefreshResolvesFormattedContactNameForEverySIMConversation() async {
         let contactStore = MessageContactStore(
             authorizationState: .authorized,
@@ -653,6 +733,70 @@ private struct MessageServerNetwork: ServerNetworking {
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         throw URLError(.unsupportedURL)
     }
+}
+
+@MainActor
+private final class HistorySnapshotClient: CommunicationSyncClient {
+    let messages: Data
+    let calls: Data
+    private(set) var requestedKinds: [Relay_Communication_V1_HistoryKind] = []
+
+    init(messages: Data, calls: Data) {
+        self.messages = messages
+        self.calls = calls
+    }
+
+    func pullEvents(afterSequence: Int64, accessToken: String) async throws -> EncryptedEventPage {
+        EncryptedEventPage(events: [], nextSequence: afterSequence)
+    }
+
+    func watchEvents(afterSequence: Int64, accessToken: String) throws -> any EncryptedEventStream {
+        EmptyHistoryEventStream()
+    }
+
+    func getHistorySnapshot(
+        kind: Relay_Communication_V1_HistoryKind,
+        accessToken: String
+    ) async throws -> HistorySnapshotPayload {
+        requestedKinds.append(kind)
+        return HistorySnapshotPayload(
+            revision: 1,
+            ciphertext: kind == .messages ? messages : calls
+        )
+    }
+
+    func putHistorySnapshot(
+        kind: Relay_Communication_V1_HistoryKind,
+        expectedRevision: Int64,
+        ciphertext: Data,
+        accessToken: String
+    ) async throws -> HistorySnapshotPayload {
+        HistorySnapshotPayload(revision: expectedRevision + 1, ciphertext: ciphertext)
+    }
+}
+
+@MainActor
+private final class HistorySnapshotClientFactory: CommunicationSyncClientCreating {
+    let client: HistorySnapshotClient
+
+    init(client: HistorySnapshotClient) {
+        self.client = client
+    }
+
+    func makeClient(baseURL: URL) -> any CommunicationSyncClient {
+        client
+    }
+}
+
+@MainActor
+private final class EmptyHistoryEventStream: EncryptedEventStream {
+    func receive() async throws -> EncryptedEventPage {
+        throw ServerConnectionError.eventStreamUnavailable
+    }
+
+    func acknowledge(sequence: Int64) async throws {}
+
+    func close() {}
 }
 
 private final class MessageSessionStore: SecureValueStoring, @unchecked Sendable {

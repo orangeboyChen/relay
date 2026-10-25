@@ -76,6 +76,7 @@ struct StorageSettingsScreen: View {
     @State private var localSearchIndex = true
     @State private var autoDownloadMMS = true
     @State private var errorMessage: String?
+    @State private var isClearingCache = false
 
     var body: some View {
         Form {
@@ -83,8 +84,11 @@ struct StorageSettingsScreen: View {
             Toggle("Automatically download MMS", isOn: $autoDownloadMMS)
             LabeledContent("Cache size", value: "24 MB")
             Button("Clear Cache", role: .destructive) {
-                do { try model.clearLocalMessageCache() }
-                catch { errorMessage = error.localizedDescription }
+                Task { await clearCacheAndRestoreHistory() }
+            }
+            .disabled(isClearingCache)
+            if isClearingCache {
+                ProgressView("Restoring history…")
             }
         }
         .navigationTitle("Messages & Storage")
@@ -92,6 +96,16 @@ struct StorageSettingsScreen: View {
             Button("OK", role: .cancel) { errorMessage = nil }
         } message: { Text(errorMessage ?? "") }
         .scrollEdgeEffectStyle(.soft, for: .all)
+    }
+
+    private func clearCacheAndRestoreHistory() async {
+        isClearingCache = true
+        defer { isClearingCache = false }
+        do {
+            try await model.clearLocalHistoryCacheAndRestoreFromServer()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }
 

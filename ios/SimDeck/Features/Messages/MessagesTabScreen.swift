@@ -22,7 +22,7 @@ struct MessagesTabScreen: View {
             contacts: contacts,
             defaultLineID: model.defaultMessageLineID,
             refreshAction: {
-                await model.refreshMessages()
+                await model.refreshCommunicationHistory()
             },
             sendAction: { lineID, remoteNumber, body in
                 try await model.sendMessage(

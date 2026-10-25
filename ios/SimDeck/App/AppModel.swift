@@ -351,6 +351,29 @@ final class AppModel {
         }
     }
 
+    /// Refreshes the durable server snapshots before polling for new modem events.
+    ///
+    /// The encrypted snapshots are the source of truth for history. The live
+    /// message transport only contains events that have not already been
+    /// acknowledged by this installation, so refreshing it alone cannot
+    /// restore a cleared local cache.
+    func refreshCommunicationHistory() async {
+        guard serverConnection.isSignedIn else {
+            await refreshMessages()
+            return
+        }
+
+        do {
+            try await synchronizeEncryptedHistory()
+        } catch {
+            Self.logger.error(
+                "Encrypted communication history refresh failed: \(String(reflecting: error), privacy: .public)"
+            )
+            serverConnection.markRequestFailed(error)
+        }
+        await refreshMessages()
+    }
+
     func handleMessageNotificationSelection(conversationIdentifier: String) async {
         pendingMessageNotificationConversationIdentifier = conversationIdentifier
         await refreshMessages()
@@ -905,17 +928,38 @@ final class AppModel {
 
     private func synchronizeMessages() async throws {
         let batch = try await messageTransport.synchronize(lines: devices)
+        let previousMessages = messages
         mergeIncomingMessages(batch.deliveries)
         try await applyDetectedSIMProfiles(batch.detectedSIMProfiles)
         if let recoveredVaultKey {
             try messageHistoryStore.save(loadedConversations, using: recoveredVaultKey)
+            if messages != previousMessages {
+                scheduleHistorySnapshotSync()
+            }
         }
         messageTransport.acknowledge(sequence: batch.nextSequence)
     }
 
     func clearLocalMessageCache() throws {
+        historySnapshotSyncTask?.cancel()
+        historySnapshotSyncTask = nil
         try messageHistoryStore.delete()
         messages = .loaded([])
+    }
+
+    /// Clears both local history files and immediately restores them from the
+    /// encrypted server snapshots. This keeps Clear Cache from becoming a
+    /// destructive history operation when the server copy is available.
+    func clearLocalHistoryCacheAndRestoreFromServer() async throws {
+        guard serverConnection.isSignedIn else {
+            throw ServerConnectionError.authenticationRequired
+        }
+        historySnapshotSyncTask?.cancel()
+        historySnapshotSyncTask = nil
+        try deleteEncryptedHistory()
+        messages = .loaded([])
+        callHistory = .loaded([])
+        try await synchronizeEncryptedHistory()
     }
 
     func deleteCallHistoryRecords(withIDs recordIDs: Set<UUID>) throws {

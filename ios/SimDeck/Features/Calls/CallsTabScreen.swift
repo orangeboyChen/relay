@@ -28,6 +28,9 @@ struct CallsTabScreen: View {
             editMode: $historyEditMode,
             filter: $filter,
             selectedLineID: $selectedLineID,
+            refreshAction: {
+                await model.refreshCommunicationHistory()
+            },
             onDelete: model.deleteCallHistoryRecords(withIDs:),
             onMarkRead: model.markCallHistoryRecordsRead(withIDs:),
             onSelectionChange: { selectedHistoryEntryIDs = $0 }

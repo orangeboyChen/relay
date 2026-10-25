@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	webauthnlib "github.com/go-webauthn/webauthn/webauthn"
@@ -74,6 +75,19 @@ type SIMRecord struct {
 	LastSeenAt        time.Time `json:"last_seen_at"`
 	AssignedDeviceID  *string   `json:"assigned_device_uuid,omitempty"`
 	AssignedSlotID    *string   `json:"assigned_slot_id,omitempty"`
+}
+
+// ESIMProfileRecord contains the server-owned metadata for one installed eSIM
+// profile. Provisioning itself remains a device capability.
+type ESIMProfileRecord struct {
+	SIMID        string    `json:"sim_id"`
+	ProfileID    string    `json:"profile_id"`
+	Name         string    `json:"name"`
+	ICCID        string    `json:"iccid"`
+	OperatorName string    `json:"operator_name"`
+	IsEnabled    bool      `json:"is_enabled"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // OwnerCredential is the password-login state for the single owner.
@@ -1217,6 +1231,120 @@ func (store *Postgres) UpdateSIMProfile(ctx context.Context, simID string, profi
 		SELECT id::text FROM updated_sim`, simID, profileCiphertext).Scan(&updatedSIMID)
 	if err != nil {
 		return fmt.Errorf("update SIM profile: %w", err)
+	}
+	return nil
+}
+
+// ListESIMProfiles returns the profiles recorded for an active SIM.
+func (store *Postgres) ListESIMProfiles(ctx context.Context, simID string) ([]ESIMProfileRecord, error) {
+	rows, err := store.pool.Query(ctx, `
+		SELECT sim_id::text, profile_id, name, iccid, operator_name, is_enabled, created_at, updated_at
+		FROM esim_profiles
+		WHERE sim_id = $1 AND EXISTS (
+			SELECT 1 FROM sim_cards WHERE id = $1 AND retired_at IS NULL
+		)
+		ORDER BY updated_at DESC, profile_id`, simID)
+	if err != nil {
+		return nil, fmt.Errorf("list eSIM profiles: %w", err)
+	}
+	defer rows.Close()
+	profiles := make([]ESIMProfileRecord, 0)
+	for rows.Next() {
+		var profile ESIMProfileRecord
+		if err := rows.Scan(&profile.SIMID, &profile.ProfileID, &profile.Name, &profile.ICCID, &profile.OperatorName, &profile.IsEnabled, &profile.CreatedAt, &profile.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan eSIM profile: %w", err)
+		}
+		profiles = append(profiles, profile)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate eSIM profiles: %w", err)
+	}
+	return profiles, nil
+}
+
+// UpsertESIMProfile records metadata after a profile is installed on a modem.
+func (store *Postgres) UpsertESIMProfile(ctx context.Context, profile ESIMProfileRecord) (ESIMProfileRecord, error) {
+	if profile.SIMID == "" || profile.ProfileID == "" || len(profile.ProfileID) > 256 || len(profile.Name) > 128 || len(profile.ICCID) > 32 || len(profile.OperatorName) > 128 {
+		return ESIMProfileRecord{}, domain.ErrInvalidESIMProfile
+	}
+	err := store.pool.QueryRow(ctx, `
+		INSERT INTO esim_profiles (sim_id, profile_id, name, iccid, operator_name, is_enabled)
+		SELECT $1, $2, $3, $4, $5, $6
+		WHERE EXISTS (SELECT 1 FROM sim_cards WHERE id = $1 AND retired_at IS NULL)
+		ON CONFLICT (sim_id, profile_id) DO UPDATE SET
+			name = EXCLUDED.name,
+			iccid = EXCLUDED.iccid,
+			operator_name = EXCLUDED.operator_name,
+			is_enabled = EXCLUDED.is_enabled,
+			updated_at = now()
+		RETURNING sim_id::text, profile_id, name, iccid, operator_name, is_enabled, created_at, updated_at`,
+		profile.SIMID, profile.ProfileID, profile.Name, profile.ICCID, profile.OperatorName, profile.IsEnabled,
+	).Scan(&profile.SIMID, &profile.ProfileID, &profile.Name, &profile.ICCID, &profile.OperatorName, &profile.IsEnabled, &profile.CreatedAt, &profile.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ESIMProfileRecord{}, pgx.ErrNoRows
+	}
+	if err != nil {
+		return ESIMProfileRecord{}, fmt.Errorf("upsert eSIM profile: %w", err)
+	}
+	return profile, nil
+}
+
+// RenameESIMProfile changes only the user-visible label of an installed profile.
+func (store *Postgres) RenameESIMProfile(ctx context.Context, simID, profileID, name string) (ESIMProfileRecord, error) {
+	name = strings.TrimSpace(name)
+	if simID == "" || profileID == "" || len(profileID) > 256 || len(name) > 128 {
+		return ESIMProfileRecord{}, domain.ErrInvalidESIMProfile
+	}
+	var profile ESIMProfileRecord
+	err := store.pool.QueryRow(ctx, `
+		UPDATE esim_profiles
+		SET name = $3, updated_at = now()
+		WHERE sim_id = $1 AND profile_id = $2
+		RETURNING sim_id::text, profile_id, name, iccid, operator_name, is_enabled, created_at, updated_at`,
+		simID, profileID, name,
+	).Scan(&profile.SIMID, &profile.ProfileID, &profile.Name, &profile.ICCID, &profile.OperatorName, &profile.IsEnabled, &profile.CreatedAt, &profile.UpdatedAt)
+	if err != nil {
+		return ESIMProfileRecord{}, fmt.Errorf("rename eSIM profile: %w", err)
+	}
+	return profile, nil
+}
+
+// SetESIMProfileEnabled toggles one profile and disables other profiles on the same SIM.
+func (store *Postgres) SetESIMProfileEnabled(ctx context.Context, simID, profileID string, enabled bool) (ESIMProfileRecord, error) {
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return ESIMProfileRecord{}, fmt.Errorf("begin eSIM profile update: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if enabled {
+		if _, err := tx.Exec(ctx, `UPDATE esim_profiles SET is_enabled = FALSE, updated_at = now() WHERE sim_id = $1`, simID); err != nil {
+			return ESIMProfileRecord{}, fmt.Errorf("disable other eSIM profiles: %w", err)
+		}
+	}
+	var profile ESIMProfileRecord
+	if err := tx.QueryRow(ctx, `
+		UPDATE esim_profiles
+		SET is_enabled = $3, updated_at = now()
+		WHERE sim_id = $1 AND profile_id = $2
+		RETURNING sim_id::text, profile_id, name, iccid, operator_name, is_enabled, created_at, updated_at`,
+		simID, profileID, enabled,
+	).Scan(&profile.SIMID, &profile.ProfileID, &profile.Name, &profile.ICCID, &profile.OperatorName, &profile.IsEnabled, &profile.CreatedAt, &profile.UpdatedAt); err != nil {
+		return ESIMProfileRecord{}, fmt.Errorf("set eSIM profile state: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ESIMProfileRecord{}, fmt.Errorf("commit eSIM profile state: %w", err)
+	}
+	return profile, nil
+}
+
+// DeleteESIMProfile removes server metadata after the modem has removed a profile.
+func (store *Postgres) DeleteESIMProfile(ctx context.Context, simID, profileID string) error {
+	command, err := store.pool.Exec(ctx, `DELETE FROM esim_profiles WHERE sim_id = $1 AND profile_id = $2`, simID, profileID)
+	if err != nil {
+		return fmt.Errorf("delete eSIM profile: %w", err)
+	}
+	if command.RowsAffected() == 0 {
+		return pgx.ErrNoRows
 	}
 	return nil
 }

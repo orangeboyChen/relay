@@ -120,6 +120,23 @@ CREATE UNIQUE INDEX IF NOT EXISTS sim_cards_fingerprint_idx
     ON sim_cards(encode(iccid_fingerprint, 'hex'))
     WHERE iccid_fingerprint IS NOT NULL AND retired_at IS NULL;
 
+-- eSIM profile metadata is server-owned so labels and enabled state survive
+-- app reinstalls. The modem remains the source of truth for provisioning.
+CREATE TABLE IF NOT EXISTS esim_profiles (
+    sim_id UUID NOT NULL REFERENCES sim_cards(id) ON DELETE CASCADE,
+    profile_id TEXT NOT NULL CHECK (length(profile_id) BETWEEN 1 AND 256),
+    name TEXT NOT NULL DEFAULT '' CHECK (length(name) <= 128),
+    iccid TEXT NOT NULL DEFAULT '' CHECK (length(iccid) <= 32),
+    operator_name TEXT NOT NULL DEFAULT '' CHECK (length(operator_name) <= 128),
+    is_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (sim_id, profile_id)
+);
+
+CREATE INDEX IF NOT EXISTS esim_profiles_sim_idx
+    ON esim_profiles(sim_id, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS device_slots (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,

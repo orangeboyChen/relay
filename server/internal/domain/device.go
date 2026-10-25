@@ -24,6 +24,7 @@ var (
 	ErrDeviceDiscoveryRejected = errors.New("device discovery request was rejected")
 	ErrInstallationConflict    = errors.New("installation id is already registered with different identity data")
 	ErrSIMAssigned             = errors.New("SIM card is still assigned to a device slot")
+	ErrInvalidESIMProfile      = errors.New("eSIM profile is invalid")
 )
 
 // DeviceLineIdentity is the public identity of one modem and SIM line.

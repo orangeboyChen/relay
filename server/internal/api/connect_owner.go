@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	connect "connectrpc.com/connect/v2"
@@ -96,6 +97,158 @@ func (service *ownerService) ListSimCards(ctx context.Context, request *communic
 		response.Sims = append(response.Sims, item)
 	}
 	return response, nil
+}
+
+type esimProfileRepository interface {
+	ListESIMProfiles(context.Context, string) ([]store.ESIMProfileRecord, error)
+	UpsertESIMProfile(context.Context, store.ESIMProfileRecord) (store.ESIMProfileRecord, error)
+	RenameESIMProfile(context.Context, string, string, string) (store.ESIMProfileRecord, error)
+	SetESIMProfileEnabled(context.Context, string, string, bool) (store.ESIMProfileRecord, error)
+	DeleteESIMProfile(context.Context, string, string) error
+}
+
+func (service *ownerService) esimProfiles() (esimProfileRepository, error) {
+	repository, ok := service.router.repository.(esimProfileRepository)
+	if !ok {
+		return nil, connect.NewError(connect.CodeUnimplemented, "eSIM profile management is unavailable")
+	}
+	return repository, nil
+}
+
+func validateESIMProfileRequest(simID, profileID string) error {
+	if !validUUID(simID) || strings.TrimSpace(profileID) == "" || len(profileID) > 256 {
+		return connect.NewError(connect.CodeInvalidArgument, "eSIM profile identifier is invalid")
+	}
+	return nil
+}
+
+func esimProfileMessage(profile store.ESIMProfileRecord) *communicationv1.EsimProfile {
+	return &communicationv1.EsimProfile{
+		ProfileId:    profile.ProfileID,
+		Name:         profile.Name,
+		Iccid:        profile.ICCID,
+		OperatorName: profile.OperatorName,
+		IsEnabled:    profile.IsEnabled,
+	}
+}
+
+func (service *ownerService) ListEsimProfiles(ctx context.Context, request *communicationv1.ListEsimProfilesRequest) (*communicationv1.ListEsimProfilesResponse, error) {
+	if _, err := ownerIDFromRPC(ctx); err != nil {
+		return nil, err
+	}
+	if !validUUID(request.GetSimId()) {
+		return nil, connect.NewError(connect.CodeInvalidArgument, "SIM identifier is invalid")
+	}
+	repository, err := service.esimProfiles()
+	if err != nil {
+		return nil, err
+	}
+	profiles, err := repository.ListESIMProfiles(ctx, request.GetSimId())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, "unable to list eSIM profiles")
+	}
+	response := &communicationv1.ListEsimProfilesResponse{}
+	for _, profile := range profiles {
+		response.Profiles = append(response.Profiles, esimProfileMessage(profile))
+	}
+	return response, nil
+}
+
+func (service *ownerService) AddEsimProfile(ctx context.Context, request *communicationv1.AddEsimProfileRequest) (*communicationv1.AddEsimProfileResponse, error) {
+	if _, err := ownerIDFromRPC(ctx); err != nil {
+		return nil, err
+	}
+	if err := validateESIMProfileRequest(request.GetSimId(), request.GetProfileId()); err != nil {
+		return nil, err
+	}
+	if len(request.GetName()) > 128 || len(request.GetIccid()) > 32 || len(request.GetOperatorName()) > 128 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, "eSIM profile metadata is too long")
+	}
+	repository, err := service.esimProfiles()
+	if err != nil {
+		return nil, err
+	}
+	profile, err := repository.UpsertESIMProfile(ctx, store.ESIMProfileRecord{
+		SIMID: request.GetSimId(), ProfileID: request.GetProfileId(), Name: strings.TrimSpace(request.GetName()),
+		ICCID: strings.TrimSpace(request.GetIccid()), OperatorName: strings.TrimSpace(request.GetOperatorName()),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, connect.NewError(connect.CodeNotFound, "SIM card not found")
+	}
+	if errors.Is(err, domain.ErrInvalidESIMProfile) {
+		return nil, connect.NewError(connect.CodeInvalidArgument, "eSIM profile metadata is invalid")
+	}
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, "unable to add eSIM profile")
+	}
+	return &communicationv1.AddEsimProfileResponse{Profile: esimProfileMessage(profile)}, nil
+}
+
+func (service *ownerService) RenameEsimProfile(ctx context.Context, request *communicationv1.RenameEsimProfileRequest) (*communicationv1.RenameEsimProfileResponse, error) {
+	if _, err := ownerIDFromRPC(ctx); err != nil {
+		return nil, err
+	}
+	if err := validateESIMProfileRequest(request.GetSimId(), request.GetProfileId()); err != nil {
+		return nil, err
+	}
+	if len(request.GetName()) > 128 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, "eSIM profile name is too long")
+	}
+	repository, err := service.esimProfiles()
+	if err != nil {
+		return nil, err
+	}
+	profile, err := repository.RenameESIMProfile(ctx, request.GetSimId(), request.GetProfileId(), request.GetName())
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, connect.NewError(connect.CodeNotFound, "eSIM profile not found")
+	}
+	if errors.Is(err, domain.ErrInvalidESIMProfile) {
+		return nil, connect.NewError(connect.CodeInvalidArgument, "eSIM profile name is invalid")
+	}
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, "unable to rename eSIM profile")
+	}
+	return &communicationv1.RenameEsimProfileResponse{Profile: esimProfileMessage(profile)}, nil
+}
+
+func (service *ownerService) SetEsimProfileEnabled(ctx context.Context, request *communicationv1.SetEsimProfileEnabledRequest) (*communicationv1.SetEsimProfileEnabledResponse, error) {
+	if _, err := ownerIDFromRPC(ctx); err != nil {
+		return nil, err
+	}
+	if err := validateESIMProfileRequest(request.GetSimId(), request.GetProfileId()); err != nil {
+		return nil, err
+	}
+	repository, err := service.esimProfiles()
+	if err != nil {
+		return nil, err
+	}
+	profile, err := repository.SetESIMProfileEnabled(ctx, request.GetSimId(), request.GetProfileId(), request.GetEnabled())
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, connect.NewError(connect.CodeNotFound, "eSIM profile not found")
+	}
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, "unable to update eSIM profile state")
+	}
+	return &communicationv1.SetEsimProfileEnabledResponse{Profile: esimProfileMessage(profile)}, nil
+}
+
+func (service *ownerService) DeleteEsimProfile(ctx context.Context, request *communicationv1.DeleteEsimProfileRequest) (*communicationv1.DeleteEsimProfileResponse, error) {
+	if _, err := ownerIDFromRPC(ctx); err != nil {
+		return nil, err
+	}
+	if err := validateESIMProfileRequest(request.GetSimId(), request.GetProfileId()); err != nil {
+		return nil, err
+	}
+	repository, err := service.esimProfiles()
+	if err != nil {
+		return nil, err
+	}
+	if err := repository.DeleteESIMProfile(ctx, request.GetSimId(), request.GetProfileId()); errors.Is(err, pgx.ErrNoRows) {
+		return nil, connect.NewError(connect.CodeNotFound, "eSIM profile not found")
+	} else if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, "unable to delete eSIM profile")
+	}
+	return &communicationv1.DeleteEsimProfileResponse{}, nil
 }
 
 func (service *ownerService) RetireSimCard(ctx context.Context, request *communicationv1.RetireSimCardRequest) (*communicationv1.RetireSimCardResponse, error) {

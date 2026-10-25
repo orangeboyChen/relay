@@ -376,7 +376,7 @@ final class AppModel {
 
     func handleMessageNotificationSelection(conversationIdentifier: String) async {
         pendingMessageNotificationConversationIdentifier = conversationIdentifier
-        await refreshMessages()
+        await refreshCommunicationHistory()
         resolvePendingMessageNotificationSelection()
     }
 
@@ -451,7 +451,7 @@ final class AppModel {
     func refreshForegroundState() async {
         refreshContactNames()
         await refreshDevices()
-        await refreshMessages()
+        await refreshCommunicationHistory()
     }
 
     @discardableResult

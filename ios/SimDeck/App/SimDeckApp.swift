@@ -190,7 +190,7 @@ struct SimDeckApp: App {
                     model.startContactUpdates()
                     appDelegate.setRemoteNotificationHandlers(
                         onActivity: {
-                            await model.refreshMessages()
+                            await model.refreshCommunicationHistory()
                         },
                         onMessageSelection: { conversationIdentifier in
                             await model.handleMessageNotificationSelection(
@@ -203,7 +203,7 @@ struct SimDeckApp: App {
                     model.bootstrapInstallation()
                     model.startVoIPPushes()
                     await model.refreshDevices()
-                    await model.refreshMessages()
+                    await model.refreshCommunicationHistory()
                     model.startMessageRealtimeUpdates()
                 }
                 .onChange(of: scenePhase) { _, phase in

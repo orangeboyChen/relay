@@ -24,6 +24,12 @@ it does not decrypt it.
 - A Linux host with Docker Engine and Docker Compose v2.
 - A DNS name and TLS reverse proxy for `PUBLIC_BASE_URL`.
 - HTTPS port 443 on the same hostname must serve `/.well-known/apple-app-site-association` so iOS can authorize native passkeys. The API itself may continue to use a different public port.
+- If the public address is behind a home router, forward TCP 443 for this
+  hostname to the Traefik HTTPS-origin entry point (the cluster VIP), not to
+  the router's administration HTTPS listener. The certificate presented on
+  public 443 must be a publicly trusted certificate whose name matches the
+  hostname; a router self-signed certificate or a 404 from the router cannot
+  be used by Apple's associated-domain validator.
 - TCP 443 reachable by the iPhone and modem hosts.
 - TURN TCP/UDP 3478 and the configured UDP relay range reachable by the
   iPhone and modem hosts.
@@ -77,6 +83,20 @@ interface. Put a TLS reverse proxy on the same host and forward its upstream to
 `127.0.0.1:${SERVER_PORT}`. The proxy must preserve HTTP/2 and streaming request
 bodies; no WebSocket upgrade is required.
 Set `PUBLIC_BASE_URL` to the proxy's HTTPS URL, not the loopback upstream.
+
+Before registering a passkey, verify the exact endpoint from a network outside
+the LAN (or with the public address explicitly resolved):
+
+```sh
+curl --fail --show-error --silent \
+  https://sim-deck.example/.well-known/apple-app-site-association
+```
+
+The response must be HTTP 200 with `Content-Type: application/json` and must
+contain the app identifier in `webcredentials.apps`. Do not validate this only
+through an internal DNS rewrite: Apple's validator reaches the public 443
+listener. After correcting a failed association, delete and reinstall the app
+so iOS can refresh its cached association.
 
 ## Start the control plane
 

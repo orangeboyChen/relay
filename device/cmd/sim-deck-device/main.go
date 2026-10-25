@@ -385,6 +385,17 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	if err := session.Initialize(ctx); err != nil {
 		return err
 	}
+	if modemIdentity, identityError := modem.ReadModemIdentity(ctx, client, config.CommandTimeout); identityError != nil {
+		logger.Warn("modem identity probe failed", "error", identityError)
+	} else {
+		logger.Info(
+			"modem identity detected",
+			"manufacturer", modemIdentity.Manufacturer,
+			"model", modemIdentity.Model,
+			"revision", modemIdentity.Revision,
+			"esim_probe", "not_run",
+		)
+	}
 	if err := session.ClearOrphanedCalls(ctx); err != nil {
 		return fmt.Errorf("reconcile modem calls after startup: %w", err)
 	}

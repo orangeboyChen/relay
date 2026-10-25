@@ -33,6 +33,31 @@ func newTestSession(sink MessageSink) (*Session, net.Conn, *at.Client) {
 }
 
 var _ = Describe("Modem session", func() {
+	It("reads the EC20CE model and revision using standard read-only commands", func() {
+		clientTransport, modemTransport := net.Pipe()
+		client := at.NewClient(clientTransport)
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			command, _ := reader.ReadString('\r')
+			Expect(strings.TrimSuffix(command, "\r")).To(Equal("ATI"))
+			_, _ = modemTransport.Write([]byte("Quectel\r\nEC20CE\r\nRevision: EC20CEHCR06A08M1G\r\nOK\r\n"))
+			command, _ = reader.ReadString('\r')
+			Expect(strings.TrimSuffix(command, "\r")).To(Equal("AT+CGMM"))
+			_, _ = modemTransport.Write([]byte("EC20CE\r\nOK\r\n"))
+			command, _ = reader.ReadString('\r')
+			Expect(strings.TrimSuffix(command, "\r")).To(Equal("AT+CGMR"))
+			_, _ = modemTransport.Write([]byte("EC20CEHCR06A08M1G\r\nOK\r\n"))
+		}()
+
+		identity, err := ReadModemIdentity(context.Background(), client, time.Second)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(identity.Manufacturer).To(Equal("Quectel"))
+		Expect(identity.Model).To(Equal("EC20CE"))
+		Expect(identity.Revision).To(Equal("EC20CEHCR06A08M1G"))
+	})
+
 	It("reads the modem equipment identity for local hardware derivation", func() {
 		clientTransport, modemTransport := net.Pipe()
 		client := at.NewClient(clientTransport)

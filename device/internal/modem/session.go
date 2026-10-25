@@ -139,6 +139,75 @@ type SIMProfile struct {
 	Operator    string
 }
 
+// ModemIdentity contains the manufacturer strings exposed by the modem.
+// The model is used for capability diagnostics only; it is never trusted as a
+// SIM or device identity.
+type ModemIdentity struct {
+	Manufacturer string
+	Model        string
+	Revision     string
+}
+
+// ReadModemIdentity reads the standard, read-only modem identification
+// commands. Quectel EC20CE exposes the model through ATI/CGMM even when its
+// USB descriptors are identical to other EC20 variants.
+func ReadModemIdentity(ctx context.Context, client *at.Client, timeout time.Duration) (ModemIdentity, error) {
+	if client == nil || timeout <= 0 {
+		return ModemIdentity{}, errors.New("AT client and positive timeout are required")
+	}
+	identity := ModemIdentity{}
+	var failures []error
+	for _, command := range []string{"ATI", "AT+CGMM", "AT+CGMR"} {
+		commandContext, cancel := context.WithTimeout(ctx, timeout)
+		response, err := client.Send(commandContext, command)
+		cancel()
+		if err != nil {
+			failures = append(failures, fmt.Errorf("%s: %w", command, err))
+			continue
+		}
+		if !response.OK() {
+			failures = append(failures, fmt.Errorf("%s: modem rejected command: %s", command, response.Terminal))
+			continue
+		}
+		identity = mergeModemIdentity(identity, command, response.Lines)
+	}
+	if identity.Model == "" && identity.Manufacturer == "" && identity.Revision == "" {
+		return ModemIdentity{}, errors.Join(failures...)
+	}
+	return identity, nil
+}
+
+func mergeModemIdentity(identity ModemIdentity, command string, lines []string) ModemIdentity {
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || strings.HasPrefix(line, "+") || strings.EqualFold(line, "OK") {
+			continue
+		}
+		switch command {
+		case "AT+CGMM":
+			if identity.Model == "" {
+				identity.Model = line
+			}
+		case "AT+CGMR":
+			if identity.Revision == "" {
+				identity.Revision = line
+			}
+		case "ATI":
+			if strings.Contains(strings.ToLower(line), "quectel") && identity.Manufacturer == "" {
+				identity.Manufacturer = line
+				continue
+			}
+			if identity.Model == "" && (strings.Contains(strings.ToLower(line), "ec20") || strings.Contains(strings.ToLower(line), "ec25")) {
+				identity.Model = line
+			}
+			if identity.Revision == "" && (strings.Contains(strings.ToLower(line), "revision") || strings.Contains(strings.ToLower(line), "rev")) {
+				identity.Revision = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "Revision:"), "revision:"))
+			}
+		}
+	}
+	return identity
+}
+
 // NewSession creates a modem session from endpoint-local dependencies.
 func NewSession(client *at.Client, inbox *sms.Inbox, sink MessageSink, logger *slog.Logger, timeout time.Duration) (*Session, error) {
 	if client == nil || inbox == nil || sink == nil || logger == nil || timeout <= 0 {

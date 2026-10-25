@@ -58,6 +58,26 @@ var _ = Describe("Modem session", func() {
 		Expect(identity.Revision).To(Equal("EC20CEHCR06A08M1G"))
 	})
 
+	It("parses Quectel eSIM profile listings", func() {
+		profiles, result, ok := parseQESIMList([]string{
+			`+QESIM: "list",0`,
+			`"8932042000000199885F",1,"sim1","V-Telekom"`,
+			`"89320420000002068839",0,"YFL1","YFL1"`,
+		})
+
+		Expect(ok).To(BeTrue())
+		Expect(result).To(Equal(0))
+		Expect(profiles).To(Equal([]ESIMProfile{
+			{ICCID: "8932042000000199885F", Enabled: true, Nickname: "sim1", Provider: "V-Telekom"},
+			{ICCID: "89320420000002068839", Enabled: false, Nickname: "YFL1", Provider: "YFL1"},
+		}))
+	})
+
+	It("parses QESIM mutation results", func() {
+		Expect(parseQESIMMutation(at.Response{Lines: []string{`+QESIM: "enable",0`}, Terminal: "OK"}, "enable")).To(Succeed())
+		Expect(parseQESIMMutation(at.Response{Lines: []string{`+QESIM: "delete",1`}, Terminal: "OK"}, "delete")).To(MatchError(ContainSubstring("QESIM delete failed")))
+	})
+
 	It("reads an eUICC EID through the read-only CSIM path", func() {
 		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
 		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })

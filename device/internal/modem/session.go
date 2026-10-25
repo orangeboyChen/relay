@@ -149,6 +149,14 @@ type ModemIdentity struct {
 	Revision     string
 }
 
+// ESIMProfile describes one profile returned by Quectel's local QESIM LPA.
+type ESIMProfile struct {
+	ICCID    string
+	Enabled  bool
+	Nickname string
+	Provider string
+}
+
 // ReadEUICCIdentifier performs a read-only generic SIM APDU EID probe.
 // Profile download, enable, disable, and delete require a separate validated
 // LPA flow and are deliberately not inferred from a modem model string.
@@ -208,7 +216,7 @@ func (session *Session) readQESIMEID(ctx context.Context) (string, error) {
 			continue
 		}
 		fields := parseATCSV(line, `+QESIM:`)
-		if len(fields) != 3 || strings.TrimSpace(fields[0]) != `"eid"` || strings.TrimSpace(fields[1]) != "0" {
+		if len(fields) != 3 || !strings.EqualFold(strings.TrimSpace(fields[0]), "eid") || strings.TrimSpace(fields[1]) != "0" {
 			continue
 		}
 		eid := strings.Trim(strings.TrimSpace(fields[2]), `"`)
@@ -217,6 +225,128 @@ func (session *Session) readQESIMEID(ctx context.Context) (string, error) {
 		}
 	}
 	return "", ErrEUICCUnsupported
+}
+
+// ListESIMProfiles returns the installed profiles without changing modem state.
+func (session *Session) ListESIMProfiles(ctx context.Context) ([]ESIMProfile, error) {
+	response, err := session.send(ctx, `AT+QESIM="list"`)
+	if err != nil {
+		return nil, err
+	}
+	if !response.OK() {
+		return nil, fmt.Errorf("QESIM list rejected: %s", response.Terminal)
+	}
+	profiles, result, ok := parseQESIMList(response.Lines)
+	if !ok {
+		return nil, ErrEUICCUnsupported
+	}
+	if result != 0 {
+		return nil, fmt.Errorf("QESIM list failed with result %d", result)
+	}
+	return profiles, nil
+}
+
+// EnableESIMProfile enables one installed profile by ICCID.
+func (session *Session) EnableESIMProfile(ctx context.Context, iccid string) error {
+	return session.mutateESIMProfile(ctx, "enable", iccid)
+}
+
+// DisableESIMProfile disables one installed profile by ICCID.
+func (session *Session) DisableESIMProfile(ctx context.Context, iccid string) error {
+	return session.mutateESIMProfile(ctx, "disable", iccid)
+}
+
+// DeleteESIMProfile removes one installed profile by ICCID.
+func (session *Session) DeleteESIMProfile(ctx context.Context, iccid string) error {
+	return session.mutateESIMProfile(ctx, "delete", iccid)
+}
+
+// RenameESIMProfile changes the local nickname of one installed profile.
+func (session *Session) RenameESIMProfile(ctx context.Context, iccid, nickname string) error {
+	if !validESIMICCID(iccid) || len([]rune(nickname)) > 32 {
+		return errors.New("invalid eSIM profile nickname or ICCID")
+	}
+	response, err := session.send(ctx, fmt.Sprintf(`AT+QESIM="nickname","%s","%s"`, escapeATString(nickname), iccid))
+	if err != nil {
+		return err
+	}
+	return parseQESIMMutation(response, "nickname")
+}
+
+func (session *Session) mutateESIMProfile(ctx context.Context, operation, iccid string) error {
+	if !validESIMICCID(iccid) {
+		return errors.New("invalid eSIM profile ICCID")
+	}
+	response, err := session.send(ctx, fmt.Sprintf(`AT+QESIM="%s","%s"`, operation, iccid))
+	if err != nil {
+		return err
+	}
+	return parseQESIMMutation(response, operation)
+}
+
+func parseQESIMMutation(response at.Response, operation string) error {
+	if !response.OK() {
+		return fmt.Errorf("QESIM %s rejected: %s", operation, response.Terminal)
+	}
+	for _, line := range response.Lines {
+		fields := parseATCSV(line, "+QESIM:")
+		if len(fields) != 2 || !strings.EqualFold(strings.TrimSpace(fields[0]), operation) {
+			continue
+		}
+		result, err := strconv.Atoi(strings.TrimSpace(fields[1]))
+		if err != nil || result != 0 {
+			return fmt.Errorf("QESIM %s failed with result %s", operation, strings.TrimSpace(fields[1]))
+		}
+		return nil
+	}
+	return ErrEUICCUnsupported
+}
+
+func parseQESIMList(lines []string) ([]ESIMProfile, int, bool) {
+	var profiles []ESIMProfile
+	result := 0
+	foundHeader := false
+	for _, line := range lines {
+		fields := parseATCSV(line, "+QESIM:")
+		if len(fields) >= 2 && strings.EqualFold(strings.TrimSpace(fields[0]), "list") {
+			parsed, err := strconv.Atoi(strings.TrimSpace(fields[1]))
+			if err != nil {
+				return nil, 0, false
+			}
+			result = parsed
+			foundHeader = true
+			continue
+		}
+		if !foundHeader {
+			continue
+		}
+		fields = parseATCSV(line, "")
+		if len(fields) != 4 || !validESIMICCID(fields[0]) {
+			continue
+		}
+		status, err := strconv.Atoi(strings.TrimSpace(fields[1]))
+		if err != nil || (status != 0 && status != 1) {
+			return nil, 0, false
+		}
+		profiles = append(profiles, ESIMProfile{ICCID: fields[0], Enabled: status == 1, Nickname: fields[2], Provider: fields[3]})
+	}
+	return profiles, result, foundHeader
+}
+
+func validESIMICCID(value string) bool {
+	if len(value) < 18 || len(value) > 22 {
+		return false
+	}
+	for _, character := range value {
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') || (character >= 'A' && character <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+func escapeATString(value string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(value, `\`, `\\`), `"`, `\"`)
 }
 
 func parseCSIMResponse(lines []string) (data string, status string, ok bool) {

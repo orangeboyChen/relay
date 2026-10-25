@@ -25,7 +25,7 @@ struct SIMManagementScreen: View {
                                     .foregroundStyle(.tint)
 
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("eSIM Management")
+                                    Text(line.lineName.isEmpty ? "eSIM" : line.lineName)
                                     Text(lineSubtitle(for: line))
                                         .font(.subheadline)
                                         .foregroundStyle(.secondary)
@@ -37,20 +37,30 @@ struct SIMManagementScreen: View {
                 } header: {
                     Text("eSIM")
                 } footer: {
-                    Text("Manage installed eSIM profiles for each eSIM line.")
+                    Text("Manage installed cellular plans for each eSIM line.")
                 }
             }
 
             if model.managedSIMs.isEmpty {
                 ContentUnavailableView("No SIM Cards", systemImage: "simcard", description: Text("SIM cards appear after a modem reports its ICCID."))
             } else {
-                ForEach(model.managedSIMs) { sim in
-                    ManagedSIMRow(sim: sim, delete: sim.isOffline ? { simToDelete = sim } : nil)
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            if sim.isOffline {
-                                Button("Delete", role: .destructive) { simToDelete = sim }
+                Section("SIM Cards") {
+                    ForEach(model.managedSIMs) { sim in
+                        if let line = line(for: sim) {
+                            NavigationLink {
+                                SIMSettingsScreen(model: model, line: line)
+                            } label: {
+                                ManagedSIMRow(sim: sim, delete: nil)
                             }
+                        } else {
+                            ManagedSIMRow(sim: sim, delete: sim.isOffline ? { simToDelete = sim } : nil)
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    if sim.isOffline {
+                                        Button("Delete", role: .destructive) { simToDelete = sim }
+                                    }
+                                }
                         }
+                    }
                 }
             }
             if let errorDescription {
@@ -61,6 +71,8 @@ struct SIMManagementScreen: View {
             }
         }
         .navigationTitle("SIM Cards")
+        .navigationBarTitleDisplayMode(.inline)
+        .listStyle(.insetGrouped)
         .refreshable { await model.refreshSIMCards() }
         .task { await model.refreshSIMCards() }
         .confirmationDialog("Delete this offline SIM?", isPresented: Binding(get: { simToDelete != nil }, set: { if !$0 { simToDelete = nil } }), titleVisibility: .visible, presenting: simToDelete) { sim in
@@ -85,6 +97,10 @@ struct SIMManagementScreen: View {
     private func lineSubtitle(for line: DeviceLineIdentity) -> String {
         let number = line.phoneNumber.isEmpty ? String(localized: "No phone number") : line.phoneNumber
         return "SIM \(line.numericID) · \(number)"
+    }
+
+    private func line(for sim: ManagedSIM) -> DeviceLineIdentity? {
+        model.devices.first { $0.simID == sim.id }
     }
 }
 

@@ -58,7 +58,6 @@ struct ProfileScreen: View {
                 continue
             }
 
-            serviceStates[line.id] = nil
             tasks.append(
                 Task { @MainActor in
                     do {
@@ -235,7 +234,10 @@ private struct ProfileSIMServicePresentation {
             title = String(localized: "Unavailable")
             color = .secondary
         case nil:
-            title = String(localized: "Checking")
+            // Keep the row quiet until the first settings snapshot arrives. A
+            // refresh should not replace a previously rendered value with a
+            // transient loading state.
+            title = "—"
             color = .secondary
         }
     }

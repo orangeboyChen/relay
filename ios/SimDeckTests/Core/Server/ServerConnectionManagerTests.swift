@@ -88,6 +88,24 @@ private final class FakePasskeyRPCClientFactory: PasskeyRPCClientCreating {
 
 @MainActor
 final class ServerConnectionManagerTests: XCTestCase {
+    func testWebPasskeyAuthorizationURLUsesConfiguredServerAddress() throws {
+        let url = try WebPasskeyAuthorizer.authorizationURL(
+            baseURL: URL(string: "https://deck.example.test:54443")!,
+            path: "passkey/login",
+            parameters: [:],
+            state: "test-state"
+        )
+
+        XCTAssertEqual(url.scheme, "https")
+        XCTAssertEqual(url.host, "deck.example.test")
+        XCTAssertEqual(url.port, 54443)
+        XCTAssertEqual(url.path, "/passkey/login")
+        XCTAssertEqual(
+            URLComponents(url: url, resolvingAgainstBaseURL: false)?.fragment,
+            "callback=simdeck://passkey&state=test-state"
+        )
+    }
+
     func testRegistersNativePasskeyWithAuthenticatedWebAuthnCeremony() async throws {
         let challengeData = Data([0xfb, 0xff, 0x00])
         let userID = Data([0x01, 0x02, 0x03])

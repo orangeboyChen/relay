@@ -688,7 +688,19 @@ final class ServerConnectionManager {
     }
 
     var authenticatedBaseURL: URL? { try? validatedBaseURL() }
+    var configuredBaseURL: URL? { try? validatedBaseURL() }
     var accessToken: String? { session?.accessToken }
+
+    func acceptWebPasskeySession(_ webSession: WebPasskeySession) throws {
+        try save(ServerSession(
+            accessToken: webSession.accessToken,
+            refreshToken: webSession.refreshToken,
+            accessExpiresAt: webSession.accessExpiresAt,
+            refreshExpiresAt: webSession.refreshExpiresAt
+        ))
+        state = .connected
+        lastErrorDescription = nil
+    }
 
     func signIn(password: String) async throws {
         state = .connecting

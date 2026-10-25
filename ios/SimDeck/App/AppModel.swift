@@ -47,6 +47,7 @@ final class AppModel {
     @ObservationIgnored private let recentCallLineStore: any RecentCallLineStoring
     @ObservationIgnored private let onboardingStore: any OnboardingStoring
     @ObservationIgnored private let passkeyAuthorizer: any PasskeyAuthorizing
+    @ObservationIgnored private let webPasskeyAuthorizer: any WebPasskeyAuthorizing
     @ObservationIgnored private var installationIdentity: InstallationIdentity?
     @ObservationIgnored private var recoveredVaultKey: VaultKey?
     @ObservationIgnored private var voipPushCoordinator: VoIPPushCoordinator?
@@ -88,6 +89,7 @@ final class AppModel {
         recentCallLineStore: (any RecentCallLineStoring)? = nil,
         onboardingStore: (any OnboardingStoring)? = nil,
         passkeyAuthorizer: (any PasskeyAuthorizing)? = nil,
+        webPasskeyAuthorizer: (any WebPasskeyAuthorizing)? = nil,
         contactStore: (any ContactStoreProviding)? = nil,
         messageHistoryStore: EncryptedMessageHistoryStore = EncryptedMessageHistoryStore(),
         callHistoryStore: EncryptedCallHistoryStore = EncryptedCallHistoryStore(),
@@ -126,6 +128,7 @@ final class AppModel {
         self.recentCallLineStore = resolvedRecentCallLineStore
         self.onboardingStore = resolvedOnboardingStore
         self.passkeyAuthorizer = passkeyAuthorizer ?? NativePasskeyAuthorizer()
+        self.webPasskeyAuthorizer = webPasskeyAuthorizer ?? WebPasskeyAuthorizer()
         self.contactStore = contactStore ?? SystemContactStore()
         self.commandSigner = resolvedCommandSigner
         self.messageHistoryStore = messageHistoryStore
@@ -222,12 +225,11 @@ final class AppModel {
     }
 
     func signInWithPasskey() async throws {
-        let ceremony = try await serverConnection.beginPasskeyLogin()
-        let credential = try await passkeyAuthorizer.assert(ceremony.challenge)
-        try await serverConnection.finishPasskeyLogin(
-            ceremonyID: ceremony.id,
-            credential: credential
-        )
+        guard let baseURL = serverConnection.configuredBaseURL else {
+            throw WebPasskeyAuthorizationError.invalidURL
+        }
+        let session = try await webPasskeyAuthorizer.signIn(baseURL: baseURL)
+        try serverConnection.acceptWebPasskeySession(session)
         try await completeServerSignIn()
     }
 
@@ -248,12 +250,11 @@ final class AppModel {
     }
 
     func registerPasskey() async throws {
-        let ceremony = try await serverConnection.beginPasskeyRegistration()
-        let credential = try await passkeyAuthorizer.register(ceremony.challenge)
-        try await serverConnection.finishPasskeyRegistration(
-            ceremonyID: ceremony.id,
-            credential: credential
-        )
+        guard let baseURL = serverConnection.configuredBaseURL,
+              let accessToken = serverConnection.accessToken else {
+            throw WebPasskeyAuthorizationError.invalidURL
+        }
+        try await webPasskeyAuthorizer.register(baseURL: baseURL, accessToken: accessToken)
     }
 
     func startVoIPPushes() {

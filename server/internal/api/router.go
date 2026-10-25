@@ -91,6 +91,8 @@ func Handler(repository Repository, config Config) http.Handler {
 	mux.HandleFunc("GET /healthz", router.health)
 	mux.HandleFunc("GET /.well-known/sim-deck", router.discovery)
 	mux.HandleFunc("GET /.well-known/apple-app-site-association", router.appleAppSiteAssociation)
+	mux.HandleFunc("GET /passkey/register", router.passkeyPage)
+	mux.HandleFunc("GET /passkey/login", router.passkeyPage)
 	return withRequestLogging(withJSONContentType(mux), config.Logger)
 }
 

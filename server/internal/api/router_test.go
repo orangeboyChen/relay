@@ -555,6 +555,19 @@ var _ = Describe("HTTP API", func() {
 		return response
 	}
 
+	It("serves the configured passkey web authorization pages", func() {
+		for _, path := range []string{"/passkey/register", "/passkey/login"} {
+			response := perform(http.MethodGet, path, "", "")
+			Expect(response.Code).To(Equal(http.StatusOK))
+			Expect(response.Header().Get("Content-Type")).To(HavePrefix("text/html"))
+			Expect(response.Header().Get("Cache-Control")).To(Equal("no-store"))
+			Expect(response.Body.String()).To(ContainSubstring("AuthenticationService/"))
+			Expect(response.Body.String()).To(ContainSubstring("BeginPasskeyRegistration"))
+			Expect(response.Body.String()).To(ContainSubstring("BeginPasskeyLogin"))
+			Expect(response.Body.String()).To(ContainSubstring("params.get('callback')"))
+		}
+	})
+
 	PIt("reports health and discovery metadata", func() {
 		health := perform(http.MethodGet, "/healthz", "", "")
 		Expect(health.Code).To(Equal(http.StatusOK))

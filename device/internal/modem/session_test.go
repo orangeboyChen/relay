@@ -73,6 +73,14 @@ var _ = Describe("Modem session", func() {
 		}))
 	})
 
+	It("accepts the empty profile listing returned by an unused eUICC", func() {
+		profiles, result, ok := parseQESIMList([]string{`+QESIM:`})
+
+		Expect(ok).To(BeTrue())
+		Expect(result).To(Equal(0))
+		Expect(profiles).To(BeEmpty())
+	})
+
 	It("parses QESIM mutation results", func() {
 		Expect(parseQESIMMutation(at.Response{Lines: []string{`+QESIM: "enable",0`}, Terminal: "OK"}, "enable")).To(Succeed())
 		Expect(parseQESIMMutation(at.Response{Lines: []string{`+QESIM: "delete",1`}, Terminal: "OK"}, "delete")).To(MatchError(ContainSubstring("QESIM delete failed")))

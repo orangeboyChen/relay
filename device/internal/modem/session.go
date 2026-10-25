@@ -308,6 +308,13 @@ func parseQESIMList(lines []string) ([]ESIMProfile, int, bool) {
 	foundHeader := false
 	for _, line := range lines {
 		fields := parseATCSV(line, "+QESIM:")
+		// EC20CE firmware returns a bare "+QESIM:" line when the eUICC is
+		// present but has no installed profiles. Treat that as a valid empty
+		// list instead of reporting that eSIM management is unsupported.
+		if strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "+QESIM:")) == "" {
+			foundHeader = true
+			continue
+		}
 		if len(fields) >= 2 && strings.EqualFold(strings.TrimSpace(fields[0]), "list") {
 			parsed, err := strconv.Atoi(strings.TrimSpace(fields[1]))
 			if err != nil {

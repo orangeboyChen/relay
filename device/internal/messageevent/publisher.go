@@ -45,6 +45,11 @@ var (
 	ErrNoRecipients = errors.New("no approved installation can receive the SMS")
 )
 
+func isHex(value string) bool {
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
 // Payload is visible only to the intended approved iPhone installation.
 type Payload struct {
 	Version        int    `json:"version"`
@@ -64,6 +69,8 @@ type Payload struct {
 type SIMProfile struct {
 	PhoneNumber string
 	LineName    string
+	SIMKind     string
+	EID         string
 }
 
 // SIMProfilePayload is visible only to the intended approved iPhone installation.
@@ -75,6 +82,8 @@ type SIMProfilePayload struct {
 	NumericID      int    `json:"numeric_id"`
 	PhoneNumber    string `json:"phone_number"`
 	LineName       string `json:"line_name"`
+	SIMKind        string `json:"sim_kind,omitempty"`
+	EID            string `json:"eid,omitempty"`
 	InstallationID string `json:"installation_id"`
 }
 
@@ -133,9 +142,13 @@ func (publisher *Publisher) Publish(ctx context.Context, message sms.ReceivedMes
 func (publisher *Publisher) PublishSIMProfile(ctx context.Context, profile SIMProfile) error {
 	profile.PhoneNumber = strings.TrimSpace(profile.PhoneNumber)
 	profile.LineName = strings.TrimSpace(profile.LineName)
-	if (profile.PhoneNumber == "" && profile.LineName == "") ||
+	profile.SIMKind = strings.TrimSpace(profile.SIMKind)
+	profile.EID = strings.TrimSpace(profile.EID)
+	if (profile.PhoneNumber == "" && profile.LineName == "" && profile.EID == "") ||
 		(profile.PhoneNumber != "" && !phoneNumberPattern.MatchString(profile.PhoneNumber)) ||
-		len(profile.LineName) > 64 {
+		len(profile.LineName) > 64 ||
+		(profile.SIMKind != "" && profile.SIMKind != "physical" && profile.SIMKind != "eSIM") ||
+		(profile.EID != "" && (len(profile.EID) != 32 || !isHex(profile.EID))) {
 		return errors.New("detected SIM profile is invalid")
 	}
 	recipients, err := publisher.remote.ListInstallationRecipients(ctx, publisher.identity.DeviceUUID, publisher.identity.Credential)
@@ -186,7 +199,8 @@ func (publisher *Publisher) sealSIMProfile(profile SIMProfile, recipient incomin
 		Version: protocolVersion, DeviceUUID: publisher.identity.DeviceUUID,
 		SlotID: publisher.identity.SlotID, SIMID: publisher.identity.SIMID,
 		NumericID: publisher.identity.NumericID, PhoneNumber: profile.PhoneNumber,
-		LineName: profile.LineName, InstallationID: recipient.InstallationID,
+		LineName: profile.LineName, SIMKind: profile.SIMKind, EID: profile.EID,
+		InstallationID: recipient.InstallationID,
 	})
 	if err != nil {
 		return callevent.Envelope{}, fmt.Errorf("encode SIM profile event: %w", err)

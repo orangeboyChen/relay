@@ -385,6 +385,8 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	if err := session.Initialize(ctx); err != nil {
 		return err
 	}
+	var eSIMSupported bool
+	var eSIMEID string
 	if modemIdentity, identityError := modem.ReadModemIdentity(ctx, client, config.CommandTimeout); identityError != nil {
 		logger.Warn("modem identity probe failed", "error", identityError)
 	} else {
@@ -396,6 +398,20 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 		)
 	}
 	if reader, readable := session.(interface {
+		ReadEUICCIdentifierWithQESIM(context.Context) (string, error)
+	}); readable {
+		if eid, eidError := reader.ReadEUICCIdentifierWithQESIM(ctx); eidError != nil {
+			if errors.Is(eidError, modem.ErrEUICCUnsupported) {
+				logger.Info("eUICC EID is not available through the modem eSIM channel")
+			} else {
+				logger.Warn("eUICC EID probe failed", "error", eidError)
+			}
+		} else {
+			eSIMSupported = true
+			eSIMEID = eid
+			logger.Info("eUICC detected", "eid_suffix", eid[max(0, len(eid)-6):])
+		}
+	} else if reader, readable := session.(interface {
 		ReadEUICCIdentifier(context.Context) (string, error)
 	}); readable {
 		if eid, eidError := reader.ReadEUICCIdentifier(ctx); eidError != nil {
@@ -405,6 +421,8 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 				logger.Warn("eUICC EID probe failed", "error", eidError)
 			}
 		} else {
+			eSIMSupported = true
+			eSIMEID = eid
 			logger.Info("eUICC detected", "eid_suffix", eid[max(0, len(eid)-6):])
 		}
 	}
@@ -466,12 +484,19 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 			profile, readError := reader.ReadSIMProfile(ctx)
 			if readError != nil {
 				logger.Warn("SIM profile is unavailable", "slot_key", deviceIdentity.SlotKey, "slot_index", deviceIdentity.SlotIndex, "error", readError)
-			} else if profile.PhoneNumber == "" && profile.Operator == "" {
+			} else if profile.PhoneNumber == "" && profile.Operator == "" && !eSIMSupported {
 				logger.Warn("SIM profile is empty", "slot_key", deviceIdentity.SlotKey, "slot_index", deviceIdentity.SlotIndex, "subscriber_number_provisioned", false, "operator_available", false)
-			} else if publishError := publisher.PublishSIMProfile(ctx, messageevent.SIMProfile{PhoneNumber: profile.PhoneNumber, LineName: profile.Operator}); publishError != nil {
-				logger.Warn("encrypted SIM profile synchronization failed", "slot_key", deviceIdentity.SlotKey, "slot_index", deviceIdentity.SlotIndex, "subscriber_number_provisioned", profile.PhoneNumber != "", "operator_available", profile.Operator != "", "error", publishError)
 			} else {
-				logger.Info("encrypted SIM profile synchronized", "slot_key", deviceIdentity.SlotKey, "slot_index", deviceIdentity.SlotIndex, "subscriber_number_provisioned", profile.PhoneNumber != "", "operator_available", profile.Operator != "")
+				simKind := "physical"
+				if eSIMSupported {
+					simKind = "eSIM"
+				}
+				publishError := publisher.PublishSIMProfile(ctx, messageevent.SIMProfile{PhoneNumber: profile.PhoneNumber, LineName: profile.Operator, SIMKind: simKind, EID: eSIMEID})
+				if publishError != nil {
+					logger.Warn("encrypted SIM profile synchronization failed", "slot_key", deviceIdentity.SlotKey, "slot_index", deviceIdentity.SlotIndex, "subscriber_number_provisioned", profile.PhoneNumber != "", "operator_available", profile.Operator != "", "error", publishError)
+				} else {
+					logger.Info("encrypted SIM profile synchronized", "slot_key", deviceIdentity.SlotKey, "slot_index", deviceIdentity.SlotIndex, "sim_kind", simKind, "subscriber_number_provisioned", profile.PhoneNumber != "", "operator_available", profile.Operator != "")
+				}
 			}
 		}
 	}

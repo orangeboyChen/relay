@@ -190,6 +190,15 @@ var _ = Describe("Incoming message publisher", func() {
 		Expect(publisher.PublishSIMProfile(context.Background(), SIMProfile{LineName: strings.Repeat("x", 65)})).To(MatchError("detected SIM profile is invalid"))
 	})
 
+	It("accepts an eSIM profile that only exposes its EID", func() {
+		profile := SIMProfile{SIMKind: "eSIM", EID: "89000000000000000000000000000001"}
+
+		Expect(publisher.PublishSIMProfile(context.Background(), profile)).To(Succeed())
+		payload := openSIMProfileEnvelope(publisher.identity, remote.envelopes[0], privateTwo)
+		Expect(payload.SIMKind).To(Equal("eSIM"))
+		Expect(payload.EID).To(Equal(profile.EID))
+	})
+
 	It("keeps detected SIM metadata pending when delivery is unavailable", func() {
 		profile := SIMProfile{PhoneNumber: "+8613500000000", LineName: "CHINA MOBILE"}
 

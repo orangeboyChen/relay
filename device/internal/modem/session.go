@@ -149,10 +149,9 @@ type ModemIdentity struct {
 	Revision     string
 }
 
-// ReadEUICCIdentifier performs a read-only EF.EID probe through the modem's
-// generic SIM APDU channel. It deliberately stops at identification; profile
-// download, enable, disable, and delete require a vendor-validated LPA flow
-// and are not safe to infer from a modem model string.
+// ReadEUICCIdentifier performs a read-only generic SIM APDU EID probe.
+// Profile download, enable, disable, and delete require a separate validated
+// LPA flow and are deliberately not inferred from a modem model string.
 func (session *Session) ReadEUICCIdentifier(ctx context.Context) (string, error) {
 	if session == nil || session.client == nil {
 		return "", errors.New("modem session is required")
@@ -178,6 +177,43 @@ func (session *Session) ReadEUICCIdentifier(ctx context.Context) (string, error)
 				return "", ErrEUICCUnsupported
 			}
 			return data, nil
+		}
+	}
+	return "", ErrEUICCUnsupported
+}
+
+// ReadEUICCIdentifierWithQESIM prefers Quectel's documented QESIM command and
+// falls back to the generic APDU path for older firmware.
+func (session *Session) ReadEUICCIdentifierWithQESIM(ctx context.Context) (string, error) {
+	if session == nil || session.client == nil {
+		return "", errors.New("modem session is required")
+	}
+	if eid, err := session.readQESIMEID(ctx); err == nil {
+		return eid, nil
+	}
+	return session.ReadEUICCIdentifier(ctx)
+}
+
+func (session *Session) readQESIMEID(ctx context.Context) (string, error) {
+	response, err := session.send(ctx, `AT+QESIM="eid"`)
+	if err != nil {
+		return "", err
+	}
+	if !response.OK() {
+		return "", ErrEUICCUnsupported
+	}
+	for _, rawLine := range response.Lines {
+		line := strings.TrimSpace(rawLine)
+		if !strings.HasPrefix(line, "+QESIM:") {
+			continue
+		}
+		fields := parseATCSV(line, `+QESIM:`)
+		if len(fields) != 3 || strings.TrimSpace(fields[0]) != `"eid"` || strings.TrimSpace(fields[1]) != "0" {
+			continue
+		}
+		eid := strings.Trim(strings.TrimSpace(fields[2]), `"`)
+		if len(eid) == 32 && allHexDigits(eid) {
+			return strings.ToUpper(eid), nil
 		}
 	}
 	return "", ErrEUICCUnsupported

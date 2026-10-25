@@ -1084,6 +1084,76 @@ final class ServerConnectionManager {
         ).result.get()
     }
 
+    func listESIMProfiles(simID: UUID) async throws -> [Relay_Communication_V1_EsimProfile] {
+        let (service, token) = try await ownerService()
+        let response = try await service.listEsimProfiles(
+            request: .with { $0.simID = simID.uuidString.lowercased() },
+            headers: ["authorization": ["Bearer \(token)"]]
+        ).result.get()
+        return response.profiles
+    }
+
+    func addESIMProfile(
+        simID: UUID,
+        profileID: String,
+        name: String = "",
+        iccid: String = "",
+        operatorName: String = ""
+    ) async throws -> Relay_Communication_V1_EsimProfile {
+        let (service, token) = try await ownerService()
+        let response = try await service.addEsimProfile(
+            request: .with {
+                $0.simID = simID.uuidString.lowercased()
+                $0.profileID = profileID
+                $0.name = name
+                $0.iccid = iccid
+                $0.operatorName = operatorName
+            },
+            headers: ["authorization": ["Bearer \(token)"]]
+        ).result.get()
+        guard response.hasProfile else { throw ServerConnectionError.invalidResponse }
+        return response.profile
+    }
+
+    func renameESIMProfile(simID: UUID, profileID: String, name: String) async throws -> Relay_Communication_V1_EsimProfile {
+        let (service, token) = try await ownerService()
+        let response = try await service.renameEsimProfile(
+            request: .with {
+                $0.simID = simID.uuidString.lowercased()
+                $0.profileID = profileID
+                $0.name = name
+            },
+            headers: ["authorization": ["Bearer \(token)"]]
+        ).result.get()
+        guard response.hasProfile else { throw ServerConnectionError.invalidResponse }
+        return response.profile
+    }
+
+    func setESIMProfileEnabled(simID: UUID, profileID: String, enabled: Bool) async throws -> Relay_Communication_V1_EsimProfile {
+        let (service, token) = try await ownerService()
+        let response = try await service.setEsimProfileEnabled(
+            request: .with {
+                $0.simID = simID.uuidString.lowercased()
+                $0.profileID = profileID
+                $0.enabled = enabled
+            },
+            headers: ["authorization": ["Bearer \(token)"]]
+        ).result.get()
+        guard response.hasProfile else { throw ServerConnectionError.invalidResponse }
+        return response.profile
+    }
+
+    func deleteESIMProfile(simID: UUID, profileID: String) async throws {
+        let (service, token) = try await ownerService()
+        _ = try await service.deleteEsimProfile(
+            request: .with {
+                $0.simID = simID.uuidString.lowercased()
+                $0.profileID = profileID
+            },
+            headers: ["authorization": ["Bearer \(token)"]]
+        ).result.get()
+    }
+
     func revokeDevice(deviceID: UUID) async throws {
         let (service, token) = try await ownerService()
         _ = try await service.revokeDevice(

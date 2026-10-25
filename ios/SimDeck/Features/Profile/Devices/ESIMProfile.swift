@@ -3,6 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import Foundation
+import CryptoKit
+import RelayProtocol
 
 struct ESIMProfile: Identifiable, Codable, Equatable, Sendable {
     let id: UUID
@@ -95,6 +97,83 @@ final class UnavailableESIMProfileManager: ESIMProfileManaging {
 
     func addActivationCode(_ code: String, line: DeviceLineIdentity) async throws -> ESIMProfile {
         throw ESIMProfileManagerError.unsupported
+    }
+}
+
+/// Persists eSIM profile metadata through the authenticated Owner RPC.
+/// The modem remains responsible for actual eSIM provisioning; this manager
+/// never stores an activation code on the server.
+@MainActor
+final class LiveESIMProfileManager: ESIMProfileManaging {
+    private let server: ServerConnectionManager
+
+    init(server: ServerConnectionManager) {
+        self.server = server
+    }
+
+    func loadProfiles(line: DeviceLineIdentity) async throws -> [ESIMProfile] {
+        let simID = try requireSIMID(line)
+        return try await server.listESIMProfiles(simID: simID).map { makeProfile($0) }
+    }
+
+    func setEnabled(_ enabled: Bool, profile: ESIMProfile, line: DeviceLineIdentity) async throws -> ESIMProfile {
+        let updated = try await server.setESIMProfileEnabled(
+            simID: requireSIMID(line), profileID: profile.profileID, enabled: enabled
+        )
+        return makeProfile(updated, preservingID: profile.id)
+    }
+
+    func rename(_ name: String, profile: ESIMProfile, line: DeviceLineIdentity) async throws -> ESIMProfile {
+        let updated = try await server.renameESIMProfile(
+            simID: requireSIMID(line), profileID: profile.profileID, name: name
+        )
+        return makeProfile(updated, preservingID: profile.id)
+    }
+
+    func delete(profile: ESIMProfile, line: DeviceLineIdentity) async throws {
+        try await server.deleteESIMProfile(simID: requireSIMID(line), profileID: profile.profileID)
+    }
+
+    func addActivationCode(_ code: String, line: DeviceLineIdentity) async throws -> ESIMProfile {
+        let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCode.isEmpty else { throw ESIMProfileManagerError.invalidActivationCode }
+        let digest = SHA256.hash(data: Data(trimmedCode.utf8))
+        let profileID = digest.prefix(16).map { String(format: "%02x", $0) }.joined()
+        let profile = try await server.addESIMProfile(
+            simID: requireSIMID(line), profileID: profileID
+        )
+        return makeProfile(profile)
+    }
+
+    private func requireSIMID(_ line: DeviceLineIdentity) throws -> UUID {
+        guard line.simKind == .eSIM, let simID = line.simID else {
+            throw ESIMProfileManagerError.unsupported
+        }
+        return simID
+    }
+
+    private func makeProfile(_ profile: Relay_Communication_V1_EsimProfile, preservingID: UUID? = nil) -> ESIMProfile {
+        ESIMProfile(
+            id: preservingID ?? stableID(for: profile.profileID),
+            profileID: profile.profileID,
+            name: profile.name,
+            iccid: profile.iccid,
+            operatorName: profile.operatorName,
+            isEnabled: profile.isEnabled
+        )
+    }
+
+    private func stableID(for profileID: String) -> UUID {
+        let bytes = Array(SHA256.hash(data: Data(profileID.utf8)).prefix(16))
+        var uuidBytes = bytes
+        uuidBytes[6] = (uuidBytes[6] & 0x0f) | 0x50
+        uuidBytes[8] = (uuidBytes[8] & 0x3f) | 0x80
+        return UUID(uuid: (
+            uuidBytes[0], uuidBytes[1], uuidBytes[2], uuidBytes[3],
+            uuidBytes[4], uuidBytes[5], uuidBytes[6], uuidBytes[7],
+            uuidBytes[8], uuidBytes[9], uuidBytes[10], uuidBytes[11],
+            uuidBytes[12], uuidBytes[13], uuidBytes[14], uuidBytes[15]
+        ))
     }
 }
 

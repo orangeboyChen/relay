@@ -144,7 +144,7 @@ final class AppModel {
             api: resolvedServerConnection,
             commandSigner: resolvedCommandSigner
         )
-        self.esimProfileManager = esimProfileManager ?? UnavailableESIMProfileManager()
+        self.esimProfileManager = esimProfileManager ?? LiveESIMProfileManager(server: resolvedServerConnection)
         self.remoteDeviceRefreshEnabled = remoteDeviceRefreshEnabled
         self.messageEventMonitor = nil
         reconcileLineHistory(using: devices)

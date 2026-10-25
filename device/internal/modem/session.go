@@ -82,6 +82,7 @@ func ReadSIMSlotIndexes(ctx context.Context, client *at.Client, timeout time.Dur
 // ErrMessageDeliveryDeferred keeps a durable SMS pending without stopping unrelated modem services.
 var ErrMessageDeliveryDeferred = errors.New("SMS delivery deferred")
 var ErrSIMSlotUnsupported = errors.New("modem does not expose SIM slot status")
+var ErrEUICCUnsupported = errors.New("modem does not expose an eUICC EID")
 
 const defaultCallPollInterval = time.Second
 
@@ -146,6 +147,69 @@ type ModemIdentity struct {
 	Manufacturer string
 	Model        string
 	Revision     string
+}
+
+// ReadEUICCIdentifier performs a read-only EF.EID probe through the modem's
+// generic SIM APDU channel. It deliberately stops at identification; profile
+// download, enable, disable, and delete require a vendor-validated LPA flow
+// and are not safe to infer from a modem model string.
+func (session *Session) ReadEUICCIdentifier(ctx context.Context) (string, error) {
+	if session == nil || session.client == nil {
+		return "", errors.New("modem session is required")
+	}
+	for _, apdu := range []string{
+		"00A40400023F00", // Select MF.
+		"00A40400022FE2", // Select EF.EID.
+		"00B0000010",     // Read 16-byte EID.
+	} {
+		response, err := session.send(ctx, fmt.Sprintf(`AT+CSIM=%d,"%s"`, len(apdu), apdu))
+		if err != nil {
+			return "", err
+		}
+		if !response.OK() {
+			return "", ErrEUICCUnsupported
+		}
+		data, status, ok := parseCSIMResponse(response.Lines)
+		if !ok || status != "9000" {
+			return "", ErrEUICCUnsupported
+		}
+		if apdu == "00B0000010" {
+			if len(data) != 32 || !allHexDigits(data) {
+				return "", ErrEUICCUnsupported
+			}
+			return data, nil
+		}
+	}
+	return "", ErrEUICCUnsupported
+}
+
+func parseCSIMResponse(lines []string) (data string, status string, ok bool) {
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if !strings.HasPrefix(line, "+CSIM:") {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(line, "+CSIM:"))
+		_, payload, found := strings.Cut(value, ",")
+		if !found {
+			continue
+		}
+		payload = strings.Trim(strings.TrimSpace(payload), `"`)
+		if len(payload) < 4 {
+			continue
+		}
+		return strings.ToUpper(payload[:len(payload)-4]), strings.ToUpper(payload[len(payload)-4:]), true
+	}
+	return "", "", false
+}
+
+func allHexDigits(value string) bool {
+	for _, character := range value {
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') || (character >= 'A' && character <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 // ReadModemIdentity reads the standard, read-only modem identification

@@ -393,8 +393,20 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 			"manufacturer", modemIdentity.Manufacturer,
 			"model", modemIdentity.Model,
 			"revision", modemIdentity.Revision,
-			"esim_probe", "not_run",
 		)
+	}
+	if reader, readable := session.(interface {
+		ReadEUICCIdentifier(context.Context) (string, error)
+	}); readable {
+		if eid, eidError := reader.ReadEUICCIdentifier(ctx); eidError != nil {
+			if errors.Is(eidError, modem.ErrEUICCUnsupported) {
+				logger.Info("eUICC EID is not available through the modem APDU channel")
+			} else {
+				logger.Warn("eUICC EID probe failed", "error", eidError)
+			}
+		} else {
+			logger.Info("eUICC detected", "eid_suffix", eid[max(0, len(eid)-6):])
+		}
 	}
 	if err := session.ClearOrphanedCalls(ctx); err != nil {
 		return fmt.Errorf("reconcile modem calls after startup: %w", err)

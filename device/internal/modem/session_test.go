@@ -58,6 +58,45 @@ var _ = Describe("Modem session", func() {
 		Expect(identity.Revision).To(Equal("EC20CEHCR06A08M1G"))
 	})
 
+	It("reads an eUICC EID through the read-only CSIM path", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		go func() {
+			reader := bufio.NewReader(modemTransport)
+			commands := []struct {
+				value    string
+				response string
+			}{
+				{`AT+CSIM=14,"00A40400023F00"`, "+CSIM: 4,\"9000\"\r\nOK\r\n"},
+				{`AT+CSIM=14,"00A40400022FE2"`, "+CSIM: 4,\"9000\"\r\nOK\r\n"},
+				{`AT+CSIM=10,"00B0000010"`, "+CSIM: 36,\"890000000000000000000000000000019000\"\r\nOK\r\n"},
+			}
+			for _, item := range commands {
+				command, _ := reader.ReadString('\r')
+				Expect(strings.TrimSuffix(command, "\r")).To(Equal(item.value))
+				_, _ = modemTransport.Write([]byte(item.response))
+			}
+		}()
+
+		eid, err := session.ReadEUICCIdentifier(context.Background())
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(eid).To(Equal("89000000000000000000000000000001"))
+	})
+
+	It("reports unsupported when the modem rejects the eUICC APDU channel", func() {
+		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
+		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })
+		go func() {
+			_, _ = bufio.NewReader(modemTransport).ReadString('\r')
+			_, _ = modemTransport.Write([]byte("ERROR\r\n"))
+		}()
+
+		_, err := session.ReadEUICCIdentifier(context.Background())
+
+		Expect(err).To(MatchError(ErrEUICCUnsupported))
+	})
+
 	It("reads the modem equipment identity for local hardware derivation", func() {
 		clientTransport, modemTransport := net.Pipe()
 		client := at.NewClient(clientTransport)

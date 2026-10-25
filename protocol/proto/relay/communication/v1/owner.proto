@@ -11,6 +11,11 @@ option go_package = "github.com/orangeboyChen/relay-sdk/gen/go/relay/communicati
 service OwnerService {
   rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
   rpc ListSimCards(ListSimCardsRequest) returns (ListSimCardsResponse);
+  rpc ListEsimProfiles(ListEsimProfilesRequest) returns (ListEsimProfilesResponse);
+  rpc AddEsimProfile(AddEsimProfileRequest) returns (AddEsimProfileResponse);
+  rpc RenameEsimProfile(RenameEsimProfileRequest) returns (RenameEsimProfileResponse);
+  rpc SetEsimProfileEnabled(SetEsimProfileEnabledRequest) returns (SetEsimProfileEnabledResponse);
+  rpc DeleteEsimProfile(DeleteEsimProfileRequest) returns (DeleteEsimProfileResponse);
   rpc RetireSimCard(RetireSimCardRequest) returns (RetireSimCardResponse);
   rpc UpdateDeviceNumericId(UpdateDeviceNumericIdRequest) returns (UpdateDeviceNumericIdResponse);
   rpc UpdateDeviceProfile(UpdateDeviceProfileRequest) returns (UpdateDeviceProfileResponse);
@@ -37,6 +42,61 @@ service OwnerService {
 message ListDevicesRequest {}
 
 message ListSimCardsRequest {}
+
+message ListEsimProfilesRequest {
+  string sim_id = 1;
+}
+
+message AddEsimProfileRequest {
+  string sim_id = 1;
+  string profile_id = 2;
+  string name = 3;
+  string iccid = 4;
+  string operator_name = 5;
+}
+
+message RenameEsimProfileRequest {
+  string sim_id = 1;
+  string profile_id = 2;
+  string name = 3;
+}
+
+message SetEsimProfileEnabledRequest {
+  string sim_id = 1;
+  string profile_id = 2;
+  bool enabled = 3;
+}
+
+message DeleteEsimProfileRequest {
+  string sim_id = 1;
+  string profile_id = 2;
+}
+
+message EsimProfile {
+  string profile_id = 1;
+  string name = 2;
+  string iccid = 3;
+  string operator_name = 4;
+  bool is_enabled = 5;
+}
+
+message ListEsimProfilesResponse {
+  repeated EsimProfile profiles = 1;
+}
+
+message AddEsimProfileResponse {
+  EsimProfile profile = 1;
+}
+
+message RenameEsimProfileResponse {
+  EsimProfile profile = 1;
+}
+
+message SetEsimProfileEnabledResponse {
+  EsimProfile profile = 1;
+}
+
+message DeleteEsimProfileResponse {}
 
 message RetireSimCardRequest {
   string sim_id = 1;

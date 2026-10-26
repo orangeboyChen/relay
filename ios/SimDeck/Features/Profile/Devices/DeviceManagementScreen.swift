@@ -130,64 +130,6 @@ private struct DeviceGroup: Identifiable {
     }
 }
 
-private struct DeviceGroupHeader: View {
-    let group: DeviceGroup
-
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            DeviceGroupHeaderHorizontal(group: group)
-            DeviceGroupHeaderVertical(group: group)
-        }
-        .textCase(nil)
-    }
-}
-
-private struct DeviceGroupHeaderHorizontal: View {
-    let group: DeviceGroup
-
-    var body: some View {
-        HStack(spacing: 8) {
-            DeviceGroupHeaderIcon(group: group)
-            Spacer(minLength: 8)
-            DeviceGroupHeaderStatus(group: group)
-        }
-    }
-}
-
-private struct DeviceGroupHeaderVertical: View {
-    let group: DeviceGroup
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            DeviceGroupHeaderIcon(group: group)
-            DeviceGroupHeaderStatus(group: group)
-        }
-    }
-}
-
-private struct DeviceGroupHeaderIcon: View {
-    let group: DeviceGroup
-
-    var body: some View {
-        Label {
-            Text(group.deviceName)
-                .font(.headline)
-        } icon: {
-            Image(systemName: "externaldrive.connected.to.line.below")
-        }
-    }
-}
-
-private struct DeviceGroupHeaderStatus: View {
-    let group: DeviceGroup
-
-    var body: some View {
-        Text(group.lines.contains(where: \.isOnline) ? String(localized: "Online") : String(localized: "Offline"))
-            .font(.caption)
-            .foregroundStyle(group.lines.contains(where: \.isOnline) ? .green : .secondary)
-    }
-}
-
 private struct DeviceSlotListRow: View {
     let model: AppModel
     let line: DeviceLineIdentity

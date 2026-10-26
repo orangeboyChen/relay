@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -11,10 +12,14 @@ import (
 	"time"
 
 	webauthnlib "github.com/go-webauthn/webauthn/webauthn"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+	"gorm.io/gorm/logger"
 
 	"sim-deck-server/internal/auth"
 	"sim-deck-server/internal/domain"
@@ -26,6 +31,7 @@ var schemaFS embed.FS
 // Postgres stores only routing metadata and encrypted application payloads.
 type Postgres struct {
 	pool *pgxpool.Pool
+	db   *gorm.DB
 }
 
 // DeviceRecord is the server-readable portion of a paired device.
@@ -167,106 +173,90 @@ func Open(ctx context.Context, databaseURL string) (*Postgres, error) {
 		pool.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
-	return &Postgres{pool: pool}, nil
+	database, err := gorm.Open(postgres.Open(databaseURL), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Warn),
+	})
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	return &Postgres{pool: pool, db: database}, nil
 }
 
 // Close releases all PostgreSQL connections.
 func (store *Postgres) Close() {
 	store.pool.Close()
+	if store.db != nil {
+		if sqlDB, err := store.db.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+	}
 }
 
 // InitializeSchema creates the complete database schema for a new deployment.
 func (store *Postgres) InitializeSchema(ctx context.Context) error {
-	schema, err := Schema()
-	if err != nil {
-		return err
-	}
-	if _, err := store.pool.Exec(ctx, string(schema)); err != nil {
-		return fmt.Errorf("initialize database schema: %w", err)
-	}
-	return nil
+	return store.runMigrations(ctx)
 }
 
 // OwnerExists reports whether the single owner account has already been created.
 func (store *Postgres) OwnerExists(ctx context.Context) (bool, error) {
-	var exists bool
-	if err := store.pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM owner_accounts)").Scan(&exists); err != nil {
+	var count int64
+	if err := store.database(ctx).Model(&ownerAccountModel{}).Count(&count).Error; err != nil {
 		return false, fmt.Errorf("check owner account: %w", err)
 	}
-	return exists, nil
+	return count > 0, nil
 }
 
 // CreateOwner creates the single owner while serializing concurrent bootstrap attempts.
 func (store *Postgres) CreateOwner(ctx context.Context, passwordHash string, recoveryPublicKey []byte) (bool, error) {
-	tx, err := store.pool.Begin(ctx)
-	if err != nil {
-		return false, fmt.Errorf("begin owner bootstrap: %w", err)
+	owner := ownerAccountModel{
+		ID: uuid.NewString(), Username: "admin", PasswordHash: []byte(passwordHash),
+		RecoveryPublicKey: append([]byte(nil), recoveryPublicKey...), CreatedAt: time.Now().UTC(),
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", int64(0x53494d4f)); err != nil {
-		return false, fmt.Errorf("lock owner bootstrap: %w", err)
-	}
-	var exists bool
-	if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM owner_accounts)").Scan(&exists); err != nil {
-		return false, fmt.Errorf("check owner during bootstrap: %w", err)
-	}
-	if exists {
-		return false, nil
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO owner_accounts (id, username, password_hash, recovery_public_key)
-		VALUES (gen_random_uuid(), 'admin', $1, $2)`, []byte(passwordHash), recoveryPublicKey); err != nil {
-		return false, fmt.Errorf("create owner account: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("commit owner bootstrap: %w", err)
+	result := store.database(ctx).Create(&owner)
+	if result.Error != nil {
+		var existing ownerAccountModel
+		if findErr := store.database(ctx).Where("username = ?", owner.Username).First(&existing).Error; findErr == nil {
+			return false, nil
+		}
+		return false, fmt.Errorf("create owner account: %w", result.Error)
 	}
 	return true, nil
 }
 
 // OwnerCredentialByUsername loads bootstrap credentials without returning recovery material.
 func (store *Postgres) OwnerCredentialByUsername(ctx context.Context, username string) (OwnerCredential, error) {
-	var credential OwnerCredential
-	var passwordHash []byte
-	err := store.pool.QueryRow(ctx, `
-		SELECT id, password_hash, password_disabled_at
-		FROM owner_accounts
-		WHERE username = $1`, username).Scan(&credential.ID, &passwordHash, &credential.PasswordDisabledAt)
-	if err != nil {
-		return OwnerCredential{}, err
+	var model ownerAccountModel
+	if err := store.database(ctx).Where("username = ?", username).First(&model).Error; err != nil {
+		return OwnerCredential{}, databaseNotFound(err)
 	}
-	credential.PasswordHash = string(passwordHash)
-	return credential, nil
+	return OwnerCredential{ID: model.ID, PasswordHash: string(model.PasswordHash), PasswordDisabledAt: model.PasswordDisabledAt}, nil
 }
 
 // OwnerID returns the singleton owner identifier used by passkey ceremonies.
 func (store *Postgres) OwnerID(ctx context.Context) (string, error) {
-	var ownerID string
-	err := store.pool.QueryRow(ctx, `SELECT id FROM owner_accounts WHERE username = 'admin'`).Scan(&ownerID)
-	return ownerID, err
+	var model ownerAccountModel
+	if err := store.database(ctx).Where("username = ?", "admin").First(&model).Error; err != nil {
+		return "", databaseNotFound(err)
+	}
+	return model.ID, nil
 }
 
 // WebAuthnCredentials loads persisted passkey records.
 func (store *Postgres) WebAuthnCredentials(ctx context.Context, ownerID string) ([]webauthnlib.Credential, error) {
-	rows, err := store.pool.Query(ctx, `SELECT public_key FROM webauthn_credentials WHERE owner_id = $1 ORDER BY created_at`, ownerID)
-	if err != nil {
+	var models []webauthnCredentialModel
+	if err := store.database(ctx).Where("owner_id = ?", ownerID).Order("created_at").Find(&models).Error; err != nil {
 		return nil, fmt.Errorf("list passkey credentials: %w", err)
 	}
-	defer rows.Close()
 	credentials := make([]webauthnlib.Credential, 0)
-	for rows.Next() {
-		var encoded []byte
-		if err := rows.Scan(&encoded); err != nil {
-			return nil, err
-		}
+	for _, model := range models {
 		var credential webauthnlib.Credential
-		if err := json.Unmarshal(encoded, &credential); err != nil {
+		if err := json.Unmarshal(model.PublicKey, &credential); err != nil {
 			return nil, fmt.Errorf("decode passkey credential: %w", err)
 		}
 		credentials = append(credentials, credential)
 	}
-	return credentials, rows.Err()
+	return credentials, nil
 }
 
 // SaveWebAuthnCredential stores the complete credential while keeping the lookup ID indexed.
@@ -275,18 +265,21 @@ func (store *Postgres) SaveWebAuthnCredential(ctx context.Context, ownerID strin
 	if err != nil {
 		return err
 	}
-	_, err = store.pool.Exec(ctx, `
-		INSERT INTO webauthn_credentials (id, owner_id, public_key, sign_count)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (id) DO UPDATE SET public_key = EXCLUDED.public_key, sign_count = EXCLUDED.sign_count, last_used_at = now()`,
-		credential.ID, ownerID, encoded, credential.Authenticator.SignCount)
-	return err
+	model := webauthnCredentialModel{ID: append([]byte(nil), credential.ID...), OwnerID: ownerID, PublicKey: encoded, SignCount: credential.Authenticator.SignCount, LastUsedAt: ptrTime(time.Now().UTC())}
+	result := store.database(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoUpdates: clause.Assignments(map[string]any{"public_key": encoded, "sign_count": credential.Authenticator.SignCount, "last_used_at": time.Now().UTC()})}).Create(&model)
+	return result.Error
 }
 
 // DisableOwnerPassword permanently disables the bootstrap password after passkey enrollment.
 func (store *Postgres) DisableOwnerPassword(ctx context.Context, ownerID string, now time.Time) error {
-	_, err := store.pool.Exec(ctx, `UPDATE owner_accounts SET password_hash = NULL, password_disabled_at = $2 WHERE id = $1`, ownerID, now.UTC())
-	return err
+	result := store.database(ctx).Model(&ownerAccountModel{}).Where("id = ?", ownerID).Updates(map[string]any{"password_hash": nil, "password_disabled_at": now.UTC()})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }
 
 // CreateSession stores only hashes of newly issued bearer credentials.
@@ -299,11 +292,8 @@ func (store *Postgres) CreateSession(ctx context.Context, ownerID string, pair a
 	if err != nil {
 		return err
 	}
-	_, err = store.pool.Exec(ctx, `
-		INSERT INTO auth_sessions (
-			owner_id, access_token_hash, refresh_token_hash, access_expires_at, refresh_expires_at
-		) VALUES ($1, $2, $3, $4, $5)`, ownerID, accessHash[:], refreshHash[:], pair.AccessExpiresAt, pair.RefreshExpiresAt)
-	if err != nil {
+	model := authSessionModel{ID: uuid.NewString(), OwnerID: ownerID, AccessTokenHash: accessHash[:], RefreshTokenHash: refreshHash[:], AccessExpiresAt: pair.AccessExpiresAt, RefreshExpiresAt: pair.RefreshExpiresAt, CreatedAt: time.Now().UTC()}
+	if err := store.database(ctx).Create(&model).Error; err != nil {
 		return fmt.Errorf("create auth session: %w", err)
 	}
 	return nil
@@ -323,30 +313,20 @@ func (store *Postgres) RotateSession(ctx context.Context, refreshToken string, p
 	if err != nil {
 		return err
 	}
-	tx, err := store.pool.Begin(ctx)
+	err = store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		var session authSessionModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("refresh_token_hash = ? AND revoked_at IS NULL AND refresh_expires_at > ?", refreshHash[:], now.UTC()).First(&session).Error; err != nil {
+			return databaseNotFound(err)
+		}
+		revokedAt := now.UTC()
+		if err := tx.Model(&session).Updates(map[string]any{"revoked_at": revokedAt}).Error; err != nil {
+			return err
+		}
+		replacement := authSessionModel{ID: uuid.NewString(), OwnerID: session.OwnerID, AccessTokenHash: accessHash[:], RefreshTokenHash: newRefreshHash[:], AccessExpiresAt: pair.AccessExpiresAt, RefreshExpiresAt: pair.RefreshExpiresAt, CreatedAt: time.Now().UTC()}
+		return tx.Create(&replacement).Error
+	})
 	if err != nil {
-		return fmt.Errorf("begin session rotation: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var ownerID string
-	err = tx.QueryRow(ctx, `
-		UPDATE auth_sessions
-		SET revoked_at = $2
-		WHERE refresh_token_hash = $1 AND revoked_at IS NULL AND refresh_expires_at > $2
-		RETURNING owner_id`, refreshHash[:], now.UTC()).Scan(&ownerID)
-	if err != nil {
-		return err
-	}
-	_, err = tx.Exec(ctx, `
-		INSERT INTO auth_sessions (
-			owner_id, access_token_hash, refresh_token_hash, access_expires_at, refresh_expires_at
-		) VALUES ($1, $2, $3, $4, $5)`, ownerID, accessHash[:], newRefreshHash[:], pair.AccessExpiresAt, pair.RefreshExpiresAt)
-	if err != nil {
-		return fmt.Errorf("insert rotated session: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit session rotation: %w", err)
+		return fmt.Errorf("rotate session: %w", err)
 	}
 	return nil
 }
@@ -357,13 +337,11 @@ func (store *Postgres) RevokeSession(ctx context.Context, accessToken string, no
 	if err != nil {
 		return err
 	}
-	command, err := store.pool.Exec(ctx, `
-		UPDATE auth_sessions SET revoked_at = $2
-		WHERE access_token_hash = $1 AND revoked_at IS NULL AND access_expires_at > $2`, accessHash[:], now.UTC())
-	if err != nil {
-		return fmt.Errorf("revoke auth session: %w", err)
+	result := store.database(ctx).Model(&authSessionModel{}).Where("access_token_hash = ? AND revoked_at IS NULL AND access_expires_at > ?", accessHash[:], now.UTC()).Updates(map[string]any{"revoked_at": now.UTC()})
+	if result.Error != nil {
+		return fmt.Errorf("revoke auth session: %w", result.Error)
 	}
-	if command.RowsAffected() == 0 {
+	if result.RowsAffected == 0 {
 		return pgx.ErrNoRows
 	}
 	return nil
@@ -375,23 +353,17 @@ func (store *Postgres) AuthenticateOwnerSession(ctx context.Context, accessToken
 	if err != nil {
 		return "", err
 	}
-	var ownerID string
-	err = store.pool.QueryRow(ctx, `
-		SELECT owner_id
-		FROM auth_sessions
-		WHERE access_token_hash = $1 AND revoked_at IS NULL AND access_expires_at > $2`, accessHash[:], now.UTC()).Scan(&ownerID)
-	if err != nil {
-		return "", err
+	var session authSessionModel
+	if err := store.database(ctx).Where("access_token_hash = ? AND revoked_at IS NULL AND access_expires_at > ?", accessHash[:], now.UTC()).First(&session).Error; err != nil {
+		return "", databaseNotFound(err)
 	}
-	return ownerID, nil
+	return session.OwnerID, nil
 }
 
 // CreatePairingToken stores only the hash of a short-lived one-time pairing secret.
 func (store *Postgres) CreatePairingToken(ctx context.Context, ownerID string, tokenHash []byte, expiresAt time.Time) error {
-	_, err := store.pool.Exec(ctx, `
-		INSERT INTO pairing_tokens (token_hash, owner_id, expires_at)
-		VALUES ($1, $2, $3)`, tokenHash, ownerID, expiresAt.UTC())
-	if err != nil {
+	owner := ownerID
+	if err := store.database(ctx).Create(&pairingTokenModel{TokenHash: append([]byte(nil), tokenHash...), OwnerID: &owner, ExpiresAt: expiresAt.UTC(), CreatedAt: time.Now().UTC()}).Error; err != nil {
 		return fmt.Errorf("create pairing token: %w", err)
 	}
 	return nil
@@ -399,129 +371,64 @@ func (store *Postgres) CreatePairingToken(ctx context.Context, ownerID string, t
 
 // RegisterAppInstallation atomically approves the first iPhone and leaves later installs pending.
 func (store *Postgres) RegisterAppInstallation(ctx context.Context, ownerID string, registration AppInstallationRegistration, now time.Time) (AppInstallationRecord, bool, error) {
-	tx, err := store.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
-	if err != nil {
-		return AppInstallationRecord{}, false, fmt.Errorf("begin app installation registration: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", int64(0x53494d49)); err != nil {
-		return AppInstallationRecord{}, false, fmt.Errorf("lock app installation registration: %w", err)
-	}
-
-	var existing AppInstallationRecord
-	var existingOwnerID string
-	err = tx.QueryRow(ctx, `
-		SELECT id, owner_id, identity_public_key, key_agreement_public_key, wrapped_vault_key,
-		       approved_at, revoked_at, created_at
-		FROM app_installations
-		WHERE id = $1`, registration.ID).Scan(
-		&existing.ID,
-		&existingOwnerID,
-		&existing.IdentityPublicKey,
-		&existing.KeyAgreementPublicKey,
-		&existing.WrappedVaultKey,
-		&existing.ApprovedAt,
-		&existing.RevokedAt,
-		&existing.CreatedAt,
-	)
-	if err == nil {
-		if existingOwnerID != ownerID || existing.RevokedAt != nil ||
-			!bytes.Equal(existing.IdentityPublicKey, registration.IdentityPublicKey) ||
-			!bytes.Equal(existing.WrappedVaultKey, registration.WrappedVaultKey) {
-			return AppInstallationRecord{}, false, domain.ErrInstallationConflict
-		}
-		if len(existing.KeyAgreementPublicKey) == 0 {
-			if _, err := tx.Exec(ctx, `
-				UPDATE app_installations
-				SET key_agreement_public_key = $2
-				WHERE id = $1`, registration.ID, registration.KeyAgreementPublicKey); err != nil {
-				return AppInstallationRecord{}, false, fmt.Errorf("upgrade app installation key agreement identity: %w", err)
+	var record AppInstallationRecord
+	created := false
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		var existing appInstallationModel
+		findErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", registration.ID).First(&existing).Error
+		if findErr == nil {
+			if existing.OwnerID != ownerID || existing.RevokedAt != nil || !bytes.Equal(existing.IdentityPublicKey, registration.IdentityPublicKey) || !bytes.Equal(existing.WrappedVaultKey, registration.WrappedVaultKey) {
+				return domain.ErrInstallationConflict
 			}
-			existing.KeyAgreementPublicKey = append([]byte(nil), registration.KeyAgreementPublicKey...)
-			if err := tx.Commit(ctx); err != nil {
-				return AppInstallationRecord{}, false, fmt.Errorf("commit app installation identity upgrade: %w", err)
+			if len(existing.KeyAgreementPublicKey) == 0 {
+				if err := tx.Model(&existing).Updates(map[string]any{"key_agreement_public_key": registration.KeyAgreementPublicKey}).Error; err != nil {
+					return err
+				}
+				existing.KeyAgreementPublicKey = append([]byte(nil), registration.KeyAgreementPublicKey...)
+			} else if !bytes.Equal(existing.KeyAgreementPublicKey, registration.KeyAgreementPublicKey) {
+				return domain.ErrInstallationConflict
 			}
-			return existing, false, nil
+			record = appInstallationRecordFromModel(existing)
+			return nil
 		}
-		if !bytes.Equal(existing.KeyAgreementPublicKey, registration.KeyAgreementPublicKey) {
-			return AppInstallationRecord{}, false, domain.ErrInstallationConflict
+		if !errors.Is(findErr, gorm.ErrRecordNotFound) {
+			return findErr
 		}
-		return existing, false, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return AppInstallationRecord{}, false, fmt.Errorf("read app installation retry: %w", err)
-	}
-
-	var hasApprovedInstallation bool
-	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM app_installations
-			WHERE owner_id = $1 AND approved_at IS NOT NULL AND revoked_at IS NULL
-		)`, ownerID).Scan(&hasApprovedInstallation); err != nil {
-		return AppInstallationRecord{}, false, fmt.Errorf("check approved app installations: %w", err)
-	}
-
-	record := AppInstallationRecord{
-		ID:                    registration.ID,
-		IdentityPublicKey:     append([]byte(nil), registration.IdentityPublicKey...),
-		KeyAgreementPublicKey: append([]byte(nil), registration.KeyAgreementPublicKey...),
-		WrappedVaultKey:       append([]byte(nil), registration.WrappedVaultKey...),
-	}
-	if !hasApprovedInstallation {
-		approvedAt := now.UTC()
-		record.ApprovedAt = &approvedAt
-	}
-	err = tx.QueryRow(ctx, `
-		INSERT INTO app_installations (
-			id, owner_id, identity_public_key, key_agreement_public_key,
-			wrapped_vault_key, approved_at
-		) VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING created_at`,
-		registration.ID,
-		ownerID,
-		registration.IdentityPublicKey,
-		registration.KeyAgreementPublicKey,
-		registration.WrappedVaultKey,
-		record.ApprovedAt,
-	).Scan(&record.CreatedAt)
+		var approvedCount int64
+		if err := tx.Model(&appInstallationModel{}).Where("owner_id = ? AND approved_at IS NOT NULL AND revoked_at IS NULL", ownerID).Count(&approvedCount).Error; err != nil {
+			return err
+		}
+		var approvedAt *time.Time
+		if approvedCount == 0 {
+			approvedAt = ptrTime(now.UTC())
+		}
+		model := appInstallationModel{ID: registration.ID, OwnerID: ownerID, IdentityPublicKey: append([]byte(nil), registration.IdentityPublicKey...), KeyAgreementPublicKey: append([]byte(nil), registration.KeyAgreementPublicKey...), WrappedVaultKey: append([]byte(nil), registration.WrappedVaultKey...), ApprovedAt: approvedAt, CreatedAt: now.UTC()}
+		if err := tx.Create(&model).Error; err != nil {
+			return domain.ErrInstallationConflict
+		}
+		record = appInstallationRecordFromModel(model)
+		created = true
+		return nil
+	}, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
-		var postgresError *pgconn.PgError
-		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
-			return AppInstallationRecord{}, false, domain.ErrInstallationConflict
-		}
-		return AppInstallationRecord{}, false, fmt.Errorf("insert app installation: %w", err)
+		return AppInstallationRecord{}, false, fmt.Errorf("register app installation: %w", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return AppInstallationRecord{}, false, fmt.Errorf("commit app installation registration: %w", err)
-	}
-	return record, true, nil
+	return record, created, nil
+}
+
+func appInstallationRecordFromModel(model appInstallationModel) AppInstallationRecord {
+	return AppInstallationRecord{ID: model.ID, IdentityPublicKey: append([]byte(nil), model.IdentityPublicKey...), KeyAgreementPublicKey: append([]byte(nil), model.KeyAgreementPublicKey...), WrappedVaultKey: append([]byte(nil), model.WrappedVaultKey...), ApprovedAt: model.ApprovedAt, RevokedAt: model.RevokedAt, CreatedAt: model.CreatedAt}
 }
 
 // ListApprovedAppInstallationRecipients returns only active public encryption identities.
 func (store *Postgres) ListApprovedAppInstallationRecipients(ctx context.Context) ([]AppInstallationRecipient, error) {
-	rows, err := store.pool.Query(ctx, `
-		SELECT id, identity_public_key, key_agreement_public_key
-		FROM app_installations
-		WHERE approved_at IS NOT NULL
-		  AND revoked_at IS NULL
-		  AND key_agreement_public_key IS NOT NULL
-		ORDER BY created_at, id`)
-	if err != nil {
+	var models []appInstallationModel
+	if err := store.database(ctx).Where("approved_at IS NOT NULL AND revoked_at IS NULL AND key_agreement_public_key IS NOT NULL").Order("created_at, id").Find(&models).Error; err != nil {
 		return nil, fmt.Errorf("list approved app installation recipients: %w", err)
 	}
-	defer rows.Close()
-
 	recipients := make([]AppInstallationRecipient, 0)
-	for rows.Next() {
-		var recipient AppInstallationRecipient
-		if err := rows.Scan(&recipient.InstallationID, &recipient.IdentityPublicKey, &recipient.KeyAgreementPublicKey); err != nil {
-			return nil, fmt.Errorf("scan approved app installation recipient: %w", err)
-		}
-		recipients = append(recipients, recipient)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate approved app installation recipients: %w", err)
+	for _, model := range models {
+		recipients = append(recipients, AppInstallationRecipient{InstallationID: model.ID, IdentityPublicKey: append([]byte(nil), model.IdentityPublicKey...), KeyAgreementPublicKey: append([]byte(nil), model.KeyAgreementPublicKey...)})
 	}
 	return recipients, nil
 }
@@ -536,24 +443,16 @@ func (store *Postgres) UpsertPushToken(
 	token []byte,
 	now time.Time,
 ) error {
-	command, err := store.pool.Exec(ctx, `
-		INSERT INTO push_tokens (installation_id, environment, kind, token_ciphertext, updated_at)
-		SELECT id, $3, $4, $5, $6
-		FROM app_installations
-		WHERE id = $1
-		  AND owner_id = $2
-		  AND approved_at IS NOT NULL
-		  AND revoked_at IS NULL
-		ON CONFLICT (installation_id, environment, kind)
-		DO UPDATE SET token_ciphertext = EXCLUDED.token_ciphertext,
-		              updated_at = EXCLUDED.updated_at`,
-		installationID, ownerID, environment, kind, token, now.UTC(),
-	)
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		var installation appInstallationModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND owner_id = ? AND approved_at IS NOT NULL AND revoked_at IS NULL", installationID, ownerID).First(&installation).Error; err != nil {
+			return databaseNotFound(err)
+		}
+		model := pushTokenModel{InstallationID: installation.ID, Environment: environment, Kind: kind, TokenCiphertext: append([]byte(nil), token...), UpdatedAt: now.UTC()}
+		return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "installation_id"}, {Name: "environment"}, {Name: "kind"}}, DoUpdates: clause.AssignmentColumns([]string{"token_ciphertext", "updated_at"})}).Create(&model).Error
+	}, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return fmt.Errorf("upsert push token: %w", err)
-	}
-	if command.RowsAffected() == 0 {
-		return pgx.ErrNoRows
 	}
 	return nil
 }
@@ -566,18 +465,20 @@ func (store *Postgres) DeletePushToken(
 	environment string,
 	kind string,
 ) error {
-	command, err := store.pool.Exec(ctx, `
-		DELETE FROM push_tokens AS token
-		USING app_installations AS installation
-		WHERE token.installation_id = installation.id
-		  AND token.installation_id = $1
-		  AND installation.owner_id = $2
-		  AND token.environment = $3
-		  AND token.kind = $4`, installationID, ownerID, environment, kind)
+	var removed int64
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		var installation appInstallationModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND owner_id = ?", installationID, ownerID).First(&installation).Error; err != nil {
+			return databaseNotFound(err)
+		}
+		result := tx.Where("installation_id = ? AND environment = ? AND kind = ?", installationID, environment, kind).Delete(&pushTokenModel{})
+		removed = result.RowsAffected
+		return result.Error
+	}, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return fmt.Errorf("delete push token: %w", err)
 	}
-	if command.RowsAffected() == 0 {
+	if removed == 0 {
 		return pgx.ErrNoRows
 	}
 	return nil
@@ -585,137 +486,76 @@ func (store *Postgres) DeletePushToken(
 
 // InsertIncomingCall stores recipient ciphertexts and queues one opaque VoIP delivery per approved iPhone.
 func (store *Postgres) InsertIncomingCall(ctx context.Context, notification domain.IncomingCallNotification, expiresAt time.Time) (bool, error) {
-	tx, err := store.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	created := false
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		model := incomingCallNotificationModel{ID: notification.ID, Type: notification.Type, DeviceID: notification.DeviceUUID, OccurredAt: notification.OccurredAt, KeyEpoch: notification.KeyEpoch, ExpiresAt: expiresAt, CreatedAt: time.Now().UTC()}
+		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&model)
+		if result.Error != nil {
+			return fmt.Errorf("insert incoming call notification: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			matches, err := incomingCallMatches(ctx, tx, notification, expiresAt)
+			if err != nil {
+				return err
+			}
+			if !matches {
+				return domain.ErrIdempotencyConflict
+			}
+			return nil
+		}
+		created = true
+		for _, recipient := range notification.Recipients {
+			var installation appInstallationModel
+			if err := tx.Where("id = ? AND approved_at IS NOT NULL AND revoked_at IS NULL", recipient.InstallationID).First(&installation).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return domain.ErrUntrustedInstallationRecipient
+				}
+				return err
+			}
+			if err := tx.Create(&incomingCallRecipientModel{NotificationID: notification.ID, InstallationID: installation.ID, SenderPublicKey: recipient.SenderPublicKey, Nonce: recipient.Nonce, Ciphertext: recipient.Ciphertext, Signature: recipient.Signature}).Error; err != nil {
+				return err
+			}
+			delivery, err := json.Marshal(domain.IncomingCallDelivery{
+				NotificationID: notification.ID,
+				Type:           notification.Type,
+				DeviceUUID:     notification.DeviceUUID,
+				OccurredAt:     notification.OccurredAt,
+				KeyEpoch:       notification.KeyEpoch,
+				Recipient:      recipient,
+			})
+			if err != nil {
+				return fmt.Errorf("encode incoming call delivery: %w", err)
+			}
+			expires := notification.OccurredAt.Add(2 * time.Minute)
+			if err := tx.Create(&outboxJobModel{Kind: "voip.incoming_call", RoutingKey: recipient.InstallationID, Payload: delivery, AvailableAt: time.Now().UTC(), ExpiresAt: &expires}).Error; err != nil {
+				return fmt.Errorf("enqueue incoming call delivery: %w", err)
+			}
+		}
+		return nil
+	}, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
-		return false, fmt.Errorf("begin incoming call insert: %w", err)
+		return false, fmt.Errorf("insert incoming call: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	command, err := tx.Exec(ctx, `
-		INSERT INTO incoming_call_notifications (id, type, device_id, occurred_at, key_epoch, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (id) DO NOTHING`,
-		notification.ID,
-		notification.Type,
-		notification.DeviceUUID,
-		notification.OccurredAt,
-		notification.KeyEpoch,
-		expiresAt,
-	)
-	if err != nil {
-		return false, fmt.Errorf("insert incoming call notification: %w", err)
-	}
-	if command.RowsAffected() == 0 {
-		matches, err := incomingCallMatches(ctx, tx, notification, expiresAt)
-		if err != nil {
-			return false, err
-		}
-		if !matches {
-			return false, domain.ErrIdempotencyConflict
-		}
-		return false, nil
-	}
-
-	for _, recipient := range notification.Recipients {
-		command, err := tx.Exec(ctx, `
-			INSERT INTO incoming_call_recipients (
-				notification_id, installation_id, sender_public_key, nonce, ciphertext, signature
-			)
-			SELECT $1, id, $3, $4, $5, $6
-			FROM app_installations
-			WHERE id = $2 AND approved_at IS NOT NULL AND revoked_at IS NULL`,
-			notification.ID,
-			recipient.InstallationID,
-			recipient.SenderPublicKey,
-			recipient.Nonce,
-			recipient.Ciphertext,
-			recipient.Signature,
-		)
-		if err != nil {
-			return false, fmt.Errorf("insert incoming call recipient: %w", err)
-		}
-		if command.RowsAffected() == 0 {
-			return false, domain.ErrUntrustedInstallationRecipient
-		}
-		delivery, err := json.Marshal(domain.IncomingCallDelivery{
-			NotificationID: notification.ID,
-			Type:           notification.Type,
-			DeviceUUID:     notification.DeviceUUID,
-			OccurredAt:     notification.OccurredAt,
-			KeyEpoch:       notification.KeyEpoch,
-			Recipient:      recipient,
-		})
-		if err != nil {
-			return false, fmt.Errorf("encode incoming call delivery: %w", err)
-		}
-		_, err = tx.Exec(ctx, `
-			INSERT INTO outbox_jobs (kind, routing_key, payload, available_at, expires_at)
-			VALUES ('voip.incoming_call', $1, $2, now(), $3)`,
-			recipient.InstallationID, delivery, notification.OccurredAt.Add(2*time.Minute))
-		if err != nil {
-			return false, fmt.Errorf("enqueue incoming call delivery: %w", err)
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("commit incoming call insert: %w", err)
-	}
-	return true, nil
+	return created, nil
 }
 
-func incomingCallMatches(ctx context.Context, tx pgx.Tx, notification domain.IncomingCallNotification, expiresAt time.Time) (bool, error) {
-	var existing domain.IncomingCallNotification
-	var existingExpiry time.Time
-	err := tx.QueryRow(ctx, `
-		SELECT id, type, device_id, occurred_at, key_epoch, expires_at
-		FROM incoming_call_notifications
-		WHERE id = $1`, notification.ID).Scan(
-		&existing.ID,
-		&existing.Type,
-		&existing.DeviceUUID,
-		&existing.OccurredAt,
-		&existing.KeyEpoch,
-		&existingExpiry,
-	)
-	if err != nil {
-		return false, fmt.Errorf("read existing incoming call notification: %w", err)
+func incomingCallMatches(ctx context.Context, tx *gorm.DB, notification domain.IncomingCallNotification, expiresAt time.Time) (bool, error) {
+	var model incomingCallNotificationModel
+	if err := tx.Where("id = ?", notification.ID).First(&model).Error; err != nil {
+		return false, databaseNotFound(err)
 	}
-	if existing.Type != notification.Type ||
-		existing.DeviceUUID != notification.DeviceUUID ||
-		!existing.OccurredAt.Equal(notification.OccurredAt) ||
-		existing.KeyEpoch != notification.KeyEpoch ||
-		!existingExpiry.Equal(expiresAt) {
+	if model.Type != notification.Type || model.DeviceID != notification.DeviceUUID || !model.OccurredAt.Equal(notification.OccurredAt) || model.KeyEpoch != notification.KeyEpoch || !model.ExpiresAt.Equal(expiresAt) {
 		return false, nil
 	}
-	rows, err := tx.Query(ctx, `
-		SELECT installation_id, sender_public_key, nonce, ciphertext, signature
-		FROM incoming_call_recipients
-		WHERE notification_id = $1
-		ORDER BY installation_id`, notification.ID)
-	if err != nil {
-		return false, fmt.Errorf("list existing incoming call recipients: %w", err)
+	var recipients []incomingCallRecipientModel
+	if err := tx.Where("notification_id = ?", notification.ID).Order("installation_id").Find(&recipients).Error; err != nil {
+		return false, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var recipient domain.IncomingCallRecipient
-		if err := rows.Scan(
-			&recipient.InstallationID,
-			&recipient.SenderPublicKey,
-			&recipient.Nonce,
-			&recipient.Ciphertext,
-			&recipient.Signature,
-		); err != nil {
-			return false, fmt.Errorf("scan existing incoming call recipient: %w", err)
-		}
-		existing.Recipients = append(existing.Recipients, recipient)
-	}
-	if err := rows.Err(); err != nil {
-		return false, fmt.Errorf("iterate existing incoming call recipients: %w", err)
-	}
-	if len(existing.Recipients) != len(notification.Recipients) {
+	if len(recipients) != len(notification.Recipients) {
 		return false, nil
 	}
-	for index := range existing.Recipients {
-		left := existing.Recipients[index]
+	for index, row := range recipients {
+		left := domain.IncomingCallRecipient{InstallationID: row.InstallationID, SenderPublicKey: row.SenderPublicKey, Nonce: row.Nonce, Ciphertext: row.Ciphertext, Signature: row.Signature}
 		right := notification.Recipients[index]
 		if left.InstallationID != right.InstallationID ||
 			!bytes.Equal(left.SenderPublicKey, right.SenderPublicKey) ||
@@ -730,148 +570,102 @@ func incomingCallMatches(ctx context.Context, tx pgx.Tx, notification domain.Inc
 
 // ClaimIncomingCall atomically selects the first approved iPhone and notifies the others.
 func (store *Postgres) ClaimIncomingCall(ctx context.Context, ownerID string, notificationID string, installationID string, now time.Time) (domain.IncomingCallClaim, error) {
-	tx, err := store.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
-	if err != nil {
-		return domain.IncomingCallClaim{}, fmt.Errorf("begin incoming call claim: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var eligible bool
-	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM incoming_call_notifications AS notification
-			JOIN incoming_call_recipients AS recipient
-			  ON recipient.notification_id = notification.id AND recipient.installation_id = $3
-			JOIN app_installations AS installation
-			  ON installation.id = recipient.installation_id
-			WHERE notification.id = $1
-			  AND notification.expires_at > $4
-			  AND installation.owner_id = $2
-			  AND installation.approved_at IS NOT NULL
-			  AND installation.revoked_at IS NULL
-		)`, notificationID, ownerID, installationID, now.UTC()).Scan(&eligible); err != nil {
-		return domain.IncomingCallClaim{}, fmt.Errorf("authorize incoming call claim: %w", err)
-	}
-	if !eligible {
-		return domain.IncomingCallClaim{}, pgx.ErrNoRows
-	}
-	command, err := tx.Exec(ctx, `
-		INSERT INTO incoming_call_claims (notification_id, installation_id, claimed_at)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (notification_id) DO NOTHING`, notificationID, installationID, now.UTC())
-	if err != nil {
-		return domain.IncomingCallClaim{}, fmt.Errorf("insert incoming call claim: %w", err)
-	}
-	created := command.RowsAffected() == 1
-	claim := domain.IncomingCallClaim{NotificationID: notificationID}
-	if err := tx.QueryRow(ctx, `
-		SELECT claim.installation_id, claim.claimed_at
-		FROM incoming_call_claims AS claim
-		JOIN incoming_call_notifications AS notification ON notification.id = claim.notification_id
-		WHERE claim.notification_id = $1 AND notification.expires_at > $2`, notificationID, now.UTC()).Scan(
-		&claim.InstallationID,
-		&claim.ClaimedAt,
-	); err != nil {
-		return domain.IncomingCallClaim{}, err
-	}
-	claim.Won = claim.InstallationID == installationID
-	if created {
-		payload, err := json.Marshal(domain.IncomingCallClaimDelivery{
-			NotificationID: notificationID,
-			Reason:         "answered_elsewhere",
-		})
-		if err != nil {
-			return domain.IncomingCallClaim{}, fmt.Errorf("encode incoming call claim delivery: %w", err)
+	var claim domain.IncomingCallClaim
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		var notification incomingCallNotificationModel
+		if err := tx.Where("id = ? AND expires_at > ?", notificationID, now.UTC()).First(&notification).Error; err != nil {
+			return databaseNotFound(err)
 		}
-		_, err = tx.Exec(ctx, `
-			INSERT INTO outbox_jobs (kind, routing_key, payload, available_at, expires_at)
-			SELECT 'voip.incoming_call_claimed', recipient.installation_id::text, $2,
-			       $3::timestamptz, $3::timestamptz + INTERVAL '30 seconds'
-			FROM incoming_call_recipients AS recipient
-			JOIN app_installations AS installation ON installation.id = recipient.installation_id
-			WHERE recipient.notification_id = $1
-			  AND recipient.installation_id <> $4
-			  AND installation.approved_at IS NOT NULL
-			  AND installation.revoked_at IS NULL`, notificationID, payload, now.UTC(), installationID)
-		if err != nil {
-			return domain.IncomingCallClaim{}, fmt.Errorf("enqueue incoming call claim deliveries: %w", err)
+		var installation appInstallationModel
+		if err := tx.Where("id = ? AND owner_id = ? AND approved_at IS NOT NULL AND revoked_at IS NULL", installationID, ownerID).First(&installation).Error; err != nil {
+			return databaseNotFound(err)
 		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return domain.IncomingCallClaim{}, fmt.Errorf("commit incoming call claim: %w", err)
+		var recipient incomingCallRecipientModel
+		if err := tx.Where("notification_id = ? AND installation_id = ?", notificationID, installationID).First(&recipient).Error; err != nil {
+			return databaseNotFound(err)
+		}
+		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&incomingCallClaimModel{NotificationID: notificationID, InstallationID: installationID, ClaimedAt: now.UTC()})
+		if result.Error != nil {
+			return result.Error
+		}
+		created := result.RowsAffected == 1
+		var stored incomingCallClaimModel
+		if err := tx.Where("notification_id = ?", notificationID).First(&stored).Error; err != nil {
+			return err
+		}
+		claim = domain.IncomingCallClaim{NotificationID: notificationID, InstallationID: stored.InstallationID, ClaimedAt: stored.ClaimedAt, Won: stored.InstallationID == installationID}
+		if !created {
+			return nil
+		}
+		payload, err := json.Marshal(domain.IncomingCallClaimDelivery{NotificationID: notificationID, Reason: "answered_elsewhere"})
+		if err != nil {
+			return fmt.Errorf("encode incoming call claim delivery: %w", err)
+		}
+		var recipients []incomingCallRecipientModel
+		if err := tx.Where("notification_id = ? AND installation_id <> ?", notificationID, installationID).Find(&recipients).Error; err != nil {
+			return err
+		}
+		expires := now.UTC().Add(30 * time.Second)
+		for _, row := range recipients {
+			var approved appInstallationModel
+			if err := tx.Where("id = ? AND approved_at IS NOT NULL AND revoked_at IS NULL", row.InstallationID).First(&approved).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			} else if err != nil {
+				return err
+			}
+			if err := tx.Create(&outboxJobModel{Kind: "voip.incoming_call_claimed", RoutingKey: row.InstallationID, Payload: payload, AvailableAt: now.UTC(), ExpiresAt: &expires}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return domain.IncomingCallClaim{}, fmt.Errorf("claim incoming call: %w", err)
 	}
 	return claim, nil
 }
 
 // ClaimVoIPPushJob leases the next time-sensitive VoIP outbox job without blocking another worker.
 func (store *Postgres) ClaimVoIPPushJob(ctx context.Context, now time.Time, leaseDuration time.Duration) (OutboxPushJob, error) {
-	tx, err := store.pool.Begin(ctx)
+	var output OutboxPushJob
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&outboxJobModel{}).Where("completed_at IS NULL AND expires_at IS NOT NULL AND expires_at <= ? AND kind LIKE ?", now.UTC(), "voip.%").Updates(map[string]any{"completed_at": now.UTC(), "last_error": "expired before delivery"}).Error; err != nil {
+			return fmt.Errorf("expire outbox jobs: %w", err)
+		}
+		var model outboxJobModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).Where("completed_at IS NULL AND available_at <= ? AND (expires_at IS NULL OR expires_at > ?) AND kind IN ?", now.UTC(), now.UTC(), []string{"voip.incoming_call", "voip.incoming_call_claimed", "alert.incoming_message"}).Order("available_at, id").First(&model).Error; err != nil {
+			return databaseNotFound(err)
+		}
+		kind := "alert"
+		if strings.HasPrefix(model.Kind, "voip.") {
+			kind = "voip"
+		}
+		var environment string
+		var deviceToken []byte
+		var installation appInstallationModel
+		if err := tx.Where("id = ? AND approved_at IS NOT NULL AND revoked_at IS NULL", model.RoutingKey).First(&installation).Error; err == nil {
+			var token pushTokenModel
+			if err := tx.Where("installation_id = ? AND kind = ?", installation.ID, kind).Order("updated_at DESC").First(&token).Error; err == nil {
+				environment = token.Environment
+				deviceToken = append([]byte(nil), token.TokenCiphertext...)
+			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		leaseExpires := now.UTC().Add(leaseDuration)
+		model.Attempts++
+		if err := tx.Model(&model).Updates(map[string]any{"attempts": model.Attempts, "available_at": leaseExpires}).Error; err != nil {
+			return fmt.Errorf("lease outbox job: %w", err)
+		}
+		output = OutboxPushJob{ID: model.ID, Kind: model.Kind, RoutingKey: model.RoutingKey, Payload: append([]byte(nil), model.Payload...), Attempt: model.Attempts, Environment: environment, DeviceToken: deviceToken, LeaseExpiresAt: leaseExpires}
+		return nil
+	}, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
-		return OutboxPushJob{}, fmt.Errorf("begin outbox claim: %w", err)
+		return OutboxPushJob{}, fmt.Errorf("claim outbox job: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	if _, err := tx.Exec(ctx, `
-		UPDATE outbox_jobs
-		SET completed_at = $1, last_error = 'expired before delivery'
-		WHERE completed_at IS NULL
-		  AND expires_at IS NOT NULL
-		  AND expires_at <= $1
-		  AND kind LIKE 'voip.%'`, now.UTC()); err != nil {
-		return OutboxPushJob{}, fmt.Errorf("expire outbox jobs: %w", err)
-	}
-
-	var job OutboxPushJob
-	var environment *string
-	job.LeaseExpiresAt = now.UTC().Add(leaseDuration)
-	err = tx.QueryRow(ctx, `
-		SELECT job.id, job.kind, job.routing_key, job.payload, job.attempts,
-		       route.environment, route.token_ciphertext
-		FROM outbox_jobs AS job
-		LEFT JOIN LATERAL (
-			SELECT token.environment, token.token_ciphertext
-			FROM push_tokens AS token
-			JOIN app_installations AS installation ON installation.id = token.installation_id
-			WHERE token.installation_id::text = job.routing_key
-			  AND token.kind = CASE WHEN job.kind LIKE 'voip.%' THEN 'voip' ELSE 'alert' END
-			  AND installation.approved_at IS NOT NULL
-			  AND installation.revoked_at IS NULL
-			ORDER BY token.updated_at DESC
-			LIMIT 1
-		) AS route ON true
-		WHERE job.completed_at IS NULL
-		  AND job.available_at <= $1
-		  AND (job.expires_at IS NULL OR job.expires_at > $1)
-		  AND job.kind IN ('voip.incoming_call', 'voip.incoming_call_claimed', 'alert.incoming_message')
-		ORDER BY job.available_at, job.id
-		FOR UPDATE OF job SKIP LOCKED
-		LIMIT 1`, now.UTC()).Scan(
-		&job.ID,
-		&job.Kind,
-		&job.RoutingKey,
-		&job.Payload,
-		&job.Attempt,
-		&environment,
-		&job.DeviceToken,
-	)
-	if err != nil {
-		return OutboxPushJob{}, err
-	}
-	job.Attempt++
-	if environment != nil {
-		job.Environment = *environment
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE outbox_jobs
-		SET attempts = $2, available_at = $3
-		WHERE id = $1`, job.ID, job.Attempt, job.LeaseExpiresAt); err != nil {
-		return OutboxPushJob{}, fmt.Errorf("lease outbox job: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return OutboxPushJob{}, fmt.Errorf("commit outbox claim: %w", err)
-	}
-	return job, nil
+	return output, nil
 }
 
 // CompletePushJob marks a leased push delivery as successful.
@@ -885,14 +679,15 @@ func (store *Postgres) DiscardPushJob(ctx context.Context, id int64, attempt int
 }
 
 func (store *Postgres) finishPushJob(ctx context.Context, id int64, attempt int, now time.Time, reason string) error {
-	command, err := store.pool.Exec(ctx, `
-		UPDATE outbox_jobs
-		SET completed_at = $3, last_error = NULLIF($4, '')
-		WHERE id = $1 AND attempts = $2 AND completed_at IS NULL`, id, attempt, now.UTC(), reason)
-	if err != nil {
-		return fmt.Errorf("finish push job: %w", err)
+	var lastError *string
+	if reason != "" {
+		lastError = &reason
 	}
-	if command.RowsAffected() == 0 {
+	result := store.database(ctx).Model(&outboxJobModel{}).Where("id = ? AND attempts = ? AND completed_at IS NULL", id, attempt).Updates(map[string]any{"completed_at": now.UTC(), "last_error": lastError})
+	if result.Error != nil {
+		return fmt.Errorf("finish push job: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
 		return pgx.ErrNoRows
 	}
 	return nil
@@ -900,14 +695,11 @@ func (store *Postgres) finishPushJob(ctx context.Context, id int64, attempt int,
 
 // RetryPushJob releases a leased delivery at the requested retry time.
 func (store *Postgres) RetryPushJob(ctx context.Context, id int64, attempt int, availableAt time.Time, reason string) error {
-	command, err := store.pool.Exec(ctx, `
-		UPDATE outbox_jobs
-		SET available_at = $3, last_error = $4
-		WHERE id = $1 AND attempts = $2 AND completed_at IS NULL`, id, attempt, availableAt.UTC(), reason)
-	if err != nil {
-		return fmt.Errorf("retry push job: %w", err)
+	result := store.database(ctx).Model(&outboxJobModel{}).Where("id = ? AND attempts = ? AND completed_at IS NULL", id, attempt).Updates(map[string]any{"available_at": availableAt.UTC(), "last_error": reason})
+	if result.Error != nil {
+		return fmt.Errorf("retry push job: %w", result.Error)
 	}
-	if command.RowsAffected() == 0 {
+	if result.RowsAffected == 0 {
 		return pgx.ErrNoRows
 	}
 	return nil
@@ -915,13 +707,7 @@ func (store *Postgres) RetryPushJob(ctx context.Context, id int64, attempt int, 
 
 // DeletePushTokenForDelivery removes only the failed route that APNs rejected.
 func (store *Postgres) DeletePushTokenForDelivery(ctx context.Context, installationID string, environment string, kind string, token []byte) error {
-	_, err := store.pool.Exec(ctx, `
-		DELETE FROM push_tokens
-		WHERE installation_id = $1
-		  AND environment = $2
-		  AND kind = $3
-		  AND token_ciphertext = $4`, installationID, environment, kind, token)
-	if err != nil {
+	if err := store.database(ctx).Where("installation_id = ? AND environment = ? AND kind = ? AND token_ciphertext = ?", installationID, environment, kind, token).Delete(&pushTokenModel{}).Error; err != nil {
 		return fmt.Errorf("delete push token: %w", err)
 	}
 	return nil
@@ -939,118 +725,48 @@ func (store *Postgres) DeleteVoIPPushToken(ctx context.Context, installationID s
 
 // ConsumePairingToken atomically consumes a pairing token, allocates a SIM ID, and stores a device credential hash.
 func (store *Postgres) ConsumePairingToken(ctx context.Context, tokenHash []byte, now time.Time, pairing DevicePairing) (DeviceRecord, error) {
-	tx, err := store.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
-	if err != nil {
-		return DeviceRecord{}, fmt.Errorf("begin device pairing: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var consumedAt *time.Time
-	var pairedDeviceID *string
-	err = tx.QueryRow(ctx, `
-		SELECT consumed_at, paired_device_id::text
-		FROM pairing_tokens
-		WHERE token_hash = $1
-		  AND owner_id IS NOT NULL
-		  AND (expires_at > $2 OR consumed_at IS NOT NULL)
-		FOR UPDATE`, tokenHash, now.UTC()).Scan(&consumedAt, &pairedDeviceID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return DeviceRecord{}, domain.ErrInvalidPairingToken
-	}
-	if err != nil {
-		return DeviceRecord{}, fmt.Errorf("lock pairing token: %w", err)
-	}
-	if consumedAt != nil {
-		if pairedDeviceID == nil || *pairedDeviceID != pairing.DeviceUUID {
-			return DeviceRecord{}, domain.ErrInvalidPairingToken
+	var record DeviceRecord
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		var token pairingTokenModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("token_hash = ? AND owner_id IS NOT NULL AND (expires_at > ? OR consumed_at IS NOT NULL)", tokenHash, now.UTC()).First(&token).Error; err != nil {
+			return domain.ErrInvalidPairingToken
 		}
-		var record DeviceRecord
-		err := tx.QueryRow(ctx, `
-			SELECT devices.id, devices.numeric_id, devices.profile_ciphertext,
-			       devices.identity_public_key, devices.command_public_key, devices.wrapped_vault_key,
-			       devices.paired_at, devices.last_seen_at
-			FROM devices
-			JOIN device_credentials ON device_credentials.device_id = devices.id
-			WHERE devices.id = $1
-			  AND device_credentials.credential_hash = $2
-			  AND devices.revoked_at IS NULL
-			  AND device_credentials.revoked_at IS NULL`, pairing.DeviceUUID, pairing.CredentialHash).Scan(
-			&record.ID,
-			&record.NumericID,
-			&record.ProfileCiphertext,
-			&record.IdentityPublicKey,
-			&record.CommandPublicKey,
-			&record.WrappedVaultKey,
-			&record.PairedAt,
-			&record.LastSeenAt,
-		)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return DeviceRecord{}, domain.ErrInvalidPairingToken
+		if token.ConsumedAt != nil {
+			if token.PairedDeviceID == nil || *token.PairedDeviceID != pairing.DeviceUUID {
+				return domain.ErrInvalidPairingToken
+			}
+			if err := tx.Model(&deviceModel{}).Joins("JOIN device_credentials ON device_credentials.device_id = devices.id").Where("devices.id = ? AND device_credentials.credential_hash = ? AND devices.revoked_at IS NULL AND device_credentials.revoked_at IS NULL", pairing.DeviceUUID, pairing.CredentialHash).First(&record).Error; err != nil {
+				return domain.ErrInvalidPairingToken
+			}
+			var slots []SlotRecord
+			if err := listDeviceSlotsDB(tx, record.ID, &slots); err != nil {
+				return err
+			}
+			record.Slots = slots
+			return nil
 		}
+		numericID, err := allocateNumericID(tx)
 		if err != nil {
-			return DeviceRecord{}, fmt.Errorf("read paired device retry: %w", err)
+			return err
 		}
-		record.Slots, err = store.listDeviceSlots(ctx, record.ID)
-		if err != nil {
-			return DeviceRecord{}, err
+		model := deviceModel{ID: pairing.DeviceUUID, NumericID: numericID, ProfileCiphertext: append([]byte(nil), pairing.ProfileCiphertext...), IdentityPublicKey: append([]byte(nil), pairing.IdentityPublicKey...), CommandPublicKey: append([]byte(nil), pairing.CommandPublicKey...), WrappedVaultKey: append([]byte(nil), pairing.WrappedVaultKey...), PairedAt: now.UTC()}
+		if err := tx.Create(&model).Error; err != nil {
+			return domain.ErrDeviceExists
 		}
-		return record, nil
-	}
-
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", int64(0x53494d44)); err != nil {
-		return DeviceRecord{}, fmt.Errorf("lock numeric id allocation: %w", err)
-	}
-
-	var numericID int
-	err = tx.QueryRow(ctx, `
-		SELECT candidate
-		FROM generate_series(1, 99) AS candidate
-		LEFT JOIN sim_cards ON sim_cards.numeric_id = candidate AND sim_cards.retired_at IS NULL
-		WHERE sim_cards.id IS NULL
-		ORDER BY candidate
-		LIMIT 1`).Scan(&numericID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return DeviceRecord{}, domain.ErrNoNumericID
-	}
+		if err := tx.Create(&deviceCredentialModel{DeviceID: pairing.DeviceUUID, CredentialHash: append([]byte(nil), pairing.CredentialHash...), CreatedAt: now.UTC()}).Error; err != nil {
+			return err
+		}
+		record = deviceRecordFromModel(model)
+		if err := createInitialSIMSlotDB(tx, pairing.DeviceUUID, numericID, pairing.ProfileCiphertext, now, &record); err != nil {
+			return err
+		}
+		if err := tx.Model(&token).Updates(map[string]any{"consumed_at": now.UTC(), "paired_device_id": pairing.DeviceUUID}).Error; err != nil {
+			return fmt.Errorf("complete pairing token: %w", err)
+		}
+		return nil
+	}, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
-		return DeviceRecord{}, fmt.Errorf("allocate numeric id: %w", err)
-	}
-
-	record := DeviceRecord{
-		ID:                pairing.DeviceUUID,
-		NumericID:         numericID,
-		ProfileCiphertext: pairing.ProfileCiphertext,
-		IdentityPublicKey: pairing.IdentityPublicKey,
-		CommandPublicKey:  pairing.CommandPublicKey,
-		WrappedVaultKey:   pairing.WrappedVaultKey,
-	}
-	err = tx.QueryRow(ctx, `
-		INSERT INTO devices (id, numeric_id, profile_ciphertext, identity_public_key, command_public_key, wrapped_vault_key)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING paired_at`, pairing.DeviceUUID, numericID, pairing.ProfileCiphertext, pairing.IdentityPublicKey, pairing.CommandPublicKey, pairing.WrappedVaultKey).Scan(&record.PairedAt)
-	if err != nil {
-		var postgresError *pgconn.PgError
-		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
-			return DeviceRecord{}, domain.ErrDeviceExists
-		}
-		return DeviceRecord{}, fmt.Errorf("insert paired device: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO device_credentials (device_id, credential_hash)
-		VALUES ($1, $2)`, pairing.DeviceUUID, pairing.CredentialHash); err != nil {
-		return DeviceRecord{}, fmt.Errorf("insert device credential: %w", err)
-	}
-	if err := createInitialSIMSlot(ctx, tx, pairing.DeviceUUID, numericID, pairing.ProfileCiphertext, now, &record); err != nil {
-		return DeviceRecord{}, err
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE pairing_tokens
-		SET consumed_at = $2, paired_device_id = $3
-		WHERE token_hash = $1`, tokenHash, now.UTC(), pairing.DeviceUUID); err != nil {
-		return DeviceRecord{}, fmt.Errorf("complete pairing token: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return DeviceRecord{}, fmt.Errorf("commit device pairing: %w", err)
+		return DeviceRecord{}, fmt.Errorf("device pairing: %w", err)
 	}
 	return record, nil
 }
@@ -1061,71 +777,98 @@ func (store *Postgres) AuthenticateDevice(ctx context.Context, deviceID string, 
 	if err != nil {
 		return nil, err
 	}
-	var identityPublicKey []byte
-	err = store.pool.QueryRow(ctx, `
-		UPDATE devices
-		SET last_seen_at = $3
-		FROM device_credentials
-		WHERE devices.id = $1
-		  AND device_credentials.device_id = devices.id
-		  AND device_credentials.credential_hash = $2
-		  AND devices.revoked_at IS NULL
-		  AND device_credentials.revoked_at IS NULL
-		RETURNING devices.identity_public_key`, deviceID, credentialHash[:], now.UTC()).Scan(&identityPublicKey)
-	if err != nil {
+	var model deviceModel
+	if err := store.database(ctx).Joins("JOIN device_credentials ON device_credentials.device_id = devices.id").Where("devices.id = ? AND device_credentials.credential_hash = ? AND devices.revoked_at IS NULL AND device_credentials.revoked_at IS NULL", deviceID, credentialHash[:]).First(&model).Error; err != nil {
+		return nil, databaseNotFound(err)
+	}
+	if err := store.database(ctx).Model(&model).Updates(map[string]any{"last_seen_at": now.UTC()}).Error; err != nil {
 		return nil, err
 	}
-	return identityPublicKey, nil
+	return append([]byte(nil), model.IdentityPublicKey...), nil
 }
 
 // CreateDevice atomically allocates the smallest free numeric identifier.
 func (store *Postgres) CreateDevice(ctx context.Context, id string, profileCiphertext []byte, identityPublicKey []byte, wrappedVaultKey []byte) (DeviceRecord, error) {
-	tx, err := store.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	var record DeviceRecord
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		numericID, err := allocateNumericID(tx)
+		if err != nil {
+			return err
+		}
+		model := deviceModel{ID: id, NumericID: numericID, ProfileCiphertext: append([]byte(nil), profileCiphertext...), IdentityPublicKey: append([]byte(nil), identityPublicKey...), WrappedVaultKey: append([]byte(nil), wrappedVaultKey...), PairedAt: time.Now().UTC()}
+		if err := tx.Create(&model).Error; err != nil {
+			return err
+		}
+		record = deviceRecordFromModel(model)
+		return createInitialSIMSlotDB(tx, id, numericID, profileCiphertext, model.PairedAt, &record)
+	}, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
-		return DeviceRecord{}, fmt.Errorf("begin device transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", int64(0x53494d44)); err != nil {
-		return DeviceRecord{}, fmt.Errorf("lock numeric id allocation: %w", err)
-	}
-
-	var numericID int
-	err = tx.QueryRow(ctx, `
-		SELECT candidate
-		FROM generate_series(1, 99) AS candidate
-		LEFT JOIN sim_cards ON sim_cards.numeric_id = candidate AND sim_cards.retired_at IS NULL
-		WHERE sim_cards.id IS NULL
-		ORDER BY candidate
-		LIMIT 1`).Scan(&numericID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return DeviceRecord{}, domain.ErrNoNumericID
-	}
-	if err != nil {
-		return DeviceRecord{}, fmt.Errorf("allocate numeric id: %w", err)
-	}
-
-	record := DeviceRecord{
-		ID:                id,
-		NumericID:         numericID,
-		ProfileCiphertext: profileCiphertext,
-		IdentityPublicKey: identityPublicKey,
-		WrappedVaultKey:   wrappedVaultKey,
-	}
-	err = tx.QueryRow(ctx, `
-		INSERT INTO devices (id, numeric_id, profile_ciphertext, identity_public_key, wrapped_vault_key)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING paired_at`, id, numericID, profileCiphertext, identityPublicKey, wrappedVaultKey).Scan(&record.PairedAt)
-	if err != nil {
-		return DeviceRecord{}, fmt.Errorf("insert device: %w", err)
-	}
-	if err := createInitialSIMSlot(ctx, tx, id, numericID, profileCiphertext, record.PairedAt, &record); err != nil {
-		return DeviceRecord{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return DeviceRecord{}, fmt.Errorf("commit device: %w", err)
+		return DeviceRecord{}, fmt.Errorf("create device: %w", err)
 	}
 	return record, nil
+}
+
+func allocateNumericID(tx *gorm.DB) (int, error) {
+	var used []int
+	if err := tx.Model(&simCardModel{}).Where("retired_at IS NULL").Pluck("numeric_id", &used).Error; err != nil {
+		return 0, err
+	}
+	for candidate := domain.MinNumericID; candidate <= domain.MaxNumericID; candidate++ {
+		found := false
+		for _, value := range used {
+			if value == candidate {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return candidate, nil
+		}
+	}
+	return 0, domain.ErrNoNumericID
+}
+
+func deviceRecordFromModel(model deviceModel) DeviceRecord {
+	return DeviceRecord{ID: model.ID, NumericID: model.NumericID, ProfileCiphertext: append([]byte(nil), model.ProfileCiphertext...), IdentityPublicKey: append([]byte(nil), model.IdentityPublicKey...), CommandPublicKey: append([]byte(nil), model.CommandPublicKey...), WrappedVaultKey: append([]byte(nil), model.WrappedVaultKey...), PairedAt: model.PairedAt, LastSeenAt: model.LastSeenAt, RadioAccessTechnology: model.RadioAccessTechnology, SignalBars: model.SignalBars, RadioStatusUpdatedAt: model.RadioStatusUpdatedAt}
+}
+
+func createInitialSIMSlotDB(tx *gorm.DB, deviceID string, numericID int, profileCiphertext []byte, now time.Time, record *DeviceRecord) error {
+	sim := simCardModel{ID: deviceID, NumericID: numericID, ProfileCiphertext: append([]byte(nil), profileCiphertext...), FirstSeenAt: now.UTC(), LastSeenAt: now.UTC(), CreatedAt: now.UTC()}
+	if err := tx.Create(&sim).Error; err != nil {
+		return fmt.Errorf("insert initial SIM identity: %w", err)
+	}
+	slot := deviceSlotModel{ID: uuid.NewString(), DeviceID: deviceID, SlotKey: "1", SlotIndex: 1, CurrentSIMID: &sim.ID, CreatedAt: now.UTC(), LastSeenAt: ptrTime(now.UTC())}
+	if err := tx.Create(&slot).Error; err != nil {
+		return fmt.Errorf("insert initial device slot: %w", err)
+	}
+	if err := tx.Create(&slotSIMAssignmentModel{SlotID: slot.ID, SIMID: sim.ID, InsertedAt: now.UTC()}).Error; err != nil {
+		return fmt.Errorf("record initial SIM slot assignment: %w", err)
+	}
+	value := numericID
+	lastSeen := now.UTC()
+	record.Slots = []SlotRecord{{ID: slot.ID, SlotKey: slot.SlotKey, SlotIndex: slot.SlotIndex, SIMID: &sim.ID, SIMNumericID: &value, ProfileCiphertext: append([]byte(nil), profileCiphertext...), LastSeenAt: &lastSeen}}
+	return nil
+}
+
+func listDeviceSlotsDB(tx *gorm.DB, deviceID string, output *[]SlotRecord) error {
+	var slots []deviceSlotModel
+	if err := tx.Where("device_id = ? AND removed_at IS NULL", deviceID).Order("slot_index").Find(&slots).Error; err != nil {
+		return fmt.Errorf("list device slots: %w", err)
+	}
+	result := make([]SlotRecord, 0, len(slots))
+	for _, slot := range slots {
+		record := SlotRecord{ID: slot.ID, SlotKey: slot.SlotKey, SlotIndex: slot.SlotIndex, SIMID: slot.CurrentSIMID, LastSeenAt: slot.LastSeenAt, RadioAccessTechnology: slot.RadioAccessTechnology, SignalBars: slot.SignalBars, RadioStatusUpdatedAt: slot.RadioStatusUpdatedAt}
+		if slot.CurrentSIMID != nil {
+			var sim simCardModel
+			if err := tx.Where("id = ? AND retired_at IS NULL", *slot.CurrentSIMID).First(&sim).Error; err == nil {
+				record.SIMNumericID = &sim.NumericID
+				record.ProfileCiphertext = append([]byte(nil), sim.ProfileCiphertext...)
+			}
+		}
+		result = append(result, record)
+	}
+	*output = result
+	return nil
 }
 
 // UpdateNumericID assigns a user-selected compact identifier.
@@ -1133,55 +876,54 @@ func (store *Postgres) UpdateNumericID(ctx context.Context, deviceID string, num
 	if numericID < domain.MinNumericID || numericID > domain.MaxNumericID {
 		return domain.ErrInvalidNumericID
 	}
-	command, err := store.pool.Exec(ctx, `
-		UPDATE sim_cards
-		SET numeric_id = $2
-		WHERE id = (
-			SELECT current_sim_id FROM device_slots
-			WHERE device_id = $1 AND removed_at IS NULL AND current_sim_id IS NOT NULL
-			ORDER BY slot_index LIMIT 1
-		) AND retired_at IS NULL`, deviceID, numericID)
-	if err != nil {
-		var postgresError *pgconn.PgError
-		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
-			return domain.ErrDuplicateNumericID
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		var slot deviceSlotModel
+		if err := tx.Where("device_id = ? AND removed_at IS NULL AND current_sim_id IS NOT NULL", deviceID).Order("slot_index").First(&slot).Error; err != nil {
+			return databaseNotFound(err)
 		}
-		return fmt.Errorf("update numeric id: %w", err)
-	}
-	if command.RowsAffected() == 0 {
-		return pgx.ErrNoRows
-	}
-	if _, err := store.pool.Exec(ctx, `UPDATE devices SET numeric_id = $2 WHERE id = $1 AND revoked_at IS NULL`, deviceID, numericID); err != nil {
-		return fmt.Errorf("update legacy numeric id: %w", err)
-	}
-	return nil
+		result := tx.Model(&simCardModel{}).Where("id = ? AND retired_at IS NULL", *slot.CurrentSIMID).Updates(map[string]any{"numeric_id": numericID})
+		if result.Error != nil {
+			if isUniqueViolation(result.Error) {
+				return domain.ErrDuplicateNumericID
+			}
+			return fmt.Errorf("update numeric id: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return pgx.ErrNoRows
+		}
+		result = tx.Model(&deviceModel{}).Where("id = ? AND revoked_at IS NULL", deviceID).Updates(map[string]any{"numeric_id": numericID})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return pgx.ErrNoRows
+		}
+		return nil
+	})
+	return err
 }
 
 // UpdateDeviceProfile replaces only the opaque end-to-end encrypted line profile.
 func (store *Postgres) UpdateDeviceProfile(ctx context.Context, deviceID string, profileCiphertext []byte) error {
-	command, err := store.pool.Exec(ctx, `
-		UPDATE sim_cards
-		SET profile_ciphertext = $2
-		WHERE id = (
-			SELECT slot.current_sim_id
-			FROM device_slots AS slot
-			JOIN devices ON devices.id = slot.device_id
-			WHERE slot.device_id = $1
-			  AND devices.revoked_at IS NULL
-			  AND slot.removed_at IS NULL
-			  AND slot.current_sim_id IS NOT NULL
-			ORDER BY slot.slot_index LIMIT 1
-		) AND retired_at IS NULL`, deviceID, profileCiphertext)
-	if err != nil {
-		return fmt.Errorf("update device profile: %w", err)
-	}
-	if command.RowsAffected() == 0 {
-		return pgx.ErrNoRows
-	}
-	if _, err := store.pool.Exec(ctx, `UPDATE devices SET profile_ciphertext = $2 WHERE id = $1 AND revoked_at IS NULL`, deviceID, profileCiphertext); err != nil {
-		return fmt.Errorf("update legacy device profile: %w", err)
-	}
-	return nil
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		var device deviceModel
+		if err := tx.Where("id = ? AND revoked_at IS NULL", deviceID).First(&device).Error; err != nil {
+			return databaseNotFound(err)
+		}
+		var slot deviceSlotModel
+		if err := tx.Where("device_id = ? AND removed_at IS NULL AND current_sim_id IS NOT NULL", deviceID).Order("slot_index").First(&slot).Error; err != nil {
+			return databaseNotFound(err)
+		}
+		result := tx.Model(&simCardModel{}).Where("id = ? AND retired_at IS NULL", *slot.CurrentSIMID).Updates(map[string]any{"profile_ciphertext": profileCiphertext})
+		if result.Error != nil {
+			return fmt.Errorf("update device profile: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return pgx.ErrNoRows
+		}
+		return tx.Model(&device).Updates(map[string]any{"profile_ciphertext": profileCiphertext}).Error
+	})
+	return err
 }
 
 // UpdateSIMNumericID assigns a user-selected compact identifier to one retained SIM card.
@@ -1189,75 +931,68 @@ func (store *Postgres) UpdateSIMNumericID(ctx context.Context, simID string, num
 	if numericID < domain.MinNumericID || numericID > domain.MaxNumericID {
 		return domain.ErrInvalidNumericID
 	}
-	var updatedSIMID string
-	err := store.pool.QueryRow(ctx, `
-		WITH updated_sim AS (
-			UPDATE sim_cards SET numeric_id = $2
-			WHERE id = $1 AND retired_at IS NULL
-			RETURNING id
-		), updated_devices AS (
-			UPDATE devices AS device
-			SET numeric_id = $2
-			FROM device_slots AS slot, updated_sim
-			WHERE slot.device_id = device.id
-			  AND slot.current_sim_id = updated_sim.id
-		)
-		SELECT id::text FROM updated_sim`, simID, numericID).Scan(&updatedSIMID)
-	if err != nil {
-		var postgresError *pgconn.PgError
-		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
-			return domain.ErrDuplicateNumericID
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&simCardModel{}).Where("id = ? AND retired_at IS NULL", simID).Updates(map[string]any{"numeric_id": numericID})
+		if result.Error != nil {
+			if isUniqueViolation(result.Error) {
+				return domain.ErrDuplicateNumericID
+			}
+			return fmt.Errorf("update SIM numeric id: %w", result.Error)
 		}
-		return fmt.Errorf("update SIM numeric id: %w", err)
-	}
-	return nil
+		if result.RowsAffected == 0 {
+			return pgx.ErrNoRows
+		}
+		var slots []deviceSlotModel
+		if err := tx.Where("current_sim_id = ? AND removed_at IS NULL", simID).Find(&slots).Error; err != nil {
+			return err
+		}
+		for _, slot := range slots {
+			if err := tx.Model(&deviceModel{}).Where("id = ? AND revoked_at IS NULL", slot.DeviceID).Updates(map[string]any{"numeric_id": numericID}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return err
 }
 
 // UpdateSIMProfile replaces the opaque end-to-end encrypted profile for one retained SIM card.
 func (store *Postgres) UpdateSIMProfile(ctx context.Context, simID string, profileCiphertext []byte) error {
-	var updatedSIMID string
-	err := store.pool.QueryRow(ctx, `
-		WITH updated_sim AS (
-			UPDATE sim_cards SET profile_ciphertext = $2
-			WHERE id = $1 AND retired_at IS NULL
-			RETURNING id
-		), updated_devices AS (
-			UPDATE devices AS device
-			SET profile_ciphertext = $2
-			FROM device_slots AS slot, updated_sim
-			WHERE slot.device_id = device.id
-			  AND slot.current_sim_id = updated_sim.id
-		)
-		SELECT id::text FROM updated_sim`, simID, profileCiphertext).Scan(&updatedSIMID)
-	if err != nil {
-		return fmt.Errorf("update SIM profile: %w", err)
-	}
-	return nil
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&simCardModel{}).Where("id = ? AND retired_at IS NULL", simID).Updates(map[string]any{"profile_ciphertext": profileCiphertext})
+		if result.Error != nil {
+			return fmt.Errorf("update SIM profile: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return pgx.ErrNoRows
+		}
+		var slots []deviceSlotModel
+		if err := tx.Where("current_sim_id = ? AND removed_at IS NULL", simID).Find(&slots).Error; err != nil {
+			return err
+		}
+		for _, slot := range slots {
+			if err := tx.Model(&deviceModel{}).Where("id = ? AND revoked_at IS NULL", slot.DeviceID).Updates(map[string]any{"profile_ciphertext": profileCiphertext}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return err
 }
 
 // ListESIMProfiles returns the profiles recorded for an active SIM.
 func (store *Postgres) ListESIMProfiles(ctx context.Context, simID string) ([]ESIMProfileRecord, error) {
-	rows, err := store.pool.Query(ctx, `
-		SELECT sim_id::text, profile_id, name, iccid, operator_name, is_enabled, created_at, updated_at
-		FROM esim_profiles
-		WHERE sim_id = $1 AND EXISTS (
-			SELECT 1 FROM sim_cards WHERE id = $1 AND retired_at IS NULL
-		)
-		ORDER BY updated_at DESC, profile_id`, simID)
-	if err != nil {
+	var sim simCardModel
+	if err := store.database(ctx).Where("id = ? AND retired_at IS NULL", simID).First(&sim).Error; err != nil {
+		return nil, databaseNotFound(err)
+	}
+	var models []esimProfileModel
+	if err := store.database(ctx).Where("sim_id = ?", simID).Order("updated_at DESC, profile_id").Find(&models).Error; err != nil {
 		return nil, fmt.Errorf("list eSIM profiles: %w", err)
 	}
-	defer rows.Close()
-	profiles := make([]ESIMProfileRecord, 0)
-	for rows.Next() {
-		var profile ESIMProfileRecord
-		if err := rows.Scan(&profile.SIMID, &profile.ProfileID, &profile.Name, &profile.ICCID, &profile.OperatorName, &profile.IsEnabled, &profile.CreatedAt, &profile.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan eSIM profile: %w", err)
-		}
-		profiles = append(profiles, profile)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate eSIM profiles: %w", err)
+	profiles := make([]ESIMProfileRecord, 0, len(models))
+	for _, model := range models {
+		profiles = append(profiles, esimProfileRecordFromModel(model))
 	}
 	return profiles, nil
 }
@@ -1267,25 +1002,25 @@ func (store *Postgres) UpsertESIMProfile(ctx context.Context, profile ESIMProfil
 	if profile.SIMID == "" || profile.ProfileID == "" || len(profile.ProfileID) > 256 || len(profile.Name) > 128 || len(profile.ICCID) > 32 || len(profile.OperatorName) > 128 {
 		return ESIMProfileRecord{}, domain.ErrInvalidESIMProfile
 	}
-	err := store.pool.QueryRow(ctx, `
-		INSERT INTO esim_profiles (sim_id, profile_id, name, iccid, operator_name, is_enabled)
-		SELECT $1, $2, $3, $4, $5, $6
-		WHERE EXISTS (SELECT 1 FROM sim_cards WHERE id = $1 AND retired_at IS NULL)
-		ON CONFLICT (sim_id, profile_id) DO UPDATE SET
-			name = EXCLUDED.name,
-			iccid = EXCLUDED.iccid,
-			operator_name = EXCLUDED.operator_name,
-			updated_at = now()
-		RETURNING sim_id::text, profile_id, name, iccid, operator_name, is_enabled, created_at, updated_at`,
-		profile.SIMID, profile.ProfileID, profile.Name, profile.ICCID, profile.OperatorName, profile.IsEnabled,
-	).Scan(&profile.SIMID, &profile.ProfileID, &profile.Name, &profile.ICCID, &profile.OperatorName, &profile.IsEnabled, &profile.CreatedAt, &profile.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ESIMProfileRecord{}, pgx.ErrNoRows
+	var sim simCardModel
+	if err := store.database(ctx).Where("id = ? AND retired_at IS NULL", profile.SIMID).First(&sim).Error; err != nil {
+		return ESIMProfileRecord{}, databaseNotFound(err)
 	}
-	if err != nil {
+	model := esimProfileModel{SIMID: profile.SIMID, ProfileID: profile.ProfileID, Name: profile.Name, ICCID: profile.ICCID, OperatorName: profile.OperatorName, IsEnabled: profile.IsEnabled, CreatedAt: profile.CreatedAt, UpdatedAt: time.Now().UTC()}
+	if model.CreatedAt.IsZero() {
+		model.CreatedAt = model.UpdatedAt
+	}
+	if err := store.database(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "sim_id"}, {Name: "profile_id"}}, DoUpdates: clause.AssignmentColumns([]string{"name", "iccid", "operator_name", "updated_at"})}).Create(&model).Error; err != nil {
 		return ESIMProfileRecord{}, fmt.Errorf("upsert eSIM profile: %w", err)
 	}
-	return profile, nil
+	if err := store.database(ctx).Where("sim_id = ? AND profile_id = ?", profile.SIMID, profile.ProfileID).First(&model).Error; err != nil {
+		return ESIMProfileRecord{}, databaseNotFound(err)
+	}
+	return esimProfileRecordFromModel(model), nil
+}
+
+func esimProfileRecordFromModel(model esimProfileModel) ESIMProfileRecord {
+	return ESIMProfileRecord{SIMID: model.SIMID, ProfileID: model.ProfileID, Name: model.Name, ICCID: model.ICCID, OperatorName: model.OperatorName, IsEnabled: model.IsEnabled, CreatedAt: model.CreatedAt, UpdatedAt: model.UpdatedAt}
 }
 
 // RenameESIMProfile changes only the user-visible label of an installed profile.
@@ -1294,55 +1029,51 @@ func (store *Postgres) RenameESIMProfile(ctx context.Context, simID, profileID, 
 	if simID == "" || profileID == "" || len(profileID) > 256 || len(name) > 128 {
 		return ESIMProfileRecord{}, domain.ErrInvalidESIMProfile
 	}
-	var profile ESIMProfileRecord
-	err := store.pool.QueryRow(ctx, `
-		UPDATE esim_profiles
-		SET name = $3, updated_at = now()
-		WHERE sim_id = $1 AND profile_id = $2
-		RETURNING sim_id::text, profile_id, name, iccid, operator_name, is_enabled, created_at, updated_at`,
-		simID, profileID, name,
-	).Scan(&profile.SIMID, &profile.ProfileID, &profile.Name, &profile.ICCID, &profile.OperatorName, &profile.IsEnabled, &profile.CreatedAt, &profile.UpdatedAt)
-	if err != nil {
-		return ESIMProfileRecord{}, fmt.Errorf("rename eSIM profile: %w", err)
+	result := store.database(ctx).Model(&esimProfileModel{}).Where("sim_id = ? AND profile_id = ?", simID, profileID).Updates(map[string]any{"name": name, "updated_at": time.Now().UTC()})
+	if result.Error != nil {
+		return ESIMProfileRecord{}, fmt.Errorf("rename eSIM profile: %w", result.Error)
 	}
-	return profile, nil
+	if result.RowsAffected == 0 {
+		return ESIMProfileRecord{}, pgx.ErrNoRows
+	}
+	var model esimProfileModel
+	if err := store.database(ctx).Where("sim_id = ? AND profile_id = ?", simID, profileID).First(&model).Error; err != nil {
+		return ESIMProfileRecord{}, databaseNotFound(err)
+	}
+	return esimProfileRecordFromModel(model), nil
 }
 
 // SetESIMProfileEnabled toggles one profile and disables other profiles on the same SIM.
 func (store *Postgres) SetESIMProfileEnabled(ctx context.Context, simID, profileID string, enabled bool) (ESIMProfileRecord, error) {
-	tx, err := store.pool.Begin(ctx)
-	if err != nil {
-		return ESIMProfileRecord{}, fmt.Errorf("begin eSIM profile update: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if enabled {
-		if _, err := tx.Exec(ctx, `UPDATE esim_profiles SET is_enabled = FALSE, updated_at = now() WHERE sim_id = $1`, simID); err != nil {
-			return ESIMProfileRecord{}, fmt.Errorf("disable other eSIM profiles: %w", err)
+	var model esimProfileModel
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		if enabled {
+			if err := tx.Model(&esimProfileModel{}).Where("sim_id = ?", simID).Updates(map[string]any{"is_enabled": false, "updated_at": time.Now().UTC()}).Error; err != nil {
+				return fmt.Errorf("disable other eSIM profiles: %w", err)
+			}
 		}
-	}
-	var profile ESIMProfileRecord
-	if err := tx.QueryRow(ctx, `
-		UPDATE esim_profiles
-		SET is_enabled = $3, updated_at = now()
-		WHERE sim_id = $1 AND profile_id = $2
-		RETURNING sim_id::text, profile_id, name, iccid, operator_name, is_enabled, created_at, updated_at`,
-		simID, profileID, enabled,
-	).Scan(&profile.SIMID, &profile.ProfileID, &profile.Name, &profile.ICCID, &profile.OperatorName, &profile.IsEnabled, &profile.CreatedAt, &profile.UpdatedAt); err != nil {
+		result := tx.Model(&esimProfileModel{}).Where("sim_id = ? AND profile_id = ?", simID, profileID).Updates(map[string]any{"is_enabled": enabled, "updated_at": time.Now().UTC()})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return pgx.ErrNoRows
+		}
+		return tx.Where("sim_id = ? AND profile_id = ?", simID, profileID).First(&model).Error
+	}, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
 		return ESIMProfileRecord{}, fmt.Errorf("set eSIM profile state: %w", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return ESIMProfileRecord{}, fmt.Errorf("commit eSIM profile state: %w", err)
-	}
-	return profile, nil
+	return esimProfileRecordFromModel(model), nil
 }
 
 // DeleteESIMProfile removes server metadata after the modem has removed a profile.
 func (store *Postgres) DeleteESIMProfile(ctx context.Context, simID, profileID string) error {
-	command, err := store.pool.Exec(ctx, `DELETE FROM esim_profiles WHERE sim_id = $1 AND profile_id = $2`, simID, profileID)
-	if err != nil {
-		return fmt.Errorf("delete eSIM profile: %w", err)
+	result := store.database(ctx).Where("sim_id = ? AND profile_id = ?", simID, profileID).Delete(&esimProfileModel{})
+	if result.Error != nil {
+		return fmt.Errorf("delete eSIM profile: %w", result.Error)
 	}
-	if command.RowsAffected() == 0 {
+	if result.RowsAffected == 0 {
 		return pgx.ErrNoRows
 	}
 	return nil
@@ -1350,88 +1081,73 @@ func (store *Postgres) DeleteESIMProfile(ctx context.Context, simID, profileID s
 
 // RevokeDevice atomically disables the device and all credentials issued to it.
 func (store *Postgres) RevokeDevice(ctx context.Context, deviceID string, revokedAt time.Time) error {
-	tx, err := store.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin device revocation: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	command, err := tx.Exec(ctx, `
-		UPDATE devices SET revoked_at = $2
-		WHERE id = $1 AND revoked_at IS NULL`, deviceID, revokedAt.UTC())
-	if err != nil {
-		return fmt.Errorf("revoke device: %w", err)
-	}
-	if command.RowsAffected() == 0 {
-		return pgx.ErrNoRows
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE device_credentials SET revoked_at = $2
-		WHERE device_id = $1 AND revoked_at IS NULL`, deviceID, revokedAt.UTC()); err != nil {
-		return fmt.Errorf("revoke device credentials: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE slot_sim_assignments
-		SET removed_at = GREATEST($2, inserted_at)
-		WHERE slot_id IN (SELECT id FROM device_slots WHERE device_id = $1 AND removed_at IS NULL)
-		  AND removed_at IS NULL`, deviceID, revokedAt.UTC()); err != nil {
-		return fmt.Errorf("remove device SIM assignments: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `DELETE FROM device_slots WHERE device_id = $1`, deviceID); err != nil {
-		return fmt.Errorf("remove device slots: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit device revocation: %w", err)
-	}
-	return nil
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&deviceModel{}).Where("id = ? AND revoked_at IS NULL", deviceID).Updates(map[string]any{"revoked_at": revokedAt.UTC()})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return pgx.ErrNoRows
+		}
+		if err := tx.Model(&deviceCredentialModel{}).Where("device_id = ? AND revoked_at IS NULL", deviceID).Updates(map[string]any{"revoked_at": revokedAt.UTC()}).Error; err != nil {
+			return err
+		}
+		var slots []deviceSlotModel
+		if err := tx.Where("device_id = ? AND removed_at IS NULL", deviceID).Find(&slots).Error; err != nil {
+			return err
+		}
+		for _, slot := range slots {
+			if err := tx.Model(&slotSIMAssignmentModel{}).Where("slot_id = ? AND removed_at IS NULL", slot.ID).Updates(map[string]any{"removed_at": revokedAt.UTC()}).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Where("device_id = ?", deviceID).Delete(&deviceSlotModel{}).Error
+	})
+	return err
 }
 
 // ListSIMCards returns active physical SIMs, including cards currently offline.
 func (store *Postgres) ListSIMCards(ctx context.Context) ([]SIMRecord, error) {
-	rows, err := store.pool.Query(ctx, `
-		SELECT sim.id::text, sim.numeric_id, sim.profile_ciphertext,
-		       sim.first_seen_at, sim.last_seen_at,
-		       slot.device_id::text, slot.id::text
-		FROM sim_cards AS sim
-		LEFT JOIN device_slots AS slot
-		  ON slot.current_sim_id = sim.id AND slot.removed_at IS NULL
-		WHERE sim.retired_at IS NULL
-		ORDER BY sim.numeric_id`)
-	if err != nil {
+	var models []simCardModel
+	if err := store.database(ctx).Where("retired_at IS NULL").Order("numeric_id").Find(&models).Error; err != nil {
 		return nil, fmt.Errorf("list SIM cards: %w", err)
 	}
-	defer rows.Close()
-	result := make([]SIMRecord, 0)
-	for rows.Next() {
-		var record SIMRecord
-		if err := rows.Scan(&record.ID, &record.NumericID, &record.ProfileCiphertext, &record.FirstSeenAt, &record.LastSeenAt, &record.AssignedDeviceID, &record.AssignedSlotID); err != nil {
-			return nil, fmt.Errorf("scan SIM card: %w", err)
+	result := make([]SIMRecord, 0, len(models))
+	for _, model := range models {
+		record := SIMRecord{ID: model.ID, NumericID: model.NumericID, ProfileCiphertext: append([]byte(nil), model.ProfileCiphertext...), FirstSeenAt: model.FirstSeenAt, LastSeenAt: model.LastSeenAt}
+		var slot deviceSlotModel
+		if err := store.database(ctx).Where("current_sim_id = ? AND removed_at IS NULL", model.ID).First(&slot).Error; err == nil {
+			record.AssignedDeviceID = &slot.DeviceID
+			record.AssignedSlotID = &slot.ID
 		}
 		result = append(result, record)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate SIM cards: %w", err)
 	}
 	return result, nil
 }
 
 // RetireSIMCard permanently removes an offline SIM from the owner's inventory.
 func (store *Postgres) RetireSIMCard(ctx context.Context, simID string, retiredAt time.Time) error {
-	command, err := store.pool.Exec(ctx, `
-		DELETE FROM sim_cards
-		WHERE id = $1
-		  AND NOT EXISTS (SELECT 1 FROM device_slots WHERE current_sim_id = $1 AND removed_at IS NULL)`, simID)
+	var removed int64
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		var sim simCardModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND retired_at IS NULL", simID).First(&sim).Error; err != nil {
+			return databaseNotFound(err)
+		}
+		var slotCount int64
+		if err := tx.Model(&deviceSlotModel{}).Where("current_sim_id = ? AND removed_at IS NULL", simID).Count(&slotCount).Error; err != nil {
+			return err
+		}
+		if slotCount > 0 {
+			return domain.ErrSIMAssigned
+		}
+		result := tx.Delete(&sim)
+		removed = result.RowsAffected
+		return result.Error
+	}, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return fmt.Errorf("retire SIM card: %w", err)
 	}
-	if command.RowsAffected() == 0 {
-		var assigned bool
-		if err := store.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM device_slots WHERE current_sim_id = $1 AND removed_at IS NULL)`, simID).Scan(&assigned); err != nil {
-			return fmt.Errorf("check SIM assignment: %w", err)
-		}
-		if assigned {
-			return domain.ErrSIMAssigned
-		}
+	if removed == 0 {
 		return pgx.ErrNoRows
 	}
 	return nil
@@ -1439,45 +1155,19 @@ func (store *Postgres) RetireSIMCard(ctx context.Context, simID string, retiredA
 
 // ListDevices returns active devices without decrypting their line profiles.
 func (store *Postgres) ListDevices(ctx context.Context) ([]DeviceRecord, error) {
-	rows, err := store.pool.Query(ctx, `
-		SELECT id, numeric_id, profile_ciphertext, identity_public_key, command_public_key,
-		       wrapped_vault_key, paired_at, last_seen_at, COALESCE(radio_access_technology, ''),
-		       signal_bars, radio_status_updated_at
-		FROM devices
-		WHERE revoked_at IS NULL
-		ORDER BY numeric_id`)
-	if err != nil {
+	var models []deviceModel
+	if err := store.database(ctx).Where("revoked_at IS NULL").Order("numeric_id").Find(&models).Error; err != nil {
 		return nil, fmt.Errorf("list devices: %w", err)
 	}
-	defer rows.Close()
-
-	records := make([]DeviceRecord, 0)
-	for rows.Next() {
-		var record DeviceRecord
-		if err := rows.Scan(
-			&record.ID,
-			&record.NumericID,
-			&record.ProfileCiphertext,
-			&record.IdentityPublicKey,
-			&record.CommandPublicKey,
-			&record.WrappedVaultKey,
-			&record.PairedAt,
-			&record.LastSeenAt,
-			&record.RadioAccessTechnology,
-			&record.SignalBars,
-			&record.RadioStatusUpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan device: %w", err)
-		}
-		slots, err := store.listDeviceSlots(ctx, record.ID)
-		if err != nil {
+	records := make([]DeviceRecord, 0, len(models))
+	for _, model := range models {
+		record := deviceRecordFromModel(model)
+		var slots []SlotRecord
+		if err := listDeviceSlotsDB(store.database(ctx), model.ID, &slots); err != nil {
 			return nil, err
 		}
 		record.Slots = slots
 		records = append(records, record)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate devices: %w", err)
 	}
 	return records, nil
 }
@@ -1521,67 +1211,31 @@ func createSIMSlot(ctx context.Context, tx pgx.Tx, deviceID string, slotKey stri
 }
 
 func (store *Postgres) listDeviceSlots(ctx context.Context, deviceID string) ([]SlotRecord, error) {
-	rows, err := store.pool.Query(ctx, `
-		SELECT slot.id::text, slot.slot_key, slot.slot_index,
-		       slot.current_sim_id::text, sim.numeric_id, sim.profile_ciphertext,
-		       slot.last_seen_at, COALESCE(slot.radio_access_technology, ''),
-		       slot.signal_bars, slot.radio_status_updated_at
-		FROM device_slots AS slot
-		LEFT JOIN sim_cards AS sim ON sim.id = slot.current_sim_id AND sim.retired_at IS NULL
-		WHERE slot.device_id = $1 AND slot.removed_at IS NULL
-		ORDER BY slot.slot_index`, deviceID)
-	if err != nil {
-		return nil, fmt.Errorf("list device slots: %w", err)
-	}
-	defer rows.Close()
-
 	slots := make([]SlotRecord, 0)
-	for rows.Next() {
-		var slot SlotRecord
-		if err := rows.Scan(
-			&slot.ID, &slot.SlotKey, &slot.SlotIndex, &slot.SIMID, &slot.SIMNumericID,
-			&slot.ProfileCiphertext, &slot.LastSeenAt, &slot.RadioAccessTechnology,
-			&slot.SignalBars, &slot.RadioStatusUpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan device slot: %w", err)
-		}
-		slots = append(slots, slot)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate device slots: %w", err)
+	if err := listDeviceSlotsDB(store.database(ctx), deviceID, &slots); err != nil {
+		return nil, err
 	}
 	return slots, nil
 }
 
 // UpdateDeviceRadioStatus stores the latest non-sensitive modem telemetry.
 func (store *Postgres) UpdateDeviceRadioStatus(ctx context.Context, deviceID string, slotKey string, slotIndex int, technology string, signalBars *int, now time.Time) error {
-	command, err := store.pool.Exec(ctx, `
-		WITH updated_slot AS (
-			UPDATE device_slots AS slot
-			SET radio_access_technology = $4,
-			    signal_bars = $5,
-			    radio_status_updated_at = $6,
-			    last_seen_at = $6
-			FROM devices AS device
-			WHERE slot.device_id = $1
-			  AND slot.slot_key = $2
-			  AND slot.slot_index = $3
-			  AND slot.removed_at IS NULL
-			  AND device.id = slot.device_id
-			  AND device.revoked_at IS NULL
-			RETURNING slot.device_id
-		)
-		UPDATE devices AS device
-		SET radio_access_technology = $4,
-		    signal_bars = $5,
-		    radio_status_updated_at = $6
-		FROM updated_slot
-		WHERE device.id = updated_slot.device_id`, deviceID, slotKey, slotIndex, technology, signalBars, now.UTC())
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		var device deviceModel
+		if err := tx.Where("id = ? AND revoked_at IS NULL", deviceID).First(&device).Error; err != nil {
+			return databaseNotFound(err)
+		}
+		result := tx.Model(&deviceSlotModel{}).Where("device_id = ? AND slot_key = ? AND slot_index = ? AND removed_at IS NULL", deviceID, slotKey, slotIndex).Updates(map[string]any{"radio_access_technology": technology, "signal_bars": signalBars, "radio_status_updated_at": now.UTC(), "last_seen_at": now.UTC()})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return pgx.ErrNoRows
+		}
+		return tx.Model(&device).Updates(map[string]any{"radio_access_technology": technology, "signal_bars": signalBars, "radio_status_updated_at": now.UTC(), "last_seen_at": now.UTC()}).Error
+	})
 	if err != nil {
 		return fmt.Errorf("update device radio status: %w", err)
-	}
-	if command.RowsAffected() == 0 {
-		return pgx.ErrNoRows
 	}
 	return nil
 }
@@ -1591,102 +1245,97 @@ func (store *Postgres) UpdateDeviceSIMIdentity(ctx context.Context, deviceID str
 	if len(fingerprint) != 32 || slotKey == "" || slotIndex < 1 || slotIndex > 32 {
 		return SIMSlotAssignment{}, errors.New("invalid slot or SIM fingerprint")
 	}
-	tx, err := store.pool.Begin(ctx)
-	if err != nil {
-		return SIMSlotAssignment{}, fmt.Errorf("begin SIM identity synchronization: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	var slotID string
-	var oldSIMID *string
-	if err := tx.QueryRow(ctx, `
-		SELECT id::text, current_sim_id::text FROM device_slots
-		WHERE device_id = $1 AND slot_key = $2 AND slot_index = $3 AND removed_at IS NULL
-		FOR UPDATE`, deviceID, slotKey, slotIndex).Scan(&slotID, &oldSIMID); err != nil {
-		return SIMSlotAssignment{}, err
-	}
-	var simID string
-	var numericID int
-	err = tx.QueryRow(ctx, `
-		SELECT id::text, numeric_id FROM sim_cards
-		WHERE iccid_fingerprint = $1
-		ORDER BY created_at LIMIT 1 FOR UPDATE`, fingerprint).Scan(&simID, &numericID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		if oldSIMID != nil {
-			err = tx.QueryRow(ctx, `
-				UPDATE sim_cards
-				SET iccid_fingerprint = $2, fingerprint_scope = $3, last_seen_at = $4
-				WHERE id = $1
-				  AND iccid_fingerprint IS NULL
-				  AND fingerprint_scope IS NULL
-				  AND retired_at IS NULL
-				RETURNING id::text, numeric_id`, *oldSIMID, fingerprint, deviceID, now.UTC()).Scan(&simID, &numericID)
-			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-				return SIMSlotAssignment{}, fmt.Errorf("identify current SIM card: %w", err)
+	var output SIMSlotAssignment
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		var slot deviceSlotModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("device_id = ? AND slot_key = ? AND slot_index = ? AND removed_at IS NULL", deviceID, slotKey, slotIndex).First(&slot).Error; err != nil {
+			return databaseNotFound(err)
+		}
+		oldSIMID := slot.CurrentSIMID
+		var sim simCardModel
+		found := false
+		findErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("iccid_fingerprint = ?", fingerprint).Order("created_at").First(&sim).Error
+		if findErr == nil {
+			found = true
+		} else if !errors.Is(findErr, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("find SIM card identity: %w", findErr)
+		}
+		if !found && oldSIMID != nil {
+			if err := tx.Where("id = ? AND iccid_fingerprint IS NULL AND fingerprint_scope IS NULL AND retired_at IS NULL", *oldSIMID).First(&sim).Error; err == nil {
+				found = true
+			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("identify current SIM card: %w", err)
 			}
 		}
-	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, int64(0x53494d44)); err != nil {
-			return SIMSlotAssignment{}, fmt.Errorf("lock SIM numeric ID allocation: %w", err)
+		if !found {
+			numericID, err := allocateNumericID(tx)
+			if err != nil {
+				return err
+			}
+			sim = simCardModel{ID: uuid.NewString(), NumericID: numericID, ICCIDFingerprint: append([]byte(nil), fingerprint...), FingerprintScope: &deviceID, ProfileCiphertext: []byte{}, FirstSeenAt: now.UTC(), LastSeenAt: now.UTC(), CreatedAt: now.UTC()}
+			if err := tx.Create(&sim).Error; err != nil {
+				return fmt.Errorf("create SIM card identity: %w", err)
+			}
+		} else if err := tx.Model(&sim).Updates(map[string]any{"iccid_fingerprint": fingerprint, "fingerprint_scope": deviceID, "retired_at": nil, "last_seen_at": now.UTC()}).Error; err != nil {
+			return fmt.Errorf("reactivate SIM card identity: %w", err)
 		}
-		err = tx.QueryRow(ctx, `
-			SELECT candidate FROM generate_series(1, 99) AS candidate
-			LEFT JOIN sim_cards ON sim_cards.numeric_id = candidate AND sim_cards.retired_at IS NULL
-			WHERE sim_cards.id IS NULL ORDER BY candidate LIMIT 1`).Scan(&numericID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return SIMSlotAssignment{}, domain.ErrNoNumericID
+		closeAssignments := func(simID, excludedSlotID string) error {
+			var assignments []slotSIMAssignmentModel
+			if err := tx.Where("sim_id = ? AND slot_id <> ? AND removed_at IS NULL", simID, excludedSlotID).Find(&assignments).Error; err != nil {
+				return err
+			}
+			for _, assignment := range assignments {
+				removed := now.UTC()
+				if assignment.InsertedAt.After(removed) {
+					removed = assignment.InsertedAt
+				}
+				if err := tx.Model(&assignment).Updates(map[string]any{"removed_at": removed}).Error; err != nil {
+					return err
+				}
+			}
+			return tx.Model(&deviceSlotModel{}).Where("current_sim_id = ? AND id <> ?", simID, excludedSlotID).Updates(map[string]any{"current_sim_id": nil}).Error
 		}
-		if err != nil {
-			return SIMSlotAssignment{}, fmt.Errorf("allocate SIM numeric ID: %w", err)
+		if oldSIMID != nil && *oldSIMID != sim.ID {
+			var assignments []slotSIMAssignmentModel
+			if err := tx.Where("slot_id = ? AND removed_at IS NULL", slot.ID).Find(&assignments).Error; err != nil {
+				return err
+			}
+			for _, assignment := range assignments {
+				removed := now.UTC()
+				if assignment.InsertedAt.After(removed) {
+					removed = assignment.InsertedAt
+				}
+				if err := tx.Model(&assignment).Updates(map[string]any{"removed_at": removed}).Error; err != nil {
+					return err
+				}
+			}
 		}
-		err = tx.QueryRow(ctx, `
-			INSERT INTO sim_cards (id, numeric_id, iccid_fingerprint, fingerprint_scope, profile_ciphertext, first_seen_at, last_seen_at)
-			VALUES (gen_random_uuid(), $1, $2, $3, ''::bytea, $4, $4)
-			RETURNING id::text`, numericID, fingerprint, deviceID, now.UTC()).Scan(&simID)
-		if err != nil {
-			return SIMSlotAssignment{}, fmt.Errorf("create SIM card identity: %w", err)
+		if err := closeAssignments(sim.ID, slot.ID); err != nil {
+			return err
 		}
-	} else if err != nil {
-		return SIMSlotAssignment{}, fmt.Errorf("find SIM card identity: %w", err)
-	} else if _, err := tx.Exec(ctx, `UPDATE sim_cards SET fingerprint_scope = $2, retired_at = NULL, last_seen_at = $3 WHERE id = $1`, simID, deviceID, now.UTC()); err != nil {
-		return SIMSlotAssignment{}, fmt.Errorf("reactivate SIM card identity: %w", err)
-	}
-	if oldSIMID != nil && *oldSIMID != simID {
-		if _, err := tx.Exec(ctx, `
-			UPDATE slot_sim_assignments
-			SET removed_at = GREATEST($2, inserted_at)
-			WHERE slot_id = $1 AND removed_at IS NULL`, slotID, now.UTC()); err != nil {
-			return SIMSlotAssignment{}, err
+		if err := tx.Model(&slot).Updates(map[string]any{"current_sim_id": sim.ID, "last_seen_at": now.UTC()}).Error; err != nil {
+			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE device_slots SET current_sim_id = NULL WHERE id = $1`, slotID); err != nil {
-			return SIMSlotAssignment{}, err
+		if result := tx.Model(&deviceModel{}).Where("id = ? AND revoked_at IS NULL", deviceID).Updates(map[string]any{"numeric_id": sim.NumericID, "last_seen_at": now.UTC()}); result.Error != nil {
+			return fmt.Errorf("update device SIM identity: %w", result.Error)
+		} else if result.RowsAffected == 0 {
+			return pgx.ErrNoRows
 		}
+		var current slotSIMAssignmentModel
+		if err := tx.Where("slot_id = ? AND sim_id = ? AND removed_at IS NULL", slot.ID, sim.ID).First(&current).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+			if err := tx.Create(&slotSIMAssignmentModel{SlotID: slot.ID, SIMID: sim.ID, InsertedAt: now.UTC()}).Error; err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		}
+		output = SIMSlotAssignment{SlotID: slot.ID, SIMID: sim.ID, NumericID: sim.NumericID}
+		return nil
+	}, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return SIMSlotAssignment{}, fmt.Errorf("synchronize SIM identity: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `UPDATE device_slots SET current_sim_id = NULL WHERE current_sim_id = $1 AND id <> $2`, simID, slotID); err != nil {
-		return SIMSlotAssignment{}, err
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE slot_sim_assignments
-		SET removed_at = GREATEST($3, inserted_at)
-		WHERE sim_id = $1 AND slot_id <> $2 AND removed_at IS NULL`, simID, slotID, now.UTC()); err != nil {
-		return SIMSlotAssignment{}, err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE device_slots SET current_sim_id = $2, last_seen_at = $3 WHERE id = $1`, slotID, simID, now.UTC()); err != nil {
-		return SIMSlotAssignment{}, err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE devices SET numeric_id = $2, last_seen_at = $3 WHERE id = $1 AND revoked_at IS NULL`, deviceID, numericID, now.UTC()); err != nil {
-		return SIMSlotAssignment{}, fmt.Errorf("update legacy device SIM identity: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO slot_sim_assignments (slot_id, sim_id, inserted_at)
-		SELECT $1, $2, $3
-		WHERE NOT EXISTS (SELECT 1 FROM slot_sim_assignments WHERE slot_id = $1 AND sim_id = $2 AND removed_at IS NULL)`, slotID, simID, now.UTC()); err != nil {
-		return SIMSlotAssignment{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return SIMSlotAssignment{}, fmt.Errorf("commit SIM identity synchronization: %w", err)
-	}
-	return SIMSlotAssignment{SlotID: slotID, SIMID: simID, NumericID: numericID}, nil
+	return output, nil
 }
 
 // InsertEvent stores an encrypted event once and returns its server sequence.

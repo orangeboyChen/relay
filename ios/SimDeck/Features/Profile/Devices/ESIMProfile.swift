@@ -318,7 +318,11 @@ final class LiveESIMProfileManager: ESIMProfileManaging {
         let updated = try await server.renameESIMProfile(
             simID: simID, profileID: profile.profileID, name: trimmedName
         )
-        return makeProfile(updated, preservingID: profile.id)
+        var renamed = makeProfile(updated, preservingID: profile.id)
+        // The modem is authoritative for activation state. A metadata-only
+        // rename must not replace that state with a stale server snapshot.
+        renamed.isEnabled = profile.isEnabled
+        return renamed
     }
 
     func delete(profile: ESIMProfile, line: DeviceLineIdentity) async throws {

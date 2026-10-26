@@ -48,6 +48,7 @@ Linux host, but it is not a deployment prerequisite for this Compose mode.
 
 ```sh
 SIM_DECK_SERVER_URL=https://sim-deck.example.com \
+  SIM_DECK_DEVICE_IMAGE=ghcr.io/orangeboychen/sim-deck-device:x.y.z \
   docker compose -f compose.node.yaml up -d
 docker compose -f compose.node.yaml logs -f node
 ```

@@ -10,7 +10,7 @@ x-node-environment: &node-environment
 
 services:
   node:
-    image: ghcr.io/orangeboychen/sim-deck-device:dev
+    image: "${SIM_DECK_DEVICE_IMAGE:?set SIM_DECK_DEVICE_IMAGE}"
     restart: unless-stopped
     environment: *node-environment
     group_add:

@@ -288,9 +288,10 @@ func (session *Session) RenameESIMProfile(ctx context.Context, iccid, nickname s
 // QESIM flow. The modem owns all eUICC state; this method only forwards the
 // modem's GSMA RSP messages to the advertised SMDP+ endpoint over HTTPS.
 func (session *Session) DownloadESIMProfile(ctx context.Context, activationCode string) error {
-	activationCode = strings.TrimSpace(activationCode)
-	if !strings.HasPrefix(activationCode, "LPA:1$") || strings.ContainsAny(activationCode, "\r\n\"") || len(activationCode) > 512 {
-		return errors.New("invalid eSIM activation code")
+	var err error
+	activationCode, err = normalizeESIMActivationCode(activationCode)
+	if err != nil {
+		return err
 	}
 	response, err := session.sendWithTimeout(ctx, fmt.Sprintf(`AT+QESIM="download","%s"`, escapeATString(activationCode)), esimTransactionTimeout)
 	if err != nil {
@@ -326,6 +327,25 @@ func (session *Session) DownloadESIMProfile(ctx context.Context, activationCode 
 		}
 		transaction = next
 	}
+}
+
+// normalizeESIMActivationCode accepts both the full QR payload form
+// (LPA:1$...) and the GSMA manual-entry form (1$...). Quectel's QESIM
+// command expects the full LPA prefix.
+func normalizeESIMActivationCode(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	switch {
+	case strings.HasPrefix(value, "LPA:1$"):
+		// Already in the full QR payload form.
+	case strings.HasPrefix(value, "1$"):
+		value = "LPA:" + value
+	default:
+		return "", errors.New("invalid eSIM activation code")
+	}
+	if strings.ContainsAny(value, "\r\n\"") || len(value) > 512 {
+		return "", errors.New("invalid eSIM activation code")
+	}
+	return value, nil
 }
 
 type esimTransaction struct {
@@ -418,7 +438,9 @@ func postESIMTransaction(ctx context.Context, endpoint, payload string) ([]byte,
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("Content-Type", "application/json; charset=utf-8")
+	request.Header.Set("X-Admin-Protocol", "gsma/rsp/v2.2.0")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("User-Agent", "gsma-rsp-lpad")
 	client := &http.Client{}
 	response, err := client.Do(request)
 	if err != nil {

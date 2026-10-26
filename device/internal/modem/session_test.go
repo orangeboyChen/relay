@@ -73,6 +73,21 @@ var _ = Describe("Modem session", func() {
 		}))
 	})
 
+	It("normalizes both GSMA activation code forms for QESIM", func() {
+		full, err := normalizeESIMActivationCode(" LPA:1$prod.smdp-plus.rsp.goog$3TD6-8L82-HUE1-LVN6 ")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(full).To(Equal("LPA:1$prod.smdp-plus.rsp.goog$3TD6-8L82-HUE1-LVN6"))
+
+		manual, err := normalizeESIMActivationCode("1$prod.smdp-plus.rsp.goog$3TD6-8L82-HUE1-LVN6")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(manual).To(Equal("LPA:1$prod.smdp-plus.rsp.goog$3TD6-8L82-HUE1-LVN6"))
+	})
+
+	It("rejects malformed eSIM activation codes before touching the modem", func() {
+		_, err := normalizeESIMActivationCode("https://example.test/profile")
+		Expect(err).To(MatchError("invalid eSIM activation code"))
+	})
+
 	It("accepts the empty profile listing returned by an unused eUICC", func() {
 		profiles, result, ok := parseQESIMList([]string{`+QESIM:`})
 

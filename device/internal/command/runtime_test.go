@@ -196,6 +196,12 @@ type fakeESIMProfiles struct {
 	err       error
 }
 
+func (profiles *fakeESIMProfiles) DownloadESIMProfile(_ context.Context, activationCode string) error {
+	profiles.operation = "download"
+	profiles.name = activationCode
+	return profiles.err
+}
+
 func (profiles *fakeESIMProfiles) ListESIMProfiles(context.Context) ([]ESIMProfile, error) {
 	return append([]ESIMProfile(nil), profiles.profiles...), profiles.err
 }
@@ -362,6 +368,15 @@ var _ = Describe("Encrypted command runtime", func() {
 		Expect(profiles.operation).To(Equal("rename"))
 		Expect(profiles.profileID).To(Equal("89000000000000000001"))
 		Expect(profiles.name).To(Equal("Primary"))
+
+		result, err = runtime.execute(context.Background(), Payload{
+			Version: 1, Operation: "esim.download", SlotID: state.SlotID, SIMID: state.SIMID,
+			ESIMActivationCode: "LPA:1$example.test$matching-id",
+		}, testInstallationID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.esimProfiles).NotTo(BeNil())
+		Expect(profiles.operation).To(Equal("download"))
+		Expect(profiles.name).To(Equal("LPA:1$example.test$matching-id"))
 	})
 
 	It("returns an encrypted modem error for a rejected SMS", func() {

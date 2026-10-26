@@ -72,6 +72,7 @@ type Payload struct {
 	IncomingCallsEnabled *bool              `json:"incoming_calls_enabled,omitempty"`
 	IncomingSMSEnabled   *bool              `json:"incoming_sms_enabled,omitempty"`
 	VoLTEEnabled         *bool              `json:"volte_enabled,omitempty"`
+	ESIMActivationCode   string             `json:"esim_activation_code,omitempty"`
 	ESIMProfileID        string             `json:"esim_profile_id,omitempty"`
 	ESIMProfileName      string             `json:"esim_profile_name,omitempty"`
 	Attachment           *MessageAttachment `json:"attachment,omitempty"`
@@ -131,10 +132,11 @@ type Messages interface {
 	SendSMS(context.Context, string, string, byte) error
 }
 
-// ESIMProfiles exposes only installed-profile operations. Provisioning a new
-// profile requires a modem-specific LPA flow and is deliberately not guessed.
+// ESIMProfiles exposes the modem-owned eSIM profile operations, including the
+// Quectel external-network LPA download flow.
 type ESIMProfiles interface {
 	ListESIMProfiles(context.Context) ([]ESIMProfile, error)
+	DownloadESIMProfile(context.Context, string) error
 	EnableESIMProfile(context.Context, string) error
 	DisableESIMProfile(context.Context, string) error
 	DeleteESIMProfile(context.Context, string) error
@@ -375,6 +377,18 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload, senderInst
 	case "esim.list":
 		if runtime.esimProfiles == nil {
 			return executionResult{}, errESIMUnavailable
+		}
+		profiles, err := runtime.esimProfiles.ListESIMProfiles(ctx)
+		if err != nil {
+			return executionResult{}, err
+		}
+		return executionResult{esimProfiles: &profiles}, nil
+	case "esim.download":
+		if runtime.esimProfiles == nil || strings.TrimSpace(payload.ESIMActivationCode) == "" {
+			return executionResult{}, errESIMUnavailable
+		}
+		if err := runtime.esimProfiles.DownloadESIMProfile(ctx, payload.ESIMActivationCode); err != nil {
+			return executionResult{}, err
 		}
 		profiles, err := runtime.esimProfiles.ListESIMProfiles(ctx)
 		if err != nil {

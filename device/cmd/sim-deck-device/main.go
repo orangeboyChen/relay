@@ -174,6 +174,7 @@ type simProfileReader interface {
 
 type esimProfileCommandReader interface {
 	ListESIMProfiles(context.Context) ([]modem.ESIMProfile, error)
+	DownloadESIMProfile(context.Context, string) error
 	EnableESIMProfile(context.Context, string) error
 	DisableESIMProfile(context.Context, string) error
 	DeleteESIMProfile(context.Context, string) error
@@ -200,6 +201,10 @@ func (profiles modemESIMProfiles) ListESIMProfiles(ctx context.Context) ([]comma
 		})
 	}
 	return result, nil
+}
+
+func (profiles modemESIMProfiles) DownloadESIMProfile(ctx context.Context, activationCode string) error {
+	return profiles.reader.DownloadESIMProfile(ctx, activationCode)
 }
 
 func (profiles modemESIMProfiles) EnableESIMProfile(ctx context.Context, profileID string) error {

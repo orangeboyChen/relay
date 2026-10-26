@@ -3,9 +3,14 @@ package modem
 import (
 	"context"
 	"encoding/csv"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -83,6 +88,12 @@ func ReadSIMSlotIndexes(ctx context.Context, client *at.Client, timeout time.Dur
 var ErrMessageDeliveryDeferred = errors.New("SMS delivery deferred")
 var ErrSIMSlotUnsupported = errors.New("modem does not expose SIM slot status")
 var ErrEUICCUnsupported = errors.New("modem does not expose an eUICC EID")
+
+const (
+	esimTransactionChunkSize = 1400
+	esimTransactionTimeout   = 10 * time.Second
+	esimHTTPResponseLimit    = 2 << 20
+)
 
 const defaultCallPollInterval = time.Second
 
@@ -271,6 +282,259 @@ func (session *Session) RenameESIMProfile(ctx context.Context, iccid, nickname s
 		return err
 	}
 	return parseQESIMMutation(response, "nickname")
+}
+
+// DownloadESIMProfile provisions a profile through Quectel's external-network
+// QESIM flow. The modem owns all eUICC state; this method only forwards the
+// modem's GSMA RSP messages to the advertised SMDP+ endpoint over HTTPS.
+func (session *Session) DownloadESIMProfile(ctx context.Context, activationCode string) error {
+	activationCode = strings.TrimSpace(activationCode)
+	if !strings.HasPrefix(activationCode, "LPA:1$") || strings.ContainsAny(activationCode, "\r\n\"") || len(activationCode) > 512 {
+		return errors.New("invalid eSIM activation code")
+	}
+	response, err := session.sendWithTimeout(ctx, fmt.Sprintf(`AT+QESIM="download","%s"`, escapeATString(activationCode)), esimTransactionTimeout)
+	if err != nil {
+		return fmt.Errorf("start eSIM download: %w", err)
+	}
+	if !response.OK() {
+		return fmt.Errorf("QESIM download rejected: %s", response.Terminal)
+	}
+	transaction, result, err := parseQESIMTransaction(response.Lines)
+	if err != nil {
+		return err
+	}
+	if result != 0 {
+		return fmt.Errorf("QESIM download failed with result %d", result)
+	}
+	for {
+		httpResponse, err := postESIMTransaction(ctx, transaction.URL, transaction.Payload)
+		if err != nil {
+			return fmt.Errorf("post eSIM RSP message: %w", err)
+		}
+		next, downloadResult, err := session.forwardESIMHTTPResponse(ctx, httpResponse)
+		if err != nil {
+			return err
+		}
+		if downloadResult != nil {
+			if *downloadResult != 0 {
+				return fmt.Errorf("QESIM download failed with result %d", *downloadResult)
+			}
+			return nil
+		}
+		if next == nil {
+			return errors.New("QESIM modem did not request the next RSP message")
+		}
+		transaction = next
+	}
+}
+
+type esimTransaction struct {
+	URL     string
+	Payload string
+}
+
+// parseQESIMTransaction deliberately does not use CSV: EC20 firmware places
+// unescaped JSON quotes inside the final quoted payload field.
+func parseQESIMTransaction(lines []string) (*esimTransaction, int, error) {
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if !strings.HasPrefix(line, "+QESIM:") {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(line, "+QESIM:"))
+		if !strings.HasPrefix(value, `"trans"`) {
+			continue
+		}
+		value = strings.TrimSpace(strings.TrimPrefix(value, `"trans"`))
+		if !strings.HasPrefix(value, ",") {
+			return nil, 0, errors.New("malformed QESIM transaction result")
+		}
+		value = strings.TrimSpace(strings.TrimPrefix(value, ","))
+		comma := strings.IndexByte(value, ',')
+		if comma < 0 {
+			result, parseErr := strconv.Atoi(value)
+			if parseErr != nil {
+				return nil, 0, errors.New("malformed QESIM transaction result")
+			}
+			return nil, result, nil
+		}
+		result, parseErr := strconv.Atoi(strings.TrimSpace(value[:comma]))
+		if parseErr != nil {
+			return nil, 0, errors.New("malformed QESIM transaction result")
+		}
+		if result != 0 {
+			return nil, result, nil
+		}
+		value = strings.TrimSpace(value[comma+1:])
+		if len(value) < 2 || value[0] != '"' {
+			return nil, 0, errors.New("malformed QESIM transaction URL")
+		}
+		urlEnd := strings.IndexByte(value[1:], '"')
+		if urlEnd < 0 {
+			return nil, 0, errors.New("malformed QESIM transaction URL")
+		}
+		endpoint := strings.TrimSpace(value[1 : urlEnd+1])
+		value = strings.TrimSpace(value[urlEnd+2:])
+		if !strings.HasPrefix(value, ",") {
+			return nil, 0, errors.New("malformed QESIM transaction payload length")
+		}
+		value = strings.TrimSpace(value[1:])
+		comma = strings.IndexByte(value, ',')
+		if comma < 0 {
+			return nil, 0, errors.New("malformed QESIM transaction payload")
+		}
+		payloadLength, parseErr := strconv.Atoi(strings.TrimSpace(value[:comma]))
+		if parseErr != nil || payloadLength < 0 {
+			return nil, 0, errors.New("malformed QESIM transaction payload length")
+		}
+		payload := strings.TrimSpace(value[comma+1:])
+		if len(payload) < 2 || payload[0] != '"' || payload[len(payload)-1] != '"' {
+			return nil, 0, errors.New("malformed QESIM transaction payload")
+		}
+		payload = payload[1 : len(payload)-1]
+		if len(payload) != payloadLength {
+			return nil, 0, fmt.Errorf("QESIM transaction payload length mismatch: got %d, want %d", len(payload), payloadLength)
+		}
+		return &esimTransaction{URL: endpoint, Payload: payload}, 0, nil
+	}
+	return nil, 0, errors.New("QESIM download did not return a transaction")
+}
+
+func postESIMTransaction(ctx context.Context, endpoint, payload string) ([]byte, error) {
+	if strings.HasPrefix(endpoint, "/") {
+		var requestPayload struct {
+			SMDPAddress string `json:"smdpAddress"`
+		}
+		if err := json.Unmarshal([]byte(payload), &requestPayload); err != nil || strings.TrimSpace(requestPayload.SMDPAddress) == "" {
+			return nil, errors.New("QESIM transaction endpoint is missing its SMDP+ host")
+		}
+		endpoint = "https://" + strings.TrimSpace(requestPayload.SMDPAddress) + endpoint
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Path == "" {
+		return nil, errors.New("QESIM transaction endpoint must be an HTTPS URL")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, parsed.String(), strings.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/json; charset=utf-8")
+	client := &http.Client{}
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.ContentLength > esimHTTPResponseLimit {
+		return nil, errors.New("QESIM SMDP+ response is too large")
+	}
+	dump, err := httputil.DumpResponse(response, true)
+	if err != nil {
+		return nil, err
+	}
+	if len(dump) > esimHTTPResponseLimit {
+		return nil, errors.New("QESIM SMDP+ response is too large")
+	}
+	return dump, nil
+}
+
+func (session *Session) forwardESIMHTTPResponse(ctx context.Context, response []byte) (*esimTransaction, *int, error) {
+	hexResponse := strings.ToUpper(hex.EncodeToString(response))
+	if len(hexResponse) == 0 || len(hexResponse) > 65535 {
+		return nil, nil, errors.New("QESIM SMDP+ response cannot be forwarded")
+	}
+	for offset, sequence := 0, 0; offset < len(hexResponse); sequence++ {
+		end := offset + esimTransactionChunkSize
+		if end > len(hexResponse) {
+			end = len(hexResponse)
+		}
+		chunk := hexResponse[offset:end]
+		state := 1
+		if end == len(hexResponse) {
+			state = 0
+		}
+		command := fmt.Sprintf(`AT+QESIM="trans",%d,%d,%d,%d,"%s"`, len(hexResponse), state, sequence, len(chunk), chunk)
+		atResponse, err := session.sendWithTimeout(ctx, command, esimTransactionTimeout)
+		if err != nil {
+			return nil, nil, fmt.Errorf("forward QESIM transaction block %d: %w", sequence, err)
+		}
+		if !atResponse.OK() {
+			return nil, nil, fmt.Errorf("QESIM transaction block %d rejected: %s", sequence, atResponse.Terminal)
+		}
+		if end == len(hexResponse) {
+			next, result, found, parseErr := session.readQESIMResult(ctx, atResponse.Lines)
+			if parseErr != nil {
+				return nil, nil, parseErr
+			}
+			if found {
+				if result != nil {
+					return nil, result, nil
+				}
+				return next, nil, nil
+			}
+		}
+		offset = end
+	}
+	return nil, nil, errors.New("QESIM transaction completed without a modem result")
+}
+
+func (session *Session) readQESIMResult(ctx context.Context, lines []string) (*esimTransaction, *int, bool, error) {
+	if next, result, found, err := parseQESIMResultLines(lines); found || err != nil {
+		return next, result, found, err
+	}
+	// The macOS USB bridge reads the bulk IN endpoint only while servicing a
+	// command. Probe once so a QESIM URC queued immediately after the final
+	// block is flushed through that bridge as part of the probe response.
+	if session.client == nil {
+		return nil, nil, false, errors.New("modem session is required")
+	}
+	probe, probeErr := session.sendWithTimeout(ctx, "AT", esimTransactionTimeout)
+	if probeErr == nil {
+		if next, result, found, err := parseQESIMResultLines(probe.Lines); found || err != nil {
+			return next, result, found, err
+		}
+	}
+	timer := time.NewTimer(esimTransactionTimeout)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, nil, false, ctx.Err()
+		case <-timer.C:
+			return nil, nil, false, errors.New("timed out waiting for QESIM transaction result")
+		case urc := <-session.client.URCs():
+			if !strings.HasPrefix(strings.TrimSpace(urc), "+QESIM:") {
+				continue
+			}
+			return parseQESIMResultLines([]string{urc})
+		}
+	}
+}
+
+func parseQESIMResultLines(lines []string) (*esimTransaction, *int, bool, error) {
+	if next, result, err := parseQESIMTransaction(lines); err == nil {
+		if result != 0 {
+			return nil, &result, true, nil
+		}
+		return next, nil, true, nil
+	} else if result != 0 {
+		return nil, &result, true, nil
+	}
+	for _, line := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(line), "+QESIM: \"download\", ") {
+			continue
+		}
+		fields := parseATCSV(line, "+QESIM:")
+		if len(fields) != 2 {
+			return nil, nil, false, errors.New("malformed QESIM download result")
+		}
+		result, parseErr := strconv.Atoi(strings.TrimSpace(fields[1]))
+		if parseErr != nil {
+			return nil, nil, false, errors.New("malformed QESIM download result")
+		}
+		return nil, &result, true, nil
+	}
+	return nil, nil, false, nil
 }
 
 func (session *Session) mutateESIMProfile(ctx context.Context, operation, iccid string) error {

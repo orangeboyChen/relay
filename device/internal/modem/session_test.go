@@ -86,6 +86,18 @@ var _ = Describe("Modem session", func() {
 		Expect(parseQESIMMutation(at.Response{Lines: []string{`+QESIM: "delete",1`}, Terminal: "OK"}, "delete")).To(MatchError(ContainSubstring("QESIM delete failed")))
 	})
 
+	It("parses an external-network QESIM transaction with embedded JSON quotes", func() {
+		transaction, result, err := parseQESIMTransaction([]string{
+			`+QESIM: "trans",0,"/gsma/rsp2/es9plus/initiateAuthentication",53,"{"euiccChallenge":"abc","smdpAddress":"example.test"}"`,
+		})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(0))
+		Expect(transaction).NotTo(BeNil())
+		Expect(transaction.URL).To(Equal("/gsma/rsp2/es9plus/initiateAuthentication"))
+		Expect(transaction.Payload).To(Equal(`{"euiccChallenge":"abc","smdpAddress":"example.test"}`))
+	})
+
 	It("reads an eUICC EID through the read-only CSIM path", func() {
 		session, modemTransport, client := newTestSession(MessageSinkFunc(func(context.Context, sms.ReceivedMessage) error { return nil }))
 		DeferCleanup(func() { _ = client.Close(); _ = modemTransport.Close() })

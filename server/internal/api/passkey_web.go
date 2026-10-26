@@ -28,6 +28,7 @@ const passkeyPage = `<!doctype html>
   const mode = location.pathname.endsWith('/register') ? 'register' : 'login';
   const accessToken = params.get('access_token');
   const callback = params.get('callback');
+  const callbackAllowed = callback === 'simdeck://passkey';
   const state = params.get('state') || '';
   const title = document.querySelector('#title');
   const status = document.querySelector('#status');
@@ -103,7 +104,7 @@ const passkeyPage = `<!doctype html>
   }
 
   function finish(result) {
-    if (!callback) return;
+    if (!callbackAllowed) return;
     const target = new URL(callback);
     target.hash = new URLSearchParams({ state, ...result }).toString();
     location.replace(target.toString());

@@ -565,6 +565,7 @@ var _ = Describe("HTTP API", func() {
 			Expect(response.Body.String()).To(ContainSubstring("BeginPasskeyRegistration"))
 			Expect(response.Body.String()).To(ContainSubstring("BeginPasskeyLogin"))
 			Expect(response.Body.String()).To(ContainSubstring("params.get('callback')"))
+			Expect(response.Body.String()).To(ContainSubstring("callback === 'simdeck://passkey'"))
 		}
 	})
 

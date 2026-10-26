@@ -3,13 +3,14 @@ package store
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"sim-deck-server/internal/domain"
 )
@@ -41,46 +42,30 @@ func (store *Postgres) OpenDeviceDiscovery(ctx context.Context, ownerID string, 
 	if !expiresAt.After(now) {
 		return DeviceDiscoverySession{}, errors.New("device discovery expiration must be after its opening time")
 	}
-	var session DeviceDiscoverySession
-	err := store.pool.QueryRow(ctx, `
-		INSERT INTO device_discovery_sessions (owner_id, opened_at, expires_at, closed_at)
-		VALUES ($1, $2, $3, NULL)
-		ON CONFLICT (owner_id) DO UPDATE
-		SET opened_at = EXCLUDED.opened_at,
-		    expires_at = EXCLUDED.expires_at,
-		    closed_at = NULL
-		RETURNING owner_id::text, opened_at, expires_at, closed_at`, ownerID, now.UTC(), expiresAt.UTC()).Scan(
-		&session.OwnerID, &session.OpenedAt, &session.ExpiresAt, &session.ClosedAt,
-	)
-	if err != nil {
-		return DeviceDiscoverySession{}, fmt.Errorf("open device discovery: %w", err)
+	model := deviceDiscoverySessionModel{OwnerID: ownerID, OpenedAt: now.UTC(), ExpiresAt: expiresAt.UTC()}
+	result := store.database(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "owner_id"}}, DoUpdates: clause.Assignments(map[string]any{"opened_at": now.UTC(), "expires_at": expiresAt.UTC(), "closed_at": nil})}).Create(&model)
+	if result.Error != nil {
+		return DeviceDiscoverySession{}, fmt.Errorf("open device discovery: %w", result.Error)
 	}
-	return session, nil
+	return DeviceDiscoverySession{OwnerID: model.OwnerID, OpenedAt: model.OpenedAt, ExpiresAt: model.ExpiresAt, ClosedAt: model.ClosedAt}, nil
 }
 
 // CloseDeviceDiscovery stops accepting new candidates without deleting pending results.
 func (store *Postgres) CloseDeviceDiscovery(ctx context.Context, ownerID string, now time.Time) error {
-	_, err := store.pool.Exec(ctx, `
-		UPDATE device_discovery_sessions
-		SET closed_at = $2
-		WHERE owner_id = $1 AND closed_at IS NULL`, ownerID, now.UTC())
-	if err != nil {
-		return fmt.Errorf("close device discovery: %w", err)
+	result := store.database(ctx).Model(&deviceDiscoverySessionModel{}).Where("owner_id = ? AND closed_at IS NULL", ownerID).Updates(map[string]any{"closed_at": now.UTC()})
+	if result.Error != nil {
+		return fmt.Errorf("close device discovery: %w", result.Error)
 	}
 	return nil
 }
 
 // GetDeviceDiscoverySession returns the latest admission window for the owner.
 func (store *Postgres) GetDeviceDiscoverySession(ctx context.Context, ownerID string) (DeviceDiscoverySession, error) {
-	var session DeviceDiscoverySession
-	err := store.pool.QueryRow(ctx, `
-		SELECT owner_id::text, opened_at, expires_at, closed_at
-		FROM device_discovery_sessions
-		WHERE owner_id = $1`, ownerID).Scan(&session.OwnerID, &session.OpenedAt, &session.ExpiresAt, &session.ClosedAt)
-	if err != nil {
-		return DeviceDiscoverySession{}, err
+	var model deviceDiscoverySessionModel
+	if err := store.database(ctx).Where("owner_id = ?", ownerID).First(&model).Error; err != nil {
+		return DeviceDiscoverySession{}, databaseNotFound(err)
 	}
-	return session, nil
+	return DeviceDiscoverySession{OwnerID: model.OwnerID, OpenedAt: model.OpenedAt, ExpiresAt: model.ExpiresAt, ClosedAt: model.ClosedAt}, nil
 }
 
 // SubmitDeviceDiscovery records a candidate only while the owner's discovery window is active.
@@ -91,291 +76,180 @@ func (store *Postgres) SubmitDeviceDiscovery(ctx context.Context, now time.Time,
 	if request.SlotIndex < 1 {
 		request.SlotIndex = 1
 	}
-	tx, err := store.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
-	if err != nil {
-		return DeviceDiscoveryRecord{}, fmt.Errorf("begin device discovery submission: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var ownerID string
-	var expiresAt time.Time
-	err = tx.QueryRow(ctx, `
-		SELECT owner_id::text, expires_at
-		FROM device_discovery_sessions
-		WHERE closed_at IS NULL AND expires_at > $1
-		ORDER BY opened_at DESC
-		LIMIT 1
-		FOR SHARE`, now.UTC()).Scan(&ownerID, &expiresAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return DeviceDiscoveryRecord{}, domain.ErrDeviceDiscoveryClosed
-	}
-	if err != nil {
-		return DeviceDiscoveryRecord{}, fmt.Errorf("read active device discovery: %w", err)
-	}
-
-	var deviceExists bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS (
-		SELECT 1 FROM devices WHERE id = $1 AND revoked_at IS NULL
-	)`, request.DeviceUUID).Scan(&deviceExists); err != nil {
-		return DeviceDiscoveryRecord{}, fmt.Errorf("check existing device discovery: %w", err)
-	}
-	if deviceExists {
-		return DeviceDiscoveryRecord{}, domain.ErrDeviceExists
-	}
-
-	var existing DeviceDiscoveryRecord
-	var existingOwnerID string
-	var existingCredentialHash []byte
-	err = tx.QueryRow(ctx, `
-		SELECT owner_id::text, device_id::text, identity_public_key, command_public_key,
-		       credential_hash, status, first_seen_at, last_seen_at, expires_at, decided_at,
-		       slot_key, slot_index, sim_fingerprint
-		FROM device_discoveries
-		WHERE device_id = $1
-		FOR UPDATE`, request.DeviceUUID).Scan(
-		&existingOwnerID, &existing.DeviceUUID, &existing.IdentityPublicKey, &existing.CommandPublicKey,
-		&existingCredentialHash, &existing.Status, &existing.FirstSeenAt, &existing.LastSeenAt,
-		&existing.ExpiresAt, &existing.DecidedAt, &existing.SlotKey, &existing.SlotIndex, &existing.SIMFingerprint,
-	)
-	if err == nil {
-		matches := existingOwnerID == ownerID &&
-			existing.SlotKey == request.SlotKey && existing.SlotIndex == request.SlotIndex &&
-			bytes.Equal(existing.IdentityPublicKey, request.IdentityPublicKey) &&
-			bytes.Equal(existing.CommandPublicKey, request.CommandPublicKey) &&
-			bytes.Equal(existing.SIMFingerprint, request.SIMFingerprint) &&
-			bytes.Equal(existingCredentialHash, request.CredentialHash)
-		if existing.ExpiresAt.After(now) || existing.Status == DeviceDiscoveryApproved {
-			if !matches {
-				return DeviceDiscoveryRecord{}, domain.ErrDeviceDiscoveryConflict
+	var record DeviceDiscoveryRecord
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		var session deviceDiscoverySessionModel
+		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).Where("closed_at IS NULL AND expires_at > ?", now.UTC()).Order("opened_at DESC").First(&session).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return domain.ErrDeviceDiscoveryClosed
 			}
-			if existing.Status == DeviceDiscoveryPending {
-				existing.LastSeenAt = now.UTC()
-				if _, err := tx.Exec(ctx, `
-					UPDATE device_discoveries SET last_seen_at = $2 WHERE device_id = $1`, request.DeviceUUID, existing.LastSeenAt); err != nil {
-					return DeviceDiscoveryRecord{}, fmt.Errorf("refresh device discovery: %w", err)
+			return fmt.Errorf("read active device discovery: %w", err)
+		}
+		var device deviceModel
+		if err := tx.Where("id = ? AND revoked_at IS NULL", request.DeviceUUID).First(&device).Error; err == nil {
+			return domain.ErrDeviceExists
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("check existing device discovery: %w", err)
+		}
+		var existing deviceDiscoveryModel
+		result := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("device_id = ?", request.DeviceUUID).First(&existing)
+		if result.Error == nil {
+			existingFingerprint := []byte{}
+			if existing.SIMFingerprint != nil {
+				existingFingerprint, _ = hex.DecodeString(*existing.SIMFingerprint)
+			}
+			matches := existing.OwnerID == session.OwnerID && existing.SlotKey == request.SlotKey && existing.SlotIndex == request.SlotIndex && bytes.Equal(existing.IdentityPublicKey, request.IdentityPublicKey) && bytes.Equal(existing.CommandPublicKey, request.CommandPublicKey) && bytes.Equal(existingFingerprint, request.SIMFingerprint) && bytes.Equal(existing.CredentialHash, request.CredentialHash)
+			if existing.ExpiresAt.After(now) || existing.Status == string(DeviceDiscoveryApproved) {
+				if !matches {
+					return domain.ErrDeviceDiscoveryConflict
 				}
+				if existing.Status == string(DeviceDiscoveryPending) {
+					if err := tx.Model(&existing).Update("last_seen_at", now.UTC()).Error; err != nil {
+						return fmt.Errorf("refresh device discovery: %w", err)
+					}
+				}
+				record = discoveryRecordFromModel(existing, existingFingerprint)
+				return nil
 			}
-			if err := tx.Commit(ctx); err != nil {
-				return DeviceDiscoveryRecord{}, fmt.Errorf("commit device discovery retry: %w", err)
+			if err := tx.Delete(&existing).Error; err != nil {
+				return fmt.Errorf("replace expired device discovery: %w", err)
 			}
-			return existing, nil
+		} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("read device discovery retry: %w", result.Error)
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM device_discoveries WHERE device_id = $1`, request.DeviceUUID); err != nil {
-			return DeviceDiscoveryRecord{}, fmt.Errorf("replace expired device discovery: %w", err)
+		var pendingCount int64
+		if err := tx.Model(&deviceDiscoveryModel{}).Where("owner_id = ? AND status = ? AND expires_at > ?", session.OwnerID, string(DeviceDiscoveryPending), now.UTC()).Count(&pendingCount).Error; err != nil {
+			return fmt.Errorf("count pending device discoveries: %w", err)
 		}
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return DeviceDiscoveryRecord{}, fmt.Errorf("read device discovery retry: %w", err)
-	}
-
-	var pendingCount int
-	if err := tx.QueryRow(ctx, `
-		SELECT count(*) FROM device_discoveries
-		WHERE owner_id = $1 AND status = 'pending' AND expires_at > $2`, ownerID, now.UTC()).Scan(&pendingCount); err != nil {
-		return DeviceDiscoveryRecord{}, fmt.Errorf("count pending device discoveries: %w", err)
-	}
-	if pendingCount >= maxPendingDeviceDiscoveries {
-		return DeviceDiscoveryRecord{}, domain.ErrDeviceDiscoveryLimit
-	}
-
-	record := DeviceDiscoveryRecord{
-		DeviceUUID: request.DeviceUUID, IdentityPublicKey: request.IdentityPublicKey,
-		CommandPublicKey: request.CommandPublicKey, Status: DeviceDiscoveryPending,
-		FirstSeenAt: now.UTC(), LastSeenAt: now.UTC(), ExpiresAt: expiresAt,
-		SlotKey: request.SlotKey, SlotIndex: request.SlotIndex, SIMFingerprint: request.SIMFingerprint,
-	}
-	_, err = tx.Exec(ctx, `
-		INSERT INTO device_discoveries (
-			device_id, owner_id, identity_public_key, command_public_key, credential_hash,
-			status, first_seen_at, last_seen_at, expires_at, slot_key, slot_index, sim_fingerprint
-		) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $6, $7, $8, $9, NULLIF($10, '')::text)`,
-		request.DeviceUUID, ownerID, request.IdentityPublicKey, request.CommandPublicKey,
-		request.CredentialHash, now.UTC(), expiresAt, request.SlotKey, request.SlotIndex, hex.EncodeToString(request.SIMFingerprint))
+		if pendingCount >= maxPendingDeviceDiscoveries {
+			return domain.ErrDeviceDiscoveryLimit
+		}
+		fingerprint := ""
+		if len(request.SIMFingerprint) > 0 {
+			fingerprint = hex.EncodeToString(request.SIMFingerprint)
+		}
+		model := deviceDiscoveryModel{DeviceID: request.DeviceUUID, OwnerID: session.OwnerID, IdentityPublicKey: append([]byte(nil), request.IdentityPublicKey...), CommandPublicKey: append([]byte(nil), request.CommandPublicKey...), CredentialHash: append([]byte(nil), request.CredentialHash...), SlotKey: request.SlotKey, SlotIndex: request.SlotIndex, Status: string(DeviceDiscoveryPending), FirstSeenAt: now.UTC(), LastSeenAt: now.UTC(), ExpiresAt: session.ExpiresAt}
+		if fingerprint != "" {
+			model.SIMFingerprint = &fingerprint
+		}
+		if err := tx.Create(&model).Error; err != nil {
+			return fmt.Errorf("insert device discovery: %w", err)
+		}
+		record = discoveryRecordFromModel(model, request.SIMFingerprint)
+		return nil
+	}, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
-		var postgresError *pgconn.PgError
-		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
-			return DeviceDiscoveryRecord{}, domain.ErrDeviceDiscoveryConflict
-		}
-		return DeviceDiscoveryRecord{}, fmt.Errorf("insert device discovery: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return DeviceDiscoveryRecord{}, fmt.Errorf("commit device discovery submission: %w", err)
+		return DeviceDiscoveryRecord{}, err
 	}
 	return record, nil
 }
 
+func discoveryRecordFromModel(model deviceDiscoveryModel, fingerprint []byte) DeviceDiscoveryRecord {
+	return DeviceDiscoveryRecord{DeviceUUID: model.DeviceID, IdentityPublicKey: append([]byte(nil), model.IdentityPublicKey...), CommandPublicKey: append([]byte(nil), model.CommandPublicKey...), Status: DeviceDiscoveryStatus(model.Status), FirstSeenAt: model.FirstSeenAt, LastSeenAt: model.LastSeenAt, ExpiresAt: model.ExpiresAt, DecidedAt: model.DecidedAt, SlotKey: model.SlotKey, SlotIndex: model.SlotIndex, SIMFingerprint: append([]byte(nil), fingerprint...)}
+}
+
 // ListPendingDeviceDiscoveries returns active candidates in first-seen order.
 func (store *Postgres) ListPendingDeviceDiscoveries(ctx context.Context, ownerID string, now time.Time) ([]DeviceDiscoveryRecord, error) {
-	rows, err := store.pool.Query(ctx, `
-		SELECT device_id::text, identity_public_key, command_public_key, status,
-		       first_seen_at, last_seen_at, expires_at, decided_at, slot_key, slot_index
-		FROM device_discoveries
-		WHERE owner_id = $1 AND status = 'pending' AND expires_at > $2
-		ORDER BY first_seen_at, device_id`, ownerID, now.UTC())
-	if err != nil {
+	var models []deviceDiscoveryModel
+	if err := store.database(ctx).Where("owner_id = ? AND status = ? AND expires_at > ?", ownerID, string(DeviceDiscoveryPending), now.UTC()).Order("first_seen_at, device_id").Find(&models).Error; err != nil {
 		return nil, fmt.Errorf("list pending device discoveries: %w", err)
 	}
-	defer rows.Close()
-	records := make([]DeviceDiscoveryRecord, 0)
-	for rows.Next() {
-		var record DeviceDiscoveryRecord
-		if err := rows.Scan(
-			&record.DeviceUUID, &record.IdentityPublicKey, &record.CommandPublicKey, &record.Status,
-			&record.FirstSeenAt, &record.LastSeenAt, &record.ExpiresAt, &record.DecidedAt,
-			&record.SlotKey, &record.SlotIndex,
-		); err != nil {
-			return nil, fmt.Errorf("scan pending device discovery: %w", err)
+	records := make([]DeviceDiscoveryRecord, 0, len(models))
+	for _, model := range models {
+		fingerprint := []byte{}
+		if model.SIMFingerprint != nil {
+			fingerprint, _ = hex.DecodeString(*model.SIMFingerprint)
 		}
-		records = append(records, record)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate pending device discoveries: %w", err)
+		records = append(records, discoveryRecordFromModel(model, fingerprint))
 	}
 	return records, nil
 }
 
 // ApproveDeviceDiscovery atomically allocates a SIM ID and activates the candidate credential.
 func (store *Postgres) ApproveDeviceDiscovery(ctx context.Context, ownerID string, deviceID string, now time.Time) (DeviceRecord, error) {
-	tx, err := store.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
-	if err != nil {
-		return DeviceRecord{}, fmt.Errorf("begin device discovery approval: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var identityPublicKey []byte
-	var commandPublicKey []byte
-	var credentialHash []byte
-	var status DeviceDiscoveryStatus
-	var expiresAt time.Time
-	var slotKey string
-	var slotIndex int
-	var simFingerprintHex string
-	err = tx.QueryRow(ctx, `
-		SELECT identity_public_key, command_public_key, credential_hash, status, expires_at,
-		       slot_key, slot_index, COALESCE(sim_fingerprint, '')
-		FROM device_discoveries
-		WHERE device_id = $1 AND owner_id = $2
-		FOR UPDATE`, deviceID, ownerID).Scan(&identityPublicKey, &commandPublicKey, &credentialHash, &status, &expiresAt, &slotKey, &slotIndex, &simFingerprintHex)
+	var record DeviceRecord
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		var discovery deviceDiscoveryModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("device_id = ? AND owner_id = ?", deviceID, ownerID).First(&discovery).Error; err != nil {
+			return err
+		}
+		if discovery.Status == string(DeviceDiscoveryRejected) {
+			return domain.ErrDeviceDiscoveryRejected
+		}
+		if discovery.Status == string(DeviceDiscoveryApproved) {
+			var model deviceModel
+			if err := tx.Where("id = ? AND revoked_at IS NULL", deviceID).First(&model).Error; err != nil {
+				return err
+			}
+			record = deviceRecordFromModel(model)
+			return listDeviceSlotsDB(tx, record.ID, &record.Slots)
+		}
+		if !discovery.ExpiresAt.After(now) {
+			return domain.ErrDeviceDiscoveryExpired
+		}
+		numericID, err := allocateNumericID(tx)
+		if err != nil {
+			return err
+		}
+		pairedAt := now.UTC()
+		model := deviceModel{ID: deviceID, NumericID: numericID, ProfileCiphertext: []byte{}, IdentityPublicKey: append([]byte(nil), discovery.IdentityPublicKey...), CommandPublicKey: append([]byte(nil), discovery.CommandPublicKey...), PairedAt: pairedAt}
+		if err := tx.Create(&model).Error; err != nil {
+			if isUniqueViolation(err) {
+				return domain.ErrDeviceExists
+			}
+			return fmt.Errorf("insert discovered device: %w", err)
+		}
+		if err := tx.Create(&deviceCredentialModel{DeviceID: deviceID, CredentialHash: append([]byte(nil), discovery.CredentialHash...), CreatedAt: pairedAt}).Error; err != nil {
+			return fmt.Errorf("insert discovered device credential: %w", err)
+		}
+		slotKey, slotIndex := discovery.SlotKey, discovery.SlotIndex
+		if slotKey == "" {
+			slotKey = "1"
+		}
+		if slotIndex < 1 {
+			slotIndex = 1
+		}
+		record = deviceRecordFromModel(model)
+		if err := createSIMSlotDB(tx, deviceID, slotKey, slotIndex, deviceID, numericID, nil, now, &record); err != nil {
+			return err
+		}
+		if discovery.SIMFingerprint != nil && *discovery.SIMFingerprint != "" {
+			fingerprint, decodeError := hex.DecodeString(*discovery.SIMFingerprint)
+			if decodeError != nil || len(fingerprint) != 32 {
+				return errors.New("stored SIM fingerprint is invalid")
+			}
+			var existing simCardModel
+			if err := tx.Where("id <> ? AND iccid_fingerprint = ? AND retired_at IS NULL", deviceID, fingerprint).First(&existing).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+				if err := tx.Model(&simCardModel{}).Where("id = ?", deviceID).Updates(map[string]any{"iccid_fingerprint": fingerprint, "fingerprint_scope": deviceID}).Error; err != nil {
+					return fmt.Errorf("store SIM fingerprint: %w", err)
+				}
+			} else if err != nil {
+				return fmt.Errorf("check SIM fingerprint: %w", err)
+			}
+		}
+		if err := tx.Model(&discovery).Updates(map[string]any{"status": string(DeviceDiscoveryApproved), "decided_at": now.UTC(), "expires_at": now.Add(deviceDiscoveryResultLifetime).UTC(), "paired_device_id": deviceID}).Error; err != nil {
+			return fmt.Errorf("complete device discovery approval: %w", err)
+		}
+		return nil
+	}, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return DeviceRecord{}, err
-	}
-	if status == DeviceDiscoveryRejected {
-		return DeviceRecord{}, domain.ErrDeviceDiscoveryRejected
-	}
-	if status == DeviceDiscoveryApproved {
-		var record DeviceRecord
-		err := tx.QueryRow(ctx, `
-			SELECT id::text, numeric_id, profile_ciphertext, identity_public_key,
-			       command_public_key, wrapped_vault_key, paired_at, last_seen_at
-			FROM devices WHERE id = $1 AND revoked_at IS NULL`, deviceID).Scan(
-			&record.ID, &record.NumericID, &record.ProfileCiphertext, &record.IdentityPublicKey,
-			&record.CommandPublicKey, &record.WrappedVaultKey, &record.PairedAt, &record.LastSeenAt,
-		)
-		if err != nil {
-			return DeviceRecord{}, err
-		}
-		record.Slots, err = store.listDeviceSlots(ctx, record.ID)
-		if err != nil {
-			return DeviceRecord{}, err
-		}
-		return record, nil
-	}
-	if !expiresAt.After(now) {
-		return DeviceRecord{}, domain.ErrDeviceDiscoveryExpired
-	}
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", int64(0x53494d44)); err != nil {
-		return DeviceRecord{}, fmt.Errorf("lock discovery numeric id allocation: %w", err)
-	}
-	var numericID int
-	err = tx.QueryRow(ctx, `
-		SELECT candidate
-		FROM generate_series(1, 99) AS candidate
-		LEFT JOIN sim_cards ON sim_cards.numeric_id = candidate AND sim_cards.retired_at IS NULL
-		WHERE sim_cards.id IS NULL
-		ORDER BY candidate
-		LIMIT 1`).Scan(&numericID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return DeviceRecord{}, domain.ErrNoNumericID
-	}
-	if err != nil {
-		return DeviceRecord{}, fmt.Errorf("allocate discovery numeric id: %w", err)
-	}
-	record := DeviceRecord{
-		ID: deviceID, NumericID: numericID, ProfileCiphertext: []byte{},
-		IdentityPublicKey: identityPublicKey, CommandPublicKey: commandPublicKey,
-	}
-	err = tx.QueryRow(ctx, `
-		INSERT INTO devices (id, numeric_id, profile_ciphertext, identity_public_key, command_public_key)
-		VALUES ($1, $2, ''::bytea, $3, $4)
-		RETURNING paired_at`, deviceID, numericID, identityPublicKey, commandPublicKey).Scan(&record.PairedAt)
-	if err != nil {
-		var postgresError *pgconn.PgError
-		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
-			return DeviceRecord{}, domain.ErrDeviceExists
-		}
-		return DeviceRecord{}, fmt.Errorf("insert discovered device: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO device_credentials (device_id, credential_hash) VALUES ($1, $2)`, deviceID, credentialHash); err != nil {
-		return DeviceRecord{}, fmt.Errorf("insert discovered device credential: %w", err)
-	}
-	if slotKey == "" {
-		slotKey = "1"
-	}
-	if slotIndex < 1 {
-		slotIndex = 1
-	}
-	if err := createSIMSlot(ctx, tx, deviceID, slotKey, slotIndex, deviceID, numericID, nil, now, &record); err != nil {
-		return DeviceRecord{}, err
-	}
-	if simFingerprintHex != "" {
-		simFingerprint, decodeError := hex.DecodeString(simFingerprintHex)
-		if decodeError != nil || len(simFingerprint) != 32 {
-			return DeviceRecord{}, errors.New("stored SIM fingerprint is invalid")
-		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE sim_cards
-			SET iccid_fingerprint = $2, fingerprint_scope = $3
-			WHERE id = $1
-			  AND NOT EXISTS (
-				  SELECT 1 FROM sim_cards AS existing
-				  WHERE existing.id <> $1
-				    AND existing.iccid_fingerprint = $2
-				    AND existing.retired_at IS NULL
-			  )`, deviceID, simFingerprint, deviceID); err != nil {
-			return DeviceRecord{}, fmt.Errorf("store SIM fingerprint: %w", err)
-		}
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE device_discoveries
-		SET status = 'approved', decided_at = $3, expires_at = $4, paired_device_id = $1
-		WHERE device_id = $1 AND owner_id = $2`, deviceID, ownerID, now.UTC(), now.Add(deviceDiscoveryResultLifetime).UTC()); err != nil {
-		return DeviceRecord{}, fmt.Errorf("complete device discovery approval: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return DeviceRecord{}, fmt.Errorf("commit device discovery approval: %w", err)
 	}
 	return record, nil
 }
 
 // RejectDeviceDiscovery denies a candidate while preserving a short-lived device-visible result.
 func (store *Postgres) RejectDeviceDiscovery(ctx context.Context, ownerID string, deviceID string, now time.Time) error {
-	command, err := store.pool.Exec(ctx, `
-		UPDATE device_discoveries
-		SET status = 'rejected', decided_at = $3, expires_at = $4
-		WHERE device_id = $1 AND owner_id = $2 AND status = 'pending' AND expires_at > $3`,
-		deviceID, ownerID, now.UTC(), now.Add(deviceDiscoveryResultLifetime).UTC())
-	if err != nil {
-		return fmt.Errorf("reject device discovery: %w", err)
+	result := store.database(ctx).Model(&deviceDiscoveryModel{}).Where("device_id = ? AND owner_id = ? AND status = ? AND expires_at > ?", deviceID, ownerID, string(DeviceDiscoveryPending), now.UTC()).Updates(map[string]any{"status": string(DeviceDiscoveryRejected), "decided_at": now.UTC(), "expires_at": now.Add(deviceDiscoveryResultLifetime).UTC()})
+	if result.Error != nil {
+		return fmt.Errorf("reject device discovery: %w", result.Error)
 	}
-	if command.RowsAffected() == 0 {
-		var status DeviceDiscoveryStatus
-		var expiresAt time.Time
-		err := store.pool.QueryRow(ctx, `
-			SELECT status, expires_at FROM device_discoveries
-			WHERE device_id = $1 AND owner_id = $2`, deviceID, ownerID).Scan(&status, &expiresAt)
-		if err != nil {
+	if result.RowsAffected == 0 {
+		var model deviceDiscoveryModel
+		if err := store.database(ctx).Where("device_id = ? AND owner_id = ?", deviceID, ownerID).First(&model).Error; err != nil {
 			return err
 		}
+		status := DeviceDiscoveryStatus(model.Status)
 		if status == DeviceDiscoveryRejected {
 			return nil
 		}
@@ -389,25 +263,27 @@ func (store *Postgres) RejectDeviceDiscovery(ctx context.Context, ownerID string
 
 // DeviceDiscoveryStatus authenticates a candidate with the hash of its private pending credential.
 func (store *Postgres) DeviceDiscoveryStatus(ctx context.Context, deviceID string, credentialHash []byte, now time.Time) (DeviceDiscoveryRecord, error) {
-	var record DeviceDiscoveryRecord
-	err := store.pool.QueryRow(ctx, `
-		SELECT discovery.device_id::text, discovery.status, discovery.first_seen_at,
-		       discovery.last_seen_at, discovery.expires_at, discovery.decided_at,
-		       COALESCE(sim.numeric_id, 0),
-		       slot.id::text, sim.id::text, discovery.slot_key, discovery.slot_index
-		FROM device_discoveries AS discovery
-		LEFT JOIN devices ON devices.id = discovery.paired_device_id AND devices.revoked_at IS NULL
-		LEFT JOIN device_slots AS slot ON slot.device_id = devices.id AND slot.removed_at IS NULL
-		LEFT JOIN sim_cards AS sim ON sim.id = slot.current_sim_id AND sim.retired_at IS NULL
-		WHERE discovery.device_id = $1
-		  AND discovery.credential_hash = $2
-		  AND discovery.expires_at > $3`, deviceID, credentialHash, now.UTC()).Scan(
-		&record.DeviceUUID, &record.Status, &record.FirstSeenAt, &record.LastSeenAt,
-		&record.ExpiresAt, &record.DecidedAt, &record.NumericID, &record.SlotID, &record.SIMID,
-		&record.SlotKey, &record.SlotIndex,
-	)
-	if err != nil {
+	var discovery deviceDiscoveryModel
+	if err := store.database(ctx).Where("device_id = ? AND credential_hash = ? AND expires_at > ?", deviceID, credentialHash, now.UTC()).First(&discovery).Error; err != nil {
 		return DeviceDiscoveryRecord{}, err
+	}
+	fingerprint := []byte{}
+	if discovery.SIMFingerprint != nil {
+		fingerprint, _ = hex.DecodeString(*discovery.SIMFingerprint)
+	}
+	record := discoveryRecordFromModel(discovery, fingerprint)
+	if discovery.PairedDeviceID != nil {
+		var slot deviceSlotModel
+		if err := store.database(ctx).Where("device_id = ? AND removed_at IS NULL", *discovery.PairedDeviceID).Order("slot_index").First(&slot).Error; err == nil {
+			record.SlotID = &slot.ID
+			if slot.CurrentSIMID != nil {
+				record.SIMID = slot.CurrentSIMID
+				var sim simCardModel
+				if err := store.database(ctx).Where("id = ? AND retired_at IS NULL", *slot.CurrentSIMID).First(&sim).Error; err == nil {
+					record.NumericID = sim.NumericID
+				}
+			}
+		}
 	}
 	return record, nil
 }

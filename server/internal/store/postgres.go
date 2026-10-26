@@ -1172,41 +1172,24 @@ func (store *Postgres) ListDevices(ctx context.Context) ([]DeviceRecord, error) 
 	return records, nil
 }
 
-func createInitialSIMSlot(ctx context.Context, tx pgx.Tx, deviceID string, numericID int, profileCiphertext []byte, now time.Time, record *DeviceRecord) error {
-	return createSIMSlot(ctx, tx, deviceID, "1", 1, deviceID, numericID, profileCiphertext, now, record)
-}
-
-func createSIMSlot(ctx context.Context, tx pgx.Tx, deviceID string, slotKey string, slotIndex int, simID string, numericID int, profileCiphertext []byte, now time.Time, record *DeviceRecord) error {
+func createSIMSlotDB(tx *gorm.DB, deviceID string, slotKey string, slotIndex int, simID string, numericID int, profileCiphertext []byte, now time.Time, record *DeviceRecord) error {
 	if profileCiphertext == nil {
 		profileCiphertext = []byte{}
 	}
-	_, err := tx.Exec(ctx, `
-		INSERT INTO sim_cards (id, numeric_id, profile_ciphertext, first_seen_at, last_seen_at)
-		VALUES ($1, $2, $3, $4, $4)`, simID, numericID, profileCiphertext, now.UTC())
-	if err != nil {
+	sim := simCardModel{ID: simID, NumericID: numericID, ProfileCiphertext: append([]byte(nil), profileCiphertext...), FirstSeenAt: now.UTC(), LastSeenAt: now.UTC(), CreatedAt: now.UTC()}
+	if err := tx.Create(&sim).Error; err != nil {
 		return fmt.Errorf("insert initial SIM identity: %w", err)
 	}
-	var slot SlotRecord
-	err = tx.QueryRow(ctx, `
-		INSERT INTO device_slots (device_id, slot_key, slot_index, current_sim_id, created_at, last_seen_at)
-		VALUES ($1, $2, $3, $4, $5, $5)
-		RETURNING id::text, slot_key, slot_index, current_sim_id::text`, deviceID, slotKey, slotIndex, simID, now.UTC()).Scan(
-		&slot.ID, &slot.SlotKey, &slot.SlotIndex, &slot.SIMID,
-	)
-	if err != nil {
+	slot := deviceSlotModel{ID: uuid.NewString(), DeviceID: deviceID, SlotKey: slotKey, SlotIndex: slotIndex, CurrentSIMID: &sim.ID, CreatedAt: now.UTC(), LastSeenAt: ptrTime(now.UTC())}
+	if err := tx.Create(&slot).Error; err != nil {
 		return fmt.Errorf("insert initial device slot: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO slot_sim_assignments (slot_id, sim_id, inserted_at)
-		VALUES ($1, $2, $3)`, slot.ID, simID, now.UTC()); err != nil {
+	if err := tx.Create(&slotSIMAssignmentModel{SlotID: slot.ID, SIMID: sim.ID, InsertedAt: now.UTC()}).Error; err != nil {
 		return fmt.Errorf("record initial SIM slot assignment: %w", err)
 	}
 	value := numericID
-	slot.SIMNumericID = &value
-	slot.ProfileCiphertext = append([]byte(nil), profileCiphertext...)
 	lastSeen := now.UTC()
-	slot.LastSeenAt = &lastSeen
-	record.Slots = []SlotRecord{slot}
+	record.Slots = []SlotRecord{{ID: slot.ID, SlotKey: slot.SlotKey, SlotIndex: slot.SlotIndex, SIMID: &sim.ID, SIMNumericID: &value, ProfileCiphertext: append([]byte(nil), profileCiphertext...), LastSeenAt: &lastSeen}}
 	return nil
 }
 
@@ -1340,214 +1323,141 @@ func (store *Postgres) UpdateDeviceSIMIdentity(ctx context.Context, deviceID str
 
 // InsertEvent stores an encrypted event once and returns its server sequence.
 func (store *Postgres) InsertEvent(ctx context.Context, envelope domain.EventEnvelope, expiresAt time.Time) (int64, bool, error) {
-	tx, err := store.pool.Begin(ctx)
-	if err != nil {
-		return 0, false, fmt.Errorf("insert encrypted event: begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	var recipient any
-	if envelope.RecipientInstallationID != "" {
-		recipient = envelope.RecipientInstallationID
-	}
 	var sequence int64
-	err = tx.QueryRow(ctx, `
-		INSERT INTO events (id, type, device_id, recipient_installation_id, occurred_at, key_epoch, nonce, ciphertext, signature, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		ON CONFLICT (id) DO NOTHING
-		RETURNING sequence`, envelope.ID, envelope.Type, envelope.DeviceUUID, recipient, envelope.OccurredAt, envelope.KeyEpoch, envelope.Nonce, envelope.Ciphertext, envelope.Signature, expiresAt).Scan(&sequence)
-	if errors.Is(err, pgx.ErrNoRows) {
-		err = tx.QueryRow(ctx, `
-			SELECT sequence
-			FROM events
-			WHERE id = $1
-			  AND type = $2
-			  AND device_id = $3
-			  AND recipient_installation_id IS NOT DISTINCT FROM $4::uuid
-			  AND occurred_at = $5
-			  AND key_epoch = $6
-			  AND nonce = $7
-			  AND ciphertext = $8
-			  AND signature = $9
-			  AND expires_at = $10`, envelope.ID, envelope.Type, envelope.DeviceUUID, recipient, envelope.OccurredAt, envelope.KeyEpoch, envelope.Nonce, envelope.Ciphertext, envelope.Signature, expiresAt).Scan(&sequence)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, false, domain.ErrIdempotencyConflict
+	created := false
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		var recipient *string
+		if envelope.RecipientInstallationID != "" {
+			recipient = &envelope.RecipientInstallationID
 		}
-		if err != nil {
-			return 0, false, fmt.Errorf("read existing event: %w", err)
+		model := eventModel{ID: envelope.ID, Type: envelope.Type, DeviceID: envelope.DeviceUUID, RecipientInstallationID: recipient, OccurredAt: envelope.OccurredAt, KeyEpoch: envelope.KeyEpoch, Nonce: append([]byte(nil), envelope.Nonce...), Ciphertext: append([]byte(nil), envelope.Ciphertext...), Signature: append([]byte(nil), envelope.Signature...), ExpiresAt: expiresAt, CreatedAt: time.Now().UTC()}
+		result := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoNothing: true}).Create(&model)
+		if result.Error != nil {
+			return fmt.Errorf("insert encrypted event: %w", result.Error)
 		}
-		if err := tx.Commit(ctx); err != nil {
-			return 0, false, fmt.Errorf("commit event retry read: %w", err)
+		if result.RowsAffected == 0 {
+			var existing eventModel
+			if err := tx.Where("id = ?", envelope.ID).First(&existing).Error; err != nil {
+				return fmt.Errorf("read existing event: %w", err)
+			}
+			if existing.Type != envelope.Type || existing.DeviceID != envelope.DeviceUUID || existing.RecipientInstallationID == nil && recipient != nil || existing.RecipientInstallationID != nil && recipient == nil || existing.RecipientInstallationID != nil && recipient != nil && *existing.RecipientInstallationID != *recipient || !existing.OccurredAt.Equal(envelope.OccurredAt) || existing.KeyEpoch != envelope.KeyEpoch || !bytes.Equal(existing.Nonce, envelope.Nonce) || !bytes.Equal(existing.Ciphertext, envelope.Ciphertext) || !bytes.Equal(existing.Signature, envelope.Signature) || !existing.ExpiresAt.Equal(expiresAt) {
+				return domain.ErrIdempotencyConflict
+			}
+			sequence = existing.Sequence
+			return nil
 		}
-		return sequence, false, nil
-	}
+		sequence = model.Sequence
+		created = true
+		if envelope.Type == "message.received" && envelope.RecipientInstallationID != "" {
+			payload, err := json.Marshal(envelope)
+			if err != nil {
+				return fmt.Errorf("encode SMS push envelope: %w", err)
+			}
+			var installation appInstallationModel
+			if err := tx.Where("id = ? AND approved_at IS NOT NULL AND revoked_at IS NULL", envelope.RecipientInstallationID).First(&installation).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return errors.New("SMS event recipient installation is not approved")
+				}
+				return err
+			}
+			if err := tx.Create(&outboxJobModel{Kind: "alert.incoming_message", RoutingKey: envelope.RecipientInstallationID, Payload: payload, Attempts: 0, AvailableAt: time.Now().UTC(), ExpiresAt: &expiresAt}).Error; err != nil {
+				return fmt.Errorf("enqueue SMS alert push: %w", err)
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return 0, false, fmt.Errorf("insert encrypted event: %w", err)
 	}
-	if envelope.Type == "message.received" && envelope.RecipientInstallationID != "" {
-		payload, err := json.Marshal(envelope)
-		if err != nil {
-			return 0, false, fmt.Errorf("encode SMS push envelope: %w", err)
-		}
-		command, err := tx.Exec(ctx, `
-			INSERT INTO outbox_jobs (kind, routing_key, payload, available_at, expires_at)
-			SELECT 'alert.incoming_message', $1::text, $2, $3, $4
-			WHERE EXISTS (
-				SELECT 1 FROM app_installations
-				WHERE id = $1::uuid AND approved_at IS NOT NULL AND revoked_at IS NULL
-			)`, envelope.RecipientInstallationID, payload, time.Now().UTC(), expiresAt)
-		if err != nil {
-			return 0, false, fmt.Errorf("enqueue SMS alert push: %w", err)
-		}
-		if command.RowsAffected() == 0 {
-			return 0, false, errors.New("SMS event recipient installation is not approved")
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, false, fmt.Errorf("commit encrypted event: %w", err)
-	}
-	return sequence, true, nil
+	return sequence, created, nil
 }
 
 // ListEvents returns unexpired opaque events strictly after the supplied cursor.
 func (store *Postgres) ListEvents(ctx context.Context, afterSequence int64, limit int, now time.Time) ([]domain.EventEnvelope, error) {
-	rows, err := store.pool.Query(ctx, `
-		SELECT id, sequence, type, device_id, recipient_installation_id, occurred_at, key_epoch, nonce, ciphertext, signature
-		FROM events
-		WHERE sequence > $1 AND expires_at > $2
-		ORDER BY sequence ASC
-		LIMIT $3`, afterSequence, now.UTC(), limit)
-	if err != nil {
+	var models []eventModel
+	if err := store.database(ctx).Where("sequence > ? AND expires_at > ?", afterSequence, now.UTC()).Order("sequence ASC").Limit(limit).Find(&models).Error; err != nil {
 		return nil, fmt.Errorf("list encrypted events: %w", err)
 	}
-	defer rows.Close()
-
-	events := make([]domain.EventEnvelope, 0)
-	for rows.Next() {
-		var envelope domain.EventEnvelope
-		var recipientInstallationID pgtype.Text
-		if err := rows.Scan(
-			&envelope.ID,
-			&envelope.Sequence,
-			&envelope.Type,
-			&envelope.DeviceUUID,
-			&recipientInstallationID,
-			&envelope.OccurredAt,
-			&envelope.KeyEpoch,
-			&envelope.Nonce,
-			&envelope.Ciphertext,
-			&envelope.Signature,
-		); err != nil {
-			return nil, fmt.Errorf("scan encrypted event: %w", err)
-		}
-		if recipientInstallationID.Valid {
-			envelope.RecipientInstallationID = recipientInstallationID.String
+	events := make([]domain.EventEnvelope, 0, len(models))
+	for _, model := range models {
+		envelope := domain.EventEnvelope{ID: model.ID, Sequence: model.Sequence, Type: model.Type, DeviceUUID: model.DeviceID, OccurredAt: model.OccurredAt, KeyEpoch: model.KeyEpoch, Nonce: append([]byte(nil), model.Nonce...), Ciphertext: append([]byte(nil), model.Ciphertext...), Signature: append([]byte(nil), model.Signature...)}
+		if model.RecipientInstallationID != nil {
+			envelope.RecipientInstallationID = *model.RecipientInstallationID
 		}
 		events = append(events, envelope)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate encrypted events: %w", err)
 	}
 	return events, nil
 }
 
 // GetHistorySnapshot reads an encrypted archive for its owner and kind.
 func (store *Postgres) GetHistorySnapshot(ctx context.Context, ownerID string, kind int) (domain.HistorySnapshot, error) {
-	var snapshot domain.HistorySnapshot
-	err := store.pool.QueryRow(ctx, `
-		SELECT owner_id, kind, revision, ciphertext, updated_at
-		FROM encrypted_history_snapshots
-		WHERE owner_id = $1 AND kind = $2`, ownerID, kind).Scan(
-		&snapshot.OwnerID, &snapshot.Kind, &snapshot.Revision, &snapshot.Ciphertext, &snapshot.UpdatedAt,
-	)
-	if err != nil {
-		return domain.HistorySnapshot{}, err
+	var model encryptedHistorySnapshotModel
+	if err := store.database(ctx).Where("owner_id = ? AND kind = ?", ownerID, kind).First(&model).Error; err != nil {
+		return domain.HistorySnapshot{}, databaseNotFound(err)
 	}
-	return snapshot, nil
+	return domain.HistorySnapshot{OwnerID: model.OwnerID, Kind: model.Kind, Revision: model.Revision, Ciphertext: append([]byte(nil), model.Ciphertext...), UpdatedAt: model.UpdatedAt}, nil
 }
 
 // PutHistorySnapshot replaces an archive only when its current revision matches expectedRevision.
 func (store *Postgres) PutHistorySnapshot(ctx context.Context, ownerID string, kind int, expectedRevision int64, ciphertext []byte, now time.Time) (domain.HistorySnapshot, error) {
-	var snapshot domain.HistorySnapshot
-	err := store.pool.QueryRow(ctx, `
-		INSERT INTO encrypted_history_snapshots (owner_id, kind, revision, ciphertext, updated_at)
-		SELECT $1, $2, 1, $4, $5 WHERE $3 = 0
-		ON CONFLICT (owner_id, kind) DO UPDATE
-		SET revision = encrypted_history_snapshots.revision + 1,
-		    ciphertext = EXCLUDED.ciphertext,
-		    updated_at = EXCLUDED.updated_at
-		WHERE encrypted_history_snapshots.revision = $3
-		RETURNING owner_id, kind, revision, ciphertext, updated_at`,
-		ownerID, kind, expectedRevision, ciphertext, now.UTC(),
-	).Scan(&snapshot.OwnerID, &snapshot.Kind, &snapshot.Revision, &snapshot.Ciphertext, &snapshot.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.HistorySnapshot{}, domain.ErrHistoryRevisionConflict
-	}
+	var model encryptedHistorySnapshotModel
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		var current encryptedHistorySnapshotModel
+		result := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("owner_id = ? AND kind = ?", ownerID, kind).First(&current)
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			if expectedRevision != 0 {
+				return domain.ErrHistoryRevisionConflict
+			}
+			model = encryptedHistorySnapshotModel{OwnerID: ownerID, Kind: kind, Revision: 1, Ciphertext: append([]byte(nil), ciphertext...), UpdatedAt: now.UTC()}
+			return tx.Create(&model).Error
+		}
+		if result.Error != nil {
+			return result.Error
+		}
+		if current.Revision != expectedRevision {
+			return domain.ErrHistoryRevisionConflict
+		}
+		current.Revision++
+		current.Ciphertext = append([]byte(nil), ciphertext...)
+		current.UpdatedAt = now.UTC()
+		if err := tx.Save(&current).Error; err != nil {
+			return err
+		}
+		model = current
+		return nil
+	})
 	if err != nil {
+		if errors.Is(err, domain.ErrHistoryRevisionConflict) {
+			return domain.HistorySnapshot{}, err
+		}
 		return domain.HistorySnapshot{}, fmt.Errorf("write encrypted history snapshot: %w", err)
 	}
-	return snapshot, nil
+	return domain.HistorySnapshot{OwnerID: model.OwnerID, Kind: model.Kind, Revision: model.Revision, Ciphertext: append([]byte(nil), model.Ciphertext...), UpdatedAt: model.UpdatedAt}, nil
 }
 
 // EnqueueCommand stores one opaque command while preserving client idempotency.
 func (store *Postgres) EnqueueCommand(ctx context.Context, encrypted domain.EncryptedCommand) (bool, error) {
-	command, err := store.pool.Exec(ctx, `
-		INSERT INTO encrypted_device_commands (
-			id, device_id, sender_installation_id, sender_public_key, nonce,
-			ciphertext, signature, created_at, expires_at
-		)
-		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9
-		FROM devices, app_installations
-		WHERE devices.id = $2 AND devices.revoked_at IS NULL
-		  AND app_installations.id = $3
-		  AND app_installations.approved_at IS NOT NULL
-		  AND app_installations.revoked_at IS NULL
-		ON CONFLICT (id) DO NOTHING`,
-		encrypted.ID,
-		encrypted.DeviceUUID,
-		encrypted.SenderInstallationID,
-		encrypted.SenderPublicKey,
-		encrypted.Nonce,
-		encrypted.Ciphertext,
-		encrypted.Signature,
-		encrypted.CreatedAt.UTC(),
-		encrypted.ExpiresAt.UTC(),
-	)
-	if err != nil {
-		return false, fmt.Errorf("enqueue encrypted command: %w", err)
+	var device deviceModel
+	if err := store.database(ctx).Where("id = ? AND revoked_at IS NULL", encrypted.DeviceUUID).First(&device).Error; err != nil {
+		return false, databaseNotFound(err)
 	}
-	if command.RowsAffected() == 1 {
+	var installation appInstallationModel
+	if err := store.database(ctx).Where("id = ? AND approved_at IS NOT NULL AND revoked_at IS NULL", encrypted.SenderInstallationID).First(&installation).Error; err != nil {
+		return false, databaseNotFound(err)
+	}
+	model := encryptedDeviceCommandModel{ID: encrypted.ID, DeviceID: encrypted.DeviceUUID, SenderInstallationID: encrypted.SenderInstallationID, SenderPublicKey: append([]byte(nil), encrypted.SenderPublicKey...), Nonce: append([]byte(nil), encrypted.Nonce...), Ciphertext: append([]byte(nil), encrypted.Ciphertext...), Signature: append([]byte(nil), encrypted.Signature...), CreatedAt: encrypted.CreatedAt.UTC(), ExpiresAt: encrypted.ExpiresAt.UTC()}
+	result := store.database(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoNothing: true}).Create(&model)
+	if result.Error != nil {
+		return false, fmt.Errorf("enqueue encrypted command: %w", result.Error)
+	}
+	if result.RowsAffected == 1 {
 		return true, nil
 	}
-
-	var matches bool
-	err = store.pool.QueryRow(ctx, `
-		SELECT device_id = $2
-		   AND sender_installation_id = $3
-		   AND sender_public_key = $4
-		   AND nonce = $5
-		   AND ciphertext = $6
-		   AND signature = $7
-		   AND created_at = $8
-		   AND expires_at = $9
-		FROM encrypted_device_commands
-		WHERE id = $1`,
-		encrypted.ID,
-		encrypted.DeviceUUID,
-		encrypted.SenderInstallationID,
-		encrypted.SenderPublicKey,
-		encrypted.Nonce,
-		encrypted.Ciphertext,
-		encrypted.Signature,
-		encrypted.CreatedAt.UTC(),
-		encrypted.ExpiresAt.UTC(),
-	).Scan(&matches)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, pgx.ErrNoRows
+	var existing encryptedDeviceCommandModel
+	if err := store.database(ctx).Where("id = ?", encrypted.ID).First(&existing).Error; err != nil {
+		return false, databaseNotFound(err)
 	}
-	if err != nil {
-		return false, fmt.Errorf("read existing encrypted command: %w", err)
-	}
-	if !matches {
+	if existing.DeviceID != encrypted.DeviceUUID || existing.SenderInstallationID != encrypted.SenderInstallationID || !bytes.Equal(existing.SenderPublicKey, encrypted.SenderPublicKey) || !bytes.Equal(existing.Nonce, encrypted.Nonce) || !bytes.Equal(existing.Ciphertext, encrypted.Ciphertext) || !bytes.Equal(existing.Signature, encrypted.Signature) || !existing.CreatedAt.Equal(encrypted.CreatedAt.UTC()) || !existing.ExpiresAt.Equal(encrypted.ExpiresAt.UTC()) {
 		return false, domain.ErrIdempotencyConflict
 	}
 	return false, nil
@@ -1555,74 +1465,29 @@ func (store *Postgres) EnqueueCommand(ctx context.Context, encrypted domain.Encr
 
 // ClaimCommand leases the oldest deliverable command to one authenticated device.
 func (store *Postgres) ClaimCommand(ctx context.Context, deviceID string, now time.Time, leaseUntil time.Time) (domain.EncryptedCommand, error) {
-	var encrypted domain.EncryptedCommand
-	err := store.pool.QueryRow(ctx, `
-		WITH next_command AS (
-			SELECT id
-			FROM encrypted_device_commands
-			WHERE device_id = $1
-			  AND completed_at IS NULL
-			  AND expires_at > $2
-			  AND (leased_until IS NULL OR leased_until <= $2)
-			ORDER BY created_at, id
-			LIMIT 1
-			FOR UPDATE SKIP LOCKED
-		)
-		UPDATE encrypted_device_commands
-		SET leased_until = $3, delivery_attempts = delivery_attempts + 1
-		FROM next_command
-		WHERE encrypted_device_commands.id = next_command.id
-		RETURNING encrypted_device_commands.id,
-		          encrypted_device_commands.device_id,
-		          encrypted_device_commands.sender_installation_id,
-		          encrypted_device_commands.sender_public_key,
-		          encrypted_device_commands.nonce,
-		          encrypted_device_commands.ciphertext,
-		          encrypted_device_commands.signature,
-		          encrypted_device_commands.created_at,
-		          encrypted_device_commands.expires_at`,
-		deviceID,
-		now.UTC(),
-		leaseUntil.UTC(),
-	).Scan(
-		&encrypted.ID,
-		&encrypted.DeviceUUID,
-		&encrypted.SenderInstallationID,
-		&encrypted.SenderPublicKey,
-		&encrypted.Nonce,
-		&encrypted.Ciphertext,
-		&encrypted.Signature,
-		&encrypted.CreatedAt,
-		&encrypted.ExpiresAt,
-	)
+	var model encryptedDeviceCommandModel
+	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).Where("device_id = ? AND completed_at IS NULL AND expires_at > ? AND (leased_until IS NULL OR leased_until <= ?)", deviceID, now.UTC(), now.UTC()).Order("created_at, id").First(&model)
+		if err := result.Error; err != nil {
+			return databaseNotFound(err)
+		}
+		model.LeasedUntil = &leaseUntil
+		model.DeliveryAttempts++
+		return tx.Model(&model).Updates(map[string]any{"leased_until": leaseUntil.UTC(), "delivery_attempts": model.DeliveryAttempts}).Error
+	})
 	if err != nil {
 		return domain.EncryptedCommand{}, err
 	}
-	return encrypted, nil
+	return domain.EncryptedCommand{ID: model.ID, DeviceUUID: model.DeviceID, SenderInstallationID: model.SenderInstallationID, SenderPublicKey: append([]byte(nil), model.SenderPublicKey...), Nonce: append([]byte(nil), model.Nonce...), Ciphertext: append([]byte(nil), model.Ciphertext...), Signature: append([]byte(nil), model.Signature...), CreatedAt: model.CreatedAt, ExpiresAt: model.ExpiresAt}, nil
 }
 
 // CompleteCommand stores only the encrypted device response and closes the lease.
 func (store *Postgres) CompleteCommand(ctx context.Context, deviceID string, commandID string, result domain.EncryptedCommandResult, completedAt time.Time) error {
-	command, err := store.pool.Exec(ctx, `
-		UPDATE encrypted_device_commands
-		SET result_nonce = $3,
-		    result_ciphertext = $4,
-		    completed_at = $5,
-		    leased_until = NULL
-		WHERE id = $1
-		  AND device_id = $2
-		  AND completed_at IS NULL
-		  AND expires_at > $5`,
-		commandID,
-		deviceID,
-		result.Nonce,
-		result.Ciphertext,
-		completedAt.UTC(),
-	)
-	if err != nil {
-		return fmt.Errorf("complete encrypted command: %w", err)
+	updated := store.database(ctx).Model(&encryptedDeviceCommandModel{}).Where("id = ? AND device_id = ? AND completed_at IS NULL AND expires_at > ?", commandID, deviceID, completedAt.UTC()).Updates(map[string]any{"result_nonce": result.Nonce, "result_ciphertext": result.Ciphertext, "completed_at": completedAt.UTC(), "leased_until": nil})
+	if updated.Error != nil {
+		return fmt.Errorf("complete encrypted command: %w", updated.Error)
 	}
-	if command.RowsAffected() == 0 {
+	if updated.RowsAffected == 0 {
 		return pgx.ErrNoRows
 	}
 	return nil
@@ -1630,37 +1495,20 @@ func (store *Postgres) CompleteCommand(ctx context.Context, deviceID string, com
 
 // CommandStatus returns routing state and an opaque result to the authenticated owner.
 func (store *Postgres) CommandStatus(ctx context.Context, deviceID string, commandID string, now time.Time) (domain.CommandStatus, error) {
-	var status domain.CommandStatus
-	var leasedUntil *time.Time
-	var resultNonce []byte
-	var resultCiphertext []byte
-	err := store.pool.QueryRow(ctx, `
-		SELECT id, device_id, leased_until, result_nonce, result_ciphertext, completed_at
-		FROM encrypted_device_commands
-		WHERE id = $1 AND device_id = $2 AND expires_at > $3`,
-		commandID,
-		deviceID,
-		now.UTC(),
-	).Scan(
-		&status.ID,
-		&status.DeviceUUID,
-		&leasedUntil,
-		&resultNonce,
-		&resultCiphertext,
-		&status.CompletedAt,
-	)
-	if err != nil {
-		return domain.CommandStatus{}, err
+	var model encryptedDeviceCommandModel
+	if err := store.database(ctx).Where("id = ? AND device_id = ? AND expires_at > ?", commandID, deviceID, now.UTC()).First(&model).Error; err != nil {
+		return domain.CommandStatus{}, databaseNotFound(err)
 	}
+	status := domain.CommandStatus{ID: model.ID, DeviceUUID: model.DeviceID, CompletedAt: model.CompletedAt}
 	status.State = "pending"
-	if leasedUntil != nil && leasedUntil.After(now) {
+	if model.LeasedUntil != nil && model.LeasedUntil.After(now) {
 		status.State = "processing"
 	}
 	if status.CompletedAt != nil {
 		status.State = "completed"
 		status.Result = &domain.EncryptedCommandResult{
-			Nonce:      resultNonce,
-			Ciphertext: resultCiphertext,
+			Nonce:      append([]byte(nil), model.ResultNonce...),
+			Ciphertext: append([]byte(nil), model.ResultCiphertext...),
 		}
 	}
 	return status, nil
@@ -1668,14 +1516,11 @@ func (store *Postgres) CommandStatus(ctx context.Context, deviceID string, comma
 
 // UpdateDeviceCommandPublicKey registers the X25519 key used for opaque commands.
 func (store *Postgres) UpdateDeviceCommandPublicKey(ctx context.Context, deviceID string, publicKey []byte) error {
-	command, err := store.pool.Exec(ctx, `
-		UPDATE devices
-		SET command_public_key = $2
-		WHERE id = $1 AND revoked_at IS NULL`, deviceID, publicKey)
-	if err != nil {
-		return fmt.Errorf("update device command public key: %w", err)
+	result := store.database(ctx).Model(&deviceModel{}).Where("id = ? AND revoked_at IS NULL", deviceID).Updates(map[string]any{"command_public_key": publicKey})
+	if result.Error != nil {
+		return fmt.Errorf("update device command public key: %w", result.Error)
 	}
-	if command.RowsAffected() == 0 {
+	if result.RowsAffected == 0 {
 		return pgx.ErrNoRows
 	}
 	return nil

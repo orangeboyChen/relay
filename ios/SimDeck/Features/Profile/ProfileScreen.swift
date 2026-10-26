@@ -19,9 +19,9 @@ struct ProfileScreen: View {
 
             Section {
                 NavigationLink {
-                    DeviceManagementScreen(model: model)
+                    NodeManagementScreen(model: model)
                 } label: {
-                    Label("Device Management", systemImage: "simcard.2")
+                    Label("Node Management", systemImage: "server.rack")
                 }
                 NavigationLink {
                     SIMManagementScreen(model: model)
@@ -110,7 +110,7 @@ private struct EmptySIMCardsRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("No SIM Cards")
-                Text("Add a device in Device Management.")
+                Text("Add a node in Node Management.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

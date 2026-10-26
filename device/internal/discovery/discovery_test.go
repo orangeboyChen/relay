@@ -14,18 +14,21 @@ func TestDiscoverLinuxTopology(t *testing.T) {
 	devRoot := filepath.Join(root, "dev")
 	sysRoot := filepath.Join(root, "sys")
 	for _, path := range []string{
-		filepath.Join(devRoot, "ttyUSB2"),
-		filepath.Join(devRoot, "snd", "controlC2"),
-		filepath.Join(devRoot, "snd", "pcmC2D0c"),
-		filepath.Join(devRoot, "snd", "pcmC2D0p"),
 		filepath.Join(sysRoot, "class", "tty", "ttyUSB2", "device"),
 		filepath.Join(sysRoot, "class", "sound", "card2", "device"),
 	} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if filepath.Ext(path) == "" || filepath.Base(path) == "device" {
-			continue
+	}
+	for _, path := range []string{
+		filepath.Join(devRoot, "ttyUSB2"),
+		filepath.Join(devRoot, "snd", "controlC2"),
+		filepath.Join(devRoot, "snd", "pcmC2D0c"),
+		filepath.Join(devRoot, "snd", "pcmC2D0p"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
 		}
 		if err := os.WriteFile(path, nil, 0o644); err != nil {
 			t.Fatal(err)

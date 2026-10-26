@@ -17,20 +17,7 @@ struct SIMManagementScreen: View {
             } else {
                 Section("SIM Cards") {
                     ForEach(model.managedSIMs) { sim in
-                        if let line = line(for: sim) {
-                            NavigationLink {
-                                SIMSettingsScreen(model: model, line: line)
-                            } label: {
-                                ManagedSIMRow(sim: sim, delete: nil)
-                            }
-                        } else {
-                            ManagedSIMRow(sim: sim, delete: sim.isOffline ? { simToDelete = sim } : nil)
-                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                    if sim.isOffline {
-                                        Button("Delete", role: .destructive) { simToDelete = sim }
-                                    }
-                                }
-                        }
+                        managedSIMRow(sim)
                     }
                 }
             }
@@ -63,6 +50,27 @@ struct SIMManagementScreen: View {
 
     private func line(for sim: ManagedSIM) -> DeviceLineIdentity? {
         model.devices.first { $0.simID == sim.id }
+    }
+
+    private func managedSIMRow(_ sim: ManagedSIM) -> AnyView {
+        if let line = line(for: sim) {
+            return AnyView(
+                NavigationLink {
+                    SIMSettingsScreen(model: model, line: line)
+                } label: {
+                    ManagedSIMRow(sim: sim, delete: nil)
+                }
+            )
+        }
+
+        return AnyView(
+            ManagedSIMRow(sim: sim, delete: sim.isOffline ? { simToDelete = sim } : nil)
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    if sim.isOffline {
+                        Button("Delete", role: .destructive) { simToDelete = sim }
+                    }
+                }
+        )
     }
 }
 

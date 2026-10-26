@@ -474,12 +474,14 @@ var _ = Describe("Device command runtime", func() {
 	It("sets readiness only for the initialized and bound session lifetime", func() {
 		transport := newBlockingTransport()
 		session := &fakeDeviceSession{runStarted: make(chan struct{})}
+		config := testConfig(GinkgoT().TempDir())
+		config.CommandTimeout = 10 * time.Millisecond
 		ready := &atomic.Bool{}
 		ctx, cancel := context.WithCancel(context.Background())
 		result := make(chan error, 1)
 
 		go func() {
-			result <- runDevice(ctx, testConfig(GinkgoT().TempDir()), logger, ready, testDependencies(transport, session))
+			result <- runDevice(ctx, config, logger, ready, testDependencies(transport, session))
 		}()
 
 		Eventually(session.runStarted).Should(BeClosed())
@@ -1057,7 +1059,7 @@ var _ = Describe("Device command runtime", func() {
 		Eventually(done).Should(BeClosed())
 	})
 
-		PIt("constructs all production dependency functions", func() {
+	PIt("constructs all production dependency functions", func() {
 		var expectedState identity.State
 		httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 			Expect(request.Method).To(Equal(http.MethodPut))

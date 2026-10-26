@@ -18,6 +18,29 @@ func configLookup(values map[string]string) func(string) (string, bool) {
 }
 
 var _ = Describe("Agent configuration", func() {
+	It("allows automatic node discovery without an AT device setting", func() {
+		config, err := LoadConfig(configLookup(map[string]string{
+			"SIM_DECK_DISCOVERY_MODE": "auto",
+			"SIM_DECK_SERVER_URL":     "https://deck.example",
+		}))
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(config.DiscoveryMode).To(Equal(DiscoveryModeAuto))
+		Expect(config.ATDevice).To(BeEmpty())
+		Expect(config.DeviceRoot).To(Equal("/dev"))
+		Expect(config.SysfsRoot).To(Equal("/sys"))
+	})
+
+	It("rejects an explicit AT device in automatic node mode", func() {
+		_, err := LoadConfig(configLookup(map[string]string{
+			"SIM_DECK_DISCOVERY_MODE": "auto",
+			"SIM_DECK_SERVER_URL":     "https://deck.example",
+			"SIM_DECK_AT_DEVICE":      "/dev/ttyUSB2",
+		}))
+
+		Expect(err).To(MatchError("SIM_DECK_AT_DEVICE must be omitted in automatic discovery mode"))
+	})
+
 	It("does not require an operator-assigned device UUID", func() {
 		config, err := LoadConfig(configLookup(map[string]string{
 			"SIM_DECK_SERVER_URL": "https://deck.example",

@@ -1,0 +1,34 @@
+x-node-environment: &node-environment
+  SIM_DECK_SERVER_URL: "${SIM_DECK_SERVER_URL:?set SIM_DECK_SERVER_URL}"
+  SIM_DECK_ALLOW_INSECURE_HTTP: "${SIM_DECK_ALLOW_INSECURE_HTTP:-false}"
+  SIM_DECK_DISCOVERY_MODE: auto
+  SIM_DECK_DEVICE_ROOT: /dev
+  SIM_DECK_SYSFS_ROOT: /sys
+  SIM_DECK_STATE_DIRECTORY: /var/lib/sim-deck
+  SIM_DECK_DISCOVERY_POLL_INTERVAL: 2s
+  SIM_DECK_COMMAND_POLL_INTERVAL: 1s
+
+services:
+  node:
+    image: ghcr.io/orangeboychen/sim-deck-device:dev
+    restart: unless-stopped
+    environment: *node-environment
+    group_add:
+      - "${SIM_DECK_DIALOUT_GID:-20}"
+      - "${SIM_DECK_AUDIO_GID:-29}"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    volumes:
+      - /dev:/dev
+      - /sys:/sys:ro
+      - node-state:/var/lib/sim-deck
+    ports:
+      - "127.0.0.1:18080:8080"
+
+volumes:
+  node-state:

@@ -1,9 +1,10 @@
 # Linux Modem Deployment
 
 This guide runs `relay-node` on a Linux host with one or more Quectel USB
-modems. The installer discovers hardware and generates one isolated Docker
-service per modem. The operator supplies the server URL and image tag; the
-installer supplies stable device paths and private state volumes.
+modems. The recommended Docker deployment uses one node container that maps
+`/dev` and read-only `/sys`; the container discovers all modems and starts one
+isolated worker per modem. The operator supplies the server URL and image tag;
+no host discovery script is required.
 
 The modem containers and the iPhone both connect outbound to `relay-control`.
 The iPhone does not connect to a modem host and does not need a modem IP, USB
@@ -14,22 +15,41 @@ path, device UUID, SIM ICCID, or pairing token.
 Prepare:
 
 - A supported 64-bit Linux host with Docker Engine and Docker Compose v2.
-- Root access for udev rules and device links.
+- Permission for the Docker daemon to bind the host `/dev` and `/sys`.
 - Network access from the host to the server's HTTPS URL.
 - The server stack already running with **Device Discovery** available in the
   iOS app. See [`relay-control/docs/deployment.md`](../../relay-control/docs/deployment.md).
 - One persistent `/etc/sim-deck` directory and Docker volumes. Do not put the
   state volume on ephemeral storage.
 
-The image runs as an unprivileged user, drops all Linux capabilities, and maps
-only the AT and audio character devices belonging to that modem. Do not use
-`--privileged` or map the host's whole `/dev` directory.
+The image runs as an unprivileged user and drops all Linux capabilities. The
+node container maps the whole `/dev` only so it can discover hot-plugged modem
+and ALSA nodes; do not use `--privileged`. ALSA PCM nodes are associated through
+the matching USB serial in `/sys` because Linux does not copy USB identity
+properties onto every `pcmC*` device node.
 
-The installer marks only the discovered Quectel serial ports with
-`ID_MM_DEVICE_IGNORE=1` and restarts ModemManager when it is active. Other
-modems remain managed normally. ALSA PCM nodes are associated through the
-matching USB control node because Linux does not copy USB identity properties
-onto every `pcmC*` device node.
+## Start the automatic node container
+
+```sh
+SIM_DECK_SERVER_URL=https://sim-deck.example.com \
+  docker compose -f compose.node.yaml up -d
+docker compose -f compose.node.yaml logs -f node
+```
+
+The first log entry contains a tree like `node → modem-1 → AT/audio nodes` for
+every discovered modem. Each worker then logs its derived device identity and
+waits for owner approval independently. The health endpoint is ready only after
+all discovered workers are ready.
+
+If a modem is added or removed, recreate the node container so the startup
+topology is rescanned:
+
+```sh
+docker compose -f compose.node.yaml up -d --force-recreate node
+```
+
+The installer below remains a read-only Linux diagnostic tool or an explicit
+single-modem deployment helper; it is not needed by the automatic node mode.
 
 ## Verify and enable modem audio
 

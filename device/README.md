@@ -1,7 +1,9 @@
 # relay-node
 
-`relay-node` controls one Quectel modem and bridges cellular voice audio to
-an end-to-end encrypted WebRTC session.
+`relay-node` controls Quectel modems and bridges cellular voice audio to an
+end-to-end encrypted WebRTC session. In automatic node mode, one container
+manages every modem exposed through `/dev` and keeps each modem's identity and
+state in a separate subdirectory.
 
 The Linux host installation and multi-modem runbook is in
 [`docs/deployment.md`](docs/deployment.md). This README documents the device
@@ -30,7 +32,32 @@ scope. The process entrypoint and modem/ALSA/WebRTC integration adapters are
 compiled and covered by integration tests instead of being counted in this
 in-memory metric.
 
-## Container model
+## Automatic node container
+
+For Docker deployments, use [`compose.node.yaml`](compose.node.yaml). It maps
+the host `/dev` and read-only `/sys` into one node container. The agent discovers
+each modem and its matching ALSA capture/playback nodes at startup, logs the
+complete Node → Device → audio/AT topology as a tree, then starts one isolated
+worker per modem. No host discovery script, generated udev rules, or per-modem
+Compose service is required.
+
+The node state volume is shared only as a parent directory; workers use
+`/var/lib/sim-deck/devices/<usb-serial>` and never share identity files. The
+diagnostic `scripts/install-linux-device.sh` remains useful for inspecting a
+Linux host, but it is not a deployment prerequisite for this Compose mode.
+
+```sh
+SIM_DECK_SERVER_URL=https://sim-deck.example.com \
+  docker compose -f compose.node.yaml up -d
+docker compose -f compose.node.yaml logs -f node
+```
+
+The image still runs without `--privileged` and drops Linux capabilities. A
+whole `/dev` bind is intentionally limited to this node container because it
+must discover hot-plugged devices; use a dedicated host or an equivalent
+device-policy sandbox when other tenants share the Docker daemon.
+
+## Explicit single-modem container
 
 One container controls exactly one modem. Every container must have all of the
 following resources kept separate from every other instance:

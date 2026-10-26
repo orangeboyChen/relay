@@ -17,12 +17,23 @@ const (
 	defaultALSACaptureDevice  = "hw:0,0"
 	defaultALSAPlaybackDevice = "hw:0,0"
 	defaultHealthAddr         = ":8080"
+	defaultDeviceRoot         = "/dev"
+	defaultSysfsRoot          = "/sys"
 	defaultBaud               = 115200
 	defaultStateDir           = "/var/lib/sim-deck"
 )
 
 // AudioMode selects the modem audio transport exposed to the media peer.
 type AudioMode string
+
+// DiscoveryMode selects whether one explicitly configured modem or all visible
+// modem topologies are managed by the node agent.
+type DiscoveryMode string
+
+const (
+	DiscoveryModeSingle DiscoveryMode = "single"
+	DiscoveryModeAuto   DiscoveryMode = "auto"
+)
 
 const (
 	AudioModeALSA      AudioMode = "alsa"
@@ -32,6 +43,9 @@ const (
 
 // Config describes the host devices and local health endpoint used by one agent instance.
 type Config struct {
+	DiscoveryMode         DiscoveryMode
+	DeviceRoot            string
+	SysfsRoot             string
 	DeviceUUID            string
 	SlotKey               string
 	SlotIndex             int
@@ -60,7 +74,11 @@ type Config struct {
 
 // LoadConfig reads agent configuration from an environment lookup function.
 func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
+	discoveryMode := DiscoveryMode(strings.ToLower(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_DISCOVERY_MODE", string(DiscoveryModeSingle)))))
 	config := Config{
+		DiscoveryMode:         discoveryMode,
+		DeviceRoot:            valueOrDefault(lookup, "SIM_DECK_DEVICE_ROOT", defaultDeviceRoot),
+		SysfsRoot:             valueOrDefault(lookup, "SIM_DECK_SYSFS_ROOT", defaultSysfsRoot),
 		DeviceUUID:            strings.ToLower(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_DEVICE_UUID", ""))),
 		SlotKey:               strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_SLOT_KEY", "1")),
 		SlotIndex:             1,
@@ -84,6 +102,12 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 		RadioStatusPoll:       15 * time.Second,
 		ServerURL:             strings.TrimRight(strings.TrimSpace(valueOrDefault(lookup, "SIM_DECK_SERVER_URL", "")), "/"),
 		StateDirectory:        valueOrDefault(lookup, "SIM_DECK_STATE_DIRECTORY", defaultStateDir),
+	}
+	if config.DiscoveryMode != DiscoveryModeSingle && config.DiscoveryMode != DiscoveryModeAuto {
+		return Config{}, fmt.Errorf("SIM_DECK_DISCOVERY_MODE must be single or auto")
+	}
+	if config.DiscoveryMode == DiscoveryModeAuto && !hasValue(lookup, "SIM_DECK_AT_DEVICE") {
+		config.ATDevice = ""
 	}
 	if config.DeviceUUID != "" && !identity.ValidDeviceUUID(config.DeviceUUID) {
 		return Config{}, fmt.Errorf("SIM_DECK_DEVICE_UUID must be empty or a canonical UUID")
@@ -141,10 +165,13 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 		}
 		config.RadioStatusPoll = interval
 	}
-	if strings.TrimSpace(config.ATDevice) == "" {
+	if config.DiscoveryMode == DiscoveryModeSingle && strings.TrimSpace(config.ATDevice) == "" {
 		return Config{}, fmt.Errorf("SIM_DECK_AT_DEVICE must not be empty")
 	}
-	if strings.HasPrefix(config.ATDevice, "tls://") {
+	if config.DiscoveryMode == DiscoveryModeAuto && strings.TrimSpace(config.ATDevice) != "" {
+		return Config{}, fmt.Errorf("SIM_DECK_AT_DEVICE must be omitted in automatic discovery mode")
+	}
+	if config.DiscoveryMode == DiscoveryModeSingle && strings.HasPrefix(config.ATDevice, "tls://") {
 		endpoint, err := url.Parse(config.ATDevice)
 		if err != nil || endpoint.Scheme != "tls" || endpoint.Host == "" || endpoint.Port() == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") {
 			return Config{}, fmt.Errorf("SIM_DECK_AT_DEVICE TLS endpoint must be tls://host:port")
@@ -155,9 +182,9 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 		if !filepath.IsAbs(config.ATTLSCertificateFile) || !filepath.IsAbs(config.ATTLSKeyFile) {
 			return Config{}, fmt.Errorf("SIM_DECK_AT_TLS_CERT_FILE and SIM_DECK_AT_TLS_KEY_FILE must be absolute paths for a TLS AT endpoint")
 		}
-	} else if strings.Contains(config.ATDevice, "://") {
+	} else if config.DiscoveryMode == DiscoveryModeSingle && strings.Contains(config.ATDevice, "://") {
 		return Config{}, fmt.Errorf("SIM_DECK_AT_DEVICE supports only a local TTY or TLS endpoint")
-	} else if config.ATTLSCAFile != "" || config.ATTLSCertificateFile != "" || config.ATTLSKeyFile != "" {
+	} else if config.DiscoveryMode == DiscoveryModeSingle && (config.ATTLSCAFile != "" || config.ATTLSCertificateFile != "" || config.ATTLSKeyFile != "") {
 		return Config{}, fmt.Errorf("SIM_DECK_AT_TLS credentials require a TLS AT endpoint")
 	}
 	switch config.AudioMode {
@@ -199,6 +226,11 @@ func LoadConfig(lookup func(string) (string, bool)) (Config, error) {
 	if !filepath.IsAbs(config.StateDirectory) {
 		return Config{}, fmt.Errorf("SIM_DECK_STATE_DIRECTORY must be an absolute path")
 	}
+	if config.DiscoveryMode == DiscoveryModeAuto {
+		if !filepath.IsAbs(config.DeviceRoot) || !filepath.IsAbs(config.SysfsRoot) {
+			return Config{}, fmt.Errorf("SIM_DECK_DEVICE_ROOT and SIM_DECK_SYSFS_ROOT must be absolute paths")
+		}
+	}
 	return config, nil
 }
 
@@ -216,4 +248,9 @@ func valueOrDefault(lookup func(string) (string, bool), key string, fallback str
 		return value
 	}
 	return fallback
+}
+
+func hasValue(lookup func(string) (string, bool), key string) bool {
+	value, ok := lookup(key)
+	return ok && strings.TrimSpace(value) != ""
 }

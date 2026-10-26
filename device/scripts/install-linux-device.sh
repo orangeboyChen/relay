@@ -15,6 +15,56 @@ audio_node() {
   esac
 }
 
+alsa_device_name() {
+  local node="$1" card device
+  case "$node" in
+    */pcmC*D*c)
+      ;;
+    */pcmC*D*p)
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+  card="${node##*pcmC}"
+  card="${card%%D*}"
+  device="${node##*D}"
+  device="${device%c}"
+  device="${device%p}"
+  [[ "$card" =~ ^[0-9]+$ && "$device" =~ ^[0-9]+$ ]] || return 0
+  printf 'hw:%s,%s' "$card" "$device"
+}
+
+print_tree() {
+  local node_count="$1" index serial capture playback
+  printf 'node\n'
+  printf '├── platform: linux\n'
+  printf '├── node_id: %s\n' "$(cat /etc/machine-id 2>/dev/null || printf 'unavailable')"
+  printf '└── devices\n'
+  index=1
+  for serial in "${serials[@]}"; do
+    printf '    %s── modem-%s\n' "$([[ "$index" -eq "$node_count" ]] && printf '└' || printf '├')" "$index"
+    printf '        ├── identity\n'
+    printf '        │   ├── usb_serial: %s\n' "$serial"
+    printf '        │   └── at_interface: %s\n' "${at_interface[$serial]}"
+    printf '        ├── at\n'
+    printf '        │   ├── host: %s\n' "${at_node[$serial]}"
+    printf '        │   └── container: /dev/sim-deck/at\n'
+    printf '        ├── audio\n'
+    printf '        │   ├── control: %s\n' "${audio_control[$serial]}"
+    capture="${audio_capture[$serial]}"
+    playback="${audio_playback[$serial]}"
+    printf '        │   ├── capture: %s\n' "$capture"
+    printf '        │   └── playback: %s\n' "$playback"
+    printf '        └── container_environment\n'
+    printf '            ├── SIM_DECK_AUDIO_MODE=alsa\n'
+    printf '            ├── SIM_DECK_ALSA_CAPTURE_DEVICE=%s\n' "$(alsa_device_name "$capture")"
+    printf '            ├── SIM_DECK_ALSA_PLAYBACK_DEVICE=%s\n' "$(alsa_device_name "$playback")"
+    printf '            └── SIM_DECK_STATE_DIRECTORY=/var/lib/sim-deck\n'
+    index=$((index + 1))
+  done
+}
+
 discover_audio_nodes() {
   local dev_root="$1" node data serial card candidate
   local -a capture_candidates playback_candidates
@@ -121,17 +171,7 @@ for serial in "${serials[@]}"; do
 done
 
 printf 'Discovered %s modem(s). No files were changed.\n' "${#serials[@]}"
-index=1
-for serial in "${serials[@]}"; do
-  printf 'modem-%s\n' "$index"
-  printf '  usb_serial: %s\n' "$serial"
-  printf '  at_device: %s\n' "${at_node[$serial]}"
-  printf '  at_interface: %s\n' "${at_interface[$serial]}"
-  printf '  audio_control: %s\n' "${audio_control[$serial]}"
-  printf '  audio_capture: %s\n' "${audio_capture[$serial]}"
-  printf '  audio_playback: %s\n' "${audio_playback[$serial]}"
-  index=$((index + 1))
-done
+print_tree "${#serials[@]}"
 
 if [[ "$start" == true && "$install_compose" != true ]]; then
   printf '%s\n' "--start requires --install-compose." >&2
@@ -202,7 +242,11 @@ fi
   for serial in "${serials[@]}"; do
     # Keep Compose substitutions literal in the generated file.
     # shellcheck disable=SC2016
-    printf '  modem-%s:\n    <<: *device-defaults\n    hostname: sim-deck-modem-%s\n    environment:\n      SIM_DECK_SERVER_URL: ${SIM_DECK_SERVER_URL}\n      SIM_DECK_ALLOW_INSECURE_HTTP: ${SIM_DECK_ALLOW_INSECURE_HTTP:-false}\n      SIM_DECK_AT_DEVICE: /dev/sim-deck/at\n      SIM_DECK_AUDIO_MODE: alsa\n      SIM_DECK_STATE_DIRECTORY: /var/lib/sim-deck\n    devices:\n      - /dev/sim-deck/modem-%s-at:/dev/sim-deck/at\n' "$index" "$index" "$index"
+    capture="${audio_capture[$serial]}"
+    playback="${audio_playback[$serial]}"
+    capture_alsa="$(alsa_device_name "$capture")"
+    playback_alsa="$(alsa_device_name "$playback")"
+    printf '  modem-%s:\n    <<: *device-defaults\n    hostname: sim-deck-modem-%s\n    environment:\n      SIM_DECK_SERVER_URL: ${SIM_DECK_SERVER_URL}\n      SIM_DECK_ALLOW_INSECURE_HTTP: ${SIM_DECK_ALLOW_INSECURE_HTTP:-false}\n      SIM_DECK_AT_DEVICE: /dev/sim-deck/at\n      SIM_DECK_AUDIO_MODE: alsa\n      SIM_DECK_ALSA_CAPTURE_DEVICE: %s\n      SIM_DECK_ALSA_PLAYBACK_DEVICE: %s\n      SIM_DECK_STATE_DIRECTORY: /var/lib/sim-deck\n    devices:\n      - /dev/sim-deck/modem-%s-at:/dev/sim-deck/at\n' "$index" "$index" "$capture_alsa" "$playback_alsa" "$index"
     for kind in control capture playback; do
       [[ -n "$(audio_node "$kind" "$serial")" ]] || continue
       case "$kind" in

@@ -293,6 +293,10 @@ func (session *Session) DownloadESIMProfile(ctx context.Context, activationCode 
 	if err != nil {
 		return err
 	}
+	smdpHost, err := smdpHostFromActivationCode(activationCode)
+	if err != nil {
+		return err
+	}
 	response, err := session.sendWithTimeout(ctx, fmt.Sprintf(`AT+QESIM="download","%s"`, escapeATString(activationCode)), esimTransactionTimeout)
 	if err != nil {
 		return fmt.Errorf("start eSIM download: %w", err)
@@ -308,7 +312,7 @@ func (session *Session) DownloadESIMProfile(ctx context.Context, activationCode 
 		return fmt.Errorf("QESIM download failed with result %d", result)
 	}
 	for {
-		httpResponse, err := postESIMTransaction(ctx, transaction.URL, transaction.Payload)
+		httpResponse, err := postESIMTransaction(ctx, transaction.URL, transaction.Payload, smdpHost)
 		if err != nil {
 			return fmt.Errorf("post eSIM RSP message: %w", err)
 		}
@@ -346,6 +350,19 @@ func normalizeESIMActivationCode(value string) (string, error) {
 		return "", errors.New("invalid eSIM activation code")
 	}
 	return value, nil
+}
+
+func smdpHostFromActivationCode(activationCode string) (string, error) {
+	parts := strings.Split(strings.TrimPrefix(activationCode, "LPA:1$"), "$")
+	if len(parts) < 2 || strings.TrimSpace(parts[0]) == "" {
+		return "", errors.New("invalid eSIM activation code")
+	}
+	host := strings.TrimSpace(parts[0])
+	parsed, err := url.Parse("https://" + host)
+	if err != nil || parsed.Hostname() == "" || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("invalid eSIM activation code")
+	}
+	return parsed.Host, nil
 }
 
 type esimTransaction struct {
@@ -420,15 +437,10 @@ func parseQESIMTransaction(lines []string) (*esimTransaction, int, error) {
 	return nil, 0, errors.New("QESIM download did not return a transaction")
 }
 
-func postESIMTransaction(ctx context.Context, endpoint, payload string) ([]byte, error) {
-	if strings.HasPrefix(endpoint, "/") {
-		var requestPayload struct {
-			SMDPAddress string `json:"smdpAddress"`
-		}
-		if err := json.Unmarshal([]byte(payload), &requestPayload); err != nil || strings.TrimSpace(requestPayload.SMDPAddress) == "" {
-			return nil, errors.New("QESIM transaction endpoint is missing its SMDP+ host")
-		}
-		endpoint = "https://" + strings.TrimSpace(requestPayload.SMDPAddress) + endpoint
+func postESIMTransaction(ctx context.Context, endpoint, payload, fallbackSMDPHost string) ([]byte, error) {
+	endpoint, err := resolveESIMEndpoint(endpoint, payload, fallbackSMDPHost)
+	if err != nil {
+		return nil, err
 	}
 	parsed, err := url.Parse(endpoint)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Path == "" {
@@ -458,6 +470,26 @@ func postESIMTransaction(ctx context.Context, endpoint, payload string) ([]byte,
 		return nil, errors.New("QESIM SMDP+ response is too large")
 	}
 	return dump, nil
+}
+
+func resolveESIMEndpoint(endpoint, payload, fallbackSMDPHost string) (string, error) {
+	if !strings.HasPrefix(endpoint, "/") {
+		return endpoint, nil
+	}
+	var requestPayload struct {
+		SMDPAddress string `json:"smdpAddress"`
+	}
+	if err := json.Unmarshal([]byte(payload), &requestPayload); err != nil {
+		return "", errors.New("QESIM transaction payload is malformed")
+	}
+	host := strings.TrimSpace(requestPayload.SMDPAddress)
+	if host == "" {
+		host = strings.TrimSpace(fallbackSMDPHost)
+	}
+	if host == "" {
+		return "", errors.New("QESIM transaction endpoint is missing its SMDP+ host")
+	}
+	return "https://" + host + endpoint, nil
 }
 
 func (session *Session) forwardESIMHTTPResponse(ctx context.Context, response []byte) (*esimTransaction, *int, error) {

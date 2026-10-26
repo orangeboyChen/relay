@@ -83,6 +83,32 @@ var _ = Describe("Modem session", func() {
 		Expect(manual).To(Equal("LPA:1$prod.smdp-plus.rsp.goog$3TD6-8L82-HUE1-LVN6"))
 	})
 
+	It("extracts the SMDP+ host from a normalized activation code", func() {
+		host, err := smdpHostFromActivationCode("LPA:1$smdp.example.test$MATCHING-CODE")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(host).To(Equal("smdp.example.test"))
+	})
+
+	It("uses the activation-code host when a relative transaction omits smdpAddress", func() {
+		endpoint, err := resolveESIMEndpoint(
+			"/gsma/rsp2/es9plus/initiateAuthentication",
+			`{"euiccChallenge":"abc"}`,
+			"smdp.example.test",
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(endpoint).To(Equal("https://smdp.example.test/gsma/rsp2/es9plus/initiateAuthentication"))
+	})
+
+	It("prefers the transaction payload host over the activation-code host", func() {
+		endpoint, err := resolveESIMEndpoint(
+			"/gsma/rsp2/es9plus/transaction",
+			`{"smdpAddress":"payload.example.test"}`,
+			"activation.example.test",
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(endpoint).To(Equal("https://payload.example.test/gsma/rsp2/es9plus/transaction"))
+	})
+
 	It("rejects malformed eSIM activation codes before touching the modem", func() {
 		_, err := normalizeESIMActivationCode("https://example.test/profile")
 		Expect(err).To(MatchError("invalid eSIM activation code"))

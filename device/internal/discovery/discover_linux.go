@@ -27,6 +27,7 @@ func discover(ctx context.Context, deviceRoot, sysfsRoot string) ([]Modem, error
 		path            string
 		serial          string
 		interfaceNumber string
+		physical        string
 	}
 	bySerial := make(map[string][]candidate)
 	patterns := []string{filepath.Join(deviceRoot, "ttyUSB*"), filepath.Join(deviceRoot, "ttyACM*")}
@@ -36,11 +37,16 @@ func discover(ctx context.Context, deviceRoot, sysfsRoot string) ([]Modem, error
 			return nil, fmt.Errorf("glob serial devices: %w", err)
 		}
 		for _, path := range paths {
-			serial, interfaceNumber, ok := serialDeviceIdentity(path, deviceRoot, sysfsRoot)
+			serial, interfaceNumber, physical, ok := serialDeviceIdentity(path, sysfsRoot)
 			if !ok {
 				continue
 			}
-			bySerial[serial] = append(bySerial[serial], candidate{path: path, serial: serial, interfaceNumber: interfaceNumber})
+			for _, existing := range bySerial[serial] {
+				if existing.physical != physical {
+					return nil, fmt.Errorf("duplicate USB serial %q belongs to multiple physical modems", serial)
+				}
+			}
+			bySerial[serial] = append(bySerial[serial], candidate{path: path, serial: serial, interfaceNumber: interfaceNumber, physical: physical})
 		}
 	}
 
@@ -85,11 +91,29 @@ func discover(ctx context.Context, deviceRoot, sysfsRoot string) ([]Modem, error
 	return result, nil
 }
 
-func serialDeviceIdentity(devicePath, deviceRoot, sysfsRoot string) (string, string, bool) {
+func serialDeviceIdentity(devicePath, sysfsRoot string) (string, string, string, bool) {
 	name := filepath.Base(devicePath)
 	path := filepath.Join(sysfsRoot, "class", "tty", name, "device")
 	serial := ancestorValue(path, "serial")
-	return serial, ancestorValue(path, "bInterfaceNumber"), serial != "" && strings.EqualFold(ancestorValue(path, "idVendor"), "2c7c")
+	physical := physicalUSBPath(path, sysfsRoot)
+	return serial, ancestorValue(path, "bInterfaceNumber"), physical, serial != "" && strings.EqualFold(ancestorValue(path, "idVendor"), "2c7c")
+}
+
+func physicalUSBPath(start, sysfsRoot string) string {
+	path := start
+	if resolved, err := filepath.EvalSymlinks(start); err == nil {
+		path = resolved
+	}
+	for {
+		if strings.EqualFold(readNodeValue(path, "idVendor"), "2c7c") && readNodeValue(path, "serial") != "" {
+			return path
+		}
+		parent := filepath.Dir(path)
+		if parent == path || (sysfsRoot != "" && !strings.HasPrefix(parent, sysfsRoot)) {
+			return path
+		}
+		path = parent
+	}
 }
 
 func soundCardForSerial(serial, deviceRoot, sysfsRoot string) (string, bool) {
@@ -139,11 +163,8 @@ func pcmDeviceNumber(path string) string {
 func ancestorValue(start, name string) string {
 	path := start
 	for {
-		if data, err := os.ReadFile(filepath.Join(path, name)); err == nil {
-			value := strings.TrimSpace(string(data))
-			if value != "" {
-				return value
-			}
+		if value := readNodeValue(path, name); value != "" {
+			return value
 		}
 		parent := filepath.Dir(path)
 		if parent == path {
@@ -151,4 +172,12 @@ func ancestorValue(start, name string) string {
 		}
 		path = parent
 	}
+}
+
+func readNodeValue(path, name string) string {
+	data, err := os.ReadFile(filepath.Join(path, name))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }

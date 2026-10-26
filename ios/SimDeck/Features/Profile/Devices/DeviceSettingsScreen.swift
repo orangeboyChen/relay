@@ -163,11 +163,23 @@ struct SIMSettingsScreen: View {
                 Stepper(value: $numericID, in: 1...99) {
                     LabeledContent("SIM ID", value: numericID, format: .number)
                 }
+                LabeledContent("Type", value: line.simKind.displayName)
                 TextField("Line name", text: $lineName)
                 TextField("Phone number", text: $phoneNumber)
                     .textContentType(.telephoneNumber)
                     .keyboardType(.numbersAndPunctuation)
 
+            }
+            if line.simKind == .eSIM {
+                Section {
+                    NavigationLink {
+                        ESIMManagementScreen(model: model, line: line)
+                    } label: {
+                        Label("eSIM Configuration", systemImage: "simcard.2")
+                    }
+                } footer: {
+                    Text("Manage the cellular profiles installed on this eSIM.")
+                }
             }
             if let slotSettings {
                 SlotControlSection(settings: slotSettingsBinding(for: slotSettings))

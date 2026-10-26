@@ -12,35 +12,6 @@ struct SIMManagementScreen: View {
 
     var body: some View {
         List {
-            if !esimLines.isEmpty {
-                Section {
-                    ForEach(esimLines) { line in
-                        NavigationLink {
-                            ESIMManagementScreen(model: model, line: line)
-                        } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: "simcard.2")
-                                    .font(.title3)
-                                    .symbolRenderingMode(.hierarchical)
-                                    .foregroundStyle(.tint)
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(line.lineName.isEmpty ? "eSIM" : line.lineName)
-                                    Text(lineSubtitle(for: line))
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            .frame(minHeight: 44)
-                        }
-                    }
-                } header: {
-                    Text("eSIM")
-                } footer: {
-                    Text("Manage installed cellular plans for each eSIM line.")
-                }
-            }
-
             if model.managedSIMs.isEmpty {
                 ContentUnavailableView("No SIM Cards", systemImage: "simcard", description: Text("SIM cards appear after a modem reports its ICCID."))
             } else {
@@ -88,15 +59,6 @@ struct SIMManagementScreen: View {
             Text("The SIM identity and its encrypted profile will be removed from this account. A future insertion creates a new managed record.")
         }
         .scrollEdgeEffectStyle(.soft, for: .all)
-    }
-
-    private var esimLines: [DeviceLineIdentity] {
-        model.devices.filter { $0.simKind == .eSIM && $0.simID != nil }
-    }
-
-    private func lineSubtitle(for line: DeviceLineIdentity) -> String {
-        let number = line.phoneNumber.isEmpty ? String(localized: "No phone number") : line.phoneNumber
-        return "SIM \(line.numericID) · \(number)"
     }
 
     private func line(for sim: ManagedSIM) -> DeviceLineIdentity? {

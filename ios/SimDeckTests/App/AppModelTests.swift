@@ -4,6 +4,7 @@
 
 import Foundation
 import XCTest
+import RelayProtocol
 @testable import SimDeck
 
 final class AppModelTests: XCTestCase {
@@ -175,7 +176,13 @@ final class AppModelTests: XCTestCase {
         model.bootstrapInstallation()
         await model.refreshDevices()
 
-        XCTAssertEqual(network.requestPaths, ["/v1/app-installations", "/v1/devices"])
+        XCTAssertEqual(
+            network.requestPaths,
+            [
+                "/relay.communication.v1.OwnerService/RegisterAppInstallation",
+                "/relay.communication.v1.OwnerService/ListDevices",
+            ]
+        )
         XCTAssertEqual(model.installationID, identity.id)
         XCTAssertTrue(model.installationTrust?.isApproved == true)
     }
@@ -228,7 +235,16 @@ final class AppModelTests: XCTestCase {
             remoteNumber: "13500000000",
             contactName: nil,
             unreadCount: 0,
-            messages: []
+            messages: [
+                MessageItem(
+                    id: UUID(),
+                    direction: .received,
+                    body: "hello",
+                    attachment: nil,
+                    sentAt: .now,
+                    status: .delivered
+                )
+            ]
         )
         try messageStore.save([conversation], using: vaultKey)
         let model = AppModel(
@@ -313,9 +329,8 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(
             network.requests.map { ($0.httpMethod ?? "") + " " + ($0.url?.path ?? "") },
             [
-                "DELETE /v1/app-installations/\(identity.id.uuidString.lowercased())/push-tokens/voip",
-                "DELETE /v1/app-installations/\(identity.id.uuidString.lowercased())/push-tokens/alert",
-                "POST /v1/auth/logout",
+                "POST /relay.communication.v1.OwnerService/DeletePushToken",
+                "POST /relay.communication.v1.OwnerService/DeletePushToken",
             ]
         )
         XCTAssertNil(sharedDefaults.data(forKey: NotificationSharedState.deviceKeysKey))
@@ -365,7 +380,14 @@ final class AppModelTests: XCTestCase {
         )
         XCTAssertEqual(model.devices.first?.numericID, 7)
         XCTAssertEqual(model.devices.first?.phoneNumber, "13500000000")
-        XCTAssertEqual(network.requestMethods, ["PUT", "PATCH", "GET"])
+        XCTAssertEqual(
+            network.requestPaths,
+            [
+                "/relay.communication.v1.OwnerService/UpdateDeviceProfile",
+                "/relay.communication.v1.OwnerService/UpdateDeviceNumericId",
+                "/relay.communication.v1.OwnerService/ListDevices",
+            ]
+        )
     }
 
     @MainActor
@@ -430,7 +452,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertNil(model.defaultCallLineID)
         XCTAssertNil(model.defaultMessageLineID)
         XCTAssertNil(model.lastSuccessfulDialLineID)
-        XCTAssertEqual(network.requestMethods, ["DELETE"])
+        XCTAssertEqual(network.requestPaths, ["/relay.communication.v1.OwnerService/RevokeDevice"])
     }
 
     @MainActor
@@ -479,10 +501,10 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(
             network.requestPaths,
             [
-                "/v1/devices/\(deviceID.uuidString.lowercased())/profile",
-                "/v1/sims/\(simID.uuidString.lowercased())/profile",
-                "/v1/sims/\(simID.uuidString.lowercased())/numeric-id",
-                "/v1/devices"
+                "/relay.communication.v1.OwnerService/UpdateDeviceProfile",
+                "/relay.communication.v1.OwnerService/UpdateSimProfile",
+                "/relay.communication.v1.OwnerService/UpdateSimNumericId",
+                "/relay.communication.v1.OwnerService/ListDevices",
             ]
         )
         XCTAssertEqual(model.devices.first?.id, slotID)
@@ -541,7 +563,7 @@ private final class AppModelServerNetwork: ServerNetworking {
 
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         requestCount += 1
-        XCTAssertEqual(request.url?.path, "/v1/devices")
+        XCTAssertEqual(request.url?.path, "/relay.communication.v1.OwnerService/ListDevices")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access")
         let key = Data(repeating: 4, count: 32).base64EncodedString()
         let body = Data("""
@@ -646,35 +668,42 @@ private final class AppModelDeviceManagementNetwork: ServerNetworking {
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         requestMethods.append(request.httpMethod ?? "")
         requestPaths.append(request.url?.path ?? "")
-        let deviceBasePath = "/v1/devices/\(deviceID.uuidString.lowercased())"
-        let lineBasePath = simID.map { "/v1/sims/\($0.uuidString.lowercased())" } ?? deviceBasePath
         let body: Data
         let status: Int
         switch (request.httpMethod, request.url?.path) {
-        case ("PUT", "\(deviceBasePath)/profile") where simID != nil:
-            let object = try XCTUnwrap(
-                JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+        case ("POST", "/relay.communication.v1.OwnerService/UpdateDeviceProfile"):
+            let object = try Relay_Communication_V1_UpdateDeviceProfileRequest(
+                serializedBytes: request.httpBody ?? Data()
             )
-            deviceProfileCiphertext = Data(base64Encoded: try XCTUnwrap(object["profile_ciphertext"] as? String))
+            if simID != nil, object.id == deviceID.uuidString.lowercased() {
+                deviceProfileCiphertext = object.profileCiphertext
+            } else {
+                profileCiphertext = object.profileCiphertext
+            }
             body = Data()
             status = 204
-        case ("PUT", "\(lineBasePath)/profile"):
-            let object = try XCTUnwrap(
-                JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+        case ("POST", "/relay.communication.v1.OwnerService/UpdateSimProfile"):
+            let object = try Relay_Communication_V1_UpdateSimProfileRequest(
+                serializedBytes: request.httpBody ?? Data()
             )
-            profileCiphertext = Data(
-                base64Encoded: try XCTUnwrap(object["profile_ciphertext"] as? String)
-            )
+            profileCiphertext = object.profileCiphertext
             body = Data()
             status = 204
-        case ("PATCH", "\(lineBasePath)/numeric-id"):
-            let object = try XCTUnwrap(
-                JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+        case ("POST", "/relay.communication.v1.OwnerService/UpdateDeviceNumericId"):
+            let object = try Relay_Communication_V1_UpdateDeviceNumericIdRequest(
+                serializedBytes: request.httpBody ?? Data()
             )
-            numericID = try XCTUnwrap(object["numeric_id"] as? Int)
+            numericID = Int(object.numericID)
             body = Data()
             status = 204
-        case ("GET", "/v1/devices"):
+        case ("POST", "/relay.communication.v1.OwnerService/UpdateSimNumericId"):
+            let object = try Relay_Communication_V1_UpdateSimNumericIdRequest(
+                serializedBytes: request.httpBody ?? Data()
+            )
+            numericID = Int(object.numericID)
+            body = Data()
+            status = 204
+        case ("POST", "/relay.communication.v1.OwnerService/ListDevices"):
             let slots = if let slotID, let simID {
                 """
                 ,"slots":[{
@@ -699,7 +728,7 @@ private final class AppModelDeviceManagementNetwork: ServerNetworking {
                 }]}
                 """.utf8)
             status = 200
-        case ("DELETE", deviceBasePath):
+        case ("POST", "/relay.communication.v1.OwnerService/RevokeDevice"):
             body = Data()
             status = 204
         default:
@@ -734,22 +763,13 @@ private final class AppModelInstallationNetwork: ServerNetworking {
         let body: Data
         let status: Int
         switch (request.httpMethod, path) {
-        case ("POST", "/v1/app-installations"):
-            let object = try XCTUnwrap(
-                JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+        case ("POST", "/relay.communication.v1.OwnerService/RegisterAppInstallation"):
+            let object = try Relay_Communication_V1_RegisterAppInstallationRequest(
+                serializedBytes: request.httpBody ?? Data()
             )
-            XCTAssertEqual(
-                (object["installation_id"] as? String).flatMap(UUID.init(uuidString:)),
-                identity.id
-            )
-            XCTAssertEqual(
-                object["identity_public_key"] as? String,
-                try identity.signingPublicKey().base64EncodedString()
-            )
-            XCTAssertEqual(
-                object["key_agreement_public_key"] as? String,
-                try identity.keyAgreementPublicKey().base64EncodedString()
-            )
+            XCTAssertEqual(UUID(uuidString: object.installationID), identity.id)
+            XCTAssertEqual(object.identityPublicKey, try identity.signingPublicKey())
+            XCTAssertEqual(object.keyAgreementPublicKey, try identity.keyAgreementPublicKey())
             body = Data("""
             {"installation":{
               "installation_id":"\(identity.id.uuidString.lowercased())",
@@ -760,7 +780,7 @@ private final class AppModelInstallationNetwork: ServerNetworking {
             },"created":true}
             """.utf8)
             status = 201
-        case ("GET", "/v1/devices"):
+        case ("POST", "/relay.communication.v1.OwnerService/ListDevices"):
             body = Data("{\"devices\":[]}".utf8)
             status = 200
         default:
@@ -796,7 +816,7 @@ private final class AppModelSignInNetwork: ServerNetworking {
             {"access_token":"access","refresh_token":"refresh","access_expires_at":"2098-01-01T00:00:00Z","refresh_expires_at":"2099-01-01T00:00:00Z"}
             """.utf8)
             status = 201
-        case ("GET", "/v1/devices"):
+        case ("POST", "/relay.communication.v1.OwnerService/ListDevices"):
             let key = Data(repeating: 5, count: 32).base64EncodedString()
             body = Data("""
             {"devices":[{"device_uuid":"\(deviceID.uuidString.lowercased())","numeric_id":5,"profile_ciphertext":"","identity_public_key":"","command_public_key":"\(key)","paired_at":"2026-10-16T00:00:00Z"}]}

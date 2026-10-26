@@ -186,6 +186,9 @@
     "Account deletion is not available until the server exposes the authenticated deletion endpoint." : {
 
     },
+    "Activation Code" : {
+
+    },
     "Active" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -196,6 +199,12 @@
           }
         }
       }
+    },
+    "Add" : {
+
+    },
+    "Add Cellular Plan" : {
+
     },
     "Add Contact" : {
 
@@ -213,7 +222,14 @@
     "Add Name" : {
 
     },
+    "Add Node" : {
+
+    },
+    "Add a cellular plan with a QR code or an activation code from your carrier." : {
+
+    },
     "Add a device in Device Management." : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -223,7 +239,16 @@
         }
       }
     },
+    "Add a node in Node Management." : {
+
+    },
     "Add attachment" : {
+
+    },
+    "Add eSIM" : {
+
+    },
+    "Add eSIM profile" : {
 
     },
     "Add image" : {
@@ -633,6 +658,15 @@
           }
         }
       }
+    },
+    "Cellular Plan" : {
+
+    },
+    "Cellular Plan Label" : {
+
+    },
+    "Cellular Plans" : {
+
     },
     "Cellular signal" : {
       "localizations" : {
@@ -1118,6 +1152,12 @@
         }
       }
     },
+    "Delete eSIM" : {
+
+    },
+    "Delete this eSIM?" : {
+
+    },
     "Delete this offline SIM?" : {
 
     },
@@ -1172,6 +1212,7 @@
       }
     },
     "Device Management" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1378,6 +1419,12 @@
     "Ending…" : {
 
     },
+    "Enter Details Manually" : {
+
+    },
+    "Enter Manually" : {
+
+    },
     "Enter a phone number." : {
       "localizations" : {
         "zh-Hans" : {
@@ -1398,6 +1445,9 @@
         }
       }
     },
+    "Enter a valid eSIM activation code." : {
+
+    },
     "Enter a valid phone number." : {
       "localizations" : {
         "zh-Hans" : {
@@ -1417,6 +1467,9 @@
           }
         }
       }
+    },
+    "Enter the activation code provided by your carrier." : {
+
     },
     "Expires" : {
       "extractionState" : "stale",
@@ -1559,6 +1612,9 @@
         }
       }
     },
+    "ICCID" : {
+
+    },
     "Identity" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1663,6 +1719,9 @@
         }
       }
     },
+    "LPA:1$…" : {
+
+    },
     "License Unavailable" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1743,6 +1802,9 @@
           }
         }
       }
+    },
+    "Loading profiles…" : {
+
     },
     "Loading slot controls…" : {
       "localizations" : {
@@ -1829,6 +1891,9 @@
           }
         }
       }
+    },
+    "Manage the cellular profiles installed on this eSIM." : {
+
     },
     "Mark as Read" : {
       "localizations" : {
@@ -2061,6 +2126,7 @@
       }
     },
     "No Devices" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2089,6 +2155,9 @@
           }
         }
       }
+    },
+    "No Nodes" : {
+
     },
     "No SIM Cards" : {
       "localizations" : {
@@ -2153,6 +2222,9 @@
         }
       }
     },
+    "No eSIM Profiles" : {
+
+    },
     "No messages yet" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2193,6 +2265,9 @@
           }
         }
       }
+    },
+    "Node Management" : {
+
     },
     "Not Connected" : {
       "localizations" : {
@@ -2365,6 +2440,9 @@
         }
       }
     },
+    "Operator" : {
+
+    },
     "Other trusted iPhones are managed during installation approval." : {
 
     },
@@ -2465,6 +2543,15 @@
         }
       }
     },
+    "Passkey authorization was cancelled." : {
+
+    },
+    "Passkey registration failed." : {
+
+    },
+    "Passkey sign-in failed." : {
+
+    },
     "Permission" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2508,6 +2595,9 @@
     "Photos" : {
 
     },
+    "Physical SIM" : {
+
+    },
     "Pin" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2547,6 +2637,9 @@
           }
         }
       }
+    },
+    "Profile ID" : {
+
     },
     "Protect App Reinstallation" : {
       "localizations" : {
@@ -2743,6 +2836,9 @@
         }
       }
     },
+    "Restoring history…" : {
+
+    },
     "Result" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -2881,6 +2977,9 @@
         }
       }
     },
+    "SIM Card Unavailable" : {
+
+    },
     "SIM Cards" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2911,6 +3010,9 @@
           }
         }
       }
+    },
+    "SIM Information" : {
+
     },
     "SIM Line:" : {
 
@@ -2968,6 +3070,9 @@
           }
         }
       }
+    },
+    "Scan QR Code" : {
+
     },
     "Search" : {
       "localizations" : {
@@ -3457,6 +3562,9 @@
         }
       }
     },
+    "The configured server address cannot open the passkey page." : {
+
+    },
     "The device did not respond in time." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3492,6 +3600,9 @@
           }
         }
       }
+    },
+    "The eSIM device is offline." : {
+
     },
     "The modem credential will stop working immediately. This action cannot be undone." : {
       "localizations" : {
@@ -3535,6 +3646,9 @@
           }
         }
       }
+    },
+    "The passkey callback state is invalid." : {
+
     },
     "The real-time event connection is unavailable." : {
 
@@ -3712,6 +3826,9 @@
     "This conversation is no longer available." : {
 
     },
+    "This eSIM profile is already installed." : {
+
+    },
     "This iPhone" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3735,6 +3852,9 @@
         }
       }
     },
+    "This modem does not expose eSIM profile management." : {
+
+    },
     "This permanently deletes the owner account, devices, messages, attachments, and call history from the server." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3744,6 +3864,9 @@
           }
         }
       }
+    },
+    "This removes the profile from the eSIM. It cannot be restored from Sim Deck." : {
+
     },
     "This section is ready for its feature implementation." : {
       "localizations" : {
@@ -3811,6 +3934,9 @@
         }
       }
     },
+    "Turn On This Line" : {
+
+    },
     "Turn on Device Discovery to add a modem." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3832,7 +3958,13 @@
         }
       }
     },
-    "Turn on Device Discovery, then start one Linux modem container for each modem." : {
+    "Turn on Node Discovery, then start the modem container on the host." : {
+
+    },
+    "Turn on a plan to use it for calls, messages, or data. Only one plan can be active on this line." : {
+
+    },
+    "Type" : {
 
     },
     "UDP" : {
@@ -3876,6 +4008,9 @@
       }
     },
     "Unable to Mark Calls as Read" : {
+
+    },
+    "Unable to open Safari for passkey authorization." : {
 
     },
     "Unavailable" : {
@@ -3938,6 +4073,9 @@
         }
       }
     },
+    "Unnamed eSIM" : {
+
+    },
     "Unpin" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3949,6 +4087,9 @@
       }
     },
     "Unread" : {
+
+    },
+    "Use QR Code" : {
 
     },
     "Use unique device mappings and a unique state volume." : {
@@ -4087,6 +4228,15 @@
           }
         }
       }
+    },
+    "eSIM" : {
+
+    },
+    "eSIM Configuration" : {
+
+    },
+    "eSIM Unavailable" : {
+
     },
     "iCloud Keychain recovery" : {
       "localizations" : {

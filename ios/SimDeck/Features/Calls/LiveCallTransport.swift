@@ -944,6 +944,7 @@ struct CallCommandResult: Codable, Equatable, Sendable {
     let callState: String?
     let mediaAnswer: String?
     let slotSettings: SlotSettings?
+    let esimProfiles: [DeviceESIMProfile]?
 
     init(
         version: Int,
@@ -951,7 +952,8 @@ struct CallCommandResult: Codable, Equatable, Sendable {
         errorCode: String? = nil,
         callState: String? = nil,
         mediaAnswer: String? = nil,
-        slotSettings: SlotSettings? = nil
+        slotSettings: SlotSettings? = nil,
+        esimProfiles: [DeviceESIMProfile]? = nil
     ) {
         self.version = version
         self.success = success
@@ -959,6 +961,7 @@ struct CallCommandResult: Codable, Equatable, Sendable {
         self.callState = callState
         self.mediaAnswer = mediaAnswer
         self.slotSettings = slotSettings
+        self.esimProfiles = esimProfiles
     }
 
     enum CodingKeys: String, CodingKey {
@@ -968,6 +971,7 @@ struct CallCommandResult: Codable, Equatable, Sendable {
         case callState = "call_state"
         case mediaAnswer = "media_answer"
         case slotSettings = "slot_settings"
+        case esimProfiles = "esim_profiles"
     }
 }
 

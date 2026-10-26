@@ -9,13 +9,30 @@ struct DeviceProfile: Codable, Equatable, Sendable {
     var deviceName: String
     var lineName: String
     var phoneNumber: String
+    var simKind: SIMCardKind
 
     static let empty = DeviceProfile(deviceName: "", lineName: "", phoneNumber: "")
+
+    init(deviceName: String, lineName: String, phoneNumber: String, simKind: SIMCardKind = .physical) {
+        self.deviceName = deviceName
+        self.lineName = lineName
+        self.phoneNumber = phoneNumber
+        self.simKind = simKind
+    }
 
     enum CodingKeys: String, CodingKey {
         case deviceName = "device_name"
         case lineName = "line_name"
         case phoneNumber = "phone_number"
+        case simKind = "sim_kind"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        deviceName = try container.decode(String.self, forKey: .deviceName)
+        lineName = try container.decode(String.self, forKey: .lineName)
+        phoneNumber = try container.decode(String.self, forKey: .phoneNumber)
+        simKind = try container.decodeIfPresent(SIMCardKind.self, forKey: .simKind) ?? .physical
     }
 }
 

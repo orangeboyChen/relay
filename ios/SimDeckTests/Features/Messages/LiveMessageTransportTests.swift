@@ -279,7 +279,8 @@ final class LiveMessageTransportTests: XCTestCase {
                 DetectedSIMProfile(
                     lineID: api.line.id,
                     lineName: "CHINA MOBILE",
-                    phoneNumber: "+8613500000000"
+                    phoneNumber: "+8613500000000",
+                    simKind: .physical
                 ),
             ]
         )
@@ -668,6 +669,7 @@ private final class MessageCommandAPIFake: EncryptedCallCommandAPI {
             numericID: line.numericID,
             phoneNumber: phoneNumber,
             lineName: lineName,
+            simKind: nil,
             installationID: installationIdentity.id
         )
         let nonce = Data(repeating: UInt8(sequence), count: 12)

@@ -24,7 +24,7 @@ struct NodeManagementScreen: View {
                                 NavigationLink {
                                     DeviceSettingsScreen(model: model, line: device.lines[0])
                                 } label: {
-                                    Label("Device Settings", systemImage: "externaldrive.badge.gearshape")
+                                    Label("Device Settings", systemImage: "gearshape")
                                 }
                                 ForEach(device.lines) { line in
                                     DeviceSlotListRow(model: model, line: line)
@@ -136,7 +136,11 @@ private struct DeviceSlotListRow: View {
 
     var body: some View {
         NavigationLink {
-            SlotSettingsScreen(model: model, line: line)
+            if line.simID != nil {
+                SIMSettingsScreen(model: model, line: line)
+            } else {
+                SlotSettingsScreen(model: model, line: line)
+            }
         } label: {
             VStack {
                 DeviceSlotRow(line: line)

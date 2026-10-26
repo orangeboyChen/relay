@@ -4,6 +4,13 @@
 
 import SwiftUI
 
+enum ProfileNavigationRoute: Hashable {
+    case nodeManagement
+    case simManagement
+    case settings
+    case sim(UUID)
+}
+
 struct ProfileScreen: View {
     let model: AppModel
 
@@ -18,19 +25,13 @@ struct ProfileScreen: View {
             )
 
             Section {
-                NavigationLink {
-                    NodeManagementScreen(model: model)
-                } label: {
+                NavigationLink(value: ProfileNavigationRoute.nodeManagement) {
                     Label("Node Management", systemImage: "server.rack")
                 }
-                NavigationLink {
-                    SIMManagementScreen(model: model)
-                } label: {
+                NavigationLink(value: ProfileNavigationRoute.simManagement) {
                     Label("SIM Cards", systemImage: "simcard")
                 }
-                NavigationLink {
-                    SettingsScreen(model: model)
-                } label: {
+                NavigationLink(value: ProfileNavigationRoute.settings) {
                     Label("Settings", systemImage: "gearshape")
                 }
             }
@@ -87,9 +88,7 @@ private struct SIMCardsSection: View {
                 EmptySIMCardsRow()
             } else {
                 ForEach(lines) { line in
-                    NavigationLink {
-                        SIMSettingsScreen(model: model, line: line)
-                    } label: {
+                    NavigationLink(value: ProfileNavigationRoute.sim(line.id)) {
                         SIMRadioStatusRow(
                             line: line,
                             serviceState: serviceStates[line.id]

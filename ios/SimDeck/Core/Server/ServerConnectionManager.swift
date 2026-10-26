@@ -924,7 +924,8 @@ final class ServerConnectionManager {
                         phoneNumber: slotProfile.phoneNumber,
                         isOnline: isOnline,
                         radioStatus: slotRadioStatus,
-                        commandPublicKey: device.commandPublicKey
+                        commandPublicKey: device.commandPublicKey,
+                        simKind: slotProfile.simKind
                     )
                 }
             }

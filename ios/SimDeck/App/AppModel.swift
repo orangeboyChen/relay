@@ -144,7 +144,10 @@ final class AppModel {
             api: resolvedServerConnection,
             commandSigner: resolvedCommandSigner
         )
-        self.esimProfileManager = esimProfileManager ?? LiveESIMProfileManager(server: resolvedServerConnection)
+        self.esimProfileManager = esimProfileManager ?? LiveESIMProfileManager(
+            server: resolvedServerConnection,
+            device: LiveESIMDeviceProfileTransport(api: resolvedServerConnection, commandSigner: resolvedCommandSigner)
+        )
         self.remoteDeviceRefreshEnabled = remoteDeviceRefreshEnabled
         self.messageEventMonitor = nil
         reconcileLineHistory(using: devices)
@@ -709,14 +712,14 @@ final class AppModel {
             try await serverConnection.updateDeviceProfile(
                 deviceID: line.deviceID,
                 profileCiphertext: try DeviceProfileCodec.seal(
-                    DeviceProfile(deviceName: profile.deviceName, lineName: "", phoneNumber: ""),
+                    DeviceProfile(deviceName: profile.deviceName, lineName: "", phoneNumber: "", simKind: line.simKind),
                     using: recoveredVaultKey
                 )
             )
             try await serverConnection.updateSIMProfile(
                 simID: simID,
                 profileCiphertext: try DeviceProfileCodec.seal(
-                    DeviceProfile(deviceName: "", lineName: profile.lineName, phoneNumber: profile.phoneNumber),
+                    DeviceProfile(deviceName: "", lineName: profile.lineName, phoneNumber: profile.phoneNumber, simKind: line.simKind),
                     using: recoveredVaultKey
                 )
             )
@@ -760,7 +763,8 @@ final class AppModel {
             DeviceProfile(
                 deviceName: "",
                 lineName: lineName.trimmingCharacters(in: .whitespacesAndNewlines),
-                phoneNumber: phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+                phoneNumber: phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines),
+                simKind: line.simKind
             ),
             using: recoveredVaultKey
         )
@@ -1124,9 +1128,10 @@ final class AppModel {
             let phoneNumber = line.phoneNumber.isEmpty
                 ? DialString.normalized(detected.phoneNumber)
                 : line.phoneNumber
-            guard lineName != line.lineName || phoneNumber != line.phoneNumber else { continue }
+            let simKind = detected.simKind
+            guard lineName != line.lineName || phoneNumber != line.phoneNumber || simKind != line.simKind else { continue }
             let ciphertext = try DeviceProfileCodec.seal(
-                DeviceProfile(deviceName: "", lineName: lineName, phoneNumber: phoneNumber),
+                DeviceProfile(deviceName: "", lineName: lineName, phoneNumber: phoneNumber, simKind: simKind),
                 using: recoveredVaultKey
             )
             try await serverConnection.updateSIMProfile(

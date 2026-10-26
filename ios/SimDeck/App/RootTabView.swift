@@ -127,6 +127,27 @@ struct RootTabView: View {
                 .navigationDestination(for: ContactRecord.self) { contact in
                     contactDetailDestination(for: contact)
                 }
+                .navigationDestination(for: ProfileNavigationRoute.self) { route in
+                    profileDestination(for: route)
+                }
+        }
+    }
+
+    @ViewBuilder
+    private func profileDestination(for route: ProfileNavigationRoute) -> some View {
+        switch route {
+        case .nodeManagement:
+            NodeManagementScreen(model: model)
+        case .simManagement:
+            SIMManagementScreen(model: model)
+        case .settings:
+            SettingsScreen(model: model)
+        case .sim(let lineID):
+            if let line = model.devices.first(where: { $0.id == lineID }) {
+                SIMSettingsScreen(model: model, line: line)
+            } else {
+                ContentUnavailableView("SIM Card Unavailable", systemImage: "simcard")
+            }
         }
     }
 

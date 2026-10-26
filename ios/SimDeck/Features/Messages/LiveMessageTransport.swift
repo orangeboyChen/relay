@@ -58,6 +58,7 @@ struct DetectedSIMProfile: Equatable, Sendable {
     let lineID: UUID
     let lineName: String
     let phoneNumber: String
+    let simKind: SIMCardKind
 }
 
 @MainActor
@@ -404,7 +405,8 @@ final class LiveMessageTransport: MessageTransport {
                     DetectedSIMProfile(
                         lineID: matchingLines[0].id,
                         lineName: payload.lineName,
-                        phoneNumber: payload.phoneNumber
+                        phoneNumber: payload.phoneNumber,
+                        simKind: SIMCardKind(rawValue: payload.simKind ?? "physical") ?? .physical
                     )
                 )
             }
@@ -632,6 +634,7 @@ struct IncomingSIMProfilePayload: Codable, Equatable, Sendable {
     let numericID: Int
     let phoneNumber: String
     let lineName: String
+    let simKind: String?
     let installationID: UUID
 
     enum CodingKeys: String, CodingKey {
@@ -642,6 +645,7 @@ struct IncomingSIMProfilePayload: Codable, Equatable, Sendable {
         case numericID = "numeric_id"
         case phoneNumber = "phone_number"
         case lineName = "line_name"
+        case simKind = "sim_kind"
         case installationID = "installation_id"
     }
 }

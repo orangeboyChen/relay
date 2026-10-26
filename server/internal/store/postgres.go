@@ -1275,7 +1275,6 @@ func (store *Postgres) UpsertESIMProfile(ctx context.Context, profile ESIMProfil
 			name = EXCLUDED.name,
 			iccid = EXCLUDED.iccid,
 			operator_name = EXCLUDED.operator_name,
-			is_enabled = EXCLUDED.is_enabled,
 			updated_at = now()
 		RETURNING sim_id::text, profile_id, name, iccid, operator_name, is_enabled, created_at, updated_at`,
 		profile.SIMID, profile.ProfileID, profile.Name, profile.ICCID, profile.OperatorName, profile.IsEnabled,

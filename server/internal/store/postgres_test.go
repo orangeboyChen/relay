@@ -43,6 +43,7 @@ var _ = Describe("Embedded schema", func() {
 			[]byte("encrypted_device_commands"),
 			[]byte("incoming_call_notifications"),
 			[]byte("device_discoveries"),
+			[]byte("esim_profiles"),
 		} {
 			Expect(schema).To(ContainSubstring(string(table)))
 		}

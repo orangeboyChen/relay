@@ -12,6 +12,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -21,6 +23,7 @@ import (
 	"sim-deck-device/internal/call"
 	"sim-deck-device/internal/callevent"
 	"sim-deck-device/internal/command"
+	"sim-deck-device/internal/discovery"
 	"sim-deck-device/internal/identity"
 	"sim-deck-device/internal/incomingcall"
 	"sim-deck-device/internal/media"
@@ -53,6 +56,10 @@ func main() {
 }
 
 func run(ctx context.Context, config agent.Config, logger *slog.Logger) error {
+	if config.DiscoveryMode == agent.DiscoveryModeAuto {
+		logger.Info("node agent starting", "server_url", config.ServerURL, "discovery_mode", config.DiscoveryMode, "device_root", config.DeviceRoot, "sysfs_root", config.SysfsRoot, "health_address", config.HealthAddress)
+		return runAuto(ctx, config, logger)
+	}
 	logger.Info(
 		"device agent starting",
 		"server_url", config.ServerURL,
@@ -68,6 +75,119 @@ func run(ctx context.Context, config agent.Config, logger *slog.Logger) error {
 		runDevice:          runDevice,
 		deviceDependencies: productionDependencies(nil),
 	})
+}
+
+// runAuto manages one worker per modem visible in the node container.
+func runAuto(ctx context.Context, config agent.Config, logger *slog.Logger) error {
+	modems, err := discovery.Discover(ctx, config.DeviceRoot, config.SysfsRoot)
+	if err != nil {
+		return fmt.Errorf("discover modem topology: %w", err)
+	}
+	nodeID := readNodeID()
+	logger.Info("node topology discovered", "platform", runtime.GOOS, "node_id", nodeID, "modem_count", len(modems), "tree", discovery.Tree(modems, nodeID, runtime.GOOS))
+
+	var ready atomic.Bool
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", config.HealthAddress)
+	if err != nil {
+		return fmt.Errorf("listen for node health checks: %w", err)
+	}
+	server := healthServer(config.HealthAddress, &ready)
+	serverResult := make(chan error, 1)
+	go func() { serverResult <- server.Serve(listener) }()
+	defer func() {
+		shutdownContext, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer shutdownCancel()
+		_ = server.Shutdown(shutdownContext)
+	}()
+
+	runContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	dependencies := productionDependencies(nil)
+	type worker struct {
+		ready  atomic.Bool
+		result chan error
+	}
+	workers := make([]*worker, 0, len(modems))
+	for _, modem := range modems {
+		workerConfig := config
+		workerConfig.DiscoveryMode = agent.DiscoveryModeSingle
+		workerConfig.DeviceUUID = ""
+		workerConfig.ATDevice = modem.ATDevice
+		workerConfig.ALSACaptureDevice = modem.ALSACapture
+		workerConfig.ALSAPlaybackDevice = modem.ALSAPlayback
+		workerConfig.StateDirectory = filepath.Join(config.StateDirectory, "devices", modem.Serial)
+		workerConfig.HealthAddress = "127.0.0.1:0"
+		item := &worker{result: make(chan error, 1)}
+		workers = append(workers, item)
+		workerLogger := logger.With("usb_serial", modem.Serial, "at_device", modem.ATDevice)
+		go func(item *worker, workerConfig agent.Config, workerLogger *slog.Logger) {
+			item.result <- runDevice(runContext, workerConfig, workerLogger, &item.ready, dependencies)
+		}(item, workerConfig, workerLogger)
+	}
+
+	checkTicker := time.NewTicker(100 * time.Millisecond)
+	defer checkTicker.Stop()
+	for {
+		allReady := true
+		for _, worker := range workers {
+			if !worker.ready.Load() {
+				allReady = false
+			}
+			select {
+			case workerError := <-worker.result:
+				cancel()
+				if workerError == nil {
+					return errors.New("modem worker stopped unexpectedly")
+				}
+				return fmt.Errorf("modem worker stopped: %w", workerError)
+			default:
+			}
+		}
+		if allReady {
+			ready.Store(true)
+			break
+		}
+		select {
+		case <-ctx.Done():
+			cancel()
+			return ctx.Err()
+		case serverError := <-serverResult:
+			cancel()
+			return meaningfulRuntimeError("health server", serverError)
+		case <-checkTicker.C:
+		}
+	}
+
+	for {
+		for _, worker := range workers {
+			select {
+			case workerError := <-worker.result:
+				cancel()
+				if workerError != nil && !errors.Is(workerError, context.Canceled) {
+					return fmt.Errorf("modem worker stopped: %w", workerError)
+				}
+				ready.Store(false)
+				return nil
+			default:
+			}
+		}
+		select {
+		case <-ctx.Done():
+			cancel()
+			return nil
+		case serverError := <-serverResult:
+			cancel()
+			return meaningfulRuntimeError("health server", serverError)
+		case <-checkTicker.C:
+		}
+	}
+}
+
+func readNodeID() string {
+	if data, err := os.ReadFile("/etc/machine-id"); err == nil && strings.TrimSpace(string(data)) != "" {
+		return strings.TrimSpace(string(data))
+	}
+	return "unavailable"
 }
 
 type runtimeDependencies struct {

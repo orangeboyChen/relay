@@ -96,7 +96,11 @@ container:
 Use this read-only mode to collect host paths for a Kubernetes or other
 externally managed deployment.
 
-## Install a Docker Compose deployment
+## Optional legacy single-modem Compose deployment
+
+Use this only when a platform cannot expose `/dev` and `/sys` to the node
+container or when an operator intentionally wants one container per modem. The
+normal deployment is `compose.node.yaml` above; it does not run this installer.
 
 Compose installation is an explicit opt-in. With `--install-compose`, the
 script creates:

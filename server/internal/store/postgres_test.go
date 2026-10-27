@@ -285,7 +285,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(record.KeyAgreementPublicKey).To(Equal(registration.KeyAgreementPublicKey))
 
 		var persisted appInstallationModel
-		Expect(database.db.First(&persisted, "id = ?", registration.ID)).To(Succeed())
+		Expect(database.db.First(&persisted, "id = ?", registration.ID).Error).To(Succeed())
 		Expect(persisted.KeyAgreementPublicKey).To(Equal(registration.KeyAgreementPublicKey))
 	})
 

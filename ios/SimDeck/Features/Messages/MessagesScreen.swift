@@ -83,19 +83,23 @@ struct MessagesScreen: View {
             case .loading:
                 ProgressView("Loading messages")
             case .loaded(let conversations) where conversations.isEmpty:
-                ContentUnavailableView(
-                    "No Messages",
-                    systemImage: "message",
-                    description: Text("Messages sent through sim-deck appear here.")
-                )
+                refreshableEmptyState {
+                    ContentUnavailableView(
+                        "No Messages",
+                        systemImage: "message",
+                        description: Text("Messages sent through sim-deck appear here.")
+                    )
+                }
             case .loaded(let conversations):
                 conversationList(conversations)
             case .failed:
-                ContentUnavailableView(
-                    "Messages Unavailable",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text("Check the server connection and try again.")
-                )
+                refreshableEmptyState {
+                    ContentUnavailableView(
+                        "Messages Unavailable",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text("Check the server connection and try again.")
+                    )
+                }
             }
         }
         .environment(\.editMode, $editMode)
@@ -145,13 +149,24 @@ struct MessagesScreen: View {
         .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
+    private func refreshableEmptyState<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        ScrollView {
+            content()
+                .frame(maxWidth: .infinity, minHeight: 260)
+        }
+    }
+
     private func conversationList(_ conversations: [MessageConversation]) -> some View {
         let contactIndex = ContactRecordIndex(contacts: contacts)
         let filtered = filteredConversations(conversations)
 
         return Group {
             if filtered.isEmpty {
-                ContentUnavailableView.search(text: searchText)
+                refreshableEmptyState {
+                    ContentUnavailableView.search(text: searchText)
+                }
             } else {
                 List(selection: editMode.isEditing ? $selectedConversationIDs : nil) {
                     ForEach(filtered) { conversation in

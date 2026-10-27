@@ -67,11 +67,13 @@ struct CallHistoryScreen: View {
             case .loading:
                 ProgressView("Loading calls")
             case .loaded(let records) where filtered(records).isEmpty:
-                ContentUnavailableView(
-                    emptyStateTitle,
-                    systemImage: "phone",
-                    description: Text("Calls made through sim-deck appear here.")
-                )
+                refreshableEmptyState {
+                    ContentUnavailableView(
+                        emptyStateTitle,
+                        systemImage: "phone",
+                        description: Text("Calls made through sim-deck appear here.")
+                    )
+                }
             case .loaded(let records):
                 let contactIndex = ContactRecordIndex(contacts: contacts)
                 let entries = CallHistoryEntry.grouped(filtered(records))
@@ -120,11 +122,13 @@ struct CallHistoryScreen: View {
                     pruneSelection(from: records)
                 }
             case .failed:
-                ContentUnavailableView(
-                    "Calls Unavailable",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text("Check the server connection and try again.")
-                )
+                refreshableEmptyState {
+                    ContentUnavailableView(
+                        "Calls Unavailable",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text("Check the server connection and try again.")
+                    )
+                }
             }
         }
         .scrollEdgeEffectStyle(.soft, for: .all)
@@ -182,6 +186,15 @@ struct CallHistoryScreen: View {
                 deleteSelectedEntries()
             }
             Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private func refreshableEmptyState<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        ScrollView {
+            content()
+                .frame(maxWidth: .infinity, minHeight: 260)
         }
     }
 

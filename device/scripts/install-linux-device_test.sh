@@ -31,7 +31,7 @@ grep -Fq 'SYMLINK+="sim-deck/modem-1-at"' <<< "$rule"
 touch "$fixture/dev/ttyUSB2"
 inventory="$(SIM_DECK_DEV_ROOT="$fixture/dev" main)"
 grep -Fq 'Discovered 1 modem(s). No files were changed.' <<< "$inventory"
-grep -Fq "at_device: $fixture/dev/ttyUSB2" <<< "$inventory"
-grep -Fq "audio_capture: $fixture/dev/snd/pcmC2D0c" <<< "$inventory"
+grep -Fq "│   ├── host: $fixture/dev/ttyUSB2" <<< "$inventory"
+grep -Fq "│   ├── capture: $fixture/dev/snd/pcmC2D0c" <<< "$inventory"
 
 printf '%s\n' 'install-linux-device tests passed'

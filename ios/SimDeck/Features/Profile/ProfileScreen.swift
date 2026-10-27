@@ -5,7 +5,7 @@
 import SwiftUI
 
 enum ProfileNavigationRoute: Hashable {
-    case nodeManagement
+    case deviceManagement
     case simManagement
     case settings
     case sim(UUID)
@@ -25,8 +25,8 @@ struct ProfileScreen: View {
             )
 
             Section {
-                NavigationLink(value: ProfileNavigationRoute.nodeManagement) {
-                    Label("Node Management", systemImage: "server.rack")
+                NavigationLink(value: ProfileNavigationRoute.deviceManagement) {
+                    Label("Device Management", systemImage: "simcard.2")
                 }
                 NavigationLink(value: ProfileNavigationRoute.simManagement) {
                     Label("SIM Cards", systemImage: "simcard")
@@ -109,7 +109,7 @@ private struct EmptySIMCardsRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("No SIM Cards")
-                Text("Add a node in Node Management.")
+                Text("Add a device in Device Management.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

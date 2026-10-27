@@ -222,9 +222,6 @@
     "Add Name" : {
 
     },
-    "Add Node" : {
-
-    },
     "Add a cellular plan with a QR code or an activation code from your carrier." : {
 
     },
@@ -238,9 +235,6 @@
           }
         }
       }
-    },
-    "Add a node in Node Management." : {
-
     },
     "Add attachment" : {
 
@@ -2265,9 +2259,6 @@
           }
         }
       }
-    },
-    "Node Management" : {
-
     },
     "Not Connected" : {
       "localizations" : {

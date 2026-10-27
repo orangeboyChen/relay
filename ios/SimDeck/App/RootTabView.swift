@@ -136,8 +136,8 @@ struct RootTabView: View {
     @ViewBuilder
     private func profileDestination(for route: ProfileNavigationRoute) -> some View {
         switch route {
-        case .nodeManagement:
-            NodeManagementScreen(model: model)
+        case .deviceManagement:
+            DeviceManagementScreen(model: model)
         case .simManagement:
             SIMManagementScreen(model: model)
         case .settings:

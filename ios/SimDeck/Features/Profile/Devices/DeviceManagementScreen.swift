@@ -4,34 +4,31 @@
 
 import SwiftUI
 
-struct NodeManagementScreen: View {
+struct DeviceManagementScreen: View {
     let model: AppModel
 
-    @State private var isAddingNode = false
+    @State private var isAddingDevice = false
 
     var body: some View {
         Group {
             if model.devices.isEmpty {
-                NodeManagementEmptyState {
-                    isAddingNode = true
+                DeviceManagementEmptyState {
+                    isAddingDevice = true
                 }
             } else {
                 List {
-                    ForEach(NodeGroup.groups(from: model.devices)) { node in
+                    ForEach(DeviceGroup.groups(from: model.devices)) { group in
                         Section {
-                            ForEach(node.devices) { device in
-                                NodeDeviceHeaderRow(group: device)
-                                NavigationLink {
-                                    DeviceSettingsScreen(model: model, line: device.lines[0])
-                                } label: {
-                                    Label("Device Settings", systemImage: "gearshape")
-                                }
-                                ForEach(device.lines) { line in
-                                    DeviceSlotListRow(model: model, line: line)
-                                }
+                            NavigationLink {
+                                DeviceSettingsScreen(model: model, line: group.lines[0])
+                            } label: {
+                                Label("Device Settings", systemImage: "externaldrive.badge.gearshape")
+                            }
+                            ForEach(group.lines) { line in
+                                DeviceSlotListRow(model: model, line: line)
                             }
                         } header: {
-                            NodeHeader(node: node)
+                            DeviceGroupHeader(group: group)
                         }
                     }
                 }
@@ -40,78 +37,24 @@ struct NodeManagementScreen: View {
                 }
             }
         }
-        .navigationTitle("Node Management")
+        .navigationTitle("Device Management")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    isAddingNode = true
+                    isAddingDevice = true
                 } label: {
                     Image(systemName: "plus")
                 }
-                .accessibilityLabel("Add Node")
+                .accessibilityLabel("Add Device")
             }
         }
-        .sheet(isPresented: $isAddingNode) {
+        .sheet(isPresented: $isAddingDevice) {
             AddDeviceScreen(model: model)
         }
         .task {
             await model.refreshDevices()
         }
         .scrollEdgeEffectStyle(.soft, for: .all)
-    }
-}
-
-/// A node is the host/container that owns one or more modem devices.
-/// The current owner API exposes device records only, so each record is kept
-/// as a one-device node until the node identity fields are added to the API.
-private struct NodeGroup: Identifiable {
-    let id: UUID
-    let name: String
-    let devices: [DeviceGroup]
-
-    static func groups(from lines: [DeviceLineIdentity]) -> [NodeGroup] {
-        DeviceGroup.groups(from: lines).map { group in
-            NodeGroup(id: group.id, name: group.deviceName, devices: [group])
-        }
-    }
-}
-
-private struct NodeHeader: View {
-    let node: NodeGroup
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Label {
-                Text(node.name)
-                    .font(.headline)
-            } icon: {
-                Image(systemName: "server.rack")
-            }
-            Spacer(minLength: 8)
-            Text(node.devices.contains { $0.lines.contains(where: \.isOnline) }
-                 ? String(localized: "Online")
-                 : String(localized: "Offline"))
-                .font(.caption)
-                .foregroundStyle(node.devices.contains { $0.lines.contains(where: \.isOnline) } ? .green : .secondary)
-        }
-        .textCase(nil)
-    }
-}
-
-private struct NodeDeviceHeaderRow: View {
-    let group: DeviceGroup
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "externaldrive.connected.to.line.below")
-                .foregroundStyle(.secondary)
-            Text(group.deviceName)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
-            Spacer(minLength: 0)
-        }
-        .frame(minHeight: 32)
-        .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -127,6 +70,48 @@ private struct DeviceGroup: Identifiable {
         Dictionary(grouping: lines, by: \.deviceID)
             .map { DeviceGroup(id: $0.key, lines: $0.value.sorted { ($0.slotIndex ?? 0) < ($1.slotIndex ?? 0) }) }
             .sorted { $0.deviceName.localizedStandardCompare($1.deviceName) == .orderedAscending }
+    }
+}
+
+private struct DeviceGroupHeader: View {
+    let group: DeviceGroup
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                DeviceGroupHeaderLabel(group: group)
+                Spacer(minLength: 8)
+                DeviceGroupHeaderStatus(group: group)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                DeviceGroupHeaderLabel(group: group)
+                DeviceGroupHeaderStatus(group: group)
+            }
+        }
+        .textCase(nil)
+    }
+}
+
+private struct DeviceGroupHeaderLabel: View {
+    let group: DeviceGroup
+
+    var body: some View {
+        Label {
+            Text(group.deviceName)
+                .font(.headline)
+        } icon: {
+            Image(systemName: "externaldrive.connected.to.line.below")
+        }
+    }
+}
+
+private struct DeviceGroupHeaderStatus: View {
+    let group: DeviceGroup
+
+    var body: some View {
+        Text(group.lines.contains(where: \.isOnline) ? String(localized: "Online") : String(localized: "Offline"))
+            .font(.caption)
+            .foregroundStyle(group.lines.contains(where: \.isOnline) ? .green : .secondary)
     }
 }
 
@@ -181,17 +166,17 @@ private struct DeviceSlotRow: View {
     }
 }
 
-private struct NodeManagementEmptyState: View {
-    let addNode: () -> Void
+private struct DeviceManagementEmptyState: View {
+    let addDevice: () -> Void
 
     var body: some View {
         ContentUnavailableView {
-            Label("No Nodes", systemImage: "server.rack")
+            Label("No Devices", systemImage: "simcard.2")
         } description: {
-            Text("Turn on Node Discovery, then start the modem container on the host.")
+            Text("Turn on Device Discovery, then start one Linux modem container for each modem.")
         } actions: {
-            Button("Add Node") {
-                addNode()
+            Button("Add Device") {
+                addDevice()
             }
                 .buttonStyle(.borderedProminent)
         }
@@ -199,9 +184,9 @@ private struct NodeManagementEmptyState: View {
 }
 
 #if DEBUG
-#Preview("Node Management") {
+#Preview("Device Management") {
     NavigationStack {
-        NodeManagementScreen(
+        DeviceManagementScreen(
             model: .preview(
                 selectedTab: .profile,
                 devices: PreviewFixtures.deviceManagementDevices
@@ -210,25 +195,16 @@ private struct NodeManagementEmptyState: View {
     }
 }
 
-#Preview("Node Management - Empty") {
+#Preview("Device Management - Populated") {
     NavigationStack {
-        NodeManagementScreen(model: .preview(selectedTab: .profile, devices: []))
+        DeviceManagementScreen(model: .preview(selectedTab: .profile, devices: []))
     }
     .preferredColorScheme(.dark)
 }
 
-#Preview("Device Management - Compatibility") {
+#Preview("Device Management - Empty") {
     NavigationStack {
         DeviceManagementScreen(model: .preview(selectedTab: .profile, devices: PreviewFixtures.deviceManagementDevices))
     }
 }
 #endif
-
-/// Compatibility wrapper for previews and older internal navigation callers.
-struct DeviceManagementScreen: View {
-    let model: AppModel
-
-    var body: some View {
-        NodeManagementScreen(model: model)
-    }
-}

@@ -268,17 +268,14 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 			KeyAgreementPublicKey: bytes.Repeat([]byte{42}, 32),
 			WrappedVaultKey:       []byte("legacy wrapped vault key"),
 		}
-		_, err := database.pool.Exec(context.Background(), `
-			INSERT INTO app_installations (
-				id, owner_id, identity_public_key, wrapped_vault_key, approved_at
-			) VALUES ($1, $2, $3, $4, $5)`,
-			registration.ID,
-			owner.ID,
-			registration.IdentityPublicKey,
-			registration.WrappedVaultKey,
-			now,
-		)
-		Expect(err).NotTo(HaveOccurred())
+		Expect(database.db.Create(&appInstallationModel{
+			ID:                registration.ID,
+			OwnerID:           owner.ID,
+			IdentityPublicKey: registration.IdentityPublicKey,
+			WrappedVaultKey:   registration.WrappedVaultKey,
+			ApprovedAt:        ptrTime(now),
+			CreatedAt:         now,
+		})).To(Succeed())
 
 		record, created, err := database.RegisterAppInstallation(
 			context.Background(), owner.ID, registration, now.Add(time.Minute),
@@ -287,11 +284,9 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(created).To(BeFalse())
 		Expect(record.KeyAgreementPublicKey).To(Equal(registration.KeyAgreementPublicKey))
 
-		var persistedKey []byte
-		Expect(database.pool.QueryRow(context.Background(), `
-			SELECT key_agreement_public_key FROM app_installations WHERE id = $1`, registration.ID,
-		).Scan(&persistedKey)).To(Succeed())
-		Expect(persistedKey).To(Equal(registration.KeyAgreementPublicKey))
+		var persisted appInstallationModel
+		Expect(database.db.First(&persisted, "id = ?", registration.ID)).To(Succeed())
+		Expect(persisted.KeyAgreementPublicKey).To(Equal(registration.KeyAgreementPublicKey))
 	})
 
 	It("rejects malformed bearer credentials before querying PostgreSQL", func() {

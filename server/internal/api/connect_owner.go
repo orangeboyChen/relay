@@ -459,7 +459,7 @@ func (service *ownerService) ApproveDeviceDiscovery(ctx context.Context, request
 	if errors.Is(err, domain.ErrDeviceDiscoveryExpired) {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, err.Error())
 	}
-	if errors.Is(err, domain.ErrDeviceDiscoveryRejected) || errors.Is(err, domain.ErrDeviceExists) || errors.Is(err, domain.ErrNoNumericID) {
+	if errors.Is(err, domain.ErrDeviceDiscoveryRejected) || errors.Is(err, domain.ErrDeviceDiscoveryConflict) || errors.Is(err, domain.ErrDeviceExists) || errors.Is(err, domain.ErrNoNumericID) {
 		return nil, connect.NewError(connect.CodeAlreadyExists, err.Error())
 	}
 	if err != nil {

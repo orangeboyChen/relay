@@ -467,6 +467,46 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
 	})
 
+	It("re-approves a revoked device with a rotated credential", func() {
+		owner := createOwner()
+		identityKey := bytes.Repeat([]byte{41}, ed25519.PublicKeySize)
+		firstCredential := newToken()
+		firstCredentialHash, err := auth.TokenHash(firstCredential)
+		Expect(err).NotTo(HaveOccurred())
+		fingerprint := bytes.Repeat([]byte{43}, 32)
+		Expect(database.OpenDeviceDiscovery(context.Background(), owner.ID, now, now.Add(10*time.Minute))).To(Succeed())
+		_, err = database.SubmitDeviceDiscovery(context.Background(), now, DeviceDiscoveryRequest{
+			DeviceUUID: firstDeviceID, SlotKey: "primary", SlotIndex: 1, SIMFingerprint: fingerprint,
+			IdentityPublicKey: identityKey, CommandPublicKey: bytes.Repeat([]byte{44}, 32), CredentialHash: firstCredentialHash[:],
+		})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = database.ApproveDeviceDiscovery(context.Background(), owner.ID, firstDeviceID, now.Add(time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(database.RevokeDevice(context.Background(), firstDeviceID, now.Add(2*time.Minute))).To(Succeed())
+
+		secondCredential := newToken()
+		secondCredentialHash, err := auth.TokenHash(secondCredential)
+		Expect(err).NotTo(HaveOccurred())
+		secondCommandKey := bytes.Repeat([]byte{46}, 32)
+		Expect(database.OpenDeviceDiscovery(context.Background(), owner.ID, now.Add(3*time.Minute), now.Add(13*time.Minute))).To(Succeed())
+		discovery, err := database.SubmitDeviceDiscovery(context.Background(), now.Add(3*time.Minute), DeviceDiscoveryRequest{
+			DeviceUUID: firstDeviceID, SlotKey: "primary", SlotIndex: 1, SIMFingerprint: fingerprint,
+			IdentityPublicKey: identityKey, CommandPublicKey: secondCommandKey, CredentialHash: secondCredentialHash[:],
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(discovery.Status).To(Equal(DeviceDiscoveryPending))
+		restored, err := database.ApproveDeviceDiscovery(context.Background(), owner.ID, firstDeviceID, now.Add(4*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(restored.NumericID).To(Equal(1))
+		Expect(restored.Slots).To(HaveLen(1))
+		Expect(restored.Slots[0].SIMID).To(HaveValue(Equal(firstDeviceID)))
+		publicKey, err := database.AuthenticateDevice(context.Background(), firstDeviceID, secondCredential, now.Add(5*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(publicKey).To(Equal(identityKey))
+		_, err = database.AuthenticateDevice(context.Background(), firstDeviceID, firstCredential, now.Add(5*time.Minute))
+		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
+	})
+
 	It("binds the discovered physical slot and SIM fingerprint during approval", func() {
 		owner := createOwner()
 		fingerprint := bytes.Repeat([]byte{7}, 32)

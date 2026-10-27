@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -102,7 +103,52 @@ func (store *Postgres) SubmitDeviceDiscovery(ctx context.Context, now time.Time,
 			matches := existing.OwnerID == session.OwnerID && existing.SlotKey == request.SlotKey && existing.SlotIndex == request.SlotIndex && bytes.Equal(existing.IdentityPublicKey, request.IdentityPublicKey) && bytes.Equal(existing.CommandPublicKey, request.CommandPublicKey) && bytes.Equal(existingFingerprint, request.SIMFingerprint) && bytes.Equal(existing.CredentialHash, request.CredentialHash)
 			if existing.ExpiresAt.After(now) || existing.Status == string(DeviceDiscoveryApproved) {
 				if !matches {
-					return domain.ErrDeviceDiscoveryConflict
+					var revoked deviceModel
+					revokedErr := tx.Where("id = ? AND revoked_at IS NOT NULL", request.DeviceUUID).First(&revoked).Error
+					if existing.Status != string(DeviceDiscoveryApproved) || revokedErr != nil || existing.OwnerID != session.OwnerID || !bytes.Equal(revoked.IdentityPublicKey, request.IdentityPublicKey) {
+						return domain.ErrDeviceDiscoveryConflict
+					}
+					fingerprint := ""
+					if len(request.SIMFingerprint) > 0 {
+						fingerprint = hex.EncodeToString(request.SIMFingerprint)
+					}
+					updates := map[string]any{
+						"identity_public_key": append([]byte(nil), request.IdentityPublicKey...),
+						"command_public_key":  append([]byte(nil), request.CommandPublicKey...),
+						"credential_hash":     append([]byte(nil), request.CredentialHash...),
+						"slot_key":            request.SlotKey,
+						"slot_index":          request.SlotIndex,
+						"sim_fingerprint":     nil,
+						"status":              string(DeviceDiscoveryPending),
+						"first_seen_at":       now.UTC(),
+						"last_seen_at":        now.UTC(),
+						"expires_at":          session.ExpiresAt,
+						"decided_at":          nil,
+						"paired_device_id":    nil,
+					}
+					if fingerprint != "" {
+						updates["sim_fingerprint"] = fingerprint
+					}
+					if err := tx.Model(&existing).Updates(updates).Error; err != nil {
+						return fmt.Errorf("refresh revoked device discovery: %w", err)
+					}
+					existing.IdentityPublicKey = append([]byte(nil), request.IdentityPublicKey...)
+					existing.CommandPublicKey = append([]byte(nil), request.CommandPublicKey...)
+					existing.CredentialHash = append([]byte(nil), request.CredentialHash...)
+					existing.SlotKey = request.SlotKey
+					existing.SlotIndex = request.SlotIndex
+					existing.SIMFingerprint = nil
+					if fingerprint != "" {
+						existing.SIMFingerprint = &fingerprint
+					}
+					existing.Status = string(DeviceDiscoveryPending)
+					existing.FirstSeenAt = now.UTC()
+					existing.LastSeenAt = now.UTC()
+					existing.ExpiresAt = session.ExpiresAt
+					existing.DecidedAt = nil
+					existing.PairedDeviceID = nil
+					record = discoveryRecordFromModel(existing, request.SIMFingerprint)
+					return nil
 				}
 				if existing.Status == string(DeviceDiscoveryPending) {
 					if err := tx.Model(&existing).Update("last_seen_at", now.UTC()).Error; err != nil {
@@ -192,21 +238,7 @@ func (store *Postgres) ApproveDeviceDiscovery(ctx context.Context, ownerID strin
 		if !discovery.ExpiresAt.After(now) {
 			return domain.ErrDeviceDiscoveryExpired
 		}
-		numericID, err := allocateNumericID(tx)
-		if err != nil {
-			return err
-		}
 		pairedAt := now.UTC()
-		model := deviceModel{ID: deviceID, NumericID: numericID, ProfileCiphertext: []byte{}, IdentityPublicKey: append([]byte(nil), discovery.IdentityPublicKey...), CommandPublicKey: append([]byte(nil), discovery.CommandPublicKey...), PairedAt: pairedAt}
-		if err := tx.Create(&model).Error; err != nil {
-			if isUniqueViolation(err) {
-				return domain.ErrDeviceExists
-			}
-			return fmt.Errorf("insert discovered device: %w", err)
-		}
-		if err := tx.Create(&deviceCredentialModel{DeviceID: deviceID, CredentialHash: append([]byte(nil), discovery.CredentialHash...), CreatedAt: pairedAt}).Error; err != nil {
-			return fmt.Errorf("insert discovered device credential: %w", err)
-		}
 		slotKey, slotIndex := discovery.SlotKey, discovery.SlotIndex
 		if slotKey == "" {
 			slotKey = "1"
@@ -214,11 +246,97 @@ func (store *Postgres) ApproveDeviceDiscovery(ctx context.Context, ownerID strin
 		if slotIndex < 1 {
 			slotIndex = 1
 		}
-		record = deviceRecordFromModel(model)
-		if err := createSIMSlotDB(tx, deviceID, slotKey, slotIndex, deviceID, numericID, nil, now, &record); err != nil {
-			return err
+		var model deviceModel
+		restored := false
+		if err := tx.Where("id = ? AND revoked_at IS NOT NULL", deviceID).First(&model).Error; err == nil {
+			if !bytes.Equal(model.IdentityPublicKey, discovery.IdentityPublicKey) {
+				return domain.ErrDeviceExists
+			}
+			var sim simCardModel
+			fingerprint := []byte(nil)
+			if discovery.SIMFingerprint != nil && *discovery.SIMFingerprint != "" {
+				decoded, decodeError := hex.DecodeString(*discovery.SIMFingerprint)
+				if decodeError != nil || len(decoded) != 32 {
+					return errors.New("stored SIM fingerprint is invalid")
+				}
+				fingerprint = decoded
+			}
+			query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND retired_at IS NULL", deviceID)
+			if len(fingerprint) > 0 {
+				query = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("iccid_fingerprint = ? AND retired_at IS NULL", fingerprint)
+			}
+			if err := query.First(&sim).Error; err != nil {
+				return fmt.Errorf("restore revoked device SIM identity: %w", err)
+			}
+			var activeSlot deviceSlotModel
+			if err := tx.Where("current_sim_id = ? AND removed_at IS NULL AND device_id <> ?", sim.ID, deviceID).First(&activeSlot).Error; err == nil {
+				return domain.ErrDeviceDiscoveryConflict
+			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("check active SIM assignment during restore: %w", err)
+			}
+			model.NumericID = sim.NumericID
+			model.IdentityPublicKey = append([]byte(nil), discovery.IdentityPublicKey...)
+			model.CommandPublicKey = append([]byte(nil), discovery.CommandPublicKey...)
+			model.RevokedAt = nil
+			model.PairedAt = pairedAt
+			if err := tx.Model(&model).Updates(map[string]any{
+				"numeric_id": model.NumericID, "identity_public_key": model.IdentityPublicKey,
+				"command_public_key": model.CommandPublicKey, "revoked_at": nil, "paired_at": pairedAt,
+			}).Error; err != nil {
+				return fmt.Errorf("restore revoked device: %w", err)
+			}
+			if len(fingerprint) > 0 && !bytes.Equal(sim.ICCIDFingerprint, fingerprint) {
+				return domain.ErrDeviceDiscoveryConflict
+			}
+			if err := tx.Create(&deviceSlotModel{ID: uuid.NewString(), DeviceID: deviceID, SlotKey: discovery.SlotKey, SlotIndex: discovery.SlotIndex, CurrentSIMID: &sim.ID, CreatedAt: pairedAt, LastSeenAt: ptrTime(pairedAt)}).Error; err != nil {
+				return fmt.Errorf("restore device slot: %w", err)
+			}
+			var slot deviceSlotModel
+			if err := tx.Where("device_id = ? AND slot_key = ? AND slot_index = ? AND removed_at IS NULL", deviceID, discovery.SlotKey, discovery.SlotIndex).First(&slot).Error; err != nil {
+				return fmt.Errorf("read restored device slot: %w", err)
+			}
+			if err := tx.Create(&slotSIMAssignmentModel{SlotID: slot.ID, SIMID: sim.ID, InsertedAt: pairedAt}).Error; err != nil {
+				return fmt.Errorf("restore SIM slot assignment: %w", err)
+			}
+			credentialUpdate := tx.Model(&deviceCredentialModel{}).Where("device_id = ?", deviceID).Updates(map[string]any{"credential_hash": append([]byte(nil), discovery.CredentialHash...), "created_at": pairedAt, "revoked_at": nil})
+			if credentialUpdate.Error != nil {
+				return fmt.Errorf("rotate restored device credential: %w", credentialUpdate.Error)
+			}
+			if credentialUpdate.RowsAffected == 0 {
+				if err := tx.Create(&deviceCredentialModel{DeviceID: deviceID, CredentialHash: append([]byte(nil), discovery.CredentialHash...), CreatedAt: pairedAt}).Error; err != nil {
+					return fmt.Errorf("rotate restored device credential: %w", err)
+				}
+			}
+			restored = true
+		} else if errors.Is(err, gorm.ErrRecordNotFound) {
+			numericID, err := allocateNumericID(tx)
+			if err != nil {
+				return err
+			}
+			model = deviceModel{ID: deviceID, NumericID: numericID, ProfileCiphertext: []byte{}, IdentityPublicKey: append([]byte(nil), discovery.IdentityPublicKey...), CommandPublicKey: append([]byte(nil), discovery.CommandPublicKey...), PairedAt: pairedAt}
+			if err := tx.Create(&model).Error; err != nil {
+				if isUniqueViolation(err) {
+					return domain.ErrDeviceExists
+				}
+				return fmt.Errorf("insert discovered device: %w", err)
+			}
+			if err := tx.Create(&deviceCredentialModel{DeviceID: deviceID, CredentialHash: append([]byte(nil), discovery.CredentialHash...), CreatedAt: pairedAt}).Error; err != nil {
+				return fmt.Errorf("insert discovered device credential: %w", err)
+			}
+		} else {
+			return fmt.Errorf("read revoked device: %w", err)
 		}
-		if discovery.SIMFingerprint != nil && *discovery.SIMFingerprint != "" {
+		record = deviceRecordFromModel(model)
+		if !restored {
+			if err := createSIMSlotDB(tx, deviceID, slotKey, slotIndex, deviceID, model.NumericID, nil, now, &record); err != nil {
+				return err
+			}
+		} else {
+			if err := listDeviceSlotsDB(tx, deviceID, &record.Slots); err != nil {
+				return err
+			}
+		}
+		if !restored && discovery.SIMFingerprint != nil && *discovery.SIMFingerprint != "" {
 			fingerprint, decodeError := hex.DecodeString(*discovery.SIMFingerprint)
 			if decodeError != nil || len(fingerprint) != 32 {
 				return errors.New("stored SIM fingerprint is invalid")

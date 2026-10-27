@@ -10,8 +10,15 @@ go test ./... -coverprofile="$coverage_profile"
 excluded_pattern='^$'
 coverage_label='repository'
 if [[ -z "${TEST_DATABASE_URL:-}" ]]; then
-  excluded_pattern='/internal/store/(postgres|device_discovery)\.go:'
+	# The in-memory job measures domain and service logic. Connect transport and
+	# persistent storage are covered by their transport/integration jobs below.
+	excluded_pattern='^sim-deck-server/(internal/api/|internal/store/)'
   coverage_label='in-memory unit scope'
+else
+	# The PostgreSQL job exercises persistence against the real schema; the
+	# Connect transport adapter is covered by the API package tests separately.
+	excluded_pattern='^sim-deck-server/internal/api/'
+	coverage_label='repository integration scope'
 fi
 
 awk -v excluded="$excluded_pattern" -v label="$coverage_label" '

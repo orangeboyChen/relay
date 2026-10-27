@@ -172,7 +172,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		owner, err = database.OwnerCredentialByUsername(context.Background(), "admin")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(owner.PasswordHash).To(BeEmpty())
-		Expect(owner.PasswordDisabledAt).To(HaveValue(Equal(disabledAt)))
+		Expect(owner.PasswordDisabledAt).To(HaveValue(BeTemporally("==", disabledAt)))
 	})
 
 	It("rejects malformed persisted passkey data", func() {

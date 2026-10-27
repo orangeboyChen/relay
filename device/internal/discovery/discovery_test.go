@@ -17,7 +17,7 @@ func TestDiscoverLinuxTopology(t *testing.T) {
 		filepath.Join(sysRoot, "class", "tty", "ttyUSB2", "device"),
 		filepath.Join(sysRoot, "class", "sound", "card2", "device"),
 	} {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}

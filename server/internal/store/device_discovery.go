@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -133,6 +134,10 @@ func (store *Postgres) SubmitDeviceDiscovery(ctx context.Context, now time.Time,
 			model.SIMFingerprint = &fingerprint
 		}
 		if err := tx.Create(&model).Error; err != nil {
+			var postgresError *pgconn.PgError
+			if errors.As(err, &postgresError) && postgresError.Code == "23505" && postgresError.ConstraintName == "idx_device_discoveries_credential_hash" {
+				return domain.ErrDeviceDiscoveryConflict
+			}
 			return fmt.Errorf("insert device discovery: %w", err)
 		}
 		record = discoveryRecordFromModel(model, request.SIMFingerprint)
@@ -247,7 +252,7 @@ func (store *Postgres) RejectDeviceDiscovery(ctx context.Context, ownerID string
 	if result.RowsAffected == 0 {
 		var model deviceDiscoveryModel
 		if err := store.database(ctx).Where("device_id = ? AND owner_id = ?", deviceID, ownerID).First(&model).Error; err != nil {
-			return err
+			return databaseNotFound(err)
 		}
 		status := DeviceDiscoveryStatus(model.Status)
 		if status == DeviceDiscoveryRejected {
@@ -265,7 +270,7 @@ func (store *Postgres) RejectDeviceDiscovery(ctx context.Context, ownerID string
 func (store *Postgres) DeviceDiscoveryStatus(ctx context.Context, deviceID string, credentialHash []byte, now time.Time) (DeviceDiscoveryRecord, error) {
 	var discovery deviceDiscoveryModel
 	if err := store.database(ctx).Where("device_id = ? AND credential_hash = ? AND expires_at > ?", deviceID, credentialHash, now.UTC()).First(&discovery).Error; err != nil {
-		return DeviceDiscoveryRecord{}, err
+		return DeviceDiscoveryRecord{}, databaseNotFound(err)
 	}
 	fingerprint := []byte{}
 	if discovery.SIMFingerprint != nil {

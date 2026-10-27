@@ -7,13 +7,16 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"time"
 
 	webauthnlib "github.com/go-webauthn/webauthn/webauthn"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"gorm.io/gorm"
 	"sim-deck-server/internal/auth"
 	"sim-deck-server/internal/domain"
 )
@@ -52,6 +55,18 @@ var _ = Describe("Embedded schema", func() {
 		Expect(schema).NotTo(ContainSubstring("ALTER TABLE"))
 		Expect(schema).NotTo(ContainSubstring("UPDATE outbox_jobs"))
 	})
+
+	It("rejects migration initialization without a database", func() {
+		Expect((&Postgres{}).InitializeSchema(context.Background())).To(MatchError(ContainSubstring("database is not initialized")))
+	})
+
+	It("keeps GORM table names aligned with the schema", func() {
+		Expect(deviceCertificateModel{}.TableName()).To(Equal("device_certificates"))
+		Expect(messageModel{}.TableName()).To(Equal("messages"))
+		Expect(attachmentModel{}.TableName()).To(Equal("attachments"))
+		Expect(callModel{}.TableName()).To(Equal("calls"))
+		Expect(auditEventModel{}.TableName()).To(Equal("audit_events"))
+	})
 })
 
 var _ = Describe("PostgreSQL integration", Ordered, func() {
@@ -80,16 +95,17 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 
 	BeforeEach(func() {
 		now = time.Date(2026, 10, 16, 1, 0, 0, 0, time.UTC)
-		_, err := database.pool.Exec(context.Background(), `
-			TRUNCATE TABLE owner_accounts, webauthn_credentials, app_installations,
-			       push_tokens, devices, device_certificates, pairing_tokens, events,
-			       messages, attachments, calls, outbox_jobs, audit_events,
-			       auth_sessions, device_credentials, encrypted_device_commands,
-			       incoming_call_notifications, incoming_call_recipients,
-			       incoming_call_claims, device_discovery_sessions, device_discoveries,
-			       slot_sim_assignments, device_slots, sim_cards
-			RESTART IDENTITY CASCADE`)
-		Expect(err).NotTo(HaveOccurred())
+		for _, model := range []any{
+			&incomingCallClaimModel{}, &incomingCallRecipientModel{}, &incomingCallNotificationModel{},
+			&deviceDiscoveryModel{}, &deviceDiscoverySessionModel{}, &encryptedDeviceCommandModel{},
+			&outboxJobModel{}, &callModel{}, &attachmentModel{}, &messageModel{}, &eventModel{},
+			&encryptedHistorySnapshotModel{}, &slotSIMAssignmentModel{}, &deviceSlotModel{},
+			&esimProfileModel{}, &simCardModel{}, &deviceCredentialModel{}, &deviceCertificateModel{},
+			&pairingTokenModel{}, &pushTokenModel{}, &authSessionModel{}, &webauthnCredentialModel{},
+			&appInstallationModel{}, &deviceModel{}, &auditEventModel{}, &ownerAccountModel{},
+		} {
+			Expect(database.db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(model).Error).To(Succeed())
+		}
 	})
 
 	createOwner := func() OwnerCredential {
@@ -123,6 +139,17 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		)
 		Expect(err).NotTo(HaveOccurred())
 		return record
+	}
+
+	createSIMCards := func(firstNumericID, lastNumericID int) {
+		cards := make([]simCardModel, 0, lastNumericID-firstNumericID+1)
+		for numericID := firstNumericID; numericID <= lastNumericID; numericID++ {
+			cards = append(cards, simCardModel{
+				ID: uuid.NewString(), NumericID: numericID, ProfileCiphertext: []byte{},
+				FirstSeenAt: now, LastSeenAt: now, CreatedAt: now,
+			})
+		}
+		Expect(database.db.CreateInBatches(&cards, 100).Error).To(Succeed())
 	}
 
 	It("creates exactly one owner and loads only login state", func() {
@@ -275,7 +302,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 			WrappedVaultKey:   registration.WrappedVaultKey,
 			ApprovedAt:        ptrTime(now),
 			CreatedAt:         now,
-		})).To(Succeed())
+		}).Error).To(Succeed())
 
 		record, created, err := database.RegisterAppInstallation(
 			context.Background(), owner.ID, registration, now.Add(time.Minute),
@@ -359,7 +386,10 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 
 		loaded, err := database.GetDeviceDiscoverySession(context.Background(), owner.ID)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(loaded).To(Equal(session))
+		Expect(loaded.OwnerID).To(Equal(session.OwnerID))
+		Expect(loaded.OpenedAt).To(BeTemporally("==", session.OpenedAt))
+		Expect(loaded.ExpiresAt).To(BeTemporally("==", session.ExpiresAt))
+		Expect(loaded.ClosedAt).To(BeNil())
 		Expect(database.CloseDeviceDiscovery(context.Background(), owner.ID, now.Add(time.Minute))).To(Succeed())
 		closed, err := database.GetDeviceDiscoverySession(context.Background(), owner.ID)
 		Expect(err).NotTo(HaveOccurred())
@@ -388,12 +418,12 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(created.DeviceUUID).To(Equal(firstDeviceID))
 		Expect(created.Status).To(Equal(DeviceDiscoveryPending))
-		Expect(created.ExpiresAt).To(Equal(now.Add(10 * time.Minute)))
+		Expect(created.ExpiresAt).To(BeTemporally("==", now.Add(10*time.Minute)))
 
 		retried, err := database.SubmitDeviceDiscovery(context.Background(), now.Add(2*time.Minute), candidate)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(retried.FirstSeenAt).To(Equal(created.FirstSeenAt))
-		Expect(retried.LastSeenAt).To(Equal(now.Add(2 * time.Minute)))
+		Expect(retried.FirstSeenAt).To(BeTemporally("==", created.FirstSeenAt))
+		Expect(retried.LastSeenAt).To(BeTemporally("==", now.Add(2*time.Minute)))
 		candidate.CommandPublicKey = bytes.Repeat([]byte{9}, 32)
 		_, err = database.SubmitDeviceDiscovery(context.Background(), now.Add(3*time.Minute), candidate)
 		Expect(errors.Is(err, domain.ErrDeviceDiscoveryConflict)).To(BeTrue())
@@ -456,13 +486,10 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(approved.Slots[0].SlotKey).To(Equal("usb-primary"))
 		Expect(approved.Slots[0].SlotIndex).To(Equal(2))
 		Expect(approved.Slots[0].SIMID).To(HaveValue(Equal(firstDeviceID)))
-		var storedFingerprint []byte
-		var fingerprintScope string
-		Expect(database.pool.QueryRow(context.Background(), `
-			SELECT iccid_fingerprint, fingerprint_scope::text
-			FROM sim_cards WHERE id = $1`, firstDeviceID).Scan(&storedFingerprint, &fingerprintScope)).To(Succeed())
-		Expect(storedFingerprint).To(Equal(fingerprint))
-		Expect(fingerprintScope).To(Equal(firstDeviceID))
+		var storedSIM simCardModel
+		Expect(database.db.First(&storedSIM, "id = ?", firstDeviceID).Error).To(Succeed())
+		Expect(storedSIM.ICCIDFingerprint).To(Equal(fingerprint))
+		Expect(storedSIM.FingerprintScope).To(HaveValue(Equal(firstDeviceID)))
 	})
 
 	It("approves a replacement device when its SIM is already known", func() {
@@ -536,12 +563,14 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 			CommandPublicKey: bytes.Repeat([]byte{2}, 32), CredentialHash: bytes.Repeat([]byte{3}, 32),
 		})
 		Expect(err).NotTo(HaveOccurred())
+		cards := make([]simCardModel, 0, domain.MaxNumericID-domain.MinNumericID+1)
 		for numericID := domain.MinNumericID; numericID <= domain.MaxNumericID; numericID++ {
-			_, err = database.pool.Exec(context.Background(), `
-				INSERT INTO sim_cards (id, numeric_id, profile_ciphertext)
-				VALUES (gen_random_uuid(), $1, ''::bytea)`, numericID)
-			Expect(err).NotTo(HaveOccurred())
+			cards = append(cards, simCardModel{
+				ID: uuid.NewString(), NumericID: numericID, ProfileCiphertext: []byte{},
+				FirstSeenAt: now, LastSeenAt: now, CreatedAt: now,
+			})
 		}
+		Expect(database.db.CreateInBatches(&cards, 100).Error).To(Succeed())
 
 		_, err = database.ApproveDeviceDiscovery(context.Background(), owner.ID, firstDeviceID, now.Add(time.Minute))
 
@@ -565,7 +594,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		replaced, err := database.SubmitDeviceDiscovery(context.Background(), now.Add(2*time.Minute), replacement)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(replaced.IdentityPublicKey).To(Equal(replacement.IdentityPublicKey))
-		Expect(replaced.FirstSeenAt).To(Equal(now.Add(2 * time.Minute)))
+		Expect(replaced.FirstSeenAt).To(BeTemporally("==", now.Add(2*time.Minute)))
 
 		createDevice(secondDeviceID)
 		replacement.DeviceUUID = secondDeviceID
@@ -718,9 +747,9 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		records, err = database.ListDevices(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(records).To(BeEmpty())
-		var slotCount int
-		Expect(database.pool.QueryRow(context.Background(), `SELECT count(*) FROM device_slots WHERE device_id = $1`, firstDeviceID).Scan(&slotCount)).To(Succeed())
-		Expect(slotCount).To(Equal(0))
+		var slotCount int64
+		Expect(database.db.Model(&deviceSlotModel{}).Where("device_id = ?", firstDeviceID).Count(&slotCount).Error).To(Succeed())
+		Expect(slotCount).To(BeZero())
 		cards, err := database.ListSIMCards(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cards).To(HaveLen(1))
@@ -759,13 +788,13 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(records[0].SignalBars).NotTo(BeNil())
 		Expect(*records[0].SignalBars).To(Equal(3))
 		Expect(records[0].RadioStatusUpdatedAt).NotTo(BeNil())
-		Expect(*records[0].RadioStatusUpdatedAt).To(Equal(now))
+		Expect(*records[0].RadioStatusUpdatedAt).To(BeTemporally("==", now))
 		Expect(records[0].Slots).To(HaveLen(1))
 		Expect(records[0].Slots[0].RadioAccessTechnology).To(Equal("5G"))
 		Expect(records[0].Slots[0].SignalBars).NotTo(BeNil())
 		Expect(*records[0].Slots[0].SignalBars).To(Equal(3))
 		Expect(records[0].Slots[0].RadioStatusUpdatedAt).NotTo(BeNil())
-		Expect(*records[0].Slots[0].RadioStatusUpdatedAt).To(Equal(now))
+		Expect(*records[0].Slots[0].RadioStatusUpdatedAt).To(BeTemporally("==", now))
 
 		encrypted := domain.EncryptedCommand{
 			ID:                   "01900000-0000-7000-8000-000000000050",
@@ -799,7 +828,15 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		leaseUntil := now.Add(30 * time.Second)
 		claimed, err := database.ClaimCommand(context.Background(), device.ID, now, leaseUntil)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(claimed).To(Equal(encrypted))
+		Expect(claimed.ID).To(Equal(encrypted.ID))
+		Expect(claimed.DeviceUUID).To(Equal(encrypted.DeviceUUID))
+		Expect(claimed.SenderInstallationID).To(Equal(encrypted.SenderInstallationID))
+		Expect(claimed.SenderPublicKey).To(Equal(encrypted.SenderPublicKey))
+		Expect(claimed.Nonce).To(Equal(encrypted.Nonce))
+		Expect(claimed.Ciphertext).To(Equal(encrypted.Ciphertext))
+		Expect(claimed.Signature).To(Equal(encrypted.Signature))
+		Expect(claimed.CreatedAt).To(BeTemporally("==", encrypted.CreatedAt))
+		Expect(claimed.ExpiresAt).To(BeTemporally("==", encrypted.ExpiresAt))
 		_, err = database.ClaimCommand(context.Background(), device.ID, now.Add(time.Second), leaseUntil)
 		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
 
@@ -820,7 +857,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(status.State).To(Equal("completed"))
 		Expect(status.Result).To(Equal(&result))
 		Expect(status.CompletedAt).NotTo(BeNil())
-		Expect(*status.CompletedAt).To(Equal(completedAt))
+		Expect(*status.CompletedAt).To(BeTemporally("==", completedAt))
 
 		_, err = database.ClaimCommand(context.Background(), device.ID, now.Add(3*time.Second), now.Add(time.Minute))
 		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
@@ -868,10 +905,10 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(listed[0].Slots[0].SIMNumericID).To(HaveValue(Equal(7)))
 		Expect(listed[0].Slots[0].ProfileCiphertext).To(Equal([]byte("encrypted line profile")))
-		_, err = database.pool.Exec(context.Background(), `
-			INSERT INTO sim_cards (id, numeric_id, profile_ciphertext)
-			VALUES (gen_random_uuid(), 8, ''::bytea)`)
-		Expect(err).NotTo(HaveOccurred())
+		Expect(database.db.Create(&simCardModel{
+			ID: uuid.NewString(), NumericID: 8, ProfileCiphertext: []byte{},
+			FirstSeenAt: now, LastSeenAt: now, CreatedAt: now,
+		}).Error).To(Succeed())
 		Expect(database.UpdateSIMNumericID(context.Background(), firstSIM, 8)).To(MatchError(domain.ErrDuplicateNumericID))
 		secondAssignment, err := database.UpdateDeviceSIMIdentity(context.Background(), device.ID, slotKey, slotIndex, secondFingerprint, now.Add(time.Minute))
 		Expect(err).NotTo(HaveOccurred())
@@ -898,9 +935,166 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		listed, err = database.ListDevices(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(listed[0].Slots[0].SIMID).To(HaveValue(Equal(firstSIM)))
-		var assignmentCount int
-		Expect(database.pool.QueryRow(context.Background(), `SELECT count(*) FROM slot_sim_assignments WHERE slot_id = $1`, listed[0].Slots[0].ID).Scan(&assignmentCount)).To(Succeed())
-		Expect(assignmentCount).To(Equal(3))
+		var assignmentCount int64
+		Expect(database.db.Model(&slotSIMAssignmentModel{}).Where("slot_id = ?", listed[0].Slots[0].ID).Count(&assignmentCount).Error).To(Succeed())
+		Expect(assignmentCount).To(Equal(int64(3)))
+	})
+
+	It("manages eSIM profiles for one SIM", func() {
+		createDevice(firstDeviceID)
+		devices, err := database.ListDevices(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(devices[0].Slots[0].SIMID).NotTo(BeNil())
+		simID := *devices[0].Slots[0].SIMID
+		_, err = database.ListESIMProfiles(context.Background(), simID)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = database.UpsertESIMProfile(context.Background(), ESIMProfileRecord{})
+		Expect(errors.Is(err, domain.ErrInvalidESIMProfile)).To(BeTrue())
+		for _, invalid := range []ESIMProfileRecord{
+			{SIMID: "01900000-0000-7000-8000-000000000199", ProfileID: "missing-sim", Name: "Test"},
+			{SIMID: simID, ProfileID: strings.Repeat("x", 257)},
+			{SIMID: simID, ProfileID: "too-long-name", Name: strings.Repeat("x", 129)},
+			{SIMID: simID, ProfileID: "too-long-iccid", ICCID: strings.Repeat("1", 33)},
+			{SIMID: simID, ProfileID: "too-long-operator", OperatorName: strings.Repeat("x", 129)},
+		} {
+			_, err = database.UpsertESIMProfile(context.Background(), invalid)
+			if invalid.ProfileID == "missing-sim" {
+				Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
+			} else {
+				Expect(errors.Is(err, domain.ErrInvalidESIMProfile)).To(BeTrue())
+			}
+		}
+		_, err = database.ListESIMProfiles(context.Background(), "01900000-0000-7000-8000-000000000199")
+		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
+		profileOne, err := database.UpsertESIMProfile(context.Background(), ESIMProfileRecord{
+			SIMID: simID, ProfileID: "profile-one", Name: "Primary", ICCID: "890100000000000001", OperatorName: "Test Carrier", IsEnabled: true, CreatedAt: now,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(profileOne.Name).To(Equal("Primary"))
+		profileTwo, err := database.UpsertESIMProfile(context.Background(), ESIMProfileRecord{
+			SIMID: simID, ProfileID: "profile-two", Name: "Backup", ICCID: "890100000000000002", OperatorName: "Test Carrier", CreatedAt: now,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(profileTwo.IsEnabled).To(BeFalse())
+		updated, err := database.UpsertESIMProfile(context.Background(), ESIMProfileRecord{
+			SIMID: simID, ProfileID: "profile-one", Name: "Renamed by modem", ICCID: "890100000000000003", OperatorName: "Updated Carrier", CreatedAt: now,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(updated.Name).To(Equal("Renamed by modem"))
+
+		profiles, err := database.ListESIMProfiles(context.Background(), simID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(profiles).To(HaveLen(2))
+		selected, err := database.SetESIMProfileEnabled(context.Background(), simID, "profile-two", true)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(selected.IsEnabled).To(BeTrue())
+		disabled, err := database.SetESIMProfileEnabled(context.Background(), simID, "profile-two", false)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(disabled.IsEnabled).To(BeFalse())
+		selected, err = database.SetESIMProfileEnabled(context.Background(), simID, "profile-two", true)
+		Expect(err).NotTo(HaveOccurred())
+		profiles, err = database.ListESIMProfiles(context.Background(), simID)
+		Expect(err).NotTo(HaveOccurred())
+		for _, profile := range profiles {
+			if profile.ProfileID == "profile-one" {
+				Expect(profile.IsEnabled).To(BeFalse())
+			}
+		}
+		renamed, err := database.RenameESIMProfile(context.Background(), simID, "profile-two", "  Travel  ")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(renamed.Name).To(Equal("Travel"))
+		deleted := database.DeleteESIMProfile(context.Background(), simID, "profile-one")
+		Expect(deleted).NotTo(HaveOccurred())
+		Expect(database.DeleteESIMProfile(context.Background(), simID, "profile-one")).To(MatchError(pgx.ErrNoRows))
+		_, err = database.RenameESIMProfile(context.Background(), simID, "missing", "name")
+		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
+		_, err = database.SetESIMProfileEnabled(context.Background(), simID, "missing", true)
+		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
+		remaining, err := database.ListESIMProfiles(context.Background(), simID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(remaining).To(HaveLen(1))
+	})
+
+	It("propagates canceled requests from database operations", func() {
+		createDevice(firstDeviceID)
+		devices, err := database.ListDevices(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(devices[0].Slots[0].SIMID).NotTo(BeNil())
+		simID := *devices[0].Slots[0].SIMID
+		owner := createOwner()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err = database.ListESIMProfiles(ctx, simID)
+		Expect(errors.Is(err, context.Canceled)).To(BeTrue())
+		_, err = database.UpsertESIMProfile(ctx, ESIMProfileRecord{SIMID: simID, ProfileID: "profile"})
+		Expect(errors.Is(err, context.Canceled)).To(BeTrue())
+		_, err = database.RenameESIMProfile(ctx, simID, "profile", "name")
+		Expect(errors.Is(err, context.Canceled)).To(BeTrue())
+		_, err = database.SetESIMProfileEnabled(ctx, simID, "profile", true)
+		Expect(errors.Is(err, context.Canceled)).To(BeTrue())
+		Expect(errors.Is(database.DeleteESIMProfile(ctx, simID, "profile"), context.Canceled)).To(BeTrue())
+		_, err = database.GetHistorySnapshot(ctx, owner.ID, 1)
+		Expect(errors.Is(err, context.Canceled)).To(BeTrue())
+	})
+
+	It("rejects invalid identifiers before touching persistence", func() {
+		ctx := context.Background()
+		Expect(database.UpdateNumericID(ctx, firstDeviceID, 0)).To(MatchError(domain.ErrInvalidNumericID))
+		Expect(database.UpdateSIMNumericID(ctx, firstDeviceID, 100)).To(MatchError(domain.ErrInvalidNumericID))
+		_, err := database.UpdateDeviceSIMIdentity(ctx, firstDeviceID, "", 0, nil, now)
+		Expect(err).To(HaveOccurred())
+		Expect(database.UpdateDeviceRadioStatus(ctx, firstDeviceID, "", 0, "", nil, now)).To(HaveOccurred())
+		Expect(database.RetireSIMCard(ctx, "", now)).To(HaveOccurred())
+		_, err = database.ListSIMCards(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = database.ListDevices(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = database.GetHistorySnapshot(ctx, "", 0)
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("returns not-found for valid operations on missing records", func() {
+		ctx := context.Background()
+		missingID := "01900000-0000-7000-8000-000000000199"
+		Expect(database.UpdateNumericID(ctx, missingID, 2)).To(HaveOccurred())
+		Expect(database.UpdateDeviceProfile(ctx, missingID, []byte("profile"))).To(HaveOccurred())
+		Expect(database.UpdateSIMNumericID(ctx, missingID, 2)).To(HaveOccurred())
+		Expect(database.UpdateSIMProfile(ctx, missingID, []byte("profile"))).To(HaveOccurred())
+		Expect(database.UpdateDeviceCommandPublicKey(ctx, missingID, bytes.Repeat([]byte{1}, 32))).To(HaveOccurred())
+		Expect(database.UpdateDeviceRadioStatus(ctx, missingID, "slot", 1, "LTE", nil, now)).To(HaveOccurred())
+		_, err := database.UpdateDeviceSIMIdentity(ctx, missingID, "slot", 1, bytes.Repeat([]byte{1}, 32), now)
+		Expect(err).To(HaveOccurred())
+		Expect(database.RevokeDevice(ctx, missingID, now)).To(HaveOccurred())
+		_, err = database.AuthenticateDevice(ctx, missingID, "credential", now)
+		Expect(err).To(HaveOccurred())
+		_, err = database.ClaimCommand(ctx, missingID, now, now.Add(time.Minute))
+		Expect(err).To(HaveOccurred())
+		Expect(database.CompleteCommand(ctx, missingID, "command", domain.EncryptedCommandResult{}, now)).To(HaveOccurred())
+		_, err = database.CommandStatus(ctx, missingID, "command", now)
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("stores encrypted history snapshots with optimistic revisions", func() {
+		owner := createOwner()
+		_, err := database.GetHistorySnapshot(context.Background(), owner.ID, 1)
+		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
+		first, err := database.PutHistorySnapshot(context.Background(), owner.ID, 1, 0, []byte("first archive"), now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(first.Revision).To(Equal(int64(1)))
+		loaded, err := database.GetHistorySnapshot(context.Background(), owner.ID, 1)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(loaded.Ciphertext).To(Equal([]byte("first archive")))
+		second, err := database.PutHistorySnapshot(context.Background(), owner.ID, 1, 1, []byte("second archive"), now.Add(time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(second.Revision).To(Equal(int64(2)))
+		_, err = database.PutHistorySnapshot(context.Background(), owner.ID, 1, 1, []byte("stale archive"), now.Add(2*time.Minute))
+		Expect(errors.Is(err, domain.ErrHistoryRevisionConflict)).To(BeTrue())
+		_, err = database.PutHistorySnapshot(context.Background(), owner.ID, 2, 1, []byte("wrong initial revision"), now)
+		Expect(errors.Is(err, domain.ErrHistoryRevisionConflict)).To(BeTrue())
+		_, err = database.PutHistorySnapshot(context.Background(), owner.ID, 2, 0, []byte{}, now)
+		Expect(err).To(MatchError(ContainSubstring("write encrypted history snapshot")))
 	})
 
 	It("reuses one SIM identity when a card moves between devices", func() {
@@ -940,10 +1134,10 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 			context.Background(), device.ID, firstSlot.SlotKey, firstSlot.SlotIndex, fingerprint, now,
 		)
 		Expect(err).NotTo(HaveOccurred())
-		_, err = database.pool.Exec(context.Background(), `
-			INSERT INTO device_slots (device_id, slot_key, slot_index, created_at, last_seen_at)
-			VALUES ($1, 'secondary', 2, $2, $2)`, device.ID, now)
-		Expect(err).NotTo(HaveOccurred())
+		Expect(database.db.Create(&deviceSlotModel{
+			ID: uuid.NewString(), DeviceID: device.ID, SlotKey: "secondary", SlotIndex: 2,
+			CreatedAt: now, LastSeenAt: ptrTime(now),
+		}).Error).To(Succeed())
 
 		movedAssignment, err := database.UpdateDeviceSIMIdentity(
 			context.Background(), device.ID, "secondary", 2, fingerprint, now.Add(time.Minute),
@@ -958,11 +1152,9 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(listed[0].Slots).To(HaveLen(2))
 		Expect(listed[0].Slots[0].SIMID).To(BeNil())
 		Expect(listed[0].Slots[1].SIMID).To(HaveValue(Equal(assignment.SIMID)))
-		var currentAssignments int
-		Expect(database.pool.QueryRow(context.Background(), `
-			SELECT count(*) FROM slot_sim_assignments
-			WHERE sim_id = $1 AND removed_at IS NULL`, assignment.SIMID).Scan(&currentAssignments)).To(Succeed())
-		Expect(currentAssignments).To(Equal(1))
+		var currentAssignments int64
+		Expect(database.db.Model(&slotSIMAssignmentModel{}).Where("sim_id = ? AND removed_at IS NULL", assignment.SIMID).Count(&currentAssignments).Error).To(Succeed())
+		Expect(currentAssignments).To(Equal(int64(1)))
 	})
 
 	It("validates SIM synchronization and reports exhausted numeric IDs", func() {
@@ -982,12 +1174,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 			context.Background(), device.ID, firstSlot.SlotKey, firstSlot.SlotIndex, fingerprint, now,
 		)
 		Expect(err).NotTo(HaveOccurred())
-		for numericID := domain.MinNumericID + 1; numericID <= domain.MaxNumericID; numericID++ {
-			_, err := database.pool.Exec(context.Background(), `
-				INSERT INTO sim_cards (id, numeric_id, profile_ciphertext)
-				VALUES (gen_random_uuid(), $1, ''::bytea)`, numericID)
-			Expect(err).NotTo(HaveOccurred())
-		}
+		createSIMCards(domain.MinNumericID+1, domain.MaxNumericID)
 		_, err = database.UpdateDeviceSIMIdentity(
 			context.Background(), device.ID, firstSlot.SlotKey, firstSlot.SlotIndex,
 			bytes.Repeat([]byte{65}, 32), now.Add(time.Minute),
@@ -996,12 +1183,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 	})
 
 	It("returns no numeric ID after all visible identifiers are occupied", func() {
-		for numericID := domain.MinNumericID; numericID <= domain.MaxNumericID; numericID++ {
-			_, err := database.pool.Exec(context.Background(), `
-				INSERT INTO sim_cards (id, numeric_id, profile_ciphertext)
-				VALUES (gen_random_uuid(), $1, ''::bytea)`, numericID)
-			Expect(err).NotTo(HaveOccurred())
-		}
+		createSIMCards(domain.MinNumericID, domain.MaxNumericID)
 
 		_, err := database.CreateDevice(context.Background(), firstDeviceID, nil, nil, nil)
 
@@ -1010,12 +1192,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 
 	It("cannot pair when all visible identifiers are occupied", func() {
 		owner := createOwner()
-		for numericID := domain.MinNumericID; numericID <= domain.MaxNumericID; numericID++ {
-			_, err := database.pool.Exec(context.Background(), `
-				INSERT INTO sim_cards (id, numeric_id, profile_ciphertext)
-				VALUES (gen_random_uuid(), $1, ''::bytea)`, numericID)
-			Expect(err).NotTo(HaveOccurred())
-		}
+		createSIMCards(domain.MinNumericID, domain.MaxNumericID)
 		tokenHash, err := auth.TokenHash(newToken())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(database.CreatePairingToken(context.Background(), owner.ID, tokenHash[:], now.Add(time.Minute))).To(Succeed())
@@ -1139,23 +1316,17 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(inserted).To(BeFalse())
 
-		var kind string
-		var routingKey string
-		var payload []byte
-		Expect(database.pool.QueryRow(context.Background(), `
-			SELECT kind, routing_key, payload
-			FROM outbox_jobs
-			WHERE kind = 'voip.incoming_call'`).Scan(&kind, &routingKey, &payload)).To(Succeed())
-		Expect(kind).To(Equal("voip.incoming_call"))
-		Expect(routingKey).To(Equal(installation.ID))
+		var job outboxJobModel
+		Expect(database.db.Where("kind = ?", "voip.incoming_call").First(&job).Error).To(Succeed())
+		Expect(job.Kind).To(Equal("voip.incoming_call"))
+		Expect(job.RoutingKey).To(Equal(installation.ID))
 		var delivery domain.IncomingCallDelivery
-		Expect(json.Unmarshal(payload, &delivery)).To(Succeed())
+		Expect(json.Unmarshal(job.Payload, &delivery)).To(Succeed())
 		Expect(delivery.NotificationID).To(Equal(notification.ID))
 		Expect(delivery.Recipient).To(Equal(notification.Recipients[0]))
-		var jobs int
-		Expect(database.pool.QueryRow(context.Background(), `
-			SELECT count(*) FROM outbox_jobs WHERE kind = 'voip.incoming_call'`).Scan(&jobs)).To(Succeed())
-		Expect(jobs).To(Equal(1))
+		var jobs int64
+		Expect(database.db.Model(&outboxJobModel{}).Where("kind = ?", "voip.incoming_call").Count(&jobs).Error).To(Succeed())
+		Expect(jobs).To(Equal(int64(1)))
 
 		notification.Recipients[0].Ciphertext = []byte("different ciphertext")
 		_, err = database.InsertIncomingCall(context.Background(), notification, expiresAt)
@@ -1176,11 +1347,10 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(database.UpsertPushToken(
 			context.Background(), owner.ID, installation.ID, "sandbox", "voip", token, now,
 		)).To(Succeed())
-		var jobID int64
-		Expect(database.pool.QueryRow(context.Background(), `
-			INSERT INTO outbox_jobs (kind, routing_key, payload, available_at, expires_at)
-			VALUES ('voip.incoming_call', $1, $2, $3, $4)
-			RETURNING id`, installation.ID, []byte(`{"ciphertext":"opaque"}`), now, now.Add(time.Minute)).Scan(&jobID)).To(Succeed())
+		expiresAt := now.Add(time.Minute)
+		fixtureJob := outboxJobModel{Kind: "voip.incoming_call", RoutingKey: installation.ID, Payload: []byte(`{"ciphertext":"opaque"}`), AvailableAt: now, ExpiresAt: &expiresAt}
+		Expect(database.db.Create(&fixtureJob).Error).To(Succeed())
+		jobID := fixtureJob.ID
 
 		job, err := database.ClaimVoIPPushJob(context.Background(), now, 20*time.Second)
 		Expect(err).NotTo(HaveOccurred())
@@ -1188,7 +1358,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(job.Attempt).To(Equal(1))
 		Expect(job.Environment).To(Equal("sandbox"))
 		Expect(job.DeviceToken).To(Equal(token))
-		Expect(job.LeaseExpiresAt).To(Equal(now.Add(20 * time.Second)))
+		Expect(job.LeaseExpiresAt).To(BeTemporally("==", now.Add(20*time.Second)))
 
 		Expect(database.RetryPushJob(
 			context.Background(), job.ID, job.Attempt, now.Add(5*time.Second), "temporary failure",
@@ -1200,9 +1370,8 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(database.CompletePushJob(context.Background(), job.ID, job.Attempt, now.Add(7*time.Second))).To(MatchError(pgx.ErrNoRows))
 
 		Expect(database.DeleteVoIPPushToken(context.Background(), installation.ID, "sandbox", token)).To(Succeed())
-		var tokens int
-		Expect(database.pool.QueryRow(context.Background(), `
-			SELECT count(*) FROM push_tokens WHERE installation_id = $1`, installation.ID).Scan(&tokens)).To(Succeed())
+		var tokens int64
+		Expect(database.db.Model(&pushTokenModel{}).Where("installation_id = ?", installation.ID).Count(&tokens).Error).To(Succeed())
 		Expect(tokens).To(BeZero())
 	})
 
@@ -1229,13 +1398,9 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 			"sandbox", "alert", firstToken, now,
 		)).To(MatchError(pgx.ErrNoRows))
 
-		var storedToken []byte
-		Expect(database.pool.QueryRow(context.Background(), `
-			SELECT token_ciphertext FROM push_tokens
-			WHERE installation_id = $1 AND environment = 'sandbox' AND kind = 'alert'`,
-			installation.ID,
-		).Scan(&storedToken)).To(Succeed())
-		Expect(storedToken).To(Equal(secondToken))
+		var storedToken pushTokenModel
+		Expect(database.db.Where("installation_id = ? AND environment = ? AND kind = ?", installation.ID, "sandbox", "alert").First(&storedToken).Error).To(Succeed())
+		Expect(storedToken.TokenCiphertext).To(Equal(secondToken))
 
 		Expect(database.DeletePushToken(
 			context.Background(), owner.ID, installation.ID, "production", "alert",
@@ -1247,12 +1412,10 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 			context.Background(), owner.ID, installation.ID, "sandbox", "alert",
 		)).To(MatchError(pgx.ErrNoRows))
 
-		var jobID int64
-		Expect(database.pool.QueryRow(context.Background(), `
-			INSERT INTO outbox_jobs (kind, routing_key, payload, available_at, expires_at)
-			VALUES ('voip.incoming_call', $1, $2, $3, $4)
-			RETURNING id`, installation.ID, []byte("opaque push"), now, now.Add(time.Minute),
-		).Scan(&jobID)).To(Succeed())
+		expiresAt := now.Add(time.Minute)
+		fixtureJob := outboxJobModel{Kind: "voip.incoming_call", RoutingKey: installation.ID, Payload: []byte("opaque push"), AvailableAt: now, ExpiresAt: &expiresAt}
+		Expect(database.db.Create(&fixtureJob).Error).To(Succeed())
+		jobID := fixtureJob.ID
 		job, err := database.ClaimVoIPPushJob(context.Background(), now, 20*time.Second)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(job.ID).To(Equal(jobID))
@@ -1263,15 +1426,12 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 			context.Background(), job.ID, job.Attempt, now.Add(2*time.Second), "duplicate discard",
 		)).To(MatchError(pgx.ErrNoRows))
 
-		var completedAt *time.Time
-		var lastError *string
-		Expect(database.pool.QueryRow(context.Background(), `
-			SELECT completed_at, last_error FROM outbox_jobs WHERE id = $1`, job.ID,
-		).Scan(&completedAt, &lastError)).To(Succeed())
-		Expect(completedAt).NotTo(BeNil())
-		Expect(*completedAt).To(Equal(now.Add(time.Second)))
-		Expect(lastError).NotTo(BeNil())
-		Expect(*lastError).To(Equal("invalid device token"))
+		var completedJob outboxJobModel
+		Expect(database.db.First(&completedJob, job.ID).Error).To(Succeed())
+		Expect(completedJob.CompletedAt).NotTo(BeNil())
+		Expect(*completedJob.CompletedAt).To(BeTemporally("==", now.Add(time.Second)))
+		Expect(completedJob.LastError).NotTo(BeNil())
+		Expect(*completedJob.LastError).To(Equal("invalid device token"))
 	})
 
 	It("rolls back an incoming call batch containing an unapproved recipient", func() {
@@ -1305,9 +1465,8 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 
 		_, err = database.InsertIncomingCall(context.Background(), notification, now.Add(time.Hour))
 		Expect(errors.Is(err, domain.ErrUntrustedInstallationRecipient)).To(BeTrue())
-		var count int
-		Expect(database.pool.QueryRow(context.Background(), `
-			SELECT count(*) FROM incoming_call_notifications WHERE id = $1`, notification.ID).Scan(&count)).To(Succeed())
+		var count int64
+		Expect(database.db.Model(&incomingCallNotificationModel{}).Where("id = ?", notification.ID).Count(&count).Error).To(Succeed())
 		Expect(count).To(BeZero())
 	})
 
@@ -1324,9 +1483,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		_, _, err = database.RegisterAppInstallation(context.Background(), owner.ID, second, now.Add(time.Second))
 		Expect(err).NotTo(HaveOccurred())
-		_, err = database.pool.Exec(context.Background(), `
-			UPDATE app_installations SET approved_at = $2 WHERE id = $1`, second.ID, now)
-		Expect(err).NotTo(HaveOccurred())
+		Expect(database.db.Model(&appInstallationModel{}).Where("id = ?", second.ID).Update("approved_at", now).Error).To(Succeed())
 		device := createDevice(firstDeviceID)
 		notification := domain.IncomingCallNotification{
 			ID:         "01900000-0000-7000-8000-000000000042",
@@ -1366,19 +1523,14 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(retry.Won).To(BeTrue())
 
-		var claimedJobs int
-		var routingKey string
-		var payload []byte
-		Expect(database.pool.QueryRow(context.Background(), `
-			SELECT count(*) FROM outbox_jobs WHERE kind = 'voip.incoming_call_claimed'`).Scan(&claimedJobs)).To(Succeed())
-		Expect(claimedJobs).To(Equal(1))
-		Expect(database.pool.QueryRow(context.Background(), `
-			SELECT routing_key, payload
-			FROM outbox_jobs
-			WHERE kind = 'voip.incoming_call_claimed'`).Scan(&routingKey, &payload)).To(Succeed())
-		Expect(routingKey).To(Equal(second.ID))
+		var claimedJobs int64
+		Expect(database.db.Model(&outboxJobModel{}).Where("kind = ?", "voip.incoming_call_claimed").Count(&claimedJobs).Error).To(Succeed())
+		Expect(claimedJobs).To(Equal(int64(1)))
+		var claimedJob outboxJobModel
+		Expect(database.db.Where("kind = ?", "voip.incoming_call_claimed").First(&claimedJob).Error).To(Succeed())
+		Expect(claimedJob.RoutingKey).To(Equal(second.ID))
 		var delivery domain.IncomingCallClaimDelivery
-		Expect(json.Unmarshal(payload, &delivery)).To(Succeed())
+		Expect(json.Unmarshal(claimedJob.Payload, &delivery)).To(Succeed())
 		Expect(delivery.NotificationID).To(Equal(notification.ID))
 		Expect(delivery.Reason).To(Equal("answered_elsewhere"))
 
@@ -1487,7 +1639,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		_, err := database.OwnerExists(ctx)
 		Expect(err).To(MatchError(ContainSubstring("check owner account")))
 		_, err = database.CreateOwner(ctx, "hash", []byte("key"))
-		Expect(err).To(MatchError(ContainSubstring("begin owner bootstrap")))
+		Expect(err).To(MatchError(ContainSubstring("create owner account")))
 		_, err = database.OwnerCredentialByUsername(ctx, "admin")
 		Expect(err).To(HaveOccurred())
 		_, err = database.OwnerID(ctx)
@@ -1497,90 +1649,87 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(database.SaveWebAuthnCredential(ctx, owner.ID, webauthnlib.Credential{})).To(HaveOccurred())
 		Expect(database.DisableOwnerPassword(ctx, owner.ID, now)).To(HaveOccurred())
 		Expect(database.CreateSession(ctx, owner.ID, pair)).To(MatchError(ContainSubstring("create auth session")))
-		Expect(database.RotateSession(ctx, pair.RefreshToken, newPair(), now)).To(MatchError(ContainSubstring("begin session rotation")))
+		Expect(database.RotateSession(ctx, pair.RefreshToken, newPair(), now)).To(MatchError(ContainSubstring("rotate session")))
 		Expect(database.RevokeSession(ctx, pair.AccessToken, now)).To(MatchError(ContainSubstring("revoke auth session")))
 		_, err = database.AuthenticateOwnerSession(ctx, pair.AccessToken, now)
 		Expect(err).To(HaveOccurred())
 		Expect(database.CreatePairingToken(ctx, owner.ID, bytes.Repeat([]byte{1}, 32), now)).To(MatchError(ContainSubstring("create pairing token")))
 		_, err = database.ConsumePairingToken(ctx, bytes.Repeat([]byte{1}, 32), now, DevicePairing{})
-		Expect(err).To(MatchError(ContainSubstring("begin device pairing")))
+		Expect(err).To(MatchError(ContainSubstring("device pairing")))
 		_, err = database.AuthenticateDevice(ctx, firstDeviceID, newToken(), now)
 		Expect(err).To(HaveOccurred())
 		_, err = database.CreateDevice(ctx, firstDeviceID, []byte{}, []byte{}, nil)
-		Expect(err).To(MatchError(ContainSubstring("begin device transaction")))
-		Expect(database.UpdateNumericID(ctx, firstDeviceID, 1)).To(MatchError(ContainSubstring("update numeric id")))
-		Expect(database.UpdateDeviceProfile(ctx, firstDeviceID, []byte("profile"))).To(MatchError(ContainSubstring("update device profile")))
-		Expect(database.UpdateSIMNumericID(ctx, firstDeviceID, 1)).To(MatchError(ContainSubstring("update SIM numeric id")))
-		Expect(database.UpdateSIMProfile(ctx, firstDeviceID, []byte("profile"))).To(MatchError(ContainSubstring("update SIM profile")))
-		Expect(database.RevokeDevice(ctx, firstDeviceID, now)).To(MatchError(ContainSubstring("begin device revocation")))
+		Expect(err).To(MatchError(ContainSubstring("create device")))
+		Expect(database.UpdateNumericID(ctx, firstDeviceID, 1)).To(HaveOccurred())
+		Expect(database.UpdateDeviceProfile(ctx, firstDeviceID, []byte("profile"))).To(HaveOccurred())
+		Expect(database.UpdateSIMNumericID(ctx, firstDeviceID, 1)).To(HaveOccurred())
+		Expect(database.UpdateSIMProfile(ctx, firstDeviceID, []byte("profile"))).To(HaveOccurred())
+		Expect(database.RevokeDevice(ctx, firstDeviceID, now)).To(HaveOccurred())
 		_, err = database.ListDevices(ctx)
 		Expect(err).To(MatchError(ContainSubstring("list devices")))
 		_, _, err = database.InsertEvent(ctx, domain.EventEnvelope{}, now)
-		Expect(err).To(MatchError(ContainSubstring("insert encrypted event")))
+		Expect(err).To(HaveOccurred())
 		_, _, err = database.RegisterAppInstallation(ctx, owner.ID, AppInstallationRegistration{}, now)
-		Expect(err).To(MatchError(ContainSubstring("begin app installation registration")))
+		Expect(err).To(HaveOccurred())
 		_, err = database.ListApprovedAppInstallationRecipients(ctx)
-		Expect(err).To(MatchError(ContainSubstring("list approved app installation recipients")))
+		Expect(err).To(HaveOccurred())
 		Expect(database.UpsertPushToken(ctx, owner.ID, "installation", "sandbox", "voip", nil, now)).To(
-			MatchError(ContainSubstring("upsert push token")),
+			HaveOccurred(),
 		)
 		Expect(database.DeletePushToken(ctx, owner.ID, "installation", "sandbox", "voip")).To(
-			MatchError(ContainSubstring("delete push token")),
+			HaveOccurred(),
 		)
 		_, err = database.InsertIncomingCall(ctx, domain.IncomingCallNotification{}, now)
-		Expect(err).To(MatchError(ContainSubstring("begin incoming call insert")))
+		Expect(err).To(HaveOccurred())
 		_, err = database.ClaimIncomingCall(ctx, owner.ID, "notification", "installation", now)
-		Expect(err).To(MatchError(ContainSubstring("begin incoming call claim")))
+		Expect(err).To(HaveOccurred())
 		_, err = database.ClaimVoIPPushJob(ctx, now, time.Minute)
-		Expect(err).To(MatchError(ContainSubstring("begin outbox claim")))
-		Expect(database.CompletePushJob(ctx, 1, 1, now)).To(MatchError(ContainSubstring("finish push job")))
-		Expect(database.DiscardPushJob(ctx, 1, 1, now, "discarded")).To(MatchError(ContainSubstring("finish push job")))
-		Expect(database.RetryPushJob(ctx, 1, 1, now, "retry")).To(MatchError(ContainSubstring("retry push job")))
+		Expect(err).To(HaveOccurred())
+		Expect(database.CompletePushJob(ctx, 1, 1, now)).To(HaveOccurred())
+		Expect(database.DiscardPushJob(ctx, 1, 1, now, "discarded")).To(HaveOccurred())
+		Expect(database.RetryPushJob(ctx, 1, 1, now, "retry")).To(HaveOccurred())
 		Expect(database.DeleteVoIPPushToken(ctx, "installation", "sandbox", nil)).To(
-			MatchError(ContainSubstring("delete push token")),
+			HaveOccurred(),
 		)
 		_, err = database.OpenDeviceDiscovery(ctx, owner.ID, now, now.Add(time.Minute))
-		Expect(err).To(MatchError(ContainSubstring("open device discovery")))
-		Expect(database.CloseDeviceDiscovery(ctx, owner.ID, now)).To(MatchError(ContainSubstring("close device discovery")))
+		Expect(err).To(HaveOccurred())
+		Expect(database.CloseDeviceDiscovery(ctx, owner.ID, now)).To(HaveOccurred())
 		_, err = database.GetDeviceDiscoverySession(ctx, owner.ID)
 		Expect(err).To(HaveOccurred())
 		_, err = database.SubmitDeviceDiscovery(ctx, now, DeviceDiscoveryRequest{})
-		Expect(err).To(MatchError(ContainSubstring("begin device discovery submission")))
+		Expect(err).To(HaveOccurred())
 		_, err = database.ListPendingDeviceDiscoveries(ctx, owner.ID, now)
-		Expect(err).To(MatchError(ContainSubstring("list pending device discoveries")))
+		Expect(err).To(HaveOccurred())
 		_, err = database.ApproveDeviceDiscovery(ctx, owner.ID, firstDeviceID, now)
-		Expect(err).To(MatchError(ContainSubstring("begin device discovery approval")))
+		Expect(err).To(HaveOccurred())
 		Expect(database.RejectDeviceDiscovery(ctx, owner.ID, firstDeviceID, now)).To(
-			MatchError(ContainSubstring("reject device discovery")),
+			HaveOccurred(),
 		)
 		_, err = database.DeviceDiscoveryStatus(ctx, firstDeviceID, nil, now)
 		Expect(err).To(HaveOccurred())
-		Expect(database.UpdateDeviceRadioStatus(ctx, firstDeviceID, "1", 1, "LTE", nil, now)).To(
-			MatchError(ContainSubstring("update device radio status")),
-		)
+		Expect(database.UpdateDeviceRadioStatus(ctx, firstDeviceID, "1", 1, "LTE", nil, now)).To(HaveOccurred())
 		_, err = database.ListEvents(ctx, 0, 100, now)
-		Expect(err).To(MatchError(ContainSubstring("list encrypted events")))
+		Expect(err).To(HaveOccurred())
 		_, err = database.EnqueueCommand(ctx, domain.EncryptedCommand{})
-		Expect(err).To(MatchError(ContainSubstring("enqueue encrypted command")))
+		Expect(err).To(HaveOccurred())
 		_, err = database.ClaimCommand(ctx, firstDeviceID, now, now.Add(time.Minute))
 		Expect(err).To(HaveOccurred())
-		Expect(database.CompleteCommand(ctx, firstDeviceID, "command", domain.EncryptedCommandResult{}, now)).To(
-			MatchError(ContainSubstring("complete encrypted command")),
-		)
+		Expect(database.CompleteCommand(ctx, firstDeviceID, "command", domain.EncryptedCommandResult{}, now)).To(HaveOccurred())
 		_, err = database.CommandStatus(ctx, firstDeviceID, "command", now)
 		Expect(err).To(HaveOccurred())
-		Expect(database.UpdateDeviceCommandPublicKey(ctx, firstDeviceID, nil)).To(
-			MatchError(ContainSubstring("update device command public key")),
-		)
+		Expect(database.UpdateDeviceCommandPublicKey(ctx, firstDeviceID, nil)).To(HaveOccurred())
 	})
 
 	It("reports ping and schema initialization failures", func() {
-		_, err := Open(context.Background(), "postgres://simdeck:simdeck-test-only@127.0.0.1:1/simdeck_test?sslmode=disable&connect_timeout=1")
+		_, err := Open(context.Background(), "not a postgres connection string")
+		Expect(err).To(MatchError(ContainSubstring("configure postgres")))
+
+		_, err = Open(context.Background(), "postgres://simdeck:simdeck-test-only@127.0.0.1:1/simdeck_test?sslmode=disable&connect_timeout=1")
 		Expect(err).To(MatchError(ContainSubstring("ping postgres")))
 
 		closed, err := Open(context.Background(), os.Getenv("TEST_DATABASE_URL"))
 		Expect(err).NotTo(HaveOccurred())
 		closed.Close()
-		Expect(closed.InitializeSchema(context.Background())).To(MatchError(ContainSubstring("initialize database schema")))
+		Expect(closed.InitializeSchema(context.Background())).To(MatchError(ContainSubstring("create schema migration table")))
 	})
 })

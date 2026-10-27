@@ -12,6 +12,7 @@ import (
 
 type memoryStore struct {
 	owner            string
+	ownerError       error
 	credentials      []webauthnlib.Credential
 	disabled         bool
 	credentialsError error
@@ -19,7 +20,9 @@ type memoryStore struct {
 	disableError     error
 }
 
-func (store *memoryStore) OwnerID(context.Context) (string, error) { return store.owner, nil }
+func (store *memoryStore) OwnerID(context.Context) (string, error) {
+	return store.owner, store.ownerError
+}
 func (store *memoryStore) WebAuthnCredentials(context.Context, string) ([]webauthnlib.Credential, error) {
 	if store.credentialsError != nil {
 		return nil, store.credentialsError
@@ -83,6 +86,18 @@ func TestBeginRegistrationPropagatesCredentialLookupFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, err := service.BeginRegistration(context.Background(), store.owner); !errors.Is(err, lookupError) {
+		t.Fatalf("expected lookup error, got %v", err)
+	}
+}
+
+func TestFinishRegistrationPropagatesCredentialLookupFailure(t *testing.T) {
+	lookupError := errors.New("credential lookup failed")
+	store := &memoryStore{owner: "01900000-0000-0000-0000-000000000001", credentialsError: lookupError}
+	service, err := New(store, "https://relay.example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.FinishRegistration(context.Background(), store.owner, "missing", nil); !errors.Is(err, lookupError) {
 		t.Fatalf("expected lookup error, got %v", err)
 	}
 }
@@ -176,5 +191,25 @@ func TestFinishCeremoniesRejectMalformedRequests(t *testing.T) {
 	}
 	if _, err := service.FinishLogin(context.Background(), loginID, loginRequest); err == nil {
 		t.Fatal("expected malformed login to fail")
+	}
+}
+
+func TestFinishLoginPropagatesOwnerLookupFailure(t *testing.T) {
+	lookupError := errors.New("owner lookup failed")
+	store := &memoryStore{owner: "01900000-0000-0000-0000-000000000001", ownerError: lookupError}
+	service, err := New(store, "https://relay.example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ceremonyID, _, err := service.BeginLogin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodPost, "https://relay.example.test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.FinishLogin(context.Background(), ceremonyID, request); !errors.Is(err, lookupError) {
+		t.Fatalf("expected owner lookup error, got %v", err)
 	}
 }

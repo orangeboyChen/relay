@@ -323,7 +323,10 @@ func (store *Postgres) RotateSession(ctx context.Context, refreshToken string, p
 			return err
 		}
 		replacement := authSessionModel{ID: uuid.NewString(), OwnerID: session.OwnerID, AccessTokenHash: accessHash[:], RefreshTokenHash: newRefreshHash[:], AccessExpiresAt: pair.AccessExpiresAt, RefreshExpiresAt: pair.RefreshExpiresAt, CreatedAt: time.Now().UTC()}
-		return tx.Create(&replacement).Error
+		if err := tx.Create(&replacement).Error; err != nil {
+			return fmt.Errorf("insert rotated session: %w", err)
+		}
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("rotate session: %w", err)
@@ -749,12 +752,12 @@ func (store *Postgres) ConsumePairingToken(ctx context.Context, tokenHash []byte
 		if err != nil {
 			return err
 		}
-		model := deviceModel{ID: pairing.DeviceUUID, NumericID: numericID, ProfileCiphertext: append([]byte(nil), pairing.ProfileCiphertext...), IdentityPublicKey: append([]byte(nil), pairing.IdentityPublicKey...), CommandPublicKey: append([]byte(nil), pairing.CommandPublicKey...), WrappedVaultKey: append([]byte(nil), pairing.WrappedVaultKey...), PairedAt: now.UTC()}
+		model := deviceModel{ID: pairing.DeviceUUID, NumericID: numericID, ProfileCiphertext: append([]byte{}, pairing.ProfileCiphertext...), IdentityPublicKey: append([]byte(nil), pairing.IdentityPublicKey...), CommandPublicKey: append([]byte(nil), pairing.CommandPublicKey...), WrappedVaultKey: append([]byte(nil), pairing.WrappedVaultKey...), PairedAt: now.UTC()}
 		if err := tx.Create(&model).Error; err != nil {
 			return domain.ErrDeviceExists
 		}
 		if err := tx.Create(&deviceCredentialModel{DeviceID: pairing.DeviceUUID, CredentialHash: append([]byte(nil), pairing.CredentialHash...), CreatedAt: now.UTC()}).Error; err != nil {
-			return err
+			return fmt.Errorf("insert device credential: %w", err)
 		}
 		record = deviceRecordFromModel(model)
 		if err := createInitialSIMSlotDB(tx, pairing.DeviceUUID, numericID, pairing.ProfileCiphertext, now, &record); err != nil {
@@ -795,9 +798,9 @@ func (store *Postgres) CreateDevice(ctx context.Context, id string, profileCiphe
 		if err != nil {
 			return err
 		}
-		model := deviceModel{ID: id, NumericID: numericID, ProfileCiphertext: append([]byte(nil), profileCiphertext...), IdentityPublicKey: append([]byte(nil), identityPublicKey...), WrappedVaultKey: append([]byte(nil), wrappedVaultKey...), PairedAt: time.Now().UTC()}
+		model := deviceModel{ID: id, NumericID: numericID, ProfileCiphertext: append([]byte{}, profileCiphertext...), IdentityPublicKey: append([]byte(nil), identityPublicKey...), WrappedVaultKey: append([]byte(nil), wrappedVaultKey...), PairedAt: time.Now().UTC()}
 		if err := tx.Create(&model).Error; err != nil {
-			return err
+			return fmt.Errorf("insert device: %w", err)
 		}
 		record = deviceRecordFromModel(model)
 		return createInitialSIMSlotDB(tx, id, numericID, profileCiphertext, model.PairedAt, &record)
@@ -833,7 +836,10 @@ func deviceRecordFromModel(model deviceModel) DeviceRecord {
 }
 
 func createInitialSIMSlotDB(tx *gorm.DB, deviceID string, numericID int, profileCiphertext []byte, now time.Time, record *DeviceRecord) error {
-	sim := simCardModel{ID: deviceID, NumericID: numericID, ProfileCiphertext: append([]byte(nil), profileCiphertext...), FirstSeenAt: now.UTC(), LastSeenAt: now.UTC(), CreatedAt: now.UTC()}
+	if profileCiphertext == nil {
+		profileCiphertext = []byte{}
+	}
+	sim := simCardModel{ID: deviceID, NumericID: numericID, ProfileCiphertext: append([]byte{}, profileCiphertext...), FirstSeenAt: now.UTC(), LastSeenAt: now.UTC(), CreatedAt: now.UTC()}
 	if err := tx.Create(&sim).Error; err != nil {
 		return fmt.Errorf("insert initial SIM identity: %w", err)
 	}
@@ -1176,7 +1182,7 @@ func createSIMSlotDB(tx *gorm.DB, deviceID string, slotKey string, slotIndex int
 	if profileCiphertext == nil {
 		profileCiphertext = []byte{}
 	}
-	sim := simCardModel{ID: simID, NumericID: numericID, ProfileCiphertext: append([]byte(nil), profileCiphertext...), FirstSeenAt: now.UTC(), LastSeenAt: now.UTC(), CreatedAt: now.UTC()}
+	sim := simCardModel{ID: simID, NumericID: numericID, ProfileCiphertext: append([]byte{}, profileCiphertext...), FirstSeenAt: now.UTC(), LastSeenAt: now.UTC(), CreatedAt: now.UTC()}
 	if err := tx.Create(&sim).Error; err != nil {
 		return fmt.Errorf("insert initial SIM identity: %w", err)
 	}
@@ -1191,14 +1197,6 @@ func createSIMSlotDB(tx *gorm.DB, deviceID string, slotKey string, slotIndex int
 	lastSeen := now.UTC()
 	record.Slots = []SlotRecord{{ID: slot.ID, SlotKey: slot.SlotKey, SlotIndex: slot.SlotIndex, SIMID: &sim.ID, SIMNumericID: &value, ProfileCiphertext: append([]byte(nil), profileCiphertext...), LastSeenAt: &lastSeen}}
 	return nil
-}
-
-func (store *Postgres) listDeviceSlots(ctx context.Context, deviceID string) ([]SlotRecord, error) {
-	slots := make([]SlotRecord, 0)
-	if err := listDeviceSlotsDB(store.database(ctx), deviceID, &slots); err != nil {
-		return nil, err
-	}
-	return slots, nil
 }
 
 // UpdateDeviceRadioStatus stores the latest non-sensitive modem telemetry.

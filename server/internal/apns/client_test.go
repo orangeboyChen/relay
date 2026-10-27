@@ -55,6 +55,25 @@ var _ = Describe("APNs client", func() {
 		return client
 	}
 
+	It("applies APNs production defaults without making a network request", func() {
+		client, err := New(Config{KeyID: "KEY123", TeamID: "TEAM123", Topic: "com.nowcent.simdeck", PrivateKeyPEM: privatePEM})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(client.httpClient).NotTo(BeNil())
+		Expect(client.productionURL).To(Equal(defaultProductionURL))
+		Expect(client.sandboxURL).To(Equal(defaultSandboxURL))
+		Expect(client.now).NotTo(BeNil())
+	})
+
+	It("rejects malformed APNs request URLs before transport", func() {
+		client, err := New(Config{
+			KeyID: "KEY123", TeamID: "TEAM123", Topic: "com.nowcent.simdeck.voip",
+			PrivateKeyPEM: privatePEM, ProductionURL: ":",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(client.SendVoIP(context.Background(), "production", []byte{1}, []byte(`{"ciphertext":"opaque"}`))).
+			To(MatchError(ContainSubstring("create APNs request")))
+	})
+
 	It("sends an immediate encrypted VoIP payload with a valid provider token", func() {
 		requests := 0
 		issuedAt := now

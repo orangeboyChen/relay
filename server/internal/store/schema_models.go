@@ -112,7 +112,7 @@ func (deviceCredentialModel) TableName() string { return "device_credentials" }
 
 type simCardModel struct {
 	ID                string     `gorm:"column:id;type:uuid;primaryKey"`
-	NumericID         int        `gorm:"column:numeric_id;not null"`
+	NumericID         int        `gorm:"column:numeric_id;not null;uniqueIndex:sim_cards_active_numeric_id_idx,where:retired_at IS NULL"`
 	FingerprintScope  *string    `gorm:"column:fingerprint_scope;type:uuid"`
 	ICCIDFingerprint  []byte     `gorm:"column:iccid_fingerprint"`
 	ProfileCiphertext []byte     `gorm:"column:profile_ciphertext;not null"`
@@ -229,7 +229,7 @@ type outboxJobModel struct {
 	Kind        string     `gorm:"column:kind;not null"`
 	RoutingKey  string     `gorm:"column:routing_key;not null"`
 	Payload     []byte     `gorm:"column:payload;not null"`
-	Attempts    int        `gorm:"column:attempts;not null"`
+	Attempts    int        `gorm:"column:attempts;not null;default:0"`
 	AvailableAt time.Time  `gorm:"column:available_at;not null"`
 	ExpiresAt   *time.Time `gorm:"column:expires_at"`
 	CompletedAt *time.Time `gorm:"column:completed_at"`

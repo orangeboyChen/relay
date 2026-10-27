@@ -75,6 +75,24 @@ var _ = Describe("Event envelopes", func() {
 		})
 	})
 
+	It("rejects a validly sealed envelope when its verification key is wrong", func() {
+		sealed, err := e2ee.Seal(vaultKey, privateKey, metadata, []byte("private message"))
+		Expect(err).NotTo(HaveOccurred())
+		otherPublicKey, _, err := ed25519.GenerateKey(rand.Reader)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = e2ee.Open(vaultKey, otherPublicKey, sealed)
+		Expect(err).To(MatchError(e2ee.ErrInvalidSignature))
+	})
+
+	It("authenticates an optional recipient installation in associated data", func() {
+		metadata.RecipientInstallationID = "installation-1"
+		sealed, err := e2ee.Seal(vaultKey, privateKey, metadata, []byte("private message"))
+		Expect(err).NotTo(HaveOccurred())
+		plaintext, err := e2ee.Open(vaultKey, publicKey, sealed)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(plaintext).To(Equal([]byte("private message")))
+	})
+
 	Describe("VerifyEnvelope", func() {
 		var sealed domain.EventEnvelope
 

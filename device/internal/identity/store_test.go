@@ -332,6 +332,49 @@ var _ = Describe("Device identity store", func() {
 		Expect(reloaded).To(Equal(bound))
 	})
 
+	It("resets only the server binding after credential revocation", func() {
+		store := NewStore(GinkgoT().TempDir(), testDeviceUUID)
+		state, err := store.LoadOrCreate()
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.ConfigureSlot(state, "usb-1", 2)
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.PrepareDiscovery(state)
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.BindAssignment(
+			state,
+			"https://deck.example",
+			7,
+			"01900000-0000-7000-8000-000000000002",
+			"01900000-0000-7000-8000-000000000003",
+			"usb-1",
+			2,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		fingerprint, err := state.FingerprintSIM("8986000000000000000")
+		Expect(err).NotTo(HaveOccurred())
+		state, err = store.SetSIMIdentity(state, fingerprint, state.SIMID, state.NumericID)
+		Expect(err).NotTo(HaveOccurred())
+
+		reset, err := store.ResetBinding(state)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(reset.DeviceUUID).To(Equal(state.DeviceUUID))
+		Expect(reset.IdentityPrivateKey).To(Equal(state.IdentityPrivateKey))
+		Expect(reset.CommandPrivateKey).To(Equal(state.CommandPrivateKey))
+		Expect(reset.SlotKey).To(Equal(state.SlotKey))
+		Expect(reset.SlotIndex).To(Equal(state.SlotIndex))
+		Expect(reset.SIMFingerprint).To(Equal(state.SIMFingerprint))
+		Expect(reset.Credential).To(BeEmpty())
+		Expect(reset.PendingCredential).To(BeEmpty())
+		Expect(reset.ServerURL).To(BeEmpty())
+		Expect(reset.NumericID).To(BeZero())
+		Expect(reset.SlotID).To(BeEmpty())
+		Expect(reset.SIMID).To(BeEmpty())
+		persisted, err := store.LoadOrCreate()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(persisted).To(Equal(reset))
+	})
+
 	It("migrates a version-one identity without replacing its signing key or UUID", func() {
 		directory := GinkgoT().TempDir()
 		store := NewStore(directory, testDeviceUUID)

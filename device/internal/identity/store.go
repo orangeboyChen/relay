@@ -282,6 +282,21 @@ func (store Store) BindAssignment(state State, serverURL string, numericID int, 
 	return state, nil
 }
 
+// ResetBinding removes a revoked server credential while preserving the local
+// device identity, command key, slot identity, and SIM fingerprint.
+func (store Store) ResetBinding(state State) (State, error) {
+	state.ServerURL = ""
+	state.PendingCredential = ""
+	state.Credential = ""
+	state.NumericID = 0
+	state.SlotID = ""
+	state.SIMID = ""
+	if err := store.save(state); err != nil {
+		return State{}, err
+	}
+	return state, nil
+}
+
 func load(path string) (State, error) {
 	file, err := os.Open(path)
 	if err != nil {

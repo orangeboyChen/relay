@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"connectrpc.com/connect/v2"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	communicationv1 "github.com/orangeboyChen/relay-sdk/gen/go/relay/communication/v1"
@@ -108,6 +109,12 @@ var _ = Describe("Device RPC client", func() {
 		client.deviceClient = &fakeDeviceRPC{err: errors.New("invalid_device_credential")}
 		err := client.UpdateCommandKey(context.Background(), identity.State{DeviceUUID: deviceID, Credential: "secret"})
 		Expect(err).To(MatchError(ContainSubstring("invalid_device_credential")))
+	})
+
+	It("marks unauthenticated command-key failures as recoverable credential errors", func() {
+		client.deviceClient = &fakeDeviceRPC{err: connect.NewError(connect.CodeUnauthenticated, "device credential is invalid or revoked")}
+		err := client.UpdateCommandKey(context.Background(), identity.State{DeviceUUID: deviceID, Credential: "secret"})
+		Expect(errors.Is(err, ErrDeviceCredentialInvalid)).To(BeTrue())
 	})
 
 })

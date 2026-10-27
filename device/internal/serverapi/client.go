@@ -221,6 +221,9 @@ func (client *Client) Complete(ctx context.Context, deviceID string, credential 
 func (client *Client) UpdateCommandKey(ctx context.Context, state identity.State) error {
 	_, err := client.deviceClient.UpdateCommandKey(client.deviceContext(ctx, state.Credential), &communicationv1.UpdateCommandKeyRequest{DeviceUuid: state.DeviceUUID, CommandPublicKey: state.CommandPublicKey()})
 	if err != nil {
+		if connect.CodeOf(err) == connect.CodeUnauthenticated {
+			return fmt.Errorf("%w: %v", ErrDeviceCredentialInvalid, err)
+		}
 		return fmt.Errorf("update device command key: %w", err)
 	}
 	return nil
@@ -244,6 +247,7 @@ const (
 )
 
 var ErrDiscoveryUnavailable = errors.New("device discovery request is unavailable")
+var ErrDeviceCredentialInvalid = errors.New("device credential is invalid or revoked")
 
 // NewClient creates a server API client with an injected transport for testing.
 func NewClient(baseURL string, httpClient *http.Client) *Client {
@@ -302,6 +306,9 @@ func (client *Client) SubmitDiscovery(ctx context.Context, pendingCredential str
 		Signature: ed25519.Sign(state.IdentityPrivateKey, proof),
 	})
 	if err != nil {
+		if connect.CodeOf(err) == connect.CodeAlreadyExists && strings.Contains(strings.ToLower(err.Error()), "device discovery is not active") {
+			return DiscoveryResult{}, ErrDiscoveryUnavailable
+		}
 		return DiscoveryResult{}, fmt.Errorf("submit device discovery: %w", err)
 	}
 	return discoveryResultFromProto(response.DeviceUuid, response.Status, response.NumericId, response.SlotId, response.SimId, response.SlotKey, int(response.SlotIndex), state.DeviceUUID)

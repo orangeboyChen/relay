@@ -641,12 +641,23 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	if err := dependencies.configureAudio(ctx, config, client); err != nil {
 		return fmt.Errorf("configure modem audio: %w", err)
 	}
-	deviceIdentity, err = dependencies.bindIdentity(ctx, config, identityStore, deviceIdentity)
-	if err != nil {
-		return fmt.Errorf("bind device to server: %w", err)
-	}
-	if err := dependencies.syncCommandKey(ctx, config, deviceIdentity); err != nil {
-		return fmt.Errorf("register device command key: %w", err)
+	for {
+		deviceIdentity, err = dependencies.bindIdentity(ctx, config, identityStore, deviceIdentity)
+		if err != nil {
+			return fmt.Errorf("bind device to server: %w", err)
+		}
+		if err := dependencies.syncCommandKey(ctx, config, deviceIdentity); err != nil {
+			if !errors.Is(err, serverapi.ErrDeviceCredentialInvalid) {
+				return fmt.Errorf("register device command key: %w", err)
+			}
+			logger.Warn("device credential rejected; resetting binding and waiting for owner approval", "device_uuid", deviceIdentity.DeviceUUID, "error", err)
+			deviceIdentity, err = identityStore.ResetBinding(deviceIdentity)
+			if err != nil {
+				return fmt.Errorf("reset revoked device binding: %w", err)
+			}
+			continue
+		}
+		break
 	}
 	if dependencies.syncSIMIdentity == nil {
 		return errors.New("SIM identity synchronization is not configured")

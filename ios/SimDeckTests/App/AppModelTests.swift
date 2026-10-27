@@ -581,17 +581,8 @@ private final class AppModelServerNetwork: ServerNetworking {
 
 private final class AppModelLogoutNetwork: ServerNetworking {
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        XCTAssertEqual(request.httpMethod, "POST")
-        XCTAssertEqual(request.url?.path, "/v1/auth/logout")
-        return (
-            Data(),
-            HTTPURLResponse(
-                url: request.url!,
-                statusCode: 204,
-                httpVersion: nil,
-                headerFields: nil
-            )!
-        )
+        XCTFail("Unexpected direct HTTP request: \(request.url?.absoluteString ?? "<missing URL>")")
+        throw URLError(.unsupportedURL)
     }
 }
 
@@ -810,12 +801,6 @@ private final class AppModelSignInNetwork: ServerNetworking {
         let body: Data
         let status: Int
         switch (request.httpMethod, request.url?.path) {
-        case ("POST", "/v1/auth/bootstrap"):
-            XCTAssertTrue(String(decoding: request.httpBody ?? Data(), as: UTF8.self).contains("bootstrap secret"))
-            body = Data("""
-            {"access_token":"access","refresh_token":"refresh","access_expires_at":"2098-01-01T00:00:00Z","refresh_expires_at":"2099-01-01T00:00:00Z"}
-            """.utf8)
-            status = 201
         case ("POST", "/relay.communication.v1.OwnerService/ListDevices"):
             let key = Data(repeating: 5, count: 32).base64EncodedString()
             body = Data("""

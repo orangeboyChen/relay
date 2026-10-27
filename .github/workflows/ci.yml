@@ -119,6 +119,12 @@ jobs:
           xcrun simctl list runtimes
           xcrun simctl list devices
           exit 1
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
+      - name: Generate Swift protocol sources
+        working-directory: protocol
+        run: buf generate
       - name: Run simulator tests
         working-directory: ios
         run: >-

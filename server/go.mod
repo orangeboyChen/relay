@@ -9,7 +9,7 @@ require (
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/onsi/ginkgo/v2 v2.29.0
 	github.com/onsi/gomega v1.41.0
-	github.com/orangeboyChen/relay-sdk v0.1.1
+	github.com/orangeboyChen/relay-sdk v0.1.2
 	golang.org/x/crypto v0.57.0
 	google.golang.org/protobuf v1.36.11
 	gorm.io/driver/postgres v1.6.0

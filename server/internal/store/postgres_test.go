@@ -1207,6 +1207,29 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(errors.Is(err, domain.ErrNoNumericID)).To(BeTrue())
 	})
 
+	It("does not leave a partial initial slot when SIM identity insertion conflicts", func() {
+		createSIMCards(domain.MinNumericID, domain.MinNumericID)
+		record := DeviceRecord{}
+		err := database.db.Transaction(func(tx *gorm.DB) error {
+			return createInitialSIMSlotDB(tx, firstDeviceID, domain.MinNumericID, nil, now, &record)
+		})
+		Expect(err).To(MatchError(ContainSubstring("insert initial SIM identity")))
+		Expect(record.Slots).To(BeEmpty())
+		var count int64
+		Expect(database.db.Model(&simCardModel{}).Count(&count).Error).To(Succeed())
+		Expect(count).To(Equal(int64(1)))
+	})
+
+	It("rejects a duplicate SIM identity when adding a discovered slot", func() {
+		createDevice(firstDeviceID)
+		record := DeviceRecord{}
+		err := database.db.Transaction(func(tx *gorm.DB) error {
+			return createSIMSlotDB(tx, firstDeviceID, "secondary", 2, firstDeviceID, 2, nil, now, &record)
+		})
+		Expect(err).To(MatchError(ContainSubstring("insert initial SIM identity")))
+		Expect(record.Slots).To(BeEmpty())
+	})
+
 	It("stores encrypted events idempotently and rejects conflicting reuse", func() {
 		device := createDevice(firstDeviceID)
 		envelope := domain.EventEnvelope{
@@ -1315,6 +1338,44 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		inserted, err = database.InsertIncomingCall(context.Background(), notification, expiresAt)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(inserted).To(BeFalse())
+		conflicts := []domain.IncomingCallNotification{}
+		changedType := notification
+		changedType.Type = "call.updated"
+		conflicts = append(conflicts, changedType)
+		changedDevice := notification
+		changedDevice.DeviceUUID = secondDeviceID
+		conflicts = append(conflicts, changedDevice)
+		changedTime := notification
+		changedTime.OccurredAt = now.Add(time.Second)
+		conflicts = append(conflicts, changedTime)
+		changedEpoch := notification
+		changedEpoch.KeyEpoch++
+		conflicts = append(conflicts, changedEpoch)
+		changedRecipient := notification
+		changedRecipient.Recipients = nil
+		conflicts = append(conflicts, changedRecipient)
+		changedKey := notification
+		changedKey.Recipients = append([]domain.IncomingCallRecipient(nil), notification.Recipients...)
+		changedKey.Recipients[0].SenderPublicKey = bytes.Repeat([]byte{14}, 32)
+		conflicts = append(conflicts, changedKey)
+		changedNonce := notification
+		changedNonce.Recipients = append([]domain.IncomingCallRecipient(nil), notification.Recipients...)
+		changedNonce.Recipients[0].Nonce = bytes.Repeat([]byte{15}, 12)
+		conflicts = append(conflicts, changedNonce)
+		changedSignature := notification
+		changedSignature.Recipients = append([]domain.IncomingCallRecipient(nil), notification.Recipients...)
+		changedSignature.Recipients[0].Signature = bytes.Repeat([]byte{16}, ed25519.SignatureSize)
+		conflicts = append(conflicts, changedSignature)
+		changedRecipientID := notification
+		changedRecipientID.Recipients = append([]domain.IncomingCallRecipient(nil), notification.Recipients...)
+		changedRecipientID.Recipients[0].InstallationID = secondDeviceID
+		conflicts = append(conflicts, changedRecipientID)
+		for _, conflict := range conflicts {
+			_, err := database.InsertIncomingCall(context.Background(), conflict, expiresAt)
+			Expect(errors.Is(err, domain.ErrIdempotencyConflict)).To(BeTrue())
+		}
+		_, err = database.InsertIncomingCall(context.Background(), notification, expiresAt.Add(time.Second))
+		Expect(errors.Is(err, domain.ErrIdempotencyConflict)).To(BeTrue())
 
 		var job outboxJobModel
 		Expect(database.db.Where("kind = ?", "voip.incoming_call").First(&job).Error).To(Succeed())
@@ -1328,8 +1389,10 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(database.db.Model(&outboxJobModel{}).Where("kind = ?", "voip.incoming_call").Count(&jobs).Error).To(Succeed())
 		Expect(jobs).To(Equal(int64(1)))
 
-		notification.Recipients[0].Ciphertext = []byte("different ciphertext")
-		_, err = database.InsertIncomingCall(context.Background(), notification, expiresAt)
+		changedCiphertext := notification
+		changedCiphertext.Recipients = append([]domain.IncomingCallRecipient(nil), notification.Recipients...)
+		changedCiphertext.Recipients[0].Ciphertext = []byte("different ciphertext")
+		_, err = database.InsertIncomingCall(context.Background(), changedCiphertext, expiresAt)
 		Expect(errors.Is(err, domain.ErrIdempotencyConflict)).To(BeTrue())
 	})
 
@@ -1479,11 +1542,16 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		}
 		second := first
 		second.ID = "01900000-0000-7000-8000-000000000102"
+		third := first
+		third.ID = "01900000-0000-7000-8000-000000000103"
 		_, _, err := database.RegisterAppInstallation(context.Background(), owner.ID, first, now)
 		Expect(err).NotTo(HaveOccurred())
 		_, _, err = database.RegisterAppInstallation(context.Background(), owner.ID, second, now.Add(time.Second))
 		Expect(err).NotTo(HaveOccurred())
+		_, _, err = database.RegisterAppInstallation(context.Background(), owner.ID, third, now.Add(2*time.Second))
+		Expect(err).NotTo(HaveOccurred())
 		Expect(database.db.Model(&appInstallationModel{}).Where("id = ?", second.ID).Update("approved_at", now).Error).To(Succeed())
+		Expect(database.db.Model(&appInstallationModel{}).Where("id = ?", third.ID).Update("approved_at", now).Error).To(Succeed())
 		device := createDevice(firstDeviceID)
 		notification := domain.IncomingCallNotification{
 			ID:         "01900000-0000-7000-8000-000000000042",
@@ -1510,6 +1578,10 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		}
 		_, err = database.InsertIncomingCall(context.Background(), notification, now.Add(time.Hour))
 		Expect(err).NotTo(HaveOccurred())
+		_, err = database.ClaimIncomingCall(context.Background(), owner.ID, notification.ID, "01900000-0000-7000-8000-000000000199", now)
+		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
+		_, err = database.ClaimIncomingCall(context.Background(), owner.ID, notification.ID, third.ID, now)
+		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
 
 		winner, err := database.ClaimIncomingCall(context.Background(), owner.ID, notification.ID, first.ID, now)
 		Expect(err).NotTo(HaveOccurred())
@@ -1664,7 +1736,13 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(database.UpdateDeviceProfile(ctx, firstDeviceID, []byte("profile"))).To(HaveOccurred())
 		Expect(database.UpdateSIMNumericID(ctx, firstDeviceID, 1)).To(HaveOccurred())
 		Expect(database.UpdateSIMProfile(ctx, firstDeviceID, []byte("profile"))).To(HaveOccurred())
+		_, err = database.UpdateDeviceSIMIdentity(ctx, firstDeviceID, "slot", 1, bytes.Repeat([]byte{1}, 32), now)
+		Expect(err).To(HaveOccurred())
+		Expect(database.UpdateDeviceRadioStatus(ctx, firstDeviceID, "slot", 1, "LTE", nil, now)).To(HaveOccurred())
 		Expect(database.RevokeDevice(ctx, firstDeviceID, now)).To(HaveOccurred())
+		_, err = database.ListSIMCards(ctx)
+		Expect(err).To(HaveOccurred())
+		Expect(database.RetireSIMCard(ctx, firstDeviceID, now)).To(HaveOccurred())
 		_, err = database.ListDevices(ctx)
 		Expect(err).To(MatchError(ContainSubstring("list devices")))
 		_, _, err = database.InsertEvent(ctx, domain.EventEnvelope{}, now)

@@ -146,6 +146,20 @@ func TestUserMetadataIsStable(t *testing.T) {
 	if user.WebAuthnName() != "admin" || user.WebAuthnDisplayName() != "Sim Deck owner" {
 		t.Fatalf("unexpected user metadata")
 	}
+	if user.WebAuthnCredentials() != nil {
+		t.Fatalf("expected empty credentials to remain nil")
+	}
+}
+
+func TestSaveSessionRejectsUnencodableResponses(t *testing.T) {
+	store := &memoryStore{}
+	service, err := New(store, "https://relay.example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.saveSession(&webauthnlib.SessionData{}, make(chan int)); err == nil {
+		t.Fatal("expected an unencodable response to fail")
+	}
 }
 
 func TestCeremoniesRejectExpiredOrMissingSessions(t *testing.T) {

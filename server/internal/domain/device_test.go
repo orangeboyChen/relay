@@ -34,6 +34,13 @@ func TestNextNumericID(t *testing.T) {
 	if got != 3 {
 		t.Fatalf("NextNumericID() = %d, want 3", got)
 	}
+	allOccupied := make(map[int]struct{}, MaxNumericID-MinNumericID+1)
+	for numericID := MinNumericID; numericID <= MaxNumericID; numericID++ {
+		allOccupied[numericID] = struct{}{}
+	}
+	if _, err := NextNumericID(allOccupied); !errors.Is(err, ErrNoNumericID) {
+		t.Fatalf("NextNumericID() error = %v, want ErrNoNumericID", err)
+	}
 }
 
 func TestValidateNumericID(t *testing.T) {

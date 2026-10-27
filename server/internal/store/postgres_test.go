@@ -474,7 +474,8 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		firstCredentialHash, err := auth.TokenHash(firstCredential)
 		Expect(err).NotTo(HaveOccurred())
 		fingerprint := bytes.Repeat([]byte{43}, 32)
-		Expect(database.OpenDeviceDiscovery(context.Background(), owner.ID, now, now.Add(10*time.Minute))).To(Succeed())
+		_, err = database.OpenDeviceDiscovery(context.Background(), owner.ID, now, now.Add(10*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
 		_, err = database.SubmitDeviceDiscovery(context.Background(), now, DeviceDiscoveryRequest{
 			DeviceUUID: firstDeviceID, SlotKey: "primary", SlotIndex: 1, SIMFingerprint: fingerprint,
 			IdentityPublicKey: identityKey, CommandPublicKey: bytes.Repeat([]byte{44}, 32), CredentialHash: firstCredentialHash[:],
@@ -488,7 +489,8 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		secondCredentialHash, err := auth.TokenHash(secondCredential)
 		Expect(err).NotTo(HaveOccurred())
 		secondCommandKey := bytes.Repeat([]byte{46}, 32)
-		Expect(database.OpenDeviceDiscovery(context.Background(), owner.ID, now.Add(3*time.Minute), now.Add(13*time.Minute))).To(Succeed())
+		_, err = database.OpenDeviceDiscovery(context.Background(), owner.ID, now.Add(3*time.Minute), now.Add(13*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
 		discovery, err := database.SubmitDeviceDiscovery(context.Background(), now.Add(3*time.Minute), DeviceDiscoveryRequest{
 			DeviceUUID: firstDeviceID, SlotKey: "primary", SlotIndex: 1, SIMFingerprint: fingerprint,
 			IdentityPublicKey: identityKey, CommandPublicKey: secondCommandKey, CredentialHash: secondCredentialHash[:],

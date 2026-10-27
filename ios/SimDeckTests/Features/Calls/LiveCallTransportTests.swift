@@ -187,6 +187,37 @@ final class LiveCallTransportTests: XCTestCase {
         XCTAssertTrue(media.isClosed)
     }
 
+    func testAnsweringIncomingCallPublishesConnectedWhenDeviceStateIsNotActiveYet() async throws {
+        let api = try DeviceCommandAPIFake(
+            deviceID: deviceID,
+            outcome: .success,
+            callState: "ringing"
+        )
+        let media = CallMediaSessionFake()
+        let transport = LiveCallTransport(
+            api: api,
+            commandSigner: api.commandSigner,
+            now: { Date(timeIntervalSince1970: 8_000) },
+            makeMediaSession: { media },
+            waitBeforePollingAgain: {},
+            automaticallyPollEvents: false
+        )
+        var events: [CallTransportEvent] = []
+        transport.setEventHandler { events.append($0) }
+        try transport.registerIncomingCall(
+            IncomingCallRegistration(
+                callID: callID,
+                lineID: deviceID,
+                callSecret: Data((97...128).map(UInt8.init)),
+                verificationKey: api.verificationKey
+            )
+        )
+
+        try await transport.answerIncomingCall(callID: callID)
+
+        XCTAssertEqual(events, [.connected(callID: callID, at: Date(timeIntervalSince1970: 8_000))])
+    }
+
     func testIncomingCallRegistrationRejectsInvalidSecretsBeforeCommands() async throws {
         let api = try DeviceCommandAPIFake(deviceID: deviceID, outcome: .success)
         let transport = LiveCallTransport(

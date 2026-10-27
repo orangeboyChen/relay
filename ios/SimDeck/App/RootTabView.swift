@@ -600,10 +600,6 @@ struct CallFilterMenuButton: UIViewRepresentable {
     func makeUIView(context: Context) -> UIButton {
         let button = UIButton(type: .system)
         button.showsMenuAsPrimaryAction = true
-        button.configuration = .plain()
-        button.configuration?.contentInsets = .zero
-        button.configuration?.cornerStyle = .fixed
-        button.configuration?.background.cornerRadius = 18
         button.widthAnchor.constraint(equalToConstant: 36).isActive = true
         button.heightAnchor.constraint(equalToConstant: 36).isActive = true
         button.accessibilityLabel = String(localized: "Call filter")
@@ -615,15 +611,19 @@ struct CallFilterMenuButton: UIViewRepresentable {
         context.coordinator.selectedLineID = $selectedLineID
 
         let isActive = filter != .all || selectedLineID != nil
+        var buttonConfiguration = isActive
+            ? UIButton.Configuration.filled()
+            : UIButton.Configuration.plain()
+        buttonConfiguration.contentInsets = .zero
+        buttonConfiguration.cornerStyle = .capsule
         let configuration = UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)
-        button.configuration?.image = UIImage(
+        buttonConfiguration.image = UIImage(
             systemName: "line.3.horizontal.decrease",
             withConfiguration: configuration
         )
-        button.configuration?.baseForegroundColor = isActive ? .white : .label
-        button.configuration?.background.backgroundColor = isActive ? .systemBlue : .clear
-        button.layer.cornerRadius = 18
-        button.clipsToBounds = true
+        buttonConfiguration.baseForegroundColor = isActive ? .white : .label
+        buttonConfiguration.background.backgroundColor = isActive ? .systemBlue : .clear
+        button.configuration = buttonConfiguration
         button.menu = context.coordinator.makeMenu(lines: lines)
         button.accessibilityValue = accessibilityValue
     }

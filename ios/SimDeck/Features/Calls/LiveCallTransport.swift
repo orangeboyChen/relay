@@ -283,9 +283,10 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
             }
             try await mediaSession.applyAnswer(answer)
             installMediaSession(mediaSession, for: callID)
-            if exchange.result.callState == "active" {
-                markConnected(callID: callID, at: now())
-            }
+            // A successful answer means the media path is established. The
+            // modem state can still be one poll behind, so do not leave the
+            // CallKit UI in Connecting while waiting for a later CLCC event.
+            markConnected(callID: callID, at: now())
             startCallLeaseRenewal(callID: callID)
         } catch {
             mediaSession.close()

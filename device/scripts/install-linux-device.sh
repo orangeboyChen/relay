@@ -271,6 +271,6 @@ printf 'Start with: docker compose --env-file %s -f %s up -d\n' "$env_file" "$co
 if [[ "$start" == true ]]; then docker compose --env-file "$env_file" -f "$compose_file" up -d; fi
 }
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]:-}" == "$0" ]]; then
   main "$@"
 fi

@@ -229,7 +229,14 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		retried, created, err := database.RegisterAppInstallation(context.Background(), owner.ID, first, now.Add(time.Minute))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(created).To(BeFalse())
-		Expect(retried).To(Equal(firstRecord))
+		Expect(retried.ID).To(Equal(firstRecord.ID))
+		Expect(retried.IdentityPublicKey).To(Equal(firstRecord.IdentityPublicKey))
+		Expect(retried.KeyAgreementPublicKey).To(Equal(firstRecord.KeyAgreementPublicKey))
+		Expect(retried.WrappedVaultKey).To(Equal(firstRecord.WrappedVaultKey))
+		Expect(retried.ApprovedAt).NotTo(BeNil())
+		Expect(*retried.ApprovedAt).To(BeTemporally("==", *firstRecord.ApprovedAt))
+		Expect(retried.RevokedAt).To(BeNil())
+		Expect(retried.CreatedAt).To(BeTemporally("==", firstRecord.CreatedAt))
 
 		second := AppInstallationRegistration{
 			ID:                    "01900000-0000-7000-8000-000000000102",

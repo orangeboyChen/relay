@@ -177,9 +177,12 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 
 	It("rejects malformed persisted passkey data", func() {
 		owner := createOwner()
-		_, err := database.pool.Exec(context.Background(), `
-			INSERT INTO webauthn_credentials (id, owner_id, public_key, sign_count)
-			VALUES ($1, $2, $3, 0)`, []byte("invalid-credential"), owner.ID, []byte("not-json"))
+		err := database.db.Create(&webauthnCredentialModel{
+			ID:        []byte("invalid-credential"),
+			OwnerID:   owner.ID,
+			PublicKey: []byte("not-json"),
+			CreatedAt: now,
+		}).Error
 		Expect(err).NotTo(HaveOccurred())
 
 		_, err = database.WebAuthnCredentials(context.Background(), owner.ID)

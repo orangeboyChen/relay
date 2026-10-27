@@ -1387,8 +1387,11 @@ final class ServerConnectionManager {
                 },
                 headers: ["authorization": ["Bearer \(accessToken)"]]
             ).result.get()
-        } catch let error where error.code == .notFound {
-            return
+        } catch {
+            if error.code == .notFound {
+                return
+            }
+            throw error
         }
     }
 

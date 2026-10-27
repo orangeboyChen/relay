@@ -504,6 +504,15 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload, senderInst
 			runtime.activeCallLease.senderInstallationID != senderInstallationID {
 			return executionResult{}, errInvalidCommand
 		}
+		if refresher, ok := runtime.calls.(interface{ Refresh(context.Context) error }); ok {
+			if err := refresher.Refresh(ctx); err != nil {
+				runtime.logger.Warn(
+					"call state refresh deferred",
+					"call_id", payload.CallID,
+					"error", err,
+				)
+			}
+		}
 		return executionResult{}, nil
 	case "call.media.restart":
 		if strings.TrimSpace(payload.CallID) == "" || strings.TrimSpace(payload.MediaOffer) == "" ||

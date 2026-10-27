@@ -79,6 +79,21 @@ func (controller *Controller) State() State {
 	return controller.Snapshot().State
 }
 
+// Refresh queries the modem's authoritative call list and updates the local snapshot.
+func (controller *Controller) Refresh(ctx context.Context) error {
+	response, err := controller.commander.Send(ctx, "AT+CLCC")
+	if err != nil {
+		return fmt.Errorf("query modem call state: %w", err)
+	}
+	if !response.OK() {
+		return fmt.Errorf("modem rejected call state query: %s", response.Terminal)
+	}
+	if err := controller.ApplyCLCC(response.Lines); err != nil {
+		return fmt.Errorf("parse modem call state: %w", err)
+	}
+	return nil
+}
+
 // Snapshot returns all concurrently known call-leg states.
 func (controller *Controller) Snapshot() Snapshot {
 	controller.mu.RLock()

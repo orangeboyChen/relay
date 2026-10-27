@@ -194,6 +194,18 @@ var _ = Describe("Cellular call controller", func() {
 		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateEnded}))
 	})
 
+	It("refreshes the local state from the modem during a heartbeat", func() {
+		commander.response = at.Response{
+			Lines:    []string{`+CLCC: 1,0,3,0,0,"10086",129`},
+			Terminal: "OK",
+		}
+
+		Expect(controller.Refresh(context.Background())).To(Succeed())
+
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateRinging}))
+		Expect(commander.commands).To(Equal([]string{"AT+CLCC"}))
+	})
+
 	It("captures the incoming number from an authoritative CLCC poll", func() {
 		controller := NewController(&fakeCommander{})
 

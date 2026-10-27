@@ -180,6 +180,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
             deviceID: deviceID(for: call.lineID),
             sharedSecret: call.callSecret,
             verificationKey: call.verificationKey,
+            hasRung: false,
             hasConnected: false
         )
         if automaticallyPollEvents {
@@ -234,11 +235,17 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
                 deviceID: deviceID,
                 sharedSecret: exchange.sharedSecret.withUnsafeBytes { Data($0) },
                 verificationKey: verificationKey,
+                hasRung: false,
                 hasConnected: false
             )
             installMediaSession(mediaSession, for: callID)
-            if exchange.result.callState == "active" {
+            switch exchange.result.callState {
+            case "active":
                 markConnected(callID: callID, at: now())
+            case "dialing", "ringing":
+                markRinging(callID: callID)
+            default:
+                break
             }
             startCallLeaseRenewal(callID: callID)
             if automaticallyPollEvents {
@@ -556,15 +563,36 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
         guard automaticallyRenewCallLease, callLeaseTasks[callID] == nil else { return }
         callLeaseTasks[callID] = Task { [weak self] in
             guard let self else { return }
+            var didReconcileImmediately = false
             while !Task.isCancelled {
-                do {
-                    try await waitBeforeCallLeaseRenewal()
-                } catch {
-                    return
+                if didReconcileImmediately {
+                    do {
+                        try await waitBeforeCallLeaseRenewal()
+                    } catch {
+                        return
+                    }
                 }
+                didReconcileImmediately = true
                 guard !Task.isCancelled, let lineID = callLines[callID] else { return }
                 do {
-                    _ = try await send(operation: "call.heartbeat", callID: callID, lineID: lineID)
+                    let exchange = try await send(
+                        operation: "call.heartbeat",
+                        callID: callID,
+                        lineID: lineID
+                    )
+                    switch exchange.result.callState {
+                    case "active", "held":
+                        if callEvents[callID]?.hasConnected != true {
+                            Self.logger.info(
+                                "Call connection confirmed by device heartbeat; call: \(callID.uuidString, privacy: .public)"
+                            )
+                            markConnected(callID: callID, at: now())
+                        }
+                    case "dialing", "ringing":
+                        markRinging(callID: callID)
+                    default:
+                        break
+                    }
                 } catch {
                     Self.logger.error(
                         "Active call lease renewal failed; call: \(callID.uuidString, privacy: .public), error: \(String(reflecting: error), privacy: .public)"
@@ -770,7 +798,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
     private func process(_ envelope: EncryptedEventEnvelope) {
         guard envelope.type == "call.state" else { return }
         for callID in Array(callEvents.keys) {
-            guard var context = callEvents[callID], context.deviceID == envelope.deviceUUID else {
+            guard let context = callEvents[callID], context.deviceID == envelope.deviceUUID else {
                 continue
             }
             guard let payload = try? EncryptedCallEventCodec.open(
@@ -782,7 +810,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
             }
             switch payload.state {
             case "ringing":
-                eventHandler?(.ringing(callID: callID))
+                markRinging(callID: callID)
             case "active":
                 markConnected(callID: callID, at: envelope.occurredAt)
             case "ended":
@@ -809,6 +837,15 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
         callEvents[callID] = context
         startMediaHealthMonitoring(callID: callID)
         eventHandler?(.connected(callID: callID, at: date))
+    }
+
+    private func markRinging(callID: UUID) {
+        guard var context = callEvents[callID], !context.hasConnected, !context.hasRung else {
+            return
+        }
+        context.hasRung = true
+        callEvents[callID] = context
+        eventHandler?(.ringing(callID: callID))
     }
 
     private func failCallAfterMediaRecovery(callID: UUID, reason: String) async {
@@ -857,6 +894,7 @@ private struct CallEventContext {
     let deviceID: UUID
     let sharedSecret: Data
     let verificationKey: Data
+    var hasRung: Bool
     var hasConnected: Bool
 }
 

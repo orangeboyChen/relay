@@ -37,6 +37,7 @@ struct InCallScreen: View {
                                     try await coordinator.playDTMF(digit)
                                 }
                             }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                             .padding(.top, 105)
                             .transition(inCallContentTransition)
                         } else {
@@ -69,7 +70,7 @@ struct InCallScreen: View {
                                     }
                                 }
                             )
-                            .padding(.top, 40)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                             .transition(inCallContentTransition)
                         }
                     }

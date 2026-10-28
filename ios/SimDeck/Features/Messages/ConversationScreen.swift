@@ -207,7 +207,7 @@ struct ConversationScreen: View {
                     Button {
                         dismiss()
                     } label: {
-                        HStack(spacing: 12) {
+                        HStack(spacing: 8) {
                             Image(systemName: "chevron.left")
                                 .font(.system(size: 22, weight: .medium))
 
@@ -222,11 +222,13 @@ struct ConversationScreen: View {
                                     in: Capsule()
                                 )
                         }
-                        .padding(.horizontal, 14)
+                        .padding(.horizontal, 8)
                         .padding(.vertical, 16)
+                        .glassEffect(.regular.interactive(), in: Capsule())
                     }
                     .accessibilityLabel("Back, \(backUnreadCount) unread messages")
                 }
+                .sharedBackgroundVisibility(.hidden)
             }
 
             ToolbarItem(placement: .principal) {

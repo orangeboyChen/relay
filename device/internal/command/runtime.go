@@ -116,6 +116,8 @@ type Remote interface {
 // Calls is the modem call capability used by encrypted commands.
 type Calls interface {
 	Dial(context.Context, string) error
+	AddParticipant(context.Context, string) error
+	Merge(context.Context) error
 	Answer(context.Context) error
 	AnswerWaiting(context.Context) error
 	Reject(context.Context) error
@@ -476,6 +478,22 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload, senderInst
 			return executionResult{}, fmt.Errorf("%w: %v", errMediaUnavailable, err)
 		}
 		return executionResult{mediaAnswer: answer}, nil
+	case "call.add":
+		if strings.TrimSpace(payload.CallID) == "" || strings.TrimSpace(payload.Number) == "" {
+			return executionResult{}, errInvalidCommand
+		}
+		if !runtime.ownsCallLease(payload.CallID, senderInstallationID) {
+			return executionResult{}, errInvalidCommand
+		}
+		return executionResult{}, runtime.calls.AddParticipant(ctx, payload.Number)
+	case "call.merge":
+		if strings.TrimSpace(payload.CallID) == "" {
+			return executionResult{}, errInvalidCommand
+		}
+		if !runtime.ownsCallLease(payload.CallID, senderInstallationID) {
+			return executionResult{}, errInvalidCommand
+		}
+		return executionResult{}, runtime.calls.Merge(ctx)
 	case "call.answer":
 		if strings.TrimSpace(payload.CallID) == "" || strings.TrimSpace(payload.MediaOffer) == "" ||
 			!validCallLeaseSeconds(payload.CallLeaseSeconds) {
@@ -577,6 +595,12 @@ func (runtime *Runtime) execute(ctx context.Context, payload Payload, senderInst
 	}
 }
 
+func (runtime *Runtime) ownsCallLease(callID, senderInstallationID string) bool {
+	lease := runtime.activeCallLease
+	return lease != nil && lease.callID == callID &&
+		lease.senderInstallationID == senderInstallationID && runtime.now().Before(lease.expiresAt)
+}
+
 func (runtime *Runtime) updateCallLease(payload Payload, senderInstallationID string) {
 	switch payload.Operation {
 	case "call.start", "call.answer":
@@ -588,7 +612,7 @@ func (runtime *Runtime) updateCallLease(payload Payload, senderInstallationID st
 			callID: payload.CallID, senderInstallationID: senderInstallationID,
 			duration: duration, expiresAt: runtime.now().Add(duration),
 		}
-	case "call.heartbeat", "call.media.restart", "call.hold", "call.resume", "call.swap", "call.dtmf":
+	case "call.heartbeat", "call.media.restart", "call.add", "call.merge", "call.hold", "call.resume", "call.swap", "call.dtmf":
 		if runtime.activeCallLease != nil && runtime.activeCallLease.callID == payload.CallID &&
 			runtime.activeCallLease.senderInstallationID == senderInstallationID {
 			runtime.activeCallLease.expiresAt = runtime.now().Add(runtime.activeCallLease.duration)

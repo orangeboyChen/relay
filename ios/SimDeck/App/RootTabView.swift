@@ -503,6 +503,7 @@ struct RootTabView: View {
                 lines: model.devices,
                 contacts: contacts,
                 defaultMessageLineID: model.defaultMessageLineID,
+                backUnreadCount: conversations.reduce(0) { $0 + $1.unreadCount },
                 sendAction: { lineID, number, body in
                     try await model.sendMessage(
                         lineID: lineID,

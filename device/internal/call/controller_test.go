@@ -13,11 +13,15 @@ import (
 type fakeCommander struct {
 	commands []string
 	response at.Response
+	rejected map[string]bool
 	err      error
 }
 
 func (fake *fakeCommander) Send(_ context.Context, command string) (at.Response, error) {
 	fake.commands = append(fake.commands, command)
+	if fake.rejected[command] {
+		return at.Response{Terminal: "ERROR"}, nil
+	}
 	return fake.response, fake.err
 }
 
@@ -140,6 +144,47 @@ var _ = Describe("Cellular call controller", func() {
 		Expect(controller.Resume(context.Background())).To(Succeed())
 		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateActive, Active: true}))
 		Expect(commander.commands).To(Equal([]string{"ATA", "AT+CHLD=2", "AT+CHLD=2"}))
+	})
+
+	It("holds the active participant and dials another participant", func() {
+		controller.ApplyURC("RING")
+		Expect(controller.Answer(context.Background())).To(Succeed())
+
+		Expect(controller.AddParticipant(context.Background(), "+8613800000000")).To(Succeed())
+
+		Expect(controller.Snapshot()).To(Equal(Snapshot{
+			State: StateDialing, Held: true,
+		}))
+		Expect(commander.commands).To(Equal([]string{
+			"ATA", "AT+CHLD=2", "ATD+8613800000000;",
+		}))
+	})
+
+	It("resumes the original call if dialing the second participant fails", func() {
+		controller.ApplyURC("RING")
+		Expect(controller.Answer(context.Background())).To(Succeed())
+		commander.rejected = map[string]bool{"ATD+8613800000000;": true}
+
+		Expect(controller.AddParticipant(context.Background(), "+8613800000000")).To(MatchError(ContainSubstring("modem rejected")))
+
+		Expect(controller.Snapshot()).To(Equal(Snapshot{
+			State: StateActive, Active: true,
+		}))
+		Expect(commander.commands).To(Equal([]string{
+			"ATA", "AT+CHLD=2", "ATD+8613800000000;", "AT+CHLD=2",
+		}))
+	})
+
+	It("merges active and held participants", func() {
+		controller.ApplyURC("RING")
+		Expect(controller.Answer(context.Background())).To(Succeed())
+		controller.ApplyURC(`+CCWA: "10010",129,1`)
+		Expect(controller.AnswerWaiting(context.Background())).To(Succeed())
+
+		Expect(controller.Merge(context.Background())).To(Succeed())
+
+		Expect(controller.Snapshot()).To(Equal(Snapshot{State: StateActive, Active: true}))
+		Expect(commander.commands[len(commander.commands)-1]).To(Equal("AT+CHLD=3"))
 	})
 
 	It("swaps only when active and held call legs both exist", func() {

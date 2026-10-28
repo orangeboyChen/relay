@@ -12,6 +12,8 @@ protocol CallStarting: AnyObject {
 @MainActor
 protocol CallControlling: AnyObject {
     func endCall() async throws
+    func addParticipant(number: String) async throws
+    func mergeCalls() async throws
     func setHeld(_ isHeld: Bool) async throws
     func setMuted(_ isMuted: Bool) async throws
     func playDTMF(_ digits: String) async throws

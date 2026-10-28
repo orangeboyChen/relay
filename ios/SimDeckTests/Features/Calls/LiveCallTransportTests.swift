@@ -287,6 +287,8 @@ final class LiveCallTransportTests: XCTestCase {
         transport.setEventHandler { events.append($0) }
 
         try await transport.startOutgoingCall(callID: callID, number: "13500000000", lineID: deviceID)
+        try await transport.addParticipant(number: "+8613800000000", callID: callID)
+        try await transport.mergeCalls(callID: callID)
         try await transport.setHeld(true, callID: callID)
         try await transport.setHeld(false, callID: callID)
         try await transport.setMuted(true, callID: callID)
@@ -295,12 +297,13 @@ final class LiveCallTransportTests: XCTestCase {
         try await transport.endCall(callID: callID)
 
         XCTAssertEqual(api.payloads.map(\.operation), [
-            "call.start", "call.hold", "call.resume", "call.dtmf", "call.end",
+            "call.start", "call.add", "call.merge", "call.hold", "call.resume", "call.dtmf", "call.end",
         ])
         XCTAssertEqual(api.payloads.first?.number, "13500000000")
+        XCTAssertEqual(api.payloads[1].number, "+8613800000000")
         XCTAssertEqual(api.payloads.first?.mediaOffer, media.offer)
         XCTAssertEqual(api.payloads.first?.callLeaseSeconds, 30)
-        XCTAssertEqual(api.payloads[3].digits, "#")
+        XCTAssertEqual(api.payloads[5].digits, "#")
         XCTAssertEqual(media.appliedAnswers, [CallMediaSessionFake.answer])
         XCTAssertEqual(media.muteChanges, [true, false])
         XCTAssertTrue(media.isClosed)

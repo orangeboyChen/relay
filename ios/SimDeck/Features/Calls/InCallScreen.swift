@@ -11,87 +11,153 @@ struct InCallScreen: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isKeypadVisible = false
+    @State private var isMorePresented = false
+    @State private var isAddPeoplePresented = false
+    @State private var isContactCardPresented = false
+    @State private var hasAdditionalCall = false
+    @State private var contactCardNumber = ""
     @State private var enteredDTMFDigits = ""
     @State private var presentedError: InCallPresentedError?
+    @Namespace private var moreMenuNamespace
 
     var body: some View {
-        ZStack {
-            InCallBackdrop()
-                .ignoresSafeArea()
-
-            if let call = coordinator.activeCall {
-                VStack(spacing: 0) {
-                    CallIdentityHeader(
-                        call: call,
-                        line: line(for: call),
-                        referenceDate: referenceDate,
-                        enteredDTMFDigits: enteredDTMFDigits
-                    )
-                    .padding(.top, 53)
-
-                    ZStack(alignment: .top) {
-                        if isKeypadVisible {
-                            InCallKeypad { digit in
-                                enteredDTMFDigits.append(contentsOf: digit)
-                                perform {
-                                    try await coordinator.playDTMF(digit)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                            .padding(.top, 105)
-                            .transition(inCallContentTransition)
-                        } else {
-                            InCallControls(
-                                call: call,
-                                capabilities: coordinator.capabilities,
-                                audioRoutes: coordinator.audioRoutes,
-                                onMute: {
-                                    perform {
-                                        try await coordinator.setMuted(!call.isMuted)
-                                    }
-                                },
-                                onKeypad: {
-                                    withAnimation(motionAnimation) {
-                                        isKeypadVisible = true
-                                    }
-                                },
-                                onAudioRoute: { route in
-                                    do {
-                                        try coordinator.audioRoutes.select(route)
-                                    } catch {
-                                        presentedError = InCallPresentedError(
-                                            message: "Could not change the audio route."
-                                        )
-                                    }
-                                },
-                                onHold: {
-                                    perform {
-                                        try await coordinator.setHeld(!call.status.isHeld)
-                                    }
-                                }
-                            )
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                            .transition(inCallContentTransition)
-                        }
+        GlassEffectContainer(spacing: 40) {
+            ZStack {
+                InCallBackdrop()
+                    .overlay {
+                        InCallMoreBackdrop()
+                            .opacity(isMorePresented ? 1 : 0)
                     }
-                    .frame(maxHeight: .infinity, alignment: .top)
+                    .ignoresSafeArea()
 
-                    InCallKeypadFooter(
-                        keypadVisible: isKeypadVisible,
-                        onEnd: {
-                            Task {
-                                try? await coordinator.endCall()
-                            }
-                        },
-                        onHide: {
-                            withAnimation(motionAnimation) {
-                                isKeypadVisible = false
+                if let call = coordinator.activeCall {
+                    VStack(spacing: 0) {
+                        CallIdentityHeader(
+                            call: call,
+                            line: line(for: call),
+                            referenceDate: referenceDate,
+                            keypadVisible: isKeypadVisible,
+                            enteredDTMFDigits: enteredDTMFDigits
+                        )
+                        .padding(.top, 53)
+                        .opacity(isMorePresented ? 0.48 : 1)
+
+                        ZStack(alignment: .top) {
+                            if isKeypadVisible {
+                                InCallKeypad { digit in
+                                    enteredDTMFDigits.append(contentsOf: digit)
+                                    perform {
+                                        try await coordinator.playDTMF(digit)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                                .padding(.top, 105)
+                                .transition(inCallContentTransition)
+                                .opacity(isMorePresented ? 0 : 1)
+                            } else {
+                                InCallControls(
+                                    call: call,
+                                    capabilities: coordinator.capabilities,
+                                    audioRoutes: coordinator.audioRoutes,
+                                    onMute: {
+                                        perform {
+                                            try await coordinator.setMuted(!call.isMuted)
+                                        }
+                                    },
+                                    onAudioRoute: { route in
+                                        do {
+                                            try coordinator.audioRoutes.select(route)
+                                        } catch {
+                                            presentedError = InCallPresentedError(
+                                                message: "Could not change the audio route."
+                                            )
+                                        }
+                                    },
+                                    isMorePresented: isMorePresented,
+                                    isCallEnded: call.status.isEnded
+                                )
+                                .padding(.bottom, 21)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                                .transition(inCallContentTransition)
                             }
                         }
-                    )
+                        .frame(maxHeight: .infinity, alignment: .top)
+                        .allowsHitTesting(!isMorePresented)
+
+                        InCallKeypadFooter(
+                            keypadVisible: isKeypadVisible,
+                            canUseKeypad: coordinator.capabilities.supportsDTMF,
+                            isCallEnded: call.status.isEnded,
+                            isMorePresented: isMorePresented,
+                            moreMenuNamespace: moreMenuNamespace,
+                            onMore: {
+                                withAnimation(moreMenuAnimation) {
+                                    isMorePresented = true
+                                }
+                            },
+                            onKeypad: {
+                                withAnimation(motionAnimation) {
+                                    enteredDTMFDigits = ""
+                                    isKeypadVisible = true
+                                }
+                            },
+                            onEnd: {
+                                Task {
+                                    try? await coordinator.endCall()
+                                }
+                            },
+                            onHide: {
+                                withAnimation(motionAnimation) {
+                                    enteredDTMFDigits = ""
+                                    isKeypadVisible = false
+                                }
+                            }
+                        )
+                        .allowsHitTesting(!isMorePresented)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 16)
                 }
-                .padding(.horizontal, 24)
-                .padding(.bottom, 16)
+            }
+            .overlay {
+                if let call = coordinator.activeCall, isMorePresented {
+                    ZStack {
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .ignoresSafeArea()
+                            .onTapGesture {
+                                withAnimation(moreMenuAnimation) {
+                                    isMorePresented = false
+                                }
+                            }
+
+                        VStack {
+                            Spacer(minLength: 0)
+                            InCallMorePanel(
+                                isConnected: call.status.connectedAt != nil,
+                                hasAdditionalCall: hasAdditionalCall,
+                                namespace: moreMenuNamespace,
+                                onAddPeople: {
+                                    isMorePresented = false
+                                    isAddPeoplePresented = true
+                                },
+                                onContactCard: {
+                                    contactCardNumber = call.remoteNumber
+                                    isMorePresented = false
+                                    isContactCardPresented = true
+                                },
+                                onMerge: {
+                                    isMorePresented = false
+                                    perform {
+                                        try await coordinator.mergeCalls()
+                                        hasAdditionalCall = false
+                                    }
+                                },
+                            )
+                        }
+                        .ignoresSafeArea(edges: .bottom)
+                    }
+                }
             }
         }
         .interactiveDismissDisabled()
@@ -116,6 +182,25 @@ struct InCallScreen: View {
         }
         .onChange(of: coordinator.activeCall?.id, initial: true) { _, _ in
             enteredDTMFDigits = ""
+            isMorePresented = false
+            hasAdditionalCall = false
+        }
+        .sheet(isPresented: $isContactCardPresented) {
+            SystemUnknownContactView(phoneNumber: contactCardNumber)
+        }
+        .sheet(isPresented: $isAddPeoplePresented) {
+            SystemContactNumberPicker(
+                onSelect: { number in
+                    isAddPeoplePresented = false
+                    perform {
+                        try await coordinator.addParticipant(number: DialString.normalized(number))
+                        hasAdditionalCall = true
+                    }
+                },
+                onCancel: {
+                    isAddPeoplePresented = false
+                }
+            )
         }
         .preferredColorScheme(.dark)
         .scrollEdgeEffectStyle(.soft, for: .all)
@@ -126,7 +211,11 @@ struct InCallScreen: View {
     }
 
     private var motionAnimation: Animation? {
-        reduceMotion ? nil : .easeInOut(duration: 0.18)
+        reduceMotion ? nil : .easeInOut(duration: 0.2)
+    }
+
+    private var moreMenuAnimation: Animation? {
+        reduceMotion ? nil : .smooth(duration: 0.2)
     }
 
     private var inCallContentTransition: AnyTransition {
@@ -152,13 +241,14 @@ private struct CallIdentityHeader: View {
     let call: ActiveCallSession
     let line: DeviceLineIdentity?
     let referenceDate: Date?
+    let keypadVisible: Bool
     let enteredDTMFDigits: String
 
     var body: some View {
         VStack(spacing: 6) {
             HStack(spacing: 6) {
                 if let line {
-                    SIMBadge(line: line, size: 18)
+                    SIMBadge(line: line, size: 18, color: .white)
                 }
 
                 CallStatusText(status: call.status, referenceDate: referenceDate)
@@ -168,11 +258,25 @@ private struct CallIdentityHeader: View {
 
             CallNumberDisplay(
                 originalNumber: call.title,
-                enteredDigits: enteredDTMFDigits
+                enteredDigits: ""
             )
             .offset(y: -4)
 
         }
+        .opacity(showsEnteredDigits ? 0 : 1)
+        .accessibilityHidden(showsEnteredDigits)
+        .overlay(alignment: .top) {
+            if showsEnteredDigits {
+                CallNumberDisplay(
+                    originalNumber: call.title,
+                    enteredDigits: enteredDTMFDigits
+                )
+            }
+        }
+    }
+
+    private var showsEnteredDigits: Bool {
+        keypadVisible && !enteredDTMFDigits.isEmpty
     }
 }
 
@@ -207,6 +311,7 @@ private struct CallNumberDisplay: View {
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(.white)
                 .lineLimit(1)
+                .truncationMode(enteredDigits.isEmpty ? .tail : .head)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .frame(maxWidth: .infinity, alignment: .center)
@@ -238,6 +343,25 @@ private struct InCallBackdrop: View {
     }
 }
 
+private struct InCallMoreBackdrop: View {
+    var body: some View {
+        LinearGradient(
+            stops: [
+                .init(color: Color(red: 0.253, green: 0.253, blue: 0.253), location: 0),
+                .init(color: Color(red: 0.245, green: 0.253, blue: 0.253), location: 0.23),
+                .init(color: Color(red: 0.209, green: 0.233, blue: 0.241), location: 0.35),
+                .init(color: Color(red: 0.143, green: 0.194, blue: 0.210), location: 0.47),
+                .init(color: Color(red: 0.100, green: 0.166, blue: 0.182), location: 0.59),
+                .init(color: Color(red: 0.092, green: 0.147, blue: 0.162), location: 0.72),
+                .init(color: Color(red: 0.127, green: 0.151, blue: 0.159), location: 0.82),
+                .init(color: Color(red: 0.155, green: 0.162, blue: 0.162), location: 1),
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+}
+
 private struct CallStatusText: View {
     let status: ActiveCallStatus
     let referenceDate: Date?
@@ -261,7 +385,9 @@ private struct CallStatusText: View {
         case .held:
             Text("On Hold")
         case .ending:
-            Text("Ending…")
+            Text("Call Ended")
+        case .ended:
+            Text("Call Ended")
         case .failed:
             Text("Call Failed")
         }
@@ -299,72 +425,53 @@ private struct InCallControls: View {
     let capabilities: CallCapabilities
     let audioRoutes: CallAudioRouteController
     let onMute: () -> Void
-    let onKeypad: () -> Void
     let onAudioRoute: (CallAudioRoute) -> Void
-    let onHold: () -> Void
+    let isMorePresented: Bool
+    let isCallEnded: Bool
 
     var body: some View {
-        VStack(spacing: 21) {
-            HStack(spacing: 36) {
-                CallAudioRouteMenu(
-                    controller: audioRoutes,
-                    onSelect: onAudioRoute
-                )
-                CallControlButton(
-                    title: "FaceTime",
-                    systemImage: "video.badge.questionmark.fill",
-                    symbolSize: 22,
-                    isSelected: false,
-                    isEnabled: false,
-                    action: {}
-                )
-                CallControlButton(
-                    title: "Mute",
-                    systemImage: call.isMuted ? "mic.slash.fill" : "mic.slash",
-                    symbolSize: 26,
-                    isSelected: call.isMuted,
-                    isEnabled: capabilities.supportsMuting,
-                    action: onMute
-                )
-            }
-
-            HStack(spacing: 36) {
-                InCallMoreMenu(
-                    isHeld: call.status.isHeld,
-                    canHold: capabilities.supportsHolding && call.status.connectedAt != nil,
-                    canSwap: capabilities.supportsSwapping,
-                    onHold: onHold
-                )
-
-                Color.clear
-                    .frame(width: 84, height: 80)
-
-                CallControlButton(
-                    title: "Keypad",
-                    systemImage: "circle.grid.3x3.fill",
-                    symbolSize: 25.5,
-                    isSelected: false,
-                    isEnabled: capabilities.supportsDTMF,
-                    action: onKeypad
-                )
-            }
+        HStack(spacing: 36) {
+            CallAudioRouteMenu(
+                controller: audioRoutes,
+                onSelect: onAudioRoute
+            )
+            CallControlButton(
+                title: "FaceTime",
+                systemImage: "video.badge.questionmark.fill",
+                symbolSize: 22,
+                isSelected: false,
+                isEnabled: false,
+                action: {}
+            )
+            CallControlButton(
+                title: "Mute",
+                systemImage: "mic.slash.fill",
+                symbolSize: 26,
+                isSelected: call.isMuted,
+                isEnabled: capabilities.supportsMuting,
+                selectedForegroundStyle: Color(
+                    red: 183.0 / 255.0,
+                    green: 21.0 / 255.0,
+                    blue: 24.0 / 255.0
+                ),
+                selectedBackgroundStyle: .white,
+                action: onMute
+            )
         }
+        .opacity(isMorePresented ? 0 : 1)
+        .allowsHitTesting(!isCallEnded)
+        .disabled(isCallEnded)
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
     }
 }
 
 private struct InCallMoreMenu: View {
-    let isHeld: Bool
-    let canHold: Bool
-    let canSwap: Bool
-    let onHold: () -> Void
-
-    @State private var isPresented = false
+    let isPresented: Bool
+    let namespace: Namespace.ID
+    let action: () -> Void
 
     var body: some View {
-        Button {
-            isPresented = true
-        } label: {
+        if isPresented {
             CallControlLabel(
                 title: "More",
                 systemImage: "ellipsis",
@@ -372,46 +479,141 @@ private struct InCallMoreMenu: View {
                 foregroundStyle: .white,
                 backgroundStyle: .white.opacity(0.16)
             )
-        }
-        .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.92))
-        .accessibilityLabel("More")
-        .popover(isPresented: $isPresented, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
-            VStack(spacing: 0) {
-                Button {
-                    isPresented = false
-                    onHold()
-                } label: {
-                    Label(
-                        isHeld ? "Resume" : "Hold",
-                        systemImage: isHeld ? "play.fill" : "pause.fill"
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(minHeight: 44)
+            .hidden()
+        } else {
+            Button(action: action) {
+                VStack(spacing: 8) {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 26, weight: .medium))
+                        .foregroundStyle(.white)
+                        .frame(width: 80, height: 80)
+                        .glassEffect(.regular.interactive(), in: Circle())
+                        .glassEffectID("moreSurface", in: namespace)
+                        .glassEffectTransition(.matchedGeometry)
+
+                    Text("More")
+                        .font(.callout)
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .offset(y: -3)
                 }
-                .disabled(!canHold)
+                .frame(width: 84)
+            }
+            .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.92))
+            .accessibilityLabel("More")
+        }
+    }
+}
 
-                if canSwap {
-                    Divider()
+private struct InCallMorePanel: View {
+    let isConnected: Bool
+    let hasAdditionalCall: Bool
+    let namespace: Namespace.ID
+    let onAddPeople: () -> Void
+    let onContactCard: () -> Void
+    let onMerge: () -> Void
 
-                    Button {} label: {
-                        Label("Swap", systemImage: "arrow.trianglehead.swap")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .frame(minHeight: 44)
-                    }
-                    .disabled(true)
+    var body: some View {
+        VStack(spacing: 0) {
+            if isConnected {
+                Button(action: onAddPeople) {
+                    InCallMoreRow(title: "Add People", icon: .addPeople)
+                        .frame(height: 67)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Button(action: onContactCard) {
+                InCallMoreRow(title: "Contact Card", icon: .contactCard)
+                    .frame(height: 67)
+            }
+            .buttonStyle(.plain)
+
+            if isConnected && hasAdditionalCall {
+                Rectangle()
+                    .fill(.white.opacity(0.18))
+                    .frame(height: 0.5)
+                    .padding(.vertical, 8)
+
+                Button(action: onMerge) {
+                    InCallMoreRow(title: "Merge Calls", icon: .addPeople)
+                        .frame(height: 67)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 32)
+        .padding(.top, 17)
+        .padding(.bottom, 17)
+        .glassEffect(
+            .regular,
+            in: RoundedRectangle(cornerRadius: 42, style: .continuous)
+        )
+        .glassEffectID("moreSurface", in: namespace)
+        .glassEffectTransition(.matchedGeometry)
+        .padding(.horizontal, 8)
+        .padding(.bottom, 8)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct InCallMoreRow: View {
+    let title: LocalizedStringKey
+    var subtitle: LocalizedStringKey? = nil
+    let icon: InCallMoreIcon.Kind
+
+    var body: some View {
+        HStack(spacing: 12) {
+            InCallMoreIcon(kind: icon)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.white)
+
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 15))
+                        .foregroundStyle(.white.opacity(0.52))
                 }
             }
-            .font(.body)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
-            .frame(width: 184)
-            .presentationCompactAdaptation(.popover)
+
+            Spacer(minLength: 0)
         }
+        .contentShape(Rectangle())
+    }
+}
+
+private struct InCallMoreIcon: View {
+    enum Kind {
+        case addPeople
+        case contactCard
+    }
+
+    let kind: Kind
+
+    var body: some View {
+        ZStack {
+            switch kind {
+            case .addPeople:
+                Circle()
+                    .fill(Color(red: 97.0 / 255.0, green: 193.0 / 255.0, blue: 249.0 / 255.0))
+                Image(systemName: "person.crop.circle.badge.plus")
+                    .font(.system(size: 23, weight: .regular))
+                    .foregroundStyle(.white)
+                    .offset(x: 1, y: 1)
+            case .contactCard:
+                PersonAvatar(displayName: nil, size: 42)
+            }
+        }
+        .frame(width: 42, height: 42)
+        .accessibilityHidden(true)
     }
 }
 
 private struct InCallEndButton: View {
     let action: () -> Void
+    var isEnabled = true
 
     var body: some View {
         Button(action: action) {
@@ -421,13 +623,14 @@ private struct InCallEndButton: View {
                 symbolSize: 26,
                 foregroundStyle: .white,
                 backgroundStyle: Color(
-                    red: 212.0 / 255.0,
-                    green: 8.0 / 255.0,
-                    blue: 9.0 / 255.0
+                    red: 183.0 / 255.0,
+                    green: 21.0 / 255.0,
+                    blue: 24.0 / 255.0
                 )
             )
         }
         .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
+        .disabled(!isEnabled)
         .accessibilityLabel("End call")
     }
 }
@@ -526,6 +729,8 @@ private struct CallControlButton: View {
     var symbolSize: CGFloat = 26
     let isSelected: Bool
     let isEnabled: Bool
+    var selectedForegroundStyle: Color = .black
+    var selectedBackgroundStyle: Color = .white
     let action: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -536,8 +741,8 @@ private struct CallControlButton: View {
                 title: title,
                 systemImage: systemImage,
                 symbolSize: symbolSize,
-                foregroundStyle: isSelected ? .black : .white,
-                backgroundStyle: isSelected ? .white : .white.opacity(0.16),
+                foregroundStyle: isSelected ? selectedForegroundStyle : .white,
+                backgroundStyle: isSelected ? selectedBackgroundStyle : .white.opacity(0.16),
                 isEnabled: isEnabled
             )
             .contentTransition(
@@ -733,35 +938,73 @@ private struct InCallKeyLabel: View {
 
 private struct InCallKeypadFooter: View {
     let keypadVisible: Bool
+    let canUseKeypad: Bool
+    let isCallEnded: Bool
+    let isMorePresented: Bool
+    let moreMenuNamespace: Namespace.ID
+    let onMore: () -> Void
+    let onKeypad: () -> Void
     let onEnd: () -> Void
     let onHide: () -> Void
 
     var body: some View {
-        ZStack {
-            Button(action: onEnd) {
-                CallControlCircle(
-                    systemImage: "phone.down.fill",
-                    symbolSize: 26,
-                    foregroundStyle: .white,
-                    tint: Color(
-                        red: 183.0 / 255.0,
-                        green: 21.0 / 255.0,
-                        blue: 24.0 / 255.0
-                    )
-                )
-            }
-            .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
-            .accessibilityLabel("End call")
-
+        Group {
             if keypadVisible {
-                Button("Hide Keypad", action: onHide)
-                    .font(.body)
-                    .foregroundStyle(.white)
-                    .frame(minWidth: 96, minHeight: 44)
-                    .offset(x: 114)
+                ZStack {
+                    endButton
+
+                    Button("Hide Keypad", action: onHide)
+                        .font(.body)
+                        .foregroundStyle(.white)
+                        .frame(minWidth: 96, minHeight: 44)
+                        .offset(x: 114)
+                }
+                .frame(height: 80)
+            } else {
+                HStack(alignment: .top, spacing: 36) {
+                    InCallMoreMenu(
+                        isPresented: isMorePresented,
+                        namespace: moreMenuNamespace,
+                        action: onMore
+                    )
+
+                    InCallEndButton(action: onEnd, isEnabled: !isCallEnded)
+                        .frame(width: 84)
+                        .opacity(isMorePresented ? 0 : 1)
+
+                    CallControlButton(
+                        title: "Keypad",
+                        systemImage: "circle.grid.3x3.fill",
+                        symbolSize: 25.5,
+                        isSelected: false,
+                        isEnabled: canUseKeypad,
+                        action: onKeypad
+                    )
+                    .opacity(isMorePresented ? 0 : 1)
+                }
+                .frame(height: 80, alignment: .top)
             }
         }
-        .frame(height: 80)
+        .allowsHitTesting(!isCallEnded)
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+    }
+
+    private var endButton: some View {
+        Button(action: onEnd) {
+            CallControlCircle(
+                systemImage: "phone.down.fill",
+                symbolSize: 26,
+                foregroundStyle: .white,
+                tint: Color(
+                    red: 183.0 / 255.0,
+                    green: 21.0 / 255.0,
+                    blue: 24.0 / 255.0
+                )
+            )
+        }
+        .buttonStyle(PressFeedbackButtonStyle(pressedScale: 0.9))
+        .disabled(isCallEnded)
+        .accessibilityLabel("End call")
     }
 }
 
@@ -770,13 +1013,6 @@ private struct InCallPresentedError: Identifiable {
     var title: LocalizedStringResource = "Call Control Failed"
     let message: LocalizedStringResource
     var endsFailedCall = false
-}
-
-private extension ActiveCallStatus {
-    var isHeld: Bool {
-        if case .held = self { return true }
-        return false
-    }
 }
 
 #if DEBUG

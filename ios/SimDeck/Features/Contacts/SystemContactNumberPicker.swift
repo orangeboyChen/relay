@@ -7,9 +7,10 @@ import SwiftUI
 
 struct SystemContactNumberPicker: UIViewControllerRepresentable {
     let onSelect: (String) -> Void
+    let onCancel: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onSelect: onSelect)
+        Coordinator(onSelect: onSelect, onCancel: onCancel)
     }
 
     func makeUIViewController(context: Context) -> CNContactPickerViewController {
@@ -27,9 +28,15 @@ struct SystemContactNumberPicker: UIViewControllerRepresentable {
 
     final class Coordinator: NSObject, CNContactPickerDelegate {
         let onSelect: (String) -> Void
+        let onCancel: () -> Void
 
-        init(onSelect: @escaping (String) -> Void) {
+        init(onSelect: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
             self.onSelect = onSelect
+            self.onCancel = onCancel
+        }
+
+        func contactPickerDidCancel(_ picker: CNContactPickerViewController) {
+            onCancel()
         }
 
         func contactPicker(

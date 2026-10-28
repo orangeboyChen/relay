@@ -319,6 +319,21 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
         _ = try await send(operation: "call.end", callID: callID, lineID: lineID)
     }
 
+    func addParticipant(number: String, callID: UUID) async throws {
+        guard let lineID = callLines[callID] else { throw LiveCallTransportError.invalidResponse }
+        _ = try await send(
+            operation: "call.add",
+            callID: callID,
+            lineID: lineID,
+            number: number
+        )
+    }
+
+    func mergeCalls(callID: UUID) async throws {
+        guard let lineID = callLines[callID] else { throw LiveCallTransportError.invalidResponse }
+        _ = try await send(operation: "call.merge", callID: callID, lineID: lineID)
+    }
+
     func setHeld(_ isHeld: Bool, callID: UUID) async throws {
         guard let lineID = callLines[callID] else { throw LiveCallTransportError.invalidResponse }
         _ = try await send(operation: isHeld ? "call.hold" : "call.resume", callID: callID, lineID: lineID)

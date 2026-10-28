@@ -116,6 +116,47 @@ func (controller *Controller) Dial(ctx context.Context, number string) error {
 	return nil
 }
 
+// AddParticipant holds the current active call and dials a second call leg.
+func (controller *Controller) AddParticipant(ctx context.Context, number string) error {
+	if !phoneNumberPattern.MatchString(number) {
+		return errors.New("phone number must contain only digits and an optional leading plus")
+	}
+	snapshot := controller.Snapshot()
+	if !snapshot.Active || snapshot.Held || snapshot.Waiting {
+		return fmt.Errorf("cannot add participant while call state is %s", snapshot.State)
+	}
+	if err := controller.command(ctx, "AT+CHLD=2"); err != nil {
+		return err
+	}
+	if err := controller.command(ctx, "ATD"+number+";"); err != nil {
+		_ = controller.command(ctx, "AT+CHLD=2")
+		return err
+	}
+	snapshot.Active = false
+	snapshot.Held = true
+	snapshot.State = StateDialing
+	controller.setSnapshot(snapshot)
+	return nil
+}
+
+// Merge combines the active and held call legs into one conference call.
+func (controller *Controller) Merge(ctx context.Context) error {
+	snapshot := controller.Snapshot()
+	if !snapshot.Active || !snapshot.Held {
+		return fmt.Errorf("cannot merge while call state is %s", snapshot.State)
+	}
+	if err := controller.command(ctx, "AT+CHLD=3"); err != nil {
+		return err
+	}
+	snapshot.Active = true
+	snapshot.Held = false
+	snapshot.Waiting = false
+	snapshot.IncomingNumber = ""
+	snapshot.State = StateActive
+	controller.setSnapshot(snapshot)
+	return nil
+}
+
 // Answer accepts the currently ringing call.
 func (controller *Controller) Answer(ctx context.Context) error {
 	if state := controller.State(); state != StateRinging {

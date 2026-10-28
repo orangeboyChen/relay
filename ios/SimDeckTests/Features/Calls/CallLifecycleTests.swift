@@ -700,6 +700,8 @@ private final class SuspendedStartCallTransport: CallTransport {
     func answerIncomingCall(callID: UUID) async throws {}
     func rejectIncomingCall(callID: UUID) async throws {}
     func endCall(callID: UUID) async throws {}
+    func addParticipant(number: String, callID: UUID) async throws {}
+    func mergeCalls(callID: UUID) async throws {}
     func setHeld(_ isHeld: Bool, callID: UUID) async throws {}
     func setMuted(_ isMuted: Bool, callID: UUID) async throws {}
     func playDTMF(_ digits: String, callID: UUID) async throws {}
@@ -808,6 +810,9 @@ private final class RecordingCallTransport: CallTransport {
         endedCallIDs.append(callID)
         eventHandler?(.ended(callID: callID, reason: .remoteEnded))
     }
+
+    func addParticipant(number: String, callID: UUID) async throws {}
+    func mergeCalls(callID: UUID) async throws {}
 
     func setHeld(_ isHeld: Bool, callID: UUID) async throws {
         holdUpdates.append(.init(callID: callID, value: isHeld))

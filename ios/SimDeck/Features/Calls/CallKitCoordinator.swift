@@ -33,6 +33,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
     @ObservationIgnored private var pendingEndCallKinds: [UUID: Bool] = [:]
     @ObservationIgnored private var pendingOutgoingEndReasons: [UUID: CallEndReason] = [:]
     @ObservationIgnored private var locallyEndedCallIDs: Set<UUID> = []
+    @ObservationIgnored private var endedPresentationCallIDs: Set<UUID> = []
     @ObservationIgnored private var historyContexts: [UUID: CallHistoryContext] = [:]
     @ObservationIgnored private var historyHandler: (@MainActor (CallRecord) -> Void)?
     @ObservationIgnored private let now: () -> Date
@@ -252,6 +253,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
 
     func endCall() async throws {
         guard let activeCall else { return }
+        guard !activeCall.status.isEnded else { return }
         let callID = activeCall.id
         let isIncoming = incomingCalls[callID] != nil
         let isStarting = pendingOutgoing[callID] != nil
@@ -262,7 +264,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
             locallyEndedCallIDs.insert(callID)
             dismissCallPresentation(callID: callID)
         } else {
-            finishCall(callID: callID, result: localEndResult(callID: callID))
+            presentCallEnded(callID: callID, result: localEndResult(callID: callID))
         }
 
         if integratesWithSystem {
@@ -308,6 +310,24 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
         )
     }
 
+    func addParticipant(number: String) async throws {
+        guard let activeCall, let connectedAt = activeCall.status.connectedAt,
+              !activeCall.status.isHeld else {
+            throw CallLifecycleError.activeCallUnavailable
+        }
+        try await transport.addParticipant(number: number, callID: activeCall.id)
+        self.activeCall?.status = .held(connectedAt: connectedAt)
+    }
+
+    func mergeCalls() async throws {
+        guard let activeCall, let connectedAt = activeCall.status.connectedAt,
+              activeCall.status.isHeld else {
+            throw CallLifecycleError.activeCallUnavailable
+        }
+        try await transport.mergeCalls(callID: activeCall.id)
+        self.activeCall?.status = .active(connectedAt: connectedAt)
+    }
+
     func setMuted(_ isMuted: Bool) async throws {
         guard let activeCall, capabilities.supportsMuting else { return }
         guard integratesWithSystem else {
@@ -341,10 +361,10 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
     func handleTransportEvent(_ event: CallTransportEvent) {
         switch event {
         case .ringing(let callID):
-            guard activeCall?.id == callID else { return }
+            guard activeCall?.id == callID, activeCall?.status.isEnded == false else { return }
             activeCall?.status = .ringing
         case .connected(let callID, let date):
-            guard activeCall?.id == callID else { return }
+            guard activeCall?.id == callID, activeCall?.status.isEnded == false else { return }
             activeCall?.status = .active(connectedAt: date)
             historyContexts[callID]?.connectedAt = date
             if integratesWithSystem {
@@ -362,6 +382,10 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
 
     private func finishEndedCall(callID: UUID, reason: CallEndReason) {
         guard activeCall?.id == callID else { return }
+        if activeCall?.status.isEnded == true {
+            finishHistory(callID: callID, result: transportEndResult(callID: callID, reason: reason))
+            return
+        }
         if integratesWithSystem {
             provider.reportCall(with: callID, endedAt: .now, reason: reason.callKitReason)
         }
@@ -467,7 +491,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
             return
         }
         if activeCall?.id == callID, callStartFailureID != callID {
-            finishCall(callID: callID, result: localEndResult(callID: callID))
+            presentCallEnded(callID: callID, result: localEndResult(callID: callID))
         }
 
         // The local hangup is complete before the remote modem command finishes.
@@ -524,6 +548,20 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
         incomingCalls.removeValue(forKey: callID)
     }
 
+    private func presentCallEnded(callID: UUID, result: CallResult) {
+        guard activeCall?.id == callID else { return }
+        activeCall?.status = .ended
+        finishHistory(callID: callID, result: result)
+        guard endedPresentationCallIDs.insert(callID).inserted else { return }
+
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            guard let self, self.activeCall?.id == callID else { return }
+            self.endedPresentationCallIDs.remove(callID)
+            self.finishCall(callID: callID)
+        }
+    }
+
     private func finishCall(callID: UUID, result: CallResult? = nil) {
         guard activeCall?.id == callID else { return }
         finishHistory(
@@ -537,6 +575,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
         pendingOutgoing.removeValue(forKey: callID)
         pendingOutgoingEndReasons.removeValue(forKey: callID)
         locallyEndedCallIDs.remove(callID)
+        endedPresentationCallIDs.remove(callID)
         incomingCalls.removeValue(forKey: callID)
         if let completion = startCompletions.removeValue(forKey: callID) {
             completion(.failure(CallLifecycleError.endedBeforeStart))
@@ -710,6 +749,7 @@ private struct CallHistoryContext {
 enum CallLifecycleError: Error {
     case endedBeforeStart
     case incomingCallUnavailable
+    case activeCallUnavailable
 }
 
 private extension CallEndReason {

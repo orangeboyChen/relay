@@ -97,6 +97,16 @@ func (calls *fakeCalls) Dial(_ context.Context, value string) error {
 	}
 	return calls.error
 }
+
+func (calls *fakeCalls) AddParticipant(_ context.Context, value string) error {
+	calls.operations = append(calls.operations, "add:"+value)
+	return nil
+}
+
+func (calls *fakeCalls) Merge(context.Context) error {
+	calls.operations = append(calls.operations, "merge")
+	return nil
+}
 func (calls *fakeCalls) Answer(context.Context) error {
 	calls.operations = append(calls.operations, "answer")
 	if calls.error == nil {
@@ -518,6 +528,14 @@ var _ = Describe("Encrypted command runtime", func() {
 
 	DescribeTable("executes supported call operations from authenticated plaintext",
 		func(payload Payload, expectedOperation string) {
+			if payload.Operation == "call.add" || payload.Operation == "call.merge" {
+				runtime.activeCallLease = &callLease{
+					callID:               payload.CallID,
+					senderInstallationID: testInstallationID,
+					duration:             defaultCallLease,
+					expiresAt:            time.Now().Add(defaultCallLease),
+				}
+			}
 			envelope, sharedSecret := sealCommand(state, senderKey, commandID, payload)
 
 			Expect(runtime.process(context.Background(), envelope)).To(Succeed())
@@ -533,11 +551,23 @@ var _ = Describe("Encrypted command runtime", func() {
 		Entry("answer", Payload{Version: 1, Operation: "call.answer", CallID: "call-1", MediaOffer: "offer-sdp"}, "answer"),
 		Entry("reject", Payload{Version: 1, Operation: "call.reject", CallID: "call-1"}, "reject"),
 		Entry("end", Payload{Version: 1, Operation: "call.end", CallID: "call-1"}, "hangup"),
+		Entry("add participant", Payload{Version: 1, Operation: "call.add", CallID: "call-1", Number: "+8613800000000"}, "add:+8613800000000"),
+		Entry("merge", Payload{Version: 1, Operation: "call.merge", CallID: "call-1"}, "merge"),
 		Entry("hold", Payload{Version: 1, Operation: "call.hold", CallID: "call-1"}, "hold"),
 		Entry("resume", Payload{Version: 1, Operation: "call.resume", CallID: "call-1"}, "resume"),
 		Entry("swap", Payload{Version: 1, Operation: "call.swap", CallID: "call-1"}, "swap"),
 		Entry("DTMF", Payload{Version: 1, Operation: "call.dtmf", CallID: "call-1", Digits: "#"}, "dtmf:#"),
 	)
+
+	It("rejects participant and merge commands without the owning call lease", func() {
+		for _, operation := range []string{"call.add", "call.merge"} {
+			_, err := runtime.execute(context.Background(), Payload{
+				Version: 1, Operation: operation, CallID: "call-1", Number: "10086",
+			}, testInstallationID)
+			Expect(err).To(MatchError(errInvalidCommand))
+		}
+		Expect(calls.operations).To(BeEmpty())
+	})
 
 	It("sends a DTMF sequence as individual modem tones", func() {
 		envelope, sharedSecret := sealCommand(state, senderKey, commandID, Payload{

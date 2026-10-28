@@ -49,6 +49,8 @@ protocol CallTransport: AnyObject {
     func answerIncomingCall(callID: UUID) async throws
     func rejectIncomingCall(callID: UUID) async throws
     func endCall(callID: UUID) async throws
+    func addParticipant(number: String, callID: UUID) async throws
+    func mergeCalls(callID: UUID) async throws
     func setHeld(_ isHeld: Bool, callID: UUID) async throws
     func setMuted(_ isMuted: Bool, callID: UUID) async throws
     func playDTMF(_ digits: String, callID: UUID) async throws
@@ -98,6 +100,8 @@ final class UnavailableCallTransport: CallTransport {
     func answerIncomingCall(callID: UUID) async throws { throw CallTransportError.notConfigured }
     func rejectIncomingCall(callID: UUID) async throws { throw CallTransportError.notConfigured }
     func endCall(callID: UUID) async throws {}
+    func addParticipant(number: String, callID: UUID) async throws {}
+    func mergeCalls(callID: UUID) async throws {}
     func setHeld(_ isHeld: Bool, callID: UUID) async throws {}
     func setMuted(_ isMuted: Bool, callID: UUID) async throws {}
     func playDTMF(_ digits: String, callID: UUID) async throws {}
@@ -136,6 +140,8 @@ final class PreviewCallTransport: CallTransport {
         eventHandler?(.ended(callID: callID, reason: .remoteEnded))
     }
 
+    func addParticipant(number: String, callID: UUID) async throws {}
+    func mergeCalls(callID: UUID) async throws {}
     func setHeld(_ isHeld: Bool, callID: UUID) async throws {}
     func setMuted(_ isMuted: Bool, callID: UUID) async throws {}
     func playDTMF(_ digits: String, callID: UUID) async throws {}

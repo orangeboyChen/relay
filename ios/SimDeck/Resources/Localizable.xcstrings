@@ -222,11 +222,13 @@
     "Add Name" : {
 
     },
+    "Add People" : {
+
+    },
     "Add a cellular plan with a QR code or an activation code from your carrier." : {
 
     },
     "Add a device in Device Management." : {
-      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -558,6 +560,16 @@
     "Call Control Failed" : {
 
     },
+    "Call Ended" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通话已结束"
+          }
+        }
+      }
+    },
     "Call Failed" : {
       "localizations" : {
         "zh-Hans" : {
@@ -577,6 +589,9 @@
           }
         }
       }
+    },
+    "Call Recording" : {
+
     },
     "Call Unavailable" : {
 
@@ -890,6 +905,9 @@
           }
         }
       }
+    },
+    "Contact Card" : {
+
     },
     "Contact details for %@" : {
 
@@ -1206,7 +1224,6 @@
       }
     },
     "Device Management" : {
-      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1586,13 +1603,16 @@
         }
       }
     },
+    "Get notified to pick up" : {
+
+    },
     "Hide Alerts" : {
 
     },
     "Hide Keypad" : {
 
     },
-    "Hold" : {
+    "Hold Assist" : {
 
     },
     "Home iPhone" : {
@@ -2120,7 +2140,6 @@
       }
     },
     "No Devices" : {
-      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2149,9 +2168,6 @@
           }
         }
       }
-    },
-    "No Nodes" : {
-
     },
     "No SIM Cards" : {
       "localizations" : {
@@ -2696,6 +2712,9 @@
         }
       }
     },
+    "Record and Transcribe" : {
+
+    },
     "Recovery" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2840,9 +2859,6 @@
           }
         }
       }
-    },
-    "Resume" : {
-
     },
     "Retry" : {
 
@@ -3453,9 +3469,6 @@
         }
       }
     },
-    "Swap" : {
-
-    },
     "TCP" : {
 
     },
@@ -3949,7 +3962,7 @@
         }
       }
     },
-    "Turn on Node Discovery, then start the modem container on the host." : {
+    "Turn on Device Discovery, then start one Linux modem container for each modem." : {
 
     },
     "Turn on a plan to use it for calls, messages, or data. Only one plan can be active on this line." : {

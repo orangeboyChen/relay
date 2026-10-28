@@ -49,7 +49,7 @@ struct ConversationHeader: View {
     }
 
     private var headerHeight: CGFloat {
-        avatarSize + (usesAccessibilityLayout ? 46 : 42) - 8
+        avatarSize + (usesAccessibilityLayout ? 40 : 36) - 8
     }
 
     private var verticalAlignmentOffset: CGFloat {
@@ -57,28 +57,17 @@ struct ConversationHeader: View {
     }
 
     private var contactIdentity: some View {
-        VStack(spacing: 1) {
-            HStack(spacing: 3) {
-                Text(contact.displayName)
-                    .font(
-                        usesAccessibilityLayout
-                            ? .subheadline.weight(.semibold)
-                            : .caption.weight(.semibold)
-                    )
-                    .lineLimit(1)
-
-                Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-            }
-
-            Text(PhoneNumberDisplayFormatter.string(from: phoneNumber))
-                .font(usesAccessibilityLayout ? .body : .subheadline)
-                .foregroundStyle(.secondary)
+        HStack(spacing: 3) {
+            Text(contact.displayName)
+                .font(.headline.weight(.semibold))
                 .lineLimit(1)
+
+            Image(systemName: "chevron.right")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 8)
-        .frame(height: usesAccessibilityLayout ? 46 : 42)
+        .frame(height: usesAccessibilityLayout ? 40 : 36)
         .glassEffect(
             .clear
                 .interactive(),

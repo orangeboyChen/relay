@@ -10,6 +10,7 @@ struct ConversationScreen: View {
     let lines: [DeviceLineIdentity]
     let contacts: [ContactRecord]
     let defaultMessageLineID: UUID?
+    let backUnreadCount: Int?
     let sendAction: (UUID, String, String) async throws -> Void
     let sendImageAction: (UUID, String, String, MessageImageAttachment) async throws -> Void
     let retryAction: (UUID) async throws -> Void
@@ -18,6 +19,7 @@ struct ConversationScreen: View {
     let callAction: (String) async -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var contactTransitionNamespace
@@ -39,6 +41,7 @@ struct ConversationScreen: View {
         lines: [DeviceLineIdentity],
         contacts: [ContactRecord] = [],
         defaultMessageLineID: UUID? = nil,
+        backUnreadCount: Int? = nil,
         sendAction: @escaping (UUID, String, String) async throws -> Void = { _, _, _ in },
         sendImageAction: @escaping (
             UUID,
@@ -55,6 +58,7 @@ struct ConversationScreen: View {
         self.lines = lines
         self.contacts = contacts
         self.defaultMessageLineID = defaultMessageLineID
+        self.backUnreadCount = backUnreadCount
         self.sendAction = sendAction
         self.sendImageAction = sendImageAction
         self.retryAction = retryAction
@@ -198,6 +202,33 @@ struct ConversationScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
+            if let backUnreadCount, backUnreadCount > 0 {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 22, weight: .medium))
+
+                            Text(verbatim: "\(backUnreadCount)")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundColor(colorScheme == .dark ? .black : .white)
+                                .fixedSize()
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(
+                                    colorScheme == .dark ? .white : .black,
+                                    in: Capsule()
+                                )
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 16)
+                    }
+                    .accessibilityLabel("Back, \(backUnreadCount) unread messages")
+                }
+            }
+
             ToolbarItem(placement: .principal) {
                 ConversationHeader(
                     contact: displayedContact,
@@ -217,6 +248,7 @@ struct ConversationScreen: View {
                 lineSelectionControl
             }
         }
+        .navigationBarBackButtonHidden(backUnreadCount.map { $0 > 0 } ?? false)
         .onAppear {
             markVisibleConversationsRead()
         }
@@ -646,35 +678,17 @@ private enum ConversationSheet: Identifiable {
 
 #if DEBUG
 #Preview("Conversation") {
-    NavigationStack {
-        ConversationScreen(
-            initialID: PreviewFixtures.conversations[0].id,
-            conversations: PreviewFixtures.conversations,
-            lines: PreviewFixtures.devices
-        )
-    }
+    ConversationNavigationPreview()
 }
 
 #Preview("Conversation - Dark Accessibility") {
-    NavigationStack {
-        ConversationScreen(
-            initialID: PreviewFixtures.conversations[0].id,
-            conversations: PreviewFixtures.conversations,
-            lines: PreviewFixtures.devices
-        )
-    }
+    ConversationNavigationPreview()
     .preferredColorScheme(.dark)
     .environment(\.dynamicTypeSize, .accessibility5)
 }
 
 #Preview("Conversation - Simplified Chinese") {
-    NavigationStack {
-        ConversationScreen(
-            initialID: PreviewFixtures.conversations[0].id,
-            conversations: PreviewFixtures.conversations,
-            lines: PreviewFixtures.devices
-        )
-    }
+    ConversationNavigationPreview()
     .environment(\.locale, Locale(identifier: "zh-Hans"))
 }
 
@@ -685,6 +699,25 @@ private enum ConversationSheet: Identifiable {
             conversations: [PreviewFixtures.conversations[0]],
             lines: []
         )
+    }
+}
+
+private struct ConversationNavigationPreview: View {
+    @State private var showsConversation = true
+
+    var body: some View {
+        NavigationStack {
+            Text("Messages")
+                .navigationTitle("Messages")
+                .navigationDestination(isPresented: $showsConversation) {
+                    ConversationScreen(
+                        initialID: PreviewFixtures.conversations[0].id,
+                        conversations: PreviewFixtures.conversations,
+                        lines: PreviewFixtures.devices,
+                        backUnreadCount: 15
+                    )
+                }
+        }
     }
 }
 #endif

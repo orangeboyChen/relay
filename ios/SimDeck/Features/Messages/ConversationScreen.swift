@@ -222,8 +222,8 @@ struct ConversationScreen: View {
                                     in: Capsule()
                                 )
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 16)
+                        .padding(.horizontal, 20.5)
+                        .padding(.vertical, 7)
                         .glassEffect(.regular.interactive(), in: Capsule())
                     }
                     .accessibilityLabel("Back, \(backUnreadCount) unread messages")

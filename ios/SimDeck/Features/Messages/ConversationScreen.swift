@@ -431,23 +431,7 @@ struct ConversationScreen: View {
             }
             .pickerStyle(.inline)
         } label: {
-            Image(systemName: "line.3.horizontal.decrease")
-                .font(.system(size: 17, weight: .semibold))
-                .frame(width: 28, height: 28)
-                .foregroundStyle(
-                    isFilteringByLine
-                        ? AnyShapeStyle(.white)
-                        : AnyShapeStyle(.primary)
-                )
-                .padding(8)
-                .background {
-                    Circle()
-                        .fill(.tint)
-                        .padding(4)
-                        .opacity(isFilteringByLine ? 1 : 0)
-                }
-                .animation(reduceMotion ? nil : .snappy(duration: 0.24), value: isFilteringByLine)
-                .glassEffect(.regular.interactive(), in: Circle())
+            SIMFilterButton(isSelected: isFilteringByLine)
         }
         .buttonBorderShape(.circle)
         .accessibilityLabel("Filter by SIM")

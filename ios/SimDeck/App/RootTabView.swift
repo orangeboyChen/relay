@@ -591,51 +591,39 @@ struct RootTabView: View {
     }
 }
 
-struct CallFilterMenuButton: UIViewRepresentable {
+struct CallFilterMenuButton: View {
     @Binding var filter: CallHistoryFilter
     @Binding var selectedLineID: UUID?
     let lines: [DeviceLineIdentity]
     let accessibilityValue: String
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(filter: $filter, selectedLineID: $selectedLineID)
-    }
+    var body: some View {
+        Menu {
+            Picker("Call Type", selection: $filter) {
+                Label("Calls", systemImage: "phone")
+                    .tag(CallHistoryFilter.all)
+                Label("Missed", systemImage: "phone.down")
+                    .tag(CallHistoryFilter.missed)
+                Label("Unknown Callers", systemImage: "person.crop.circle.badge.questionmark")
+                    .tag(CallHistoryFilter.unknownCallers)
+            }
+            .pickerStyle(.inline)
 
-    func makeUIView(context: Context) -> UIButton {
-        let button = UIButton(type: .system)
-        button.showsMenuAsPrimaryAction = true
-        button.widthAnchor.constraint(equalToConstant: 44).isActive = true
-        button.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        button.accessibilityLabel = String(localized: "Call filter")
-        return button
-    }
-
-    func updateUIView(_ button: UIButton, context: Context) {
-        context.coordinator.filter = $filter
-        context.coordinator.selectedLineID = $selectedLineID
-
-        let isActive = filter != .all || selectedLineID != nil
-        var buttonConfiguration = isActive
-            ? UIButton.Configuration.filled()
-            : UIButton.Configuration.plain()
-        buttonConfiguration.contentInsets = .zero
-        buttonConfiguration.cornerStyle = .capsule
-        let configuration = UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
-        buttonConfiguration.image = UIImage(
-            systemName: "line.3.horizontal.decrease",
-            withConfiguration: configuration
-        )
-        buttonConfiguration.baseForegroundColor = isActive ? .white : .label
-        buttonConfiguration.background.backgroundColor = isActive ? .systemBlue : .clear
-        buttonConfiguration.background.backgroundInsets = NSDirectionalEdgeInsets(
-            top: 4,
-            leading: 4,
-            bottom: 4,
-            trailing: 4
-        )
-        button.configuration = buttonConfiguration
-        button.menu = context.coordinator.makeMenu(lines: lines)
-        button.accessibilityValue = accessibilityValue
+            Picker("SIM", selection: $selectedLineID) {
+                Label("All SIMs", systemImage: "simcard.2")
+                    .tag(nil as UUID?)
+                ForEach(lines) { line in
+                    SIMLabel(line: line)
+                        .tag(line.id as UUID?)
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            SIMFilterButton(isSelected: filter != .all || selectedLineID != nil)
+        }
+        .buttonBorderShape(.circle)
+        .accessibilityLabel("Call filter")
+        .accessibilityValue(Text(verbatim: accessibilityValue))
     }
 
     final class Coordinator: @unchecked Sendable {

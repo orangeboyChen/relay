@@ -188,6 +188,12 @@ struct SimDeckApp: App {
                     NotificationPreferences.migrateToSharedDefaults()
                     model.refreshContactNames()
                     model.startContactUpdates()
+                    guard shouldStartLiveServices else { return }
+                    model.startNetworkPathObservation()
+                    model.bootstrapInstallation()
+                    model.startVoIPPushes()
+                    await model.refreshDevices()
+                    await model.refreshCommunicationHistory()
                     appDelegate.setRemoteNotificationHandlers(
                         onActivity: {
                             await model.refreshCommunicationHistory()
@@ -198,12 +204,6 @@ struct SimDeckApp: App {
                             )
                         }
                     )
-                    guard shouldStartLiveServices else { return }
-                    model.startNetworkPathObservation()
-                    model.bootstrapInstallation()
-                    model.startVoIPPushes()
-                    await model.refreshDevices()
-                    await model.refreshCommunicationHistory()
                     model.startMessageRealtimeUpdates()
                 }
                 .onChange(of: scenePhase) { _, phase in

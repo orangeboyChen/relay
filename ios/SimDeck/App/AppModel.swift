@@ -60,7 +60,8 @@ final class AppModel {
     @ObservationIgnored private let callHistoryStore: EncryptedCallHistoryStore
     @ObservationIgnored private let remoteDeviceRefreshEnabled: Bool
     @ObservationIgnored private var messageEventMonitor: MessageEventMonitor?
-    @ObservationIgnored private var realtimeRefreshTask: Task<Void, Never>?
+    @ObservationIgnored private var deviceStatusExpiryTasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var deviceStatusReportedAt: [UUID: Date] = [:]
     @ObservationIgnored private var historySnapshotSyncTask: Task<Void, Never>?
     @ObservationIgnored private var contactNameIndex = ContactNameIndex()
     @ObservationIgnored private var contactUpdatesTask: Task<Void, Never>?
@@ -405,25 +406,6 @@ final class AppModel {
     func startRealtimeUpdates() {
         guard serverConnection.isSignedIn else { return }
         startMessageRealtimeUpdates()
-        guard realtimeRefreshTask == nil else { return }
-        realtimeRefreshTask = Task { [weak self] in
-            var historyRefreshTick = 0
-            while !Task.isCancelled {
-                do {
-                    try await Task.sleep(for: .seconds(15))
-                } catch {
-                    return
-                }
-                guard let self, !Task.isCancelled else { return }
-                await self.refreshDevices()
-                await self.refreshSIMCards()
-                historyRefreshTick += 1
-                if historyRefreshTick >= 4 {
-                    historyRefreshTick = 0
-                    await self.refreshCommunicationHistory()
-                }
-            }
-        }
     }
 
     func startNetworkPathObservation() {
@@ -445,8 +427,11 @@ final class AppModel {
 
     func stopRealtimeUpdates() {
         stopMessageRealtimeUpdates()
-        realtimeRefreshTask?.cancel()
-        realtimeRefreshTask = nil
+        for task in deviceStatusExpiryTasks.values {
+            task.cancel()
+        }
+        deviceStatusExpiryTasks.removeAll()
+        deviceStatusReportedAt.removeAll()
     }
 
     func startContactUpdates() {
@@ -974,6 +959,7 @@ final class AppModel {
         let batch = try await messageTransport.synchronize(lines: devices)
         let previousMessages = messages
         mergeIncomingMessages(batch.deliveries)
+        applyDetectedRadioStatuses(batch.detectedRadioStatuses)
         try await applyDetectedSIMProfiles(batch.detectedSIMProfiles)
         if let recoveredVaultKey {
             try messageHistoryStore.save(loadedConversations, using: recoveredVaultKey)
@@ -982,6 +968,91 @@ final class AppModel {
             }
         }
         messageTransport.acknowledge(sequence: batch.nextSequence)
+    }
+
+    private func applyDetectedRadioStatuses(_ statuses: [DetectedRadioStatus]) {
+        var routesChanged = false
+        for status in statuses {
+            guard let index = devices.firstIndex(where: { $0.id == status.lineID }) else { continue }
+            let age = Date.now.timeIntervalSince(status.reportedAt)
+            let isFresh = age >= 0 && age < 60
+            var line = devices[index]
+            let isOnline = status.isOnline && isFresh
+            line.numericID = status.numericID
+            line.isOnline = isOnline
+            line.radioStatus = isOnline ? status.radioStatus : nil
+            devices[index] = line
+            updateManagedSIMAssignment(for: line, reportedAt: status.reportedAt)
+            routesChanged = true
+            deviceStatusReportedAt[status.lineID] = status.reportedAt
+            deviceStatusExpiryTasks[status.lineID]?.cancel()
+            if isOnline {
+                let delay = max(1, 60 - max(0, age))
+                deviceStatusExpiryTasks[status.lineID] = Task { [weak self] in
+                    do {
+                        try await Task.sleep(for: .seconds(delay))
+                    } catch {
+                        return
+                    }
+                    self?.expireDeviceStatus(lineID: status.lineID, reportedAt: status.reportedAt)
+                }
+            } else {
+                deviceStatusExpiryTasks.removeValue(forKey: status.lineID)
+            }
+        }
+        guard routesChanged else { return }
+        callCoordinator.updateLineRoutes(devices)
+        messageTransport.updateLineRoutes(devices)
+    }
+
+    private func updateManagedSIMAssignment(for line: DeviceLineIdentity, reportedAt: Date) {
+        for index in managedSIMs.indices where managedSIMs[index].assignedSlotID == line.slotID && managedSIMs[index].id != line.simID {
+            let sim = managedSIMs[index]
+            managedSIMs[index] = ManagedSIM(
+                id: sim.id,
+                numericID: sim.numericID,
+                assignedDeviceID: nil,
+                assignedSlotID: nil,
+                lastSeenAt: sim.lastSeenAt,
+                lineName: sim.lineName,
+                phoneNumber: sim.phoneNumber
+            )
+        }
+        guard let simID = line.simID else { return }
+        if let index = managedSIMs.firstIndex(where: { $0.id == simID }) {
+            let sim = managedSIMs[index]
+            managedSIMs[index] = ManagedSIM(
+                id: simID,
+                numericID: line.numericID,
+                assignedDeviceID: line.deviceID,
+                assignedSlotID: line.slotID,
+                lastSeenAt: reportedAt,
+                lineName: line.lineName,
+                phoneNumber: line.phoneNumber
+            )
+        } else {
+            managedSIMs.append(ManagedSIM(
+                id: simID,
+                numericID: line.numericID,
+                assignedDeviceID: line.deviceID,
+                assignedSlotID: line.slotID,
+                lastSeenAt: reportedAt,
+                lineName: line.lineName,
+                phoneNumber: line.phoneNumber
+            ))
+        }
+    }
+
+    private func expireDeviceStatus(lineID: UUID, reportedAt: Date) {
+        guard deviceStatusReportedAt[lineID] == reportedAt,
+              let index = devices.firstIndex(where: { $0.id == lineID }) else { return }
+        var line = devices[index]
+        line.isOnline = false
+        line.radioStatus = nil
+        devices[index] = line
+        deviceStatusExpiryTasks.removeValue(forKey: lineID)
+        callCoordinator.updateLineRoutes(devices)
+        messageTransport.updateLineRoutes(devices)
     }
 
     func clearLocalMessageCache() throws {

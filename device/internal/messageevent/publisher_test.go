@@ -199,6 +199,41 @@ var _ = Describe("Incoming message publisher", func() {
 		Expect(payload.EID).To(Equal(profile.EID))
 	})
 
+	It("encrypts current radio and SIM status for every approved installation", func() {
+		state.SlotID = "01900000-0000-7000-8000-000000000201"
+		state.SIMID = "01900000-0000-7000-8000-000000000301"
+		state.SlotKey = "primary"
+		state.SlotIndex = 1
+		state.NumericID = 2
+		publisher.identity = state
+		reportedAt := time.Date(2026, 10, 30, 1, 2, 3, 4000000, time.UTC)
+
+		Expect(publisher.PublishDeviceStatus(context.Background(), DeviceStatus{
+			RadioAccessTechnology: "lte",
+			SignalBars:            intPointer(3),
+			ReportedAt:            reportedAt,
+		})).To(Succeed())
+
+		Expect(remote.envelopes).To(HaveLen(2))
+		for index, envelope := range remote.envelopes {
+			Expect(envelope.Type).To(Equal("device.status"))
+			Expect(ed25519.Verify(state.PublicKey(), signedData(envelope), envelope.Signature)).To(BeTrue())
+			privateKey := privateOne
+			if index == 0 {
+				privateKey = privateTwo
+			}
+			payload := openDeviceStatusEnvelope(state, envelope, privateKey)
+			Expect(payload.DeviceUUID).To(Equal(deviceID))
+			Expect(payload.SlotID).To(Equal(state.SlotID))
+			Expect(payload.SIMID).To(Equal(state.SIMID))
+			Expect(payload.Online).To(BeTrue())
+			Expect(payload.RadioAccessTechnology).To(Equal("lte"))
+			Expect(payload.SignalBars).NotTo(BeNil())
+			Expect(*payload.SignalBars).To(Equal(3))
+			Expect(payload.ReportedAt).To(Equal(reportedAt.Format(time.RFC3339Nano)))
+		}
+	})
+
 	It("keeps detected SIM metadata pending when delivery is unavailable", func() {
 		profile := SIMProfile{PhoneNumber: "+8613500000000", LineName: "CHINA MOBILE"}
 
@@ -294,6 +329,22 @@ func openSIMProfileEnvelope(state identity.State, envelope callevent.Envelope, p
 	Expect(json.Unmarshal(plaintext, &payload)).To(Succeed())
 	return payload
 }
+
+func openDeviceStatusEnvelope(state identity.State, envelope callevent.Envelope, privateKey *ecdh.PrivateKey) DeviceStatusPayload {
+	devicePublic, err := ecdh.X25519().NewPublicKey(state.CommandPublicKey())
+	Expect(err).NotTo(HaveOccurred())
+	sharedSecret, err := privateKey.ECDH(devicePublic)
+	Expect(err).NotTo(HaveOccurred())
+	aead, err := eventAEADWithContext(sharedSecret, envelope.ID, envelope.DeviceUUID, deviceStatusContext)
+	Expect(err).NotTo(HaveOccurred())
+	plaintext, err := aead.Open(nil, envelope.Nonce, envelope.Ciphertext, associatedData(envelope))
+	Expect(err).NotTo(HaveOccurred())
+	var payload DeviceStatusPayload
+	Expect(json.Unmarshal(plaintext, &payload)).To(Succeed())
+	return payload
+}
+
+func intPointer(value int) *int { return &value }
 
 func tryOpenEnvelope(state identity.State, envelope callevent.Envelope, privateKey *ecdh.PrivateKey) (Payload, error) {
 	devicePublic, err := ecdh.X25519().NewPublicKey(state.CommandPublicKey())

@@ -50,6 +50,10 @@ func (remote *fakeRemote) UpdateRadioStatus(_ context.Context, _ identity.State,
 	return remote.err
 }
 
+func (remote *fakeRemote) PublishRadioStatus(context.Context, identity.State, Status, time.Time) error {
+	return nil
+}
+
 func (remote *fakeRemote) statuses() []Status {
 	remote.mutex.Lock()
 	defer remote.mutex.Unlock()

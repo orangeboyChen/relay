@@ -27,14 +27,16 @@ import (
 )
 
 const (
-	eventType         = "message.received"
-	protocolVersion   = 1
-	keyEpoch          = 1
-	keyBytes          = 32
-	nonceBytes        = 12
-	eventContext      = "sim-deck-message-event-v1"
-	simProfileType    = "sim.profile"
-	simProfileContext = "sim-deck-sim-profile-event-v1"
+	eventType           = "message.received"
+	protocolVersion     = 1
+	keyEpoch            = 1
+	keyBytes            = 32
+	nonceBytes          = 12
+	eventContext        = "sim-deck-message-event-v1"
+	simProfileType      = "sim.profile"
+	simProfileContext   = "sim-deck-sim-profile-event-v1"
+	deviceStatusType    = "device.status"
+	deviceStatusContext = "sim-deck-device-status-event-v1"
 )
 
 var (
@@ -85,6 +87,27 @@ type SIMProfilePayload struct {
 	SIMKind        string `json:"sim_kind,omitempty"`
 	EID            string `json:"eid,omitempty"`
 	InstallationID string `json:"installation_id"`
+}
+
+type DeviceStatus struct {
+	RadioAccessTechnology string
+	SignalBars            *int
+	ReportedAt            time.Time
+}
+
+type DeviceStatusPayload struct {
+	Version               int    `json:"version"`
+	DeviceUUID            string `json:"device_uuid"`
+	SlotID                string `json:"slot_id,omitempty"`
+	SIMID                 string `json:"sim_id,omitempty"`
+	NumericID             int    `json:"numeric_id"`
+	SlotKey               string `json:"slot_key"`
+	SlotIndex             int    `json:"slot_index"`
+	Online                bool   `json:"online"`
+	RadioAccessTechnology string `json:"radio_access_technology"`
+	SignalBars            *int   `json:"signal_bars,omitempty"`
+	ReportedAt            string `json:"reported_at"`
+	InstallationID        string `json:"installation_id"`
 }
 
 // Remote provides approved recipient identities and opaque event upload.
@@ -168,6 +191,79 @@ func (publisher *Publisher) PublishSIMProfile(ctx context.Context, profile SIMPr
 		}
 	}
 	return nil
+}
+
+func (publisher *Publisher) PublishDeviceStatus(ctx context.Context, status DeviceStatus) error {
+	if status.RadioAccessTechnology == "" || len(status.RadioAccessTechnology) > 16 ||
+		(status.SignalBars != nil && (*status.SignalBars < 0 || *status.SignalBars > 4)) || status.ReportedAt.IsZero() {
+		return errors.New("device status is invalid")
+	}
+	recipients, err := publisher.remote.ListInstallationRecipients(ctx, publisher.identity.DeviceUUID, publisher.identity.Credential)
+	if err != nil {
+		return fmt.Errorf("list device status recipients: %w", err)
+	}
+	if len(recipients) == 0 {
+		return ErrNoRecipients
+	}
+	for _, recipient := range recipients {
+		envelope, err := publisher.sealDeviceStatus(status, recipient)
+		if err != nil {
+			return err
+		}
+		if err := publisher.remote.UploadEvent(ctx, publisher.identity.DeviceUUID, publisher.identity.Credential, envelope); err != nil {
+			return fmt.Errorf("upload device status event for installation %s: %w", recipient.InstallationID, err)
+		}
+	}
+	return nil
+}
+
+func (publisher *Publisher) sealDeviceStatus(status DeviceStatus, recipient incomingcall.Recipient) (callevent.Envelope, error) {
+	if !identity.ValidDeviceUUID(recipient.InstallationID) || len(recipient.IdentityPublicKey) != ed25519.PublicKeySize || len(recipient.KeyAgreementPublicKey) != keyBytes {
+		return callevent.Envelope{}, errors.New("device status recipient identity is invalid")
+	}
+	privateKey, err := ecdh.X25519().NewPrivateKey(publisher.identity.CommandPrivateKey)
+	if err != nil {
+		return callevent.Envelope{}, fmt.Errorf("parse device status key: %w", err)
+	}
+	publicKey, err := ecdh.X25519().NewPublicKey(recipient.KeyAgreementPublicKey)
+	if err != nil {
+		return callevent.Envelope{}, fmt.Errorf("parse recipient device status key: %w", err)
+	}
+	sharedSecret, err := privateKey.ECDH(publicKey)
+	if err != nil {
+		return callevent.Envelope{}, fmt.Errorf("derive recipient device status key: %w", err)
+	}
+	eventID, err := randomEventID(rand.Reader)
+	if err != nil {
+		return callevent.Envelope{}, fmt.Errorf("generate device status event id: %w", err)
+	}
+	envelope := callevent.Envelope{
+		ID: eventID, Type: deviceStatusType, DeviceUUID: publisher.identity.DeviceUUID,
+		RecipientInstallationID: recipient.InstallationID,
+		OccurredAt:              status.ReportedAt.UTC().Truncate(time.Millisecond), KeyEpoch: keyEpoch,
+	}
+	payload, err := json.Marshal(DeviceStatusPayload{
+		Version: protocolVersion, DeviceUUID: publisher.identity.DeviceUUID,
+		SlotID: publisher.identity.SlotID, SIMID: publisher.identity.SIMID,
+		NumericID: publisher.identity.NumericID, SlotKey: publisher.identity.SlotKey,
+		SlotIndex: publisher.identity.SlotIndex, Online: true,
+		RadioAccessTechnology: status.RadioAccessTechnology, SignalBars: status.SignalBars,
+		ReportedAt: envelope.OccurredAt.Format(time.RFC3339Nano), InstallationID: recipient.InstallationID,
+	})
+	if err != nil {
+		return callevent.Envelope{}, fmt.Errorf("encode device status event: %w", err)
+	}
+	aead, err := eventAEADWithContext(sharedSecret, envelope.ID, envelope.DeviceUUID, deviceStatusContext)
+	if err != nil {
+		return callevent.Envelope{}, fmt.Errorf("create device status cipher: %w", err)
+	}
+	envelope.Nonce = make([]byte, nonceBytes)
+	if _, err := io.ReadFull(rand.Reader, envelope.Nonce); err != nil {
+		return callevent.Envelope{}, fmt.Errorf("generate device status nonce: %w", err)
+	}
+	envelope.Ciphertext = aead.Seal(nil, envelope.Nonce, payload, associatedData(envelope))
+	envelope.Signature = ed25519.Sign(publisher.identity.IdentityPrivateKey, signedData(envelope))
+	return envelope, nil
 }
 
 func (publisher *Publisher) sealSIMProfile(profile SIMProfile, recipient incomingcall.Recipient) (callevent.Envelope, error) {

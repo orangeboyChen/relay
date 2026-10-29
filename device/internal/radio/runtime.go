@@ -26,6 +26,7 @@ type commander interface {
 // Remote accepts authenticated radio status updates.
 type Remote interface {
 	UpdateRadioStatus(context.Context, identity.State, Status) error
+	PublishRadioStatus(context.Context, identity.State, Status, time.Time) error
 }
 
 // Runtime polls one modem and publishes its current cellular status.
@@ -82,6 +83,9 @@ func (runtime *Runtime) publish(ctx context.Context) error {
 	}
 	if err := runtime.remote.UpdateRadioStatus(ctx, runtime.identity, status); err != nil {
 		return fmt.Errorf("publish radio status: %w", err)
+	}
+	if err := runtime.remote.PublishRadioStatus(ctx, runtime.identity, status, time.Now().UTC()); err != nil {
+		return fmt.Errorf("publish radio status event: %w", err)
 	}
 	runtime.logger.Info(
 		"radio status published",

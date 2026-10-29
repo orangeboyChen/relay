@@ -22,6 +22,7 @@ import (
 )
 
 const eventStreamPollInterval = 500 * time.Millisecond
+const deviceStatusEventRetention = 2 * time.Minute
 
 type rpcOwnerContextKey struct{}
 
@@ -196,6 +197,9 @@ func (service *syncService) PublishEvent(ctx context.Context, request *communica
 		return nil, connect.NewError(connect.CodeInvalidArgument, "event timestamp is too far in the future")
 	}
 	expiresAt := event.OccurredAt.Add(eventRetention)
+	if event.Type == "device.status" {
+		expiresAt = now.Add(deviceStatusEventRetention)
+	}
 	if !expiresAt.After(now) {
 		return nil, connect.NewError(connect.CodeInvalidArgument, "event is outside the retention window")
 	}

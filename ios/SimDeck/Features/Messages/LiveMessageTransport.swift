@@ -41,15 +41,18 @@ struct IncomingMessageDelivery: Equatable, Sendable {
 struct MessageSyncBatch: Equatable, Sendable {
     let deliveries: [IncomingMessageDelivery]
     let detectedSIMProfiles: [DetectedSIMProfile]
+    let detectedRadioStatuses: [DetectedRadioStatus]
     let nextSequence: Int64
 
     init(
         deliveries: [IncomingMessageDelivery],
         detectedSIMProfiles: [DetectedSIMProfile] = [],
+        detectedRadioStatuses: [DetectedRadioStatus] = [],
         nextSequence: Int64
     ) {
         self.deliveries = deliveries
         self.detectedSIMProfiles = detectedSIMProfiles
+        self.detectedRadioStatuses = detectedRadioStatuses
         self.nextSequence = nextSequence
     }
 }
@@ -59,6 +62,15 @@ struct DetectedSIMProfile: Equatable, Sendable {
     let lineName: String
     let phoneNumber: String
     let simKind: SIMCardKind
+}
+
+struct DetectedRadioStatus: Equatable, Sendable {
+    let lineID: UUID
+    let simID: UUID?
+    let numericID: Int
+    let isOnline: Bool
+    let radioStatus: CellularRadioStatus?
+    let reportedAt: Date
 }
 
 @MainActor
@@ -303,6 +315,7 @@ final class LiveMessageTransport: MessageTransport {
         var verificationKeys: [UUID: Data] = [:]
         var deliveries: [IncomingMessageDelivery] = []
         var detectedSIMProfiles: [DetectedSIMProfile] = []
+        var detectedRadioStatuses: [DetectedRadioStatus] = []
         var nextSequence = cursorStore.sequence
 
         while true {
@@ -410,6 +423,61 @@ final class LiveMessageTransport: MessageTransport {
                     )
                 )
             }
+            for envelope in page.events where envelope.type == "device.status" {
+                guard envelope.recipientInstallationID == installationIdentity.id,
+                      let candidates = linesByDevice[envelope.deviceUUID],
+                      let commandPublicKey = candidates.first?.commandPublicKey else {
+                    throw LiveMessageTransportError.invalidResponse
+                }
+                let verificationKey: Data
+                if let cached = verificationKeys[envelope.deviceUUID] {
+                    verificationKey = cached
+                } else {
+                    verificationKey = try await api.eventVerificationKey(deviceID: envelope.deviceUUID)
+                    verificationKeys[envelope.deviceUUID] = verificationKey
+                }
+                let payload = try EncryptedDeviceStatusEventCodec.open(
+                    envelope,
+                    installationIdentity: installationIdentity,
+                    deviceCommandPublicKey: commandPublicKey,
+                    deviceVerificationKey: verificationKey
+                )
+                let matchingLines = candidates.filter { line in
+                    if let slotID = payload.slotID {
+                        return line.slotID == slotID
+                    }
+                    if let simID = payload.simID {
+                        return line.simID == simID
+                    }
+                    if let slotKey = line.slotKey,
+                       !payload.slotKey.isEmpty,
+                       slotKey != payload.slotKey { return false }
+                    if let slotIndex = line.slotIndex, payload.slotIndex > 0, slotIndex != payload.slotIndex { return false }
+                    return true
+                }
+                guard matchingLines.count == 1 else {
+                    throw LiveMessageTransportError.invalidResponse
+                }
+                let reportedAt = parseISO8601Date(payload.reportedAt)
+                guard let reportedAt else {
+                    throw LiveMessageTransportError.invalidResponse
+                }
+                detectedRadioStatuses.append(
+                    DetectedRadioStatus(
+                        lineID: matchingLines[0].id,
+                        simID: payload.simID,
+                        numericID: payload.numericID,
+                        isOnline: payload.online,
+                        radioStatus: payload.online
+                            ? CellularRadioStatus(
+                                technology: CellularRadioAccessTechnology(rawValue: payload.radioAccessTechnology) ?? .unknown,
+                                signalBars: payload.signalBars
+                            )
+                            : nil,
+                        reportedAt: reportedAt
+                    )
+                )
+            }
             guard page.nextSequence > nextSequence else { break }
             nextSequence = page.nextSequence
             if page.events.count < Self.eventPageSize { break }
@@ -417,6 +485,7 @@ final class LiveMessageTransport: MessageTransport {
         return MessageSyncBatch(
             deliveries: deliveries,
             detectedSIMProfiles: detectedSIMProfiles,
+            detectedRadioStatuses: detectedRadioStatuses,
             nextSequence: nextSequence
         )
     }
@@ -713,6 +782,97 @@ enum EncryptedSIMProfileEventCodec {
               payload.lineName.count <= 64,
               payload.phoneNumber.isEmpty || DialString.isValid(normalizedNumber),
               !normalizedNumber.isEmpty || !normalizedLineName.isEmpty else {
+            throw LiveMessageTransportError.invalidResponse
+        }
+        return payload
+    }
+}
+
+struct IncomingDeviceStatusPayload: Codable, Equatable, Sendable {
+    let version: Int
+    let deviceUUID: UUID
+    let slotID: UUID?
+    let simID: UUID?
+    let numericID: Int
+    let slotKey: String
+    let slotIndex: Int
+    let online: Bool
+    let radioAccessTechnology: String
+    let signalBars: Int?
+    let reportedAt: String
+    let installationID: UUID
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case deviceUUID = "device_uuid"
+        case slotID = "slot_id"
+        case simID = "sim_id"
+        case numericID = "numeric_id"
+        case slotKey = "slot_key"
+        case slotIndex = "slot_index"
+        case online
+        case radioAccessTechnology = "radio_access_technology"
+        case signalBars = "signal_bars"
+        case reportedAt = "reported_at"
+        case installationID = "installation_id"
+    }
+}
+
+private func parseISO8601Date(_ value: String) -> Date? {
+    let fractionalFormatter = ISO8601DateFormatter()
+    fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = fractionalFormatter.date(from: value) {
+        return date
+    }
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime]
+    return formatter.date(from: value)
+}
+
+enum EncryptedDeviceStatusEventCodec {
+    static func open(
+        _ envelope: EncryptedEventEnvelope,
+        installationIdentity: InstallationIdentity,
+        deviceCommandPublicKey: Data,
+        deviceVerificationKey: Data
+    ) throws -> IncomingDeviceStatusPayload {
+        guard envelope.type == "device.status",
+              envelope.keyEpoch == 1,
+              envelope.nonce.count == 12,
+              envelope.ciphertext.count > 16,
+              envelope.signature.count == 64,
+              deviceCommandPublicKey.count == 32,
+              deviceVerificationKey.count == 32 else {
+            throw LiveMessageTransportError.invalidResponse
+        }
+        let signingKey = try Curve25519.Signing.PublicKey(rawRepresentation: deviceVerificationKey)
+        guard signingKey.isValidSignature(envelope.signature, for: EncryptedCallEventCodec.signedData(envelope)) else {
+            throw LiveMessageTransportError.invalidResponse
+        }
+        let installationKey = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: installationIdentity.keyAgreementPrivateKey)
+        let deviceKey = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: deviceCommandPublicKey)
+        let sharedSecret = try installationKey.sharedSecretFromKeyAgreement(with: deviceKey)
+        let key = sharedSecret.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: Data("\(envelope.id.uuidString.lowercased())\0\(envelope.deviceUUID.uuidString.lowercased())".utf8),
+            sharedInfo: Data("sim-deck-device-status-event-v1".utf8),
+            outputByteCount: 32
+        )
+        let box = try AES.GCM.SealedBox(
+            nonce: AES.GCM.Nonce(data: envelope.nonce),
+            ciphertext: Data(envelope.ciphertext.dropLast(16)),
+            tag: Data(envelope.ciphertext.suffix(16))
+        )
+        let plaintext = try AES.GCM.open(box, using: key, authenticating: EncryptedCallEventCodec.associatedData(envelope))
+        let payload = try JSONDecoder().decode(IncomingDeviceStatusPayload.self, from: plaintext)
+        guard payload.version == 1,
+              payload.deviceUUID == envelope.deviceUUID,
+              payload.installationID == installationIdentity.id,
+              payload.numericID >= 1,
+              payload.numericID <= 99,
+              payload.slotIndex >= 1,
+              payload.radioAccessTechnology.count <= 16,
+              payload.signalBars == nil || (0...4).contains(payload.signalBars!) else {
             throw LiveMessageTransportError.invalidResponse
         }
         return payload

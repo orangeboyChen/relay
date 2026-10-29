@@ -23,6 +23,7 @@ import (
 	"sim-deck-device/internal/identity"
 	"sim-deck-device/internal/incomingcall"
 	"sim-deck-device/internal/media"
+	"sim-deck-device/internal/messageevent"
 	"sim-deck-device/internal/radio"
 )
 
@@ -86,6 +87,22 @@ func (client *Client) UpdateRadioStatus(ctx context.Context, state identity.Stat
 		return fmt.Errorf("update radio status: %w", err)
 	}
 	return nil
+}
+
+func (client *Client) PublishRadioStatus(ctx context.Context, state identity.State, status radio.Status, reportedAt time.Time) error {
+	publisher, err := messageevent.NewPublisher(client, state)
+	if err != nil {
+		return fmt.Errorf("create device status event publisher: %w", err)
+	}
+	err = publisher.PublishDeviceStatus(ctx, messageevent.DeviceStatus{
+		RadioAccessTechnology: status.RadioAccessTechnology,
+		SignalBars:            status.SignalBars,
+		ReportedAt:            reportedAt,
+	})
+	if errors.Is(err, messageevent.ErrNoRecipients) {
+		return nil
+	}
+	return err
 }
 
 // SIMAssignment is the current server-owned identity for a physical slot and inserted SIM.

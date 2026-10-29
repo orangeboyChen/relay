@@ -25,11 +25,11 @@ struct ConversationHeader: View {
                     id: transitionID,
                     in: transitionNamespace
                 )
-                .zIndex(1)
+                .zIndex(2)
 
                 contactIdentity
                     .offset(y: identityOffset)
-                    .zIndex(2)
+                    .zIndex(1)
             }
             .frame(height: headerHeight, alignment: .top)
             .offset(y: verticalAlignmentOffset)
@@ -144,6 +144,11 @@ struct MessageBubble: View {
                     Spacer(minLength: 64)
                 }
             }
+            .offset(
+                x: message.direction == .sent
+                    ? timestampRevealModel.horizontalOffset
+                    : 0
+            )
         }
         .contentShape(.rect)
         .accessibilityAction(named: Text("Details")) {

@@ -46,6 +46,7 @@ struct MessageTimestampRevealState: Equatable {
 @Observable
 final class MessageTimestampRevealModel {
     private(set) var progress: CGFloat
+    private(set) var horizontalOffset: CGFloat = 0
 
     init(progress: CGFloat = 0) {
         self.progress = progress
@@ -56,11 +57,13 @@ final class MessageTimestampRevealModel {
             horizontal: horizontal,
             vertical: vertical
         )
+        horizontalOffset = offset
         progress = min(max(-offset / 28, 0), 1)
     }
 
     func end() {
         progress = 0
+        horizontalOffset = 0
     }
 }
 

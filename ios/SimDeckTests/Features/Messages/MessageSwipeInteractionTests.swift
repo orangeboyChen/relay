@@ -73,12 +73,15 @@ final class MessageSwipeInteractionTests: XCTestCase {
 
         model.update(horizontal: -14, vertical: 0)
         XCTAssertEqual(model.progress, 0.5)
+        XCTAssertEqual(model.horizontalOffset, -14)
 
         model.update(horizontal: -72, vertical: 0)
         XCTAssertEqual(model.progress, 1)
+        XCTAssertEqual(model.horizontalOffset, -72)
 
         model.end()
         XCTAssertEqual(model.progress, 0)
+        XCTAssertEqual(model.horizontalOffset, 0)
     }
 
     @MainActor
@@ -87,8 +90,10 @@ final class MessageSwipeInteractionTests: XCTestCase {
 
         model.update(horizontal: 72, vertical: 0)
         XCTAssertEqual(model.progress, 0)
+        XCTAssertEqual(model.horizontalOffset, 0)
 
         model.update(horizontal: -20, vertical: 40)
         XCTAssertEqual(model.progress, 0)
+        XCTAssertEqual(model.horizontalOffset, 0)
     }
 }

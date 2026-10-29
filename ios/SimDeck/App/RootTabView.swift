@@ -383,9 +383,12 @@ struct RootTabView: View {
         }
 
         if !messageEditMode.isEditing {
-            ToolbarItemGroup(placement: .topBarTrailing) {
+            ToolbarItem(placement: .topBarTrailing) {
                 SIMFilterMenu(lines: model.devices, selection: $messageLineID)
+            }
+            .sharedBackgroundVisibility(.hidden)
 
+            ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     isMessageComposerPresented = true
                 } label: {
@@ -601,8 +604,8 @@ struct CallFilterMenuButton: UIViewRepresentable {
     func makeUIView(context: Context) -> UIButton {
         let button = UIButton(type: .system)
         button.showsMenuAsPrimaryAction = true
-        button.widthAnchor.constraint(equalToConstant: 36).isActive = true
-        button.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        button.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 28).isActive = true
         button.accessibilityLabel = String(localized: "Call filter")
         return button
     }
@@ -624,6 +627,12 @@ struct CallFilterMenuButton: UIViewRepresentable {
         )
         buttonConfiguration.baseForegroundColor = isActive ? .white : .label
         buttonConfiguration.background.backgroundColor = isActive ? .systemBlue : .clear
+        buttonConfiguration.background.backgroundInsets = NSDirectionalEdgeInsets(
+            top: 4,
+            leading: 4,
+            bottom: 4,
+            trailing: 4
+        )
         button.configuration = buttonConfiguration
         button.menu = context.coordinator.makeMenu(lines: lines)
         button.accessibilityValue = accessibilityValue

@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import SwiftUI
+import SwiftUIIntrospect
 import UIKit
 
 struct ConversationScreen: View {
@@ -222,13 +223,10 @@ struct ConversationScreen: View {
                                     in: Capsule()
                                 )
                         }
-                        .padding(.horizontal, 20.5)
-                        .padding(.vertical, 7)
-                        .glassEffect(.regular.interactive(), in: Capsule())
                     }
+                    .buttonBorderShape(.capsule)
                     .accessibilityLabel("Back, \(backUnreadCount) unread messages")
                 }
-                .sharedBackgroundVisibility(.hidden)
             }
 
             ToolbarItem(placement: .principal) {
@@ -249,8 +247,17 @@ struct ConversationScreen: View {
             ToolbarItem(placement: .topBarTrailing) {
                 lineSelectionControl
             }
+            .sharedBackgroundVisibility(.hidden)
         }
         .navigationBarBackButtonHidden(backUnreadCount.map { $0 > 0 } ?? false)
+        .introspect(
+            .navigationStack,
+            on: .iOS(.v26, .v27),
+            scope: .ancestor
+        ) { navigationController in
+            navigationController.interactivePopGestureRecognizer?.delegate = nil
+            navigationController.interactivePopGestureRecognizer?.isEnabled = true
+        }
         .onAppear {
             markVisibleConversationsRead()
         }
@@ -426,7 +433,7 @@ struct ConversationScreen: View {
         } label: {
             Image(systemName: "line.3.horizontal.decrease")
                 .font(.system(size: 17, weight: .semibold))
-                .frame(width: 20, height: 20)
+                .frame(width: 28, height: 28)
                 .foregroundStyle(
                     isFilteringByLine
                         ? AnyShapeStyle(.white)
@@ -436,13 +443,11 @@ struct ConversationScreen: View {
                 .background {
                     Circle()
                         .fill(.tint)
-                        .scaleEffect(isFilteringByLine ? 1 : 0.8)
+                        .padding(4)
                         .opacity(isFilteringByLine ? 1 : 0)
                 }
-                .animation(
-                    reduceMotion ? nil : .snappy(duration: 0.24),
-                    value: isFilteringByLine
-                )
+                .animation(reduceMotion ? nil : .snappy(duration: 0.24), value: isFilteringByLine)
+                .glassEffect(.regular.interactive(), in: Circle())
         }
         .buttonBorderShape(.circle)
         .accessibilityLabel("Filter by SIM")
@@ -716,7 +721,7 @@ private struct ConversationNavigationPreview: View {
                         initialID: PreviewFixtures.conversations[0].id,
                         conversations: PreviewFixtures.conversations,
                         lines: PreviewFixtures.devices,
-                        backUnreadCount: 15
+                        backUnreadCount: 282
                     )
                 }
         }

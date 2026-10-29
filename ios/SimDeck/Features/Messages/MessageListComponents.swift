@@ -20,14 +20,19 @@ struct SIMFilterMenu: View {
             }
             .pickerStyle(.inline)
         } label: {
-            Label(
-                "Filter by SIM",
-                systemImage: selection == nil
-                    ? "line.3.horizontal.decrease"
-                    : "line.3.horizontal.decrease.circle.fill"
-            )
-                .labelStyle(.iconOnly)
+            Image(systemName: "line.3.horizontal.decrease")
+                .font(.system(size: 17, weight: .semibold))
+                .frame(width: 28, height: 28)
+                .foregroundStyle(selection == nil ? AnyShapeStyle(.primary) : AnyShapeStyle(.white))
+                .background {
+                    Circle()
+                        .fill(.tint)
+                        .padding(4)
+                        .opacity(selection == nil ? 0 : 1)
+                }
+                .glassEffect(.regular.interactive(), in: Circle())
         }
+        .buttonBorderShape(.circle)
         .accessibilityLabel("Filter by SIM")
         .accessibilityValue(selectionAccessibilityValue)
     }

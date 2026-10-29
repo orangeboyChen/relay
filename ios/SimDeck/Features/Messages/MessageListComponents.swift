@@ -8,6 +8,8 @@ struct SIMFilterMenu: View {
     let lines: [DeviceLineIdentity]
     @Binding var selection: UUID?
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         Menu {
             Picker("SIM", selection: $selection) {
@@ -23,13 +25,22 @@ struct SIMFilterMenu: View {
             Image(systemName: "line.3.horizontal.decrease")
                 .font(.system(size: 17, weight: .semibold))
                 .frame(width: 28, height: 28)
-                .foregroundStyle(selection == nil ? AnyShapeStyle(.primary) : AnyShapeStyle(.white))
+                .foregroundStyle(
+                    selection == nil
+                        ? AnyShapeStyle(.primary)
+                        : AnyShapeStyle(.white)
+                )
+                .padding(8)
                 .background {
                     Circle()
                         .fill(.tint)
                         .padding(4)
                         .opacity(selection == nil ? 0 : 1)
                 }
+                .animation(
+                    reduceMotion ? nil : .snappy(duration: 0.24),
+                    value: selection
+                )
                 .glassEffect(.regular.interactive(), in: Circle())
         }
         .buttonBorderShape(.circle)

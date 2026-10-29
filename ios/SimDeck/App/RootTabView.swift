@@ -604,8 +604,8 @@ struct CallFilterMenuButton: UIViewRepresentable {
     func makeUIView(context: Context) -> UIButton {
         let button = UIButton(type: .system)
         button.showsMenuAsPrimaryAction = true
-        button.widthAnchor.constraint(equalToConstant: 28).isActive = true
-        button.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        button.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 44).isActive = true
         button.accessibilityLabel = String(localized: "Call filter")
         return button
     }
@@ -620,7 +620,7 @@ struct CallFilterMenuButton: UIViewRepresentable {
             : UIButton.Configuration.plain()
         buttonConfiguration.contentInsets = .zero
         buttonConfiguration.cornerStyle = .capsule
-        let configuration = UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)
+        let configuration = UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
         buttonConfiguration.image = UIImage(
             systemName: "line.3.horizontal.decrease",
             withConfiguration: configuration

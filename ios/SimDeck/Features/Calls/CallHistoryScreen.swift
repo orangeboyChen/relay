@@ -135,9 +135,6 @@ struct CallHistoryScreen: View {
         .contentMargins(.bottom, editMode.isEditing ? 64 : 0, for: .scrollContent)
         .environment(\.editMode, $editMode)
         .toolbar(editMode.isEditing ? .hidden : .visible, for: .tabBar)
-        .task {
-            await refreshAction()
-        }
         .refreshable {
             await refreshAction()
         }

@@ -193,6 +193,7 @@ struct SimDeckApp: App {
                     model.bootstrapInstallation()
                     model.startVoIPPushes()
                     await model.refreshDevices()
+                    await model.refreshSIMCards()
                     await model.refreshCommunicationHistory()
                     appDelegate.setRemoteNotificationHandlers(
                         onActivity: {
@@ -204,17 +205,17 @@ struct SimDeckApp: App {
                             )
                         }
                     )
-                    model.startMessageRealtimeUpdates()
+                    model.startRealtimeUpdates()
                 }
                 .onChange(of: scenePhase) { _, phase in
                     guard shouldStartLiveServices else { return }
                     if phase == .active {
                         Task {
                             await model.refreshForegroundState()
-                            model.startMessageRealtimeUpdates()
+                            model.startRealtimeUpdates()
                         }
                     } else {
-                        model.stopMessageRealtimeUpdates()
+                        model.stopRealtimeUpdates()
                     }
                 }
         }

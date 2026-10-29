@@ -105,7 +105,6 @@ struct MessagesScreen: View {
         .environment(\.editMode, $editMode)
         .toolbar(editMode.isEditing ? .hidden : .visible, for: .tabBar)
         .task {
-            await refreshAction()
             synchronizeMutedConversations()
             synchronizePinnedConversations()
         }

@@ -32,7 +32,6 @@ struct SIMManagementScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .listStyle(.insetGrouped)
         .refreshable { await model.refreshSIMCards() }
-        .task { await model.refreshSIMCards() }
         .confirmationDialog("Delete this offline SIM?", isPresented: Binding(get: { simToDelete != nil }, set: { if !$0 { simToDelete = nil } }), titleVisibility: .visible, presenting: simToDelete) { sim in
             Button("Delete SIM", role: .destructive) {
                 Task {

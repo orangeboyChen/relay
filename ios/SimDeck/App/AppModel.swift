@@ -60,6 +60,7 @@ final class AppModel {
     @ObservationIgnored private let callHistoryStore: EncryptedCallHistoryStore
     @ObservationIgnored private let remoteDeviceRefreshEnabled: Bool
     @ObservationIgnored private var messageEventMonitor: MessageEventMonitor?
+    @ObservationIgnored private var realtimeRefreshTask: Task<Void, Never>?
     @ObservationIgnored private var historySnapshotSyncTask: Task<Void, Never>?
     @ObservationIgnored private var contactNameIndex = ContactNameIndex()
     @ObservationIgnored private var contactUpdatesTask: Task<Void, Never>?
@@ -242,6 +243,7 @@ final class AppModel {
         reconcileLineHistory(using: devices)
         callCoordinator.updateLineRoutes(devices)
         messageTransport.updateLineRoutes(devices)
+        await refreshSIMCards()
         try? await synchronizeEncryptedHistory()
         resolvePendingMessageNotificationSelection()
         if voipPushCoordinator != nil || alertPushCoordinator != nil {
@@ -249,7 +251,7 @@ final class AppModel {
         }
         try? await voipPushCoordinator?.uploadPendingToken()
         try? await alertPushCoordinator?.uploadPendingToken()
-        startMessageRealtimeUpdates()
+        startRealtimeUpdates()
     }
 
     func registerPasskey() async throws {
@@ -400,6 +402,30 @@ final class AppModel {
         messageEventMonitor?.start()
     }
 
+    func startRealtimeUpdates() {
+        guard serverConnection.isSignedIn else { return }
+        startMessageRealtimeUpdates()
+        guard realtimeRefreshTask == nil else { return }
+        realtimeRefreshTask = Task { [weak self] in
+            var historyRefreshTick = 0
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(15))
+                } catch {
+                    return
+                }
+                guard let self, !Task.isCancelled else { return }
+                await self.refreshDevices()
+                await self.refreshSIMCards()
+                historyRefreshTick += 1
+                if historyRefreshTick >= 4 {
+                    historyRefreshTick = 0
+                    await self.refreshCommunicationHistory()
+                }
+            }
+        }
+    }
+
     func startNetworkPathObservation() {
         guard networkPathObserver == nil else { return }
         let observer = NetworkPathObserver { [weak self] update in
@@ -415,6 +441,12 @@ final class AppModel {
 
     func stopMessageRealtimeUpdates() {
         messageEventMonitor?.stop()
+    }
+
+    func stopRealtimeUpdates() {
+        stopMessageRealtimeUpdates()
+        realtimeRefreshTask?.cancel()
+        realtimeRefreshTask = nil
     }
 
     func startContactUpdates() {
@@ -455,6 +487,7 @@ final class AppModel {
     func refreshForegroundState() async {
         refreshContactNames()
         await refreshDevices()
+        await refreshSIMCards()
         await refreshCommunicationHistory()
     }
 
@@ -848,7 +881,7 @@ final class AppModel {
     }
 
     func signOutFromServer() async throws {
-        stopMessageRealtimeUpdates()
+        stopRealtimeUpdates()
         await stopPushNotifications()
         try serverConnection.signOut()
         reconcileLineHistory(using: devices)
@@ -858,7 +891,7 @@ final class AppModel {
     }
 
     func revokeCurrentSession() async throws {
-        stopMessageRealtimeUpdates()
+        stopRealtimeUpdates()
         await stopPushNotifications()
         do {
             try await serverConnection.revokeCurrentSession()
@@ -926,6 +959,7 @@ final class AppModel {
     private func synchronizeMessages(through requiredSequence: Int64? = nil) async -> Bool {
         do {
             try await synchronizeMessages()
+            scheduleHistorySnapshotSync()
             return requiredSequence.map { messageTransport.currentSequence >= $0 } ?? true
         } catch {
             Self.logger.error(

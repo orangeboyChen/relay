@@ -51,9 +51,6 @@ struct DeviceManagementScreen: View {
         .sheet(isPresented: $isAddingDevice) {
             AddDeviceScreen(model: model)
         }
-        .task {
-            await model.refreshDevices()
-        }
         .scrollEdgeEffectStyle(.soft, for: .all)
     }
 }

@@ -807,6 +807,9 @@ private final class AppModelSignInNetwork: ServerNetworking {
             {"devices":[{"device_uuid":"\(deviceID.uuidString.lowercased())","numeric_id":5,"profile_ciphertext":"","identity_public_key":"","command_public_key":"\(key)","paired_at":"2026-10-16T00:00:00Z"}]}
             """.utf8)
             status = 200
+        case ("POST", "/relay.communication.v1.OwnerService/ListSimCards"):
+            body = Data("{\"sim_cards\":[]}".utf8)
+            status = 200
         default:
             XCTFail("Unexpected request: \(request.httpMethod ?? "") \(request.url?.path ?? "")")
             body = Data("{}".utf8)

@@ -244,6 +244,24 @@ final class AppMessageFlowTests: XCTestCase {
                 messages: [remoteMessage]
             ),
         ], using: vaultKey)
+        try EncryptedMessageHistoryStore(
+            fileURL: localDirectory.appending(path: "messages.bin")
+        ).save([
+            MessageConversation(
+                lineID: firstLine.id,
+                remoteNumber: "10086",
+                contactName: nil,
+                unreadCount: 1,
+                messages: [MessageItem(
+                    id: UUID(),
+                    direction: .received,
+                    body: "stale local message",
+                    attachment: nil,
+                    sentAt: Date(timeIntervalSince1970: 99),
+                    status: .delivered
+                )]
+            ),
+        ], using: vaultKey)
         let remoteCall = CallRecord(
             id: UUID(),
             lineID: firstLine.id,
@@ -284,13 +302,19 @@ final class AppMessageFlowTests: XCTestCase {
         )
         model.bootstrapInstallation()
 
+        await model.refreshCommunicationHistory()
+        XCTAssertEqual(model.messageItems.map(\.body), ["restored message"])
+
         try await model.clearLocalHistoryCacheAndRestoreFromServer()
 
         XCTAssertEqual(model.messageItems.map(\.body), ["restored message"])
         var expectedRemoteCall = remoteCall
         expectedRemoteCall.lineSnapshot = LineHistorySnapshot(line: firstLine)
         XCTAssertEqual(model.callHistory, .loaded([expectedRemoteCall]))
-        XCTAssertEqual(syncClient.requestedKinds, [.messages, .calls])
+        XCTAssertEqual(
+            syncClient.requestedKinds,
+            [.messages, .calls, .messages, .calls]
+        )
     }
 
     func testRefreshResolvesFormattedContactNameForEverySIMConversation() async {
@@ -768,15 +792,6 @@ private final class HistorySnapshotClient: CommunicationSyncClient {
             revision: 1,
             ciphertext: kind == .messages ? messages : calls
         )
-    }
-
-    func putHistorySnapshot(
-        kind: Relay_Communication_V1_HistoryKind,
-        expectedRevision: Int64,
-        ciphertext: Data,
-        accessToken: String
-    ) async throws -> HistorySnapshotPayload {
-        HistorySnapshotPayload(revision: expectedRevision + 1, ciphertext: ciphertext)
     }
 }
 

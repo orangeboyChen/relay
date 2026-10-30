@@ -1212,10 +1212,6 @@ private final class TestCommunicationSyncClient: CommunicationSyncClient {
     func getHistorySnapshot(kind: Relay_Communication_V1_HistoryKind, accessToken: String) async throws -> HistorySnapshotPayload {
         HistorySnapshotPayload(revision: 0, ciphertext: Data())
     }
-
-    func putHistorySnapshot(kind: Relay_Communication_V1_HistoryKind, expectedRevision: Int64, ciphertext: Data, accessToken: String) async throws -> HistorySnapshotPayload {
-        HistorySnapshotPayload(revision: expectedRevision + 1, ciphertext: ciphertext)
-    }
 }
 
 @MainActor

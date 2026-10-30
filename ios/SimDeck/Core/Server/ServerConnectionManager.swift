@@ -395,7 +395,6 @@ protocol CommunicationSyncClient: AnyObject {
     func pullEvents(afterSequence: Int64, accessToken: String) async throws -> EncryptedEventPage
     func watchEvents(afterSequence: Int64, accessToken: String) throws -> any EncryptedEventStream
     func getHistorySnapshot(kind: Relay_Communication_V1_HistoryKind, accessToken: String) async throws -> HistorySnapshotPayload
-    func putHistorySnapshot(kind: Relay_Communication_V1_HistoryKind, expectedRevision: Int64, ciphertext: Data, accessToken: String) async throws -> HistorySnapshotPayload
 }
 
 struct HistorySnapshotPayload: Equatable, Sendable {
@@ -596,19 +595,6 @@ private final class ConnectCommunicationSyncClient: CommunicationSyncClient {
     func getHistorySnapshot(kind: Relay_Communication_V1_HistoryKind, accessToken: String) async throws -> HistorySnapshotPayload {
         let response = await client.getHistorySnapshot(
             request: Relay_Communication_V1_GetHistorySnapshotRequest.with { $0.kind = kind },
-            headers: ["authorization": ["Bearer \(accessToken)"]]
-        )
-        let snapshot = try response.result.get().snapshot
-        return HistorySnapshotPayload(revision: snapshot.revision, ciphertext: snapshot.ciphertext)
-    }
-
-    func putHistorySnapshot(kind: Relay_Communication_V1_HistoryKind, expectedRevision: Int64, ciphertext: Data, accessToken: String) async throws -> HistorySnapshotPayload {
-        let response = await client.putHistorySnapshot(
-            request: Relay_Communication_V1_PutHistorySnapshotRequest.with {
-                $0.kind = kind
-                $0.expectedRevision = expectedRevision
-                $0.ciphertext = ciphertext
-            },
             headers: ["authorization": ["Bearer \(accessToken)"]]
         )
         let snapshot = try response.result.get().snapshot
@@ -1289,13 +1275,6 @@ final class ServerConnectionManager {
         let activeSession = try await validSession(baseURL: baseURL)
         return try await communicationSyncClientFactory.makeClient(baseURL: baseURL)
             .getHistorySnapshot(kind: kind, accessToken: activeSession.accessToken)
-    }
-
-    func putHistorySnapshot(kind: Relay_Communication_V1_HistoryKind, expectedRevision: Int64, ciphertext: Data) async throws -> HistorySnapshotPayload {
-        let baseURL = try validatedBaseURL()
-        let activeSession = try await validSession(baseURL: baseURL)
-        return try await communicationSyncClientFactory.makeClient(baseURL: baseURL)
-            .putHistorySnapshot(kind: kind, expectedRevision: expectedRevision, ciphertext: ciphertext, accessToken: activeSession.accessToken)
     }
 
     func openEncryptedEventStream(

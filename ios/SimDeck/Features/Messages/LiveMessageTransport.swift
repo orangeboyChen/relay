@@ -86,6 +86,7 @@ protocol MessageTransport: AnyObject {
     ) async throws
     func synchronize(lines: [DeviceLineIdentity]) async throws -> MessageSyncBatch
     func acknowledge(sequence: Int64)
+    func resetSequence()
     func updateLineRoutes(_ lines: [DeviceLineIdentity])
 }
 
@@ -102,6 +103,7 @@ extension MessageTransport {
     }
     func updateLineRoutes(_ lines: [DeviceLineIdentity]) {}
     func acknowledge(sequence: Int64) {}
+    func resetSequence() {}
 }
 
 @MainActor
@@ -129,7 +131,7 @@ final class UserDefaultsMessageCursorStore: MessageCursorStoring {
 
     private var key: String {
         let suffix = installationID()?.uuidString.lowercased() ?? "pending"
-        return "sim-deck.message-cursor.v1.\(suffix)"
+        return "sim-deck.message-cursor.v2.\(suffix)"
     }
 }
 
@@ -492,6 +494,10 @@ final class LiveMessageTransport: MessageTransport {
 
     func acknowledge(sequence: Int64) {
         cursorStore.sequence = max(cursorStore.sequence, sequence)
+    }
+
+    func resetSequence() {
+        cursorStore.sequence = 0
     }
 
     private static func logEventFailure(

@@ -60,6 +60,8 @@ final class AppModel {
     @ObservationIgnored private let callHistoryStore: EncryptedCallHistoryStore
     @ObservationIgnored private let remoteDeviceRefreshEnabled: Bool
     @ObservationIgnored private var messageEventMonitor: MessageEventMonitor?
+    @ObservationIgnored private var communicationSyncInFlight = false
+    @ObservationIgnored private var communicationSyncWaiters: [CheckedContinuation<Void, Never>] = []
     @ObservationIgnored private var deviceStatusExpiryTasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var deviceStatusReportedAt: [UUID: Date] = [:]
     @ObservationIgnored private var historySnapshotSyncTask: Task<Void, Never>?
@@ -345,16 +347,18 @@ final class AppModel {
             resolvePendingMessageNotificationSelection()
             return
         }
-        defer { resolvePendingMessageNotificationSelection() }
-        do {
-            try await synchronizeMessages()
-        } catch {
-            Self.logger.error("Message and SIM profile synchronization failed: \(String(reflecting: error), privacy: .public)")
-            serverConnection.markRequestFailed(error)
-            if case .loaded(let conversations) = messages, !conversations.isEmpty {
-                return
+        await withCommunicationSync {
+            defer { resolvePendingMessageNotificationSelection() }
+            do {
+                try await synchronizeMessages()
+            } catch {
+                Self.logger.error("Message and SIM profile synchronization failed: \(String(reflecting: error), privacy: .public)")
+                serverConnection.markRequestFailed(error)
+                if case .loaded(let conversations) = messages, !conversations.isEmpty {
+                    return
+                }
+                messages = .failed
             }
-            messages = .failed
         }
     }
 
@@ -370,15 +374,17 @@ final class AppModel {
             return
         }
 
-        do {
-            try await synchronizeEncryptedHistory()
-        } catch {
-            Self.logger.error(
-                "Encrypted communication history refresh failed: \(String(reflecting: error), privacy: .public)"
-            )
-            serverConnection.markRequestFailed(error)
+        await withCommunicationSync {
+            do {
+                try await synchronizeEncryptedHistory()
+            } catch {
+                Self.logger.error(
+                    "Encrypted communication history refresh failed: \(String(reflecting: error), privacy: .public)"
+                )
+                serverConnection.markRequestFailed(error)
+            }
+            await refreshMessagesWithoutSynchronization()
         }
-        await refreshMessages()
     }
 
     func handleMessageNotificationSelection(conversationIdentifier: String) async {
@@ -942,17 +948,52 @@ final class AppModel {
     }
 
     private func synchronizeMessages(through requiredSequence: Int64? = nil) async -> Bool {
+        var synchronized = false
+        await withCommunicationSync {
+            do {
+                try await synchronizeMessages()
+                scheduleHistorySnapshotSync()
+                synchronized = requiredSequence.map { messageTransport.currentSequence >= $0 } ?? true
+            } catch {
+                Self.logger.error(
+                    "Realtime message synchronization failed: \(String(reflecting: error), privacy: .public)"
+                )
+                serverConnection.markRequestFailed(error)
+            }
+        }
+        return synchronized
+    }
+
+    private func refreshMessagesWithoutSynchronization() async {
+        defer { resolvePendingMessageNotificationSelection() }
         do {
             try await synchronizeMessages()
-            scheduleHistorySnapshotSync()
-            return requiredSequence.map { messageTransport.currentSequence >= $0 } ?? true
         } catch {
-            Self.logger.error(
-                "Realtime message synchronization failed: \(String(reflecting: error), privacy: .public)"
-            )
+            Self.logger.error("Message and SIM profile synchronization failed: \(String(reflecting: error), privacy: .public)")
             serverConnection.markRequestFailed(error)
-            return false
+            if case .loaded(let conversations) = messages, !conversations.isEmpty {
+                return
+            }
+            messages = .failed
         }
+    }
+
+    private func withCommunicationSync<T>(
+        _ operation: () async throws -> T
+    ) async rethrows -> T {
+        if communicationSyncInFlight {
+            await withCheckedContinuation { continuation in
+                communicationSyncWaiters.append(continuation)
+            }
+        }
+        communicationSyncInFlight = true
+        defer {
+            communicationSyncInFlight = false
+            let waiters = communicationSyncWaiters
+            communicationSyncWaiters.removeAll()
+            waiters.forEach { $0.resume() }
+        }
+        return try await operation()
     }
 
     private func synchronizeMessages() async throws {

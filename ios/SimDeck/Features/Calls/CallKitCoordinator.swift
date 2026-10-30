@@ -33,7 +33,6 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
     @ObservationIgnored private var pendingEndCallKinds: [UUID: Bool] = [:]
     @ObservationIgnored private var pendingOutgoingEndReasons: [UUID: CallEndReason] = [:]
     @ObservationIgnored private var locallyEndedCallIDs: Set<UUID> = []
-    @ObservationIgnored private var endedPresentationCallIDs: Set<UUID> = []
     @ObservationIgnored private var historyContexts: [UUID: CallHistoryContext] = [:]
     @ObservationIgnored private var historyHandler: (@MainActor (CallRecord) -> Void)?
     @ObservationIgnored private let now: () -> Date
@@ -550,16 +549,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
 
     private func presentCallEnded(callID: UUID, result: CallResult) {
         guard activeCall?.id == callID else { return }
-        activeCall?.status = .ended
-        finishHistory(callID: callID, result: result)
-        guard endedPresentationCallIDs.insert(callID).inserted else { return }
-
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 900_000_000)
-            guard let self, self.activeCall?.id == callID else { return }
-            self.endedPresentationCallIDs.remove(callID)
-            self.finishCall(callID: callID)
-        }
+        finishCall(callID: callID, result: result)
     }
 
     private func finishCall(callID: UUID, result: CallResult? = nil) {
@@ -575,7 +565,6 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
         pendingOutgoing.removeValue(forKey: callID)
         pendingOutgoingEndReasons.removeValue(forKey: callID)
         locallyEndedCallIDs.remove(callID)
-        endedPresentationCallIDs.remove(callID)
         incomingCalls.removeValue(forKey: callID)
         if let completion = startCompletions.removeValue(forKey: callID) {
             completion(.failure(CallLifecycleError.endedBeforeStart))

@@ -234,6 +234,69 @@ var _ = Describe("Incoming message publisher", func() {
 		}
 	})
 
+	It("keeps invalid or unavailable status heartbeats from being published", func() {
+		Expect(publisher.PublishDeviceStatus(context.Background(), DeviceStatus{})).To(MatchError("device status is invalid"))
+
+		remote.recipients = nil
+		Expect(publisher.PublishDeviceStatus(context.Background(), DeviceStatus{
+			RadioAccessTechnology: "lte",
+			ReportedAt:            time.Now().UTC(),
+		})).To(MatchError(ErrNoRecipients))
+		remote.recipients = []incomingcall.Recipient{{
+			InstallationID:        "01900000-0000-7000-8000-000000000101",
+			IdentityPublicKey:     bytes.Repeat([]byte{1}, ed25519.PublicKeySize),
+			KeyAgreementPublicKey: privateOne.PublicKey().Bytes(),
+		}}
+		remote.listError = errors.New("database unavailable")
+		Expect(publisher.PublishDeviceStatus(context.Background(), DeviceStatus{
+			RadioAccessTechnology: "lte",
+			ReportedAt:            time.Now().UTC(),
+		})).To(MatchError(ContainSubstring("list device status recipients")))
+		remote.listError = nil
+
+		remote.recipients = []incomingcall.Recipient{{
+			InstallationID:        "not-a-uuid",
+			KeyAgreementPublicKey: privateOne.PublicKey().Bytes(),
+		}}
+		Expect(publisher.PublishDeviceStatus(context.Background(), DeviceStatus{
+			RadioAccessTechnology: "lte",
+			ReportedAt:            time.Now().UTC(),
+		})).To(MatchError("device status recipient identity is invalid"))
+
+		remote.recipients = []incomingcall.Recipient{{
+			InstallationID:        "01900000-0000-7000-8000-000000000101",
+			IdentityPublicKey:     bytes.Repeat([]byte{1}, ed25519.PublicKeySize),
+			KeyAgreementPublicKey: privateOne.PublicKey().Bytes(),
+		}}
+		publisher.identity.CommandPrivateKey = []byte("invalid")
+		Expect(publisher.PublishDeviceStatus(context.Background(), DeviceStatus{
+			RadioAccessTechnology: "lte",
+			ReportedAt:            time.Now().UTC(),
+		})).To(MatchError(ContainSubstring("parse device status key")))
+		publisher.identity.CommandPrivateKey = state.CommandPrivateKey
+
+		remote.recipients = []incomingcall.Recipient{{
+			InstallationID:        "01900000-0000-7000-8000-000000000101",
+			IdentityPublicKey:     bytes.Repeat([]byte{1}, ed25519.PublicKeySize),
+			KeyAgreementPublicKey: bytes.Repeat([]byte{0}, 32),
+		}}
+		Expect(publisher.PublishDeviceStatus(context.Background(), DeviceStatus{
+			RadioAccessTechnology: "lte",
+			ReportedAt:            time.Now().UTC(),
+		})).To(MatchError(ContainSubstring("derive recipient device status key")))
+
+		remote.recipients = []incomingcall.Recipient{{
+			InstallationID:        "01900000-0000-7000-8000-000000000101",
+			IdentityPublicKey:     bytes.Repeat([]byte{1}, ed25519.PublicKeySize),
+			KeyAgreementPublicKey: privateOne.PublicKey().Bytes(),
+		}}
+		remote.uploadAt = 1
+		Expect(publisher.PublishDeviceStatus(context.Background(), DeviceStatus{
+			RadioAccessTechnology: "lte",
+			ReportedAt:            time.Now().UTC(),
+		})).To(MatchError(ContainSubstring("upload device status event")))
+	})
+
 	It("keeps detected SIM metadata pending when delivery is unavailable", func() {
 		profile := SIMProfile{PhoneNumber: "+8613500000000", LineName: "CHINA MOBILE"}
 

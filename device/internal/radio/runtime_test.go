@@ -8,6 +8,7 @@ import (
 
 	"sim-deck-device/internal/at"
 	"sim-deck-device/internal/identity"
+	"sim-deck-device/internal/slotpolicy"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -100,6 +101,34 @@ var _ = Describe("Radio status runtime", func() {
 		Expect(status.RadioAccessTechnology).To(Equal("gsm"))
 		Expect(status.SignalBars).NotTo(BeNil())
 		Expect(*status.SignalBars).To(Equal(1))
+	})
+
+	It("includes the current slot policy in heartbeat status", func() {
+		commander := &fakeCommander{responses: map[string]at.Response{
+			"AT+CEREG?":  {Lines: []string{"+CEREG: 0,1"}, Terminal: "OK"},
+			"AT+QNWINFO": {Lines: []string{`+QNWINFO: "FDD LTE","46000","LTE BAND 3",1850`}, Terminal: "OK"},
+			"AT+CSQ":     {Lines: []string{"+CSQ: 17,99"}, Terminal: "OK"},
+		}}
+		settings := slotpolicy.Settings{DataEnabled: true, IncomingCallsEnabled: true, IncomingSMSEnabled: true}
+		runtime, err := NewRuntimeWithLoggerAndPolicy(
+			commander,
+			&fakeRemote{},
+			state,
+			time.Hour,
+			time.Second,
+			nil,
+			func() slotpolicy.Settings { return settings },
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		status, err := runtime.read(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status.SlotSettings).To(Equal(settings))
+
+		runtime.SetSlotSettingsProvider(func() slotpolicy.Settings { return slotpolicy.Settings{AirplaneModeEnabled: true} })
+		status, err = runtime.read(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status.SlotSettings.AirplaneModeEnabled).To(BeTrue())
 	})
 
 	It("publishes an unavailable status while the SIM is not registered", func() {

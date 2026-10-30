@@ -113,7 +113,7 @@ jobs:
   ios:
     name: iOS
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - name: Select Xcode 26.6
@@ -145,6 +145,7 @@ jobs:
           -project SimDeck.xcodeproj
           -scheme SimDeck
           -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'
+          -parallel-testing-enabled NO
           CODE_SIGNING_ALLOWED=NO
 
   containers:

@@ -97,6 +97,7 @@ func (client *Client) PublishRadioStatus(ctx context.Context, state identity.Sta
 	err = publisher.PublishDeviceStatus(ctx, messageevent.DeviceStatus{
 		RadioAccessTechnology: status.RadioAccessTechnology,
 		SignalBars:            status.SignalBars,
+		SlotSettings:          status.SlotSettings,
 		ReportedAt:            reportedAt,
 	})
 	if errors.Is(err, messageevent.ErrNoRecipients) {

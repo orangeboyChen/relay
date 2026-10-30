@@ -23,6 +23,7 @@ import (
 	"sim-deck-device/internal/callevent"
 	"sim-deck-device/internal/identity"
 	"sim-deck-device/internal/incomingcall"
+	"sim-deck-device/internal/slotpolicy"
 	"sim-deck-device/internal/sms"
 )
 
@@ -92,22 +93,24 @@ type SIMProfilePayload struct {
 type DeviceStatus struct {
 	RadioAccessTechnology string
 	SignalBars            *int
+	SlotSettings          slotpolicy.Settings
 	ReportedAt            time.Time
 }
 
 type DeviceStatusPayload struct {
-	Version               int    `json:"version"`
-	DeviceUUID            string `json:"device_uuid"`
-	SlotID                string `json:"slot_id,omitempty"`
-	SIMID                 string `json:"sim_id,omitempty"`
-	NumericID             int    `json:"numeric_id"`
-	SlotKey               string `json:"slot_key"`
-	SlotIndex             int    `json:"slot_index"`
-	Online                bool   `json:"online"`
-	RadioAccessTechnology string `json:"radio_access_technology"`
-	SignalBars            *int   `json:"signal_bars,omitempty"`
-	ReportedAt            string `json:"reported_at"`
-	InstallationID        string `json:"installation_id"`
+	Version               int                 `json:"version"`
+	DeviceUUID            string              `json:"device_uuid"`
+	SlotID                string              `json:"slot_id,omitempty"`
+	SIMID                 string              `json:"sim_id,omitempty"`
+	NumericID             int                 `json:"numeric_id"`
+	SlotKey               string              `json:"slot_key"`
+	SlotIndex             int                 `json:"slot_index"`
+	Online                bool                `json:"online"`
+	RadioAccessTechnology string              `json:"radio_access_technology"`
+	SignalBars            *int                `json:"signal_bars,omitempty"`
+	SlotSettings          slotpolicy.Settings `json:"slot_settings"`
+	ReportedAt            string              `json:"reported_at"`
+	InstallationID        string              `json:"installation_id"`
 }
 
 // Remote provides approved recipient identities and opaque event upload.
@@ -248,7 +251,8 @@ func (publisher *Publisher) sealDeviceStatus(status DeviceStatus, recipient inco
 		NumericID: publisher.identity.NumericID, SlotKey: publisher.identity.SlotKey,
 		SlotIndex: publisher.identity.SlotIndex, Online: true,
 		RadioAccessTechnology: status.RadioAccessTechnology, SignalBars: status.SignalBars,
-		ReportedAt: envelope.OccurredAt.Format(time.RFC3339Nano), InstallationID: recipient.InstallationID,
+		SlotSettings: status.SlotSettings,
+		ReportedAt:   envelope.OccurredAt.Format(time.RFC3339Nano), InstallationID: recipient.InstallationID,
 	})
 	if err != nil {
 		return callevent.Envelope{}, fmt.Errorf("encode device status event: %w", err)

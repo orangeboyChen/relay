@@ -16,6 +16,7 @@ final class AppModel {
     )
     var devices: [DeviceLineIdentity]
     var managedSIMs: [ManagedSIM]
+    var slotSettingsByLineID: [UUID: SlotSettings]
     var callHistory: CallHistoryState
     var messages: MessageListState
     var lastSuccessfulDialLineID: UUID?
@@ -75,6 +76,7 @@ final class AppModel {
     init(
         devices: [DeviceLineIdentity] = [],
         managedSIMs: [ManagedSIM] = [],
+        slotSettingsByLineID: [UUID: SlotSettings] = [:],
         callHistory: CallHistoryState = .loaded([]),
         messages: MessageListState = .loaded([]),
         lastSuccessfulDialLineID: UUID? = nil,
@@ -103,6 +105,7 @@ final class AppModel {
         let resolvedRecentCallLineStore = recentCallLineStore ?? UserDefaultsRecentCallLineStore()
         self.devices = devices
         self.managedSIMs = managedSIMs
+        self.slotSettingsByLineID = slotSettingsByLineID
         self.callHistory = callHistory
         self.messages = messages
         self.lastSuccessfulDialLineID = lastSuccessfulDialLineID
@@ -804,11 +807,15 @@ final class AppModel {
     }
 
     func loadSlotSettings(line: DeviceLineIdentity) async throws -> SlotSettings {
-        try await slotSettingsTransport.load(line: line)
+        let settings = try await slotSettingsTransport.load(line: line)
+        slotSettingsByLineID[line.id] = settings
+        return settings
     }
 
     func saveSlotSettings(_ settings: SlotSettings, line: DeviceLineIdentity) async throws -> SlotSettings {
-        try await slotSettingsTransport.update(settings, line: line)
+        let saved = try await slotSettingsTransport.update(settings, line: line)
+        slotSettingsByLineID[line.id] = saved
+        return saved
     }
 
     func restartSlotModem(line: DeviceLineIdentity) async throws {
@@ -1021,6 +1028,9 @@ final class AppModel {
             line.isOnline = isOnline
             line.radioStatus = isOnline ? status.radioStatus : nil
             devices[index] = line
+            if let slotSettings = status.slotSettings {
+                slotSettingsByLineID[line.id] = slotSettings
+            }
             updateManagedSIMAssignment(for: line, reportedAt: status.reportedAt)
             routesChanged = true
             deviceStatusReportedAt[status.lineID] = status.reportedAt

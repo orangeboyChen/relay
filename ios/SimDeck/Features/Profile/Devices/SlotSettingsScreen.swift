@@ -16,6 +16,15 @@ struct SlotSettingsScreen: View {
     @State private var showsVoLTERestartConfirmation = false
     @State private var errorDescription: String?
 
+    init(model: AppModel, line: DeviceLineIdentity) {
+        self.model = model
+        self.line = line
+        let cached = model.slotSettingsByLineID[line.id]
+        _settings = State(initialValue: cached)
+        _original = State(initialValue: cached)
+        _isLoading = State(initialValue: cached == nil)
+    }
+
     var body: some View {
         Form {
             SlotIdentitySection(line: line)
@@ -85,6 +94,13 @@ struct SlotSettingsScreen: View {
     }
 
     private func loadSettings() async {
+        if let cached = model.slotSettingsByLineID[line.id] {
+            settings = cached
+            original = cached
+            isLoading = false
+            errorDescription = nil
+            return
+        }
         isLoading = true
         errorDescription = nil
         do {

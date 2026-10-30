@@ -70,6 +70,7 @@ struct DetectedRadioStatus: Equatable, Sendable {
     let numericID: Int
     let isOnline: Bool
     let radioStatus: CellularRadioStatus?
+    let slotSettings: SlotSettings?
     let reportedAt: Date
 }
 
@@ -476,6 +477,7 @@ final class LiveMessageTransport: MessageTransport {
                                 signalBars: payload.signalBars
                             )
                             : nil,
+                        slotSettings: payload.slotSettings,
                         reportedAt: reportedAt
                     )
                 )
@@ -805,6 +807,7 @@ struct IncomingDeviceStatusPayload: Codable, Equatable, Sendable {
     let online: Bool
     let radioAccessTechnology: String
     let signalBars: Int?
+    let slotSettings: SlotSettings?
     let reportedAt: String
     let installationID: UUID
 
@@ -819,6 +822,7 @@ struct IncomingDeviceStatusPayload: Codable, Equatable, Sendable {
         case online
         case radioAccessTechnology = "radio_access_technology"
         case signalBars = "signal_bars"
+        case slotSettings = "slot_settings"
         case reportedAt = "reported_at"
         case installationID = "installation_id"
     }

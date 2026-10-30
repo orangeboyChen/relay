@@ -734,6 +734,11 @@ func runDevice(ctx context.Context, config agent.Config, logger *slog.Logger, re
 	if err != nil {
 		return fmt.Errorf("create radio status runtime: %w", err)
 	}
+	if provider, ok := radioStatus.(interface {
+		SetSlotSettingsProvider(func() slotpolicy.Settings)
+	}); ok {
+		provider.SetSlotSettingsProvider(policy.Current)
+	}
 
 	ready.Store(true)
 	defer ready.Store(false)

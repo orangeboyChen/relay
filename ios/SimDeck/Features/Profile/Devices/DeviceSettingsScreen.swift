@@ -155,6 +155,10 @@ struct SIMSettingsScreen: View {
         _numericID = State(initialValue: line.numericID)
         _lineName = State(initialValue: line.lineName)
         _phoneNumber = State(initialValue: line.phoneNumber)
+        let cached = model.slotSettingsByLineID[line.id]
+        _slotSettings = State(initialValue: cached)
+        _originalSlotSettings = State(initialValue: cached)
+        _isLoadingControls = State(initialValue: cached == nil && line.isOnline)
     }
 
     var body: some View {
@@ -260,6 +264,13 @@ struct SIMSettingsScreen: View {
     }
 
     private func loadSlotSettings() async {
+        if let cached = model.slotSettingsByLineID[line.id] {
+            slotSettings = cached
+            originalSlotSettings = cached
+            isLoadingControls = false
+            controlErrorDescription = nil
+            return
+        }
         isLoadingControls = line.isOnline
         controlErrorDescription = nil
         guard line.isOnline else { return }

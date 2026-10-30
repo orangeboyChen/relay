@@ -11,12 +11,14 @@ import (
 
 	"sim-deck-device/internal/at"
 	"sim-deck-device/internal/identity"
+	"sim-deck-device/internal/slotpolicy"
 )
 
 // Status is the current non-sensitive cellular registration summary.
 type Status struct {
-	RadioAccessTechnology string `json:"radio_access_technology"`
-	SignalBars            *int   `json:"signal_bars"`
+	RadioAccessTechnology string              `json:"radio_access_technology"`
+	SignalBars            *int                `json:"signal_bars"`
+	SlotSettings          slotpolicy.Settings `json:"slot_settings"`
 }
 
 type commander interface {
@@ -37,6 +39,7 @@ type Runtime struct {
 	interval  time.Duration
 	timeout   time.Duration
 	logger    *slog.Logger
+	policy    func() slotpolicy.Settings
 }
 
 // NewRuntime creates a radio poller for one bound modem identity.
@@ -46,13 +49,19 @@ func NewRuntime(commander commander, remote Remote, state identity.State, interv
 
 // NewRuntimeWithLogger creates a radio poller that writes diagnostic status to the supplied logger.
 func NewRuntimeWithLogger(commander commander, remote Remote, state identity.State, interval time.Duration, timeout time.Duration, logger *slog.Logger) (*Runtime, error) {
+	return NewRuntimeWithLoggerAndPolicy(commander, remote, state, interval, timeout, logger, nil)
+}
+
+// NewRuntimeWithLoggerAndPolicy creates a radio poller that includes the current
+// slot policy in each encrypted status heartbeat.
+func NewRuntimeWithLoggerAndPolicy(commander commander, remote Remote, state identity.State, interval time.Duration, timeout time.Duration, logger *slog.Logger, policy func() slotpolicy.Settings) (*Runtime, error) {
 	if commander == nil || remote == nil || state.DeviceUUID == "" || state.Credential == "" || interval <= 0 || timeout <= 0 {
 		return nil, errors.New("radio runtime requires modem, remote, bound identity, and positive intervals")
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Runtime{commander: commander, remote: remote, identity: state, interval: interval, timeout: timeout, logger: logger}, nil
+	return &Runtime{commander: commander, remote: remote, identity: state, interval: interval, timeout: timeout, logger: logger, policy: policy}, nil
 }
 
 // Run publishes immediately and then at the configured interval until cancellation.
@@ -74,6 +83,11 @@ func (runtime *Runtime) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// SetSlotSettingsProvider attaches the live policy snapshot to future heartbeats.
+func (runtime *Runtime) SetSlotSettingsProvider(provider func() slotpolicy.Settings) {
+	runtime.policy = provider
 }
 
 func (runtime *Runtime) publish(ctx context.Context) error {
@@ -119,7 +133,15 @@ func (runtime *Runtime) read(ctx context.Context) (Status, error) {
 	return Status{
 		RadioAccessTechnology: parseTechnology(network.Lines),
 		SignalBars:            parseSignalBars(signal.Lines),
+		SlotSettings:          runtime.currentSlotSettings(),
 	}, nil
+}
+
+func (runtime *Runtime) currentSlotSettings() slotpolicy.Settings {
+	if runtime.policy == nil {
+		return slotpolicy.Settings{}
+	}
+	return runtime.policy()
 }
 
 func (runtime *Runtime) readRegistration(ctx context.Context) (bool, error) {

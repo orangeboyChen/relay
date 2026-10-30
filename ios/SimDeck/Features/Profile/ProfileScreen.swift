@@ -14,14 +14,12 @@ enum ProfileNavigationRoute: Hashable {
 struct ProfileScreen: View {
     let model: AppModel
 
-    @State private var serviceStates: [UUID: ProfileSIMServiceState] = [:]
-
     var body: some View {
         List {
             SIMCardsSection(
                 model: model,
                 lines: model.devices.filter { $0.simID != nil },
-                serviceStates: serviceStates
+                serviceStates: model.slotSettingsByLineID
             )
 
             Section {
@@ -38,49 +36,16 @@ struct ProfileScreen: View {
         }
         .refreshable {
             await model.refreshDevices()
-            await refreshSIMServiceStates()
-        }
-        .task { await refreshSIMServiceStates() }
-        .onChange(of: model.devices) { _, _ in
-            Task { await refreshSIMServiceStates() }
         }
         .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
-    private func refreshSIMServiceStates() async {
-        let lines = model.devices.filter { $0.simID != nil }
-        let currentIDs = Set(lines.map(\.id))
-        serviceStates = serviceStates.filter { currentIDs.contains($0.key) }
-
-        var tasks: [Task<(UUID, ProfileSIMServiceState), Never>] = []
-        for line in lines {
-            guard line.isOnline else {
-                serviceStates[line.id] = .offline
-                continue
-            }
-
-            tasks.append(
-                Task { @MainActor in
-                    do {
-                        return (line.id, .loaded(try await model.loadSlotSettings(line: line)))
-                    } catch {
-                        return (line.id, .unavailable)
-                    }
-                }
-            )
-        }
-
-        for task in tasks {
-            let (lineID, state) = await task.value
-            serviceStates[lineID] = state
-        }
-    }
 }
 
 private struct SIMCardsSection: View {
     let model: AppModel
     let lines: [DeviceLineIdentity]
-    let serviceStates: [UUID: ProfileSIMServiceState]
+    let serviceStates: [UUID: SlotSettings]
 
     var body: some View {
         Section("SIM Cards") {
@@ -120,7 +85,7 @@ private struct EmptySIMCardsRow: View {
 
 struct SIMRadioStatusRow: View {
     let line: DeviceLineIdentity
-    let serviceState: ProfileSIMServiceState?
+    let serviceState: SlotSettings?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -149,7 +114,7 @@ struct SIMRadioStatusRow: View {
 
 private struct SIMLineDescription: View {
     let line: DeviceLineIdentity
-    let serviceState: ProfileSIMServiceState?
+    let serviceState: SlotSettings?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -193,17 +158,11 @@ private struct SIMRadioStatusSummary: View {
     }
 }
 
-enum ProfileSIMServiceState: Equatable {
-    case loaded(SlotSettings)
-    case offline
-    case unavailable
-}
-
 private struct ProfileSIMServicePresentation {
     let title: String
     let color: Color
 
-    init(line: DeviceLineIdentity, state: ProfileSIMServiceState?) {
+    init(line: DeviceLineIdentity, state: SlotSettings?) {
         guard line.isOnline else {
             title = String(localized: "Offline")
             color = .secondary
@@ -211,7 +170,7 @@ private struct ProfileSIMServicePresentation {
         }
 
         switch state {
-        case .loaded(let settings):
+        case let settings?:
             if settings.airplaneModeEnabled {
                 title = String(localized: "Airplane Mode")
                 color = .yellow
@@ -226,12 +185,6 @@ private struct ProfileSIMServicePresentation {
                     : services.joined(separator: " · ")
                 color = .green
             }
-        case .offline:
-            title = String(localized: "Offline")
-            color = .secondary
-        case .unavailable:
-            title = String(localized: "Unavailable")
-            color = .secondary
         case nil:
             // Keep the row quiet until the first settings snapshot arrives. A
             // refresh should not replace a previously rendered value with a

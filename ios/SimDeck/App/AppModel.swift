@@ -386,6 +386,13 @@ final class AppModel {
 
     func handleMessageNotificationSelection(conversationIdentifier: String) async {
         pendingMessageNotificationConversationIdentifier = conversationIdentifier
+        // Recover events that may have been acknowledged by an older client
+        // after a stale history snapshot replaced its local cache.
+        if case .loaded(let conversations) = messages,
+           conversations.isEmpty,
+           messageTransport.currentSequence > 0 {
+            messageTransport.resetSequence()
+        }
         await refreshCommunicationHistory()
         resolvePendingMessageNotificationSelection()
     }

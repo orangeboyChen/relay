@@ -567,6 +567,33 @@ final class AppMessageFlowTests: XCTestCase {
         XCTAssertNil(model.pendingNavigationRequest)
     }
 
+    func testNotificationSelectionRecoversEventsAfterAnEmptyCacheAdvancedTheCursor() async {
+        let delivery = IncomingMessageDelivery(
+            id: UUID(),
+            sourceID: String(repeating: "a", count: 64),
+            lineID: firstLine.id,
+            remoteNumber: "10086",
+            body: "Recovered",
+            receivedAt: Date(timeIntervalSince1970: 100)
+        )
+        let transport = MessageTransportFake(
+            currentSequence: 7,
+            deliveries: [delivery]
+        )
+        let model = makeModel(transport: transport)
+        let identifier = MessageNotificationConversationIdentifier.make(
+            simID: firstLine.simID,
+            slotID: firstLine.slotID,
+            deviceUUID: firstLine.deviceID,
+            remoteNumber: delivery.remoteNumber
+        )
+
+        await model.handleMessageNotificationSelection(conversationIdentifier: identifier)
+
+        XCTAssertEqual(transport.resetSequenceCount, 1)
+        XCTAssertEqual(model.messageItems.map(\.body), ["Recovered"])
+    }
+
     func testColdLaunchNotificationSelectionWaitsForLineMetadata() async {
         let conversation = MessageConversation(
             lineID: firstLine.id,
@@ -708,8 +735,18 @@ private final class MessageTransportFake: MessageTransport {
     private var sendCompletion: CheckedContinuation<Void, Never>?
     private var didStartSend = false
 
-    init(sendMode: SendMode = .success, deliveries: [IncomingMessageDelivery] = []) {
+    private(set) var resetSequenceCount = 0
+    private var sequence: Int64
+
+    var currentSequence: Int64 { sequence }
+
+    init(
+        sendMode: SendMode = .success,
+        currentSequence: Int64 = 0,
+        deliveries: [IncomingMessageDelivery] = []
+    ) {
         self.sendMode = sendMode
+        sequence = currentSequence
         self.deliveries = deliveries
     }
 
@@ -741,6 +778,15 @@ private final class MessageTransportFake: MessageTransport {
     func synchronize(lines: [DeviceLineIdentity]) async throws -> MessageSyncBatch {
         synchronizedLineIDs.append(lines.map(\.id))
         return MessageSyncBatch(deliveries: deliveries, nextSequence: 7)
+    }
+
+    func acknowledge(sequence: Int64) {
+        self.sequence = max(self.sequence, sequence)
+    }
+
+    func resetSequence() {
+        sequence = 0
+        resetSequenceCount += 1
     }
 
     func updateLineRoutes(_ lines: [DeviceLineIdentity]) {

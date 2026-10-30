@@ -356,6 +356,7 @@ struct RootTabView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     callFilterMenu
                 }
+                .sharedBackgroundVisibility(.hidden)
             }
         }
     }

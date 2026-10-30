@@ -149,11 +149,13 @@ struct MessagesScreen: View {
     }
 
     private func refreshableEmptyState<Content: View>(
-        @ViewBuilder content: () -> Content
+        @ViewBuilder content: @escaping () -> Content
     ) -> some View {
-        ScrollView {
-            content()
-                .frame(maxWidth: .infinity, minHeight: 260)
+        GeometryReader { proxy in
+            ScrollView {
+                content()
+                    .frame(maxWidth: .infinity, minHeight: proxy.size.height)
+            }
         }
     }
 

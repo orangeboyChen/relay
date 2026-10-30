@@ -303,7 +303,10 @@ final class AppMessageFlowTests: XCTestCase {
         model.bootstrapInstallation()
 
         await model.refreshCommunicationHistory()
-        XCTAssertEqual(model.messageItems.map(\.body), ["restored message"])
+        XCTAssertEqual(
+            Set(model.messageItems.map(\.body)),
+            ["stale local message", "restored message"]
+        )
 
         try await model.clearLocalHistoryCacheAndRestoreFromServer()
 

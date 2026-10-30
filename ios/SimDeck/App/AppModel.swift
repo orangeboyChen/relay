@@ -361,7 +361,7 @@ final class AppModel {
         }
     }
 
-    /// Downloads the server-owned history snapshots and then pulls new events.
+    /// Merges server-owned history snapshots and then pulls new events.
     ///
     /// Local encrypted files are only a cache. They are never uploaded as a
     /// replacement for server history.
@@ -1310,12 +1310,22 @@ final class AppModel {
         guard let recoveredVaultKey else { return }
         let remoteMessages = try await serverConnection.getHistorySnapshot(kind: .messages)
         if !remoteMessages.ciphertext.isEmpty {
-            try messageHistoryStore.replaceEncryptedData(remoteMessages.ciphertext)
+            // The event stream is the source of newly received messages. A
+            // snapshot can lag behind an already acknowledged event, so it
+            // must be merged instead of replacing the local event-derived
+            // cache.
+            try messageHistoryStore.merge(
+                encryptedData: remoteMessages.ciphertext,
+                using: recoveredVaultKey
+            )
         }
 
         let remoteCalls = try await serverConnection.getHistorySnapshot(kind: .calls)
         if !remoteCalls.ciphertext.isEmpty {
-            try callHistoryStore.replaceEncryptedData(remoteCalls.ciphertext)
+            try callHistoryStore.merge(
+                encryptedData: remoteCalls.ciphertext,
+                using: recoveredVaultKey
+            )
         }
         restoreLocalHistory(using: recoveredVaultKey)
     }

@@ -337,13 +337,6 @@ func (service *syncService) GetHistorySnapshot(ctx context.Context, request *com
 	return &communicationv1.GetHistorySnapshotResponse{Snapshot: snapshotProto(snapshot)}, nil
 }
 
-func (service *syncService) PutHistorySnapshot(ctx context.Context, request *communicationv1.PutHistorySnapshotRequest) (*communicationv1.PutHistorySnapshotResponse, error) {
-	// History is server-owned. Clients pull encrypted snapshots and event pages;
-	// accepting an opaque client snapshot would allow a stale or empty cache to
-	// replace the durable server state.
-	return nil, connect.NewError(connect.CodeUnimplemented, "history snapshots are read-only")
-}
-
 func rpcBearer(ctx context.Context) string {
 	info, _ := connect.CallInfoForServerContext(ctx)
 	token, _ := bearerToken(info.RequestHeader().Get("Authorization"))

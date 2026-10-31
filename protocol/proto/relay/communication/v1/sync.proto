@@ -19,9 +19,6 @@ service CommunicationSyncService {
 
   // GetHistorySnapshot returns the latest owner-scoped encrypted archive.
   rpc GetHistorySnapshot(GetHistorySnapshotRequest) returns (GetHistorySnapshotResponse);
-
-  // Deprecated: history is server-owned and this method is read-only for clients.
-  rpc PutHistorySnapshot(PutHistorySnapshotRequest) returns (PutHistorySnapshotResponse);
 }
 
 enum HistoryKind {
@@ -84,15 +81,5 @@ message HistorySnapshot {
 }
 
 message GetHistorySnapshotResponse {
-  HistorySnapshot snapshot = 1;
-}
-
-message PutHistorySnapshotRequest {
-  HistoryKind kind = 1;
-  int64 expected_revision = 2;
-  bytes ciphertext = 3;
-}
-
-message PutHistorySnapshotResponse {
   HistorySnapshot snapshot = 1;
 }

@@ -69,10 +69,6 @@ type fakeRepository struct {
 	ownerAuthToken              string
 	historySnapshot             domain.HistorySnapshot
 	historySnapshotError        error
-	historyWriteExpected        int64
-	historyWriteCiphertext      []byte
-	historyWriteAt              time.Time
-	historyWriteError           error
 	pairingOwnerID              string
 	pairingTokenHash            []byte
 	pairingExpiresAt            time.Time
@@ -396,20 +392,6 @@ func (fake *fakeRepository) GetHistorySnapshot(_ context.Context, ownerID string
 	snapshot.OwnerID = ownerID
 	snapshot.Kind = kind
 	return snapshot, nil
-}
-
-func (fake *fakeRepository) PutHistorySnapshot(_ context.Context, ownerID string, kind int, expectedRevision int64, ciphertext []byte, now time.Time) (domain.HistorySnapshot, error) {
-	fake.historyWriteExpected = expectedRevision
-	fake.historyWriteCiphertext = append([]byte(nil), ciphertext...)
-	fake.historyWriteAt = now
-	if fake.historyWriteError != nil {
-		return domain.HistorySnapshot{}, fake.historyWriteError
-	}
-	fake.historySnapshot = domain.HistorySnapshot{
-		OwnerID: ownerID, Kind: kind, Revision: expectedRevision + 1,
-		Ciphertext: append([]byte(nil), ciphertext...), UpdatedAt: now,
-	}
-	return fake.historySnapshot, nil
 }
 
 func (fake *fakeRepository) CreatePairingToken(_ context.Context, ownerID string, tokenHash []byte, expiresAt time.Time) error {

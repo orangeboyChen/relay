@@ -1449,44 +1449,6 @@ func (store *Postgres) GetHistorySnapshot(ctx context.Context, ownerID string, k
 	return domain.HistorySnapshot{OwnerID: model.OwnerID, Kind: model.Kind, Revision: model.Revision, Ciphertext: append([]byte(nil), model.Ciphertext...), UpdatedAt: model.UpdatedAt}, nil
 }
 
-// PutHistorySnapshot is retained for legacy migrations; the public API rejects
-// client snapshot writes because history is server-owned.
-func (store *Postgres) PutHistorySnapshot(ctx context.Context, ownerID string, kind int, expectedRevision int64, ciphertext []byte, now time.Time) (domain.HistorySnapshot, error) {
-	var model encryptedHistorySnapshotModel
-	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {
-		var current encryptedHistorySnapshotModel
-		result := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("owner_id = ? AND kind = ?", ownerID, kind).First(&current)
-		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			if expectedRevision != 0 {
-				return domain.ErrHistoryRevisionConflict
-			}
-			model = encryptedHistorySnapshotModel{OwnerID: ownerID, Kind: kind, Revision: 1, Ciphertext: append([]byte(nil), ciphertext...), UpdatedAt: now.UTC()}
-			return tx.Create(&model).Error
-		}
-		if result.Error != nil {
-			return result.Error
-		}
-		if current.Revision != expectedRevision {
-			return domain.ErrHistoryRevisionConflict
-		}
-		current.Revision++
-		current.Ciphertext = append([]byte(nil), ciphertext...)
-		current.UpdatedAt = now.UTC()
-		if err := tx.Save(&current).Error; err != nil {
-			return err
-		}
-		model = current
-		return nil
-	})
-	if err != nil {
-		if errors.Is(err, domain.ErrHistoryRevisionConflict) {
-			return domain.HistorySnapshot{}, err
-		}
-		return domain.HistorySnapshot{}, fmt.Errorf("write encrypted history snapshot: %w", err)
-	}
-	return domain.HistorySnapshot{OwnerID: model.OwnerID, Kind: model.Kind, Revision: model.Revision, Ciphertext: append([]byte(nil), model.Ciphertext...), UpdatedAt: model.UpdatedAt}, nil
-}
-
 // EnqueueCommand stores one opaque command while preserving client idempotency.
 func (store *Postgres) EnqueueCommand(ctx context.Context, encrypted domain.EncryptedCommand) (bool, error) {
 	var device deviceModel

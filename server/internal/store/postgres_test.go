@@ -1118,27 +1118,6 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(err).To(HaveOccurred())
 	})
 
-	It("stores encrypted history snapshots with optimistic revisions", func() {
-		owner := createOwner()
-		_, err := database.GetHistorySnapshot(context.Background(), owner.ID, 1)
-		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
-		first, err := database.PutHistorySnapshot(context.Background(), owner.ID, 1, 0, []byte("first archive"), now)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(first.Revision).To(Equal(int64(1)))
-		loaded, err := database.GetHistorySnapshot(context.Background(), owner.ID, 1)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(loaded.Ciphertext).To(Equal([]byte("first archive")))
-		second, err := database.PutHistorySnapshot(context.Background(), owner.ID, 1, 1, []byte("second archive"), now.Add(time.Minute))
-		Expect(err).NotTo(HaveOccurred())
-		Expect(second.Revision).To(Equal(int64(2)))
-		_, err = database.PutHistorySnapshot(context.Background(), owner.ID, 1, 1, []byte("stale archive"), now.Add(2*time.Minute))
-		Expect(errors.Is(err, domain.ErrHistoryRevisionConflict)).To(BeTrue())
-		_, err = database.PutHistorySnapshot(context.Background(), owner.ID, 2, 1, []byte("wrong initial revision"), now)
-		Expect(errors.Is(err, domain.ErrHistoryRevisionConflict)).To(BeTrue())
-		_, err = database.PutHistorySnapshot(context.Background(), owner.ID, 2, 0, []byte{}, now)
-		Expect(err).To(MatchError(ContainSubstring("write encrypted history snapshot")))
-	})
-
 	It("reuses one SIM identity when a card moves between devices", func() {
 		firstDevice := createDevice(firstDeviceID)
 		secondDevice := createDevice(secondDeviceID)

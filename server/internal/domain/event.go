@@ -5,8 +5,6 @@ import (
 	"time"
 )
 
-var ErrHistoryRevisionConflict = errors.New("encrypted history revision conflict")
-
 // HistorySnapshot is one owner-scoped encrypted archive.
 type HistorySnapshot struct {
 	OwnerID    string

@@ -74,15 +74,6 @@ var _ = Describe("Connect encrypted sync service", func() {
 		Expect(response.Body.String()).To(ContainSubstring(`"ciphertext":"AQID"`))
 	})
 
-	It("rejects client snapshot writes", func() {
-		response := request("PutHistorySnapshot", "Bearer owner-token",
-			`{"kind":"HISTORY_KIND_CALLS","expectedRevision":"4","ciphertext":"AQID"}`)
-
-		Expect(response.Code).To(Equal(http.StatusNotImplemented))
-		Expect(response.Body.String()).To(ContainSubstring("read-only"))
-		Expect(repository.historyWriteCiphertext).To(BeNil())
-	})
-
 	It("does not expose repository errors for snapshot reads", func() {
 		repository.historySnapshotError = errors.New("private storage detail")
 

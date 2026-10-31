@@ -116,11 +116,10 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
             status: .requesting,
             isMuted: false
         )
-        // CallKit does not expose a public API to foreground its system call
-        // screen over an active application scene. Keep an in-app control
-        // surface visible for calls initiated here; CallKit still owns the
-        // call when the app is backgrounded or the device is locked.
-        showsInAppCallUI = true
+        // CallKit owns the live call surface whenever system integration is
+        // enabled. Keep the custom surface only for the explicit in-process
+        // transport used by previews and tests.
+        showsInAppCallUI = !integratesWithSystem
         pendingOutgoing[callID] = request
         historyContexts[callID] = CallHistoryContext(
             lineID: lineID,

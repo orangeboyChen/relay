@@ -402,7 +402,7 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertTrue(didFulfill)
         XCTAssertFalse(didFail)
         XCTAssertEqual(coordinator.activeCall?.status, .ringing)
-        XCTAssertTrue(coordinator.showsInAppCallUI)
+        XCTAssertFalse(coordinator.showsInAppCallUI)
         for _ in 0..<10 where !transport.isStartPending {
             await Task.yield()
         }

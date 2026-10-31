@@ -484,6 +484,7 @@ final class AppModel {
 
     func refreshForegroundState() async {
         refreshContactNames()
+        guard messageEventMonitor?.isRunning != true else { return }
         await refreshDevices()
         await refreshSIMCards()
         await refreshCommunicationHistory()

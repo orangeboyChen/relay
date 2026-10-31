@@ -316,12 +316,10 @@ final class LiveMessageTransportTests: XCTestCase {
             commandPublicKey: api.recipientKey
         )
 
-        do {
-            _ = try await makeTransport(api: api).synchronize(lines: [currentLine])
-            XCTFail("Expected stale SIM profile to be rejected")
-        } catch {
-            XCTAssertEqual(error as? LiveMessageTransportError, .invalidResponse)
-        }
+        let batch = try await makeTransport(api: api).synchronize(lines: [currentLine])
+
+        XCTAssertTrue(batch.detectedSIMProfiles.isEmpty)
+        XCTAssertEqual(batch.nextSequence, 1)
     }
 
     func testSynchronizeRejectsMalformedDetectedNumberEvenWithOperatorName() async throws {

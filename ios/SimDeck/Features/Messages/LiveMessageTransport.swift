@@ -330,7 +330,8 @@ final class LiveMessageTransport: MessageTransport {
                 guard let candidates = linesByDevice[envelope.deviceUUID],
                     let commandPublicKey = candidates.first?.commandPublicKey
                 else {
-                    throw LiveMessageTransportError.invalidResponse
+                    Self.logSkippedEvent(envelope, reason: "device is no longer managed")
+                    continue
                 }
                 let verificationKey: Data
                 if let cached = verificationKeys[envelope.deviceUUID] {
@@ -362,7 +363,8 @@ final class LiveMessageTransport: MessageTransport {
                     matchingLines = candidates.count == 1 ? candidates : []
                 }
                 guard matchingLines.count == 1 else {
-                    throw LiveMessageTransportError.invalidResponse
+                    Self.logSkippedEvent(envelope, reason: "SIM line is no longer current")
+                    continue
                 }
                 deliveries.append(
                     IncomingMessageDelivery(
@@ -382,7 +384,8 @@ final class LiveMessageTransport: MessageTransport {
                 guard let candidates = linesByDevice[envelope.deviceUUID],
                     let commandPublicKey = candidates.first?.commandPublicKey
                 else {
-                    throw LiveMessageTransportError.invalidResponse
+                    Self.logSkippedEvent(envelope, reason: "device is no longer managed")
+                    continue
                 }
                 let verificationKey: Data
                 if let cached = verificationKeys[envelope.deviceUUID] {
@@ -415,7 +418,8 @@ final class LiveMessageTransport: MessageTransport {
                     return payload.slotID != nil || payload.simID != nil || candidates.count == 1
                 }
                 guard matchingLines.count == 1 else {
-                    throw LiveMessageTransportError.invalidResponse
+                    Self.logSkippedEvent(envelope, reason: "SIM line is no longer current")
+                    continue
                 }
                 detectedSIMProfiles.append(
                     DetectedSIMProfile(
@@ -427,10 +431,13 @@ final class LiveMessageTransport: MessageTransport {
                 )
             }
             for envelope in page.events where envelope.type == "device.status" {
-                guard envelope.recipientInstallationID == installationIdentity.id,
-                      let candidates = linesByDevice[envelope.deviceUUID],
+                guard envelope.recipientInstallationID == installationIdentity.id else {
+                    continue
+                }
+                guard let candidates = linesByDevice[envelope.deviceUUID],
                       let commandPublicKey = candidates.first?.commandPublicKey else {
-                    throw LiveMessageTransportError.invalidResponse
+                    Self.logSkippedEvent(envelope, reason: "device is no longer managed")
+                    continue
                 }
                 let verificationKey: Data
                 if let cached = verificationKeys[envelope.deviceUUID] {
@@ -459,7 +466,8 @@ final class LiveMessageTransport: MessageTransport {
                     return true
                 }
                 guard matchingLines.count == 1 else {
-                    throw LiveMessageTransportError.invalidResponse
+                    Self.logSkippedEvent(envelope, reason: "SIM line is no longer current")
+                    continue
                 }
                 let reportedAt = parseISO8601Date(payload.reportedAt)
                 guard let reportedAt else {
@@ -509,6 +517,15 @@ final class LiveMessageTransport: MessageTransport {
     ) {
         logger.error(
             "Encrypted event failed; sequence=\(envelope.sequence, privacy: .public), type=\(envelope.type, privacy: .public), stage=\(stage, privacy: .public), error=\(String(describing: error), privacy: .private(mask: .hash))"
+        )
+    }
+
+    private static func logSkippedEvent(
+        _ envelope: EncryptedEventEnvelope,
+        reason: String
+    ) {
+        logger.warning(
+            "Skipping encrypted event; sequence=\(envelope.sequence, privacy: .public), type=\(envelope.type, privacy: .public), reason=\(reason, privacy: .public)"
         )
     }
 }

@@ -35,19 +35,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
+      - name: Generate Go protocol SDK
+        working-directory: protocol
+        run: buf generate
       - name: Run tests
         working-directory: server
-        env:
-          GOWORK: "off"
         run: go test -race ./...
       - name: Check coverage
         working-directory: server
-        env:
-          GOWORK: "off"
         run: ./scripts/test-coverage.sh
 
   server-postgres:
@@ -69,13 +71,18 @@ jobs:
           --health-retries 10
     env:
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/sim_deck_test?sslmode=disable
-      GOWORK: "off"
     steps:
       - uses: actions/checkout@v5
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
+      - name: Generate Go protocol SDK
+        working-directory: protocol
+        run: buf generate
       - name: Run integration coverage
         working-directory: server
         run: ./scripts/test-coverage.sh

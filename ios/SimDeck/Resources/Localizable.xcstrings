@@ -4,6 +4,20 @@
     "" : {
 
     },
+    "·" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "·"
+          }
+        }
+      }
+    },
+    "(%lld)" : {
+
+    },
     "%@ · %@" : {
       "localizations" : {
         "en" : {
@@ -46,27 +60,6 @@
         }
       }
     },
-    "%lld More Results" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "另有 %lld 个结果"
-          }
-        }
-      }
-    },
-    "%lld Selected" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已选择 %lld 项"
-          }
-        }
-      }
-    },
     "%lld bars" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -85,6 +78,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%1$lld 分 %2$lld 秒"
+          }
+        }
+      }
+    },
+    "%lld More Results" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "另有 %lld 个结果"
           }
         }
       }
@@ -109,6 +112,17 @@
         }
       }
     },
+    "%lld Selected" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已选择 %lld 项"
+          }
+        }
+      }
+    },
     "%lld unread messages" : {
       "localizations" : {
         "zh-Hans" : {
@@ -118,9 +132,6 @@
           }
         }
       }
-    },
-    "(%lld)" : {
-
     },
     "0, long press for plus" : {
       "localizations" : {
@@ -138,26 +149,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "拨打电话和收发短信需要可连接的 Sim Deck 服务器、已配对的设备和有效的 SIM 卡。"
-          }
-        }
-      }
-    },
-    "API" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "API"
-          }
-        }
-      }
-    },
-    "APN" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "APN"
           }
         }
       }
@@ -203,28 +194,6 @@
     "Add" : {
 
     },
-    "Add Cellular Plan" : {
-
-    },
-    "Add Contact" : {
-
-    },
-    "Add Device" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "添加设备"
-          }
-        }
-      }
-    },
-    "Add Name" : {
-
-    },
-    "Add People" : {
-
-    },
     "Add a cellular plan with a QR code or an activation code from your carrier." : {
 
     },
@@ -240,6 +209,22 @@
     },
     "Add attachment" : {
 
+    },
+    "Add Cellular Plan" : {
+
+    },
+    "Add Contact" : {
+
+    },
+    "Add Device" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加设备"
+          }
+        }
+      }
     },
     "Add eSIM" : {
 
@@ -257,6 +242,12 @@
           }
         }
       }
+    },
+    "Add Name" : {
+
+    },
+    "Add People" : {
+
     },
     "Add recipient" : {
       "localizations" : {
@@ -332,16 +323,6 @@
         }
       }
     },
-    "All SIMs" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "所有 SIM"
-          }
-        }
-      }
-    },
     "All call history on this iPhone will be removed." : {
 
     },
@@ -351,6 +332,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "所选对话中的所有信息都会从此 iPhone 移除。"
+          }
+        }
+      }
+    },
+    "All SIMs" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所有 SIM"
           }
         }
       }
@@ -365,6 +356,16 @@
         }
       }
     },
+    "Allow contact access in Settings to browse your iOS contacts in Sim Deck." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请在“设置”中允许访问通讯录，以便在 Sim Deck 中浏览您的 iOS 联系人。"
+          }
+        }
+      }
+    },
     "Allow Contacts Access" : {
 
     },
@@ -374,16 +375,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "允许这台设备？"
-          }
-        }
-      }
-    },
-    "Allow contact access in Settings to browse your iOS contacts in Sim Deck." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请在“设置”中允许访问通讯录，以便在 Sim Deck 中浏览您的 iOS 联系人。"
           }
         }
       }
@@ -412,6 +403,26 @@
         }
       }
     },
+    "API" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API"
+          }
+        }
+      }
+    },
+    "APN" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "APN"
+          }
+        }
+      }
+    },
     "App Version" : {
       "localizations" : {
         "zh-Hans" : {
@@ -435,22 +446,22 @@
     "Audio" : {
 
     },
-    "Audio Output" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "音频输出"
-          }
-        }
-      }
-    },
     "Audio messages are unavailable" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "暂不支持语音消息"
+          }
+        }
+      }
+    },
+    "Audio Output" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "音频输出"
           }
         }
       }
@@ -516,6 +527,9 @@
         }
       }
     },
+    "Back, %lld unread messages" : {
+
+    },
     "Bound devices" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -557,7 +571,20 @@
         }
       }
     },
+    "Call and message through your own SIM devices while your numbers and conversations remain end-to-end encrypted." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通过你自己的 SIM 设备通话和收发短信，同时让号码与会话保持端到端加密。"
+          }
+        }
+      }
+    },
     "Call Control Failed" : {
+
+    },
+    "Call details" : {
 
     },
     "Call Ended" : {
@@ -580,35 +607,6 @@
         }
       }
     },
-    "Call History" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "通话记录"
-          }
-        }
-      }
-    },
-    "Call Recording" : {
-
-    },
-    "Call Unavailable" : {
-
-    },
-    "Call and message through your own SIM devices while your numbers and conversations remain end-to-end encrypted." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "通过你自己的 SIM 设备通话和收发短信，同时让号码与会话保持端到端加密。"
-          }
-        }
-      }
-    },
-    "Call details" : {
-
-    },
     "Call filter" : {
       "localizations" : {
         "zh-Hans" : {
@@ -619,6 +617,19 @@
         }
       }
     },
+    "Call History" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通话记录"
+          }
+        }
+      }
+    },
+    "Call Unavailable" : {
+
+    },
     "Calling…" : {
 
     },
@@ -628,16 +639,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "通话"
-          }
-        }
-      }
-    },
-    "Calls Unavailable" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法加载通话"
           }
         }
       }
@@ -654,6 +655,16 @@
     },
     "Calls this number using the displayed SIM" : {
 
+    },
+    "Calls Unavailable" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法加载通话"
+          }
+        }
+      }
     },
     "Camera" : {
 
@@ -718,8 +729,15 @@
         }
       }
     },
-    "Choose File" : {
-
+    "Choose a phone number" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择电话号码"
+          }
+        }
+      }
     },
     "Choose a SIM" : {
       "localizations" : {
@@ -727,16 +745,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "选择 SIM"
-          }
-        }
-      }
-    },
-    "Choose a phone number" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "选择电话号码"
           }
         }
       }
@@ -751,6 +759,9 @@
           }
         }
       }
+    },
+    "Choose File" : {
+
     },
     "Choose sending SIM" : {
 
@@ -835,22 +846,22 @@
         }
       }
     },
-    "Connect Your Server" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "连接你的后台"
-          }
-        }
-      }
-    },
     "Connect a SIM before starting a new message." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "连接 SIM 后才能新建短信。"
+          }
+        }
+      }
+    },
+    "Connect Your Server" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连接你的后台"
           }
         }
       }
@@ -942,22 +953,22 @@
         }
       }
     },
-    "Contacts Unavailable" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "通讯录不可用"
-          }
-        }
-      }
-    },
     "Contacts saved in iOS appear here." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "保存在 iOS 中的联系人会显示在这里。"
+          }
+        }
+      }
+    },
+    "Contacts Unavailable" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通讯录不可用"
           }
         }
       }
@@ -1039,22 +1050,22 @@
         }
       }
     },
-    "Default Lines" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "默认线路"
-          }
-        }
-      }
-    },
     "Default call SIM" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "默认通话 SIM"
+          }
+        }
+      }
+    },
+    "Default Lines" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认线路"
           }
         }
       }
@@ -1089,6 +1100,17 @@
         }
       }
     },
+    "Delete all account and server data?" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除全部账户与后台数据？"
+          }
+        }
+      }
+    },
     "Delete Conversations?" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1108,6 +1130,19 @@
           }
         }
       }
+    },
+    "Delete digit" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除数字"
+          }
+        }
+      }
+    },
+    "Delete eSIM" : {
+
     },
     "Delete Message?" : {
       "localizations" : {
@@ -1130,9 +1165,6 @@
         }
       }
     },
-    "Delete SIM" : {
-
-    },
     "Delete Selected Calls?" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1143,28 +1175,7 @@
         }
       }
     },
-    "Delete all account and server data?" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "删除全部账户与后台数据？"
-          }
-        }
-      }
-    },
-    "Delete digit" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "删除数字"
-          }
-        }
-      }
-    },
-    "Delete eSIM" : {
+    "Delete SIM" : {
 
     },
     "Delete this eSIM?" : {
@@ -1233,6 +1244,16 @@
         }
       }
     },
+    "Device name" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设备名称"
+          }
+        }
+      }
+    },
     "Device Paired" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1246,16 +1267,6 @@
     },
     "Device Settings" : {
 
-    },
-    "Device name" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "设备名称"
-          }
-        }
-      }
     },
     "Devices" : {
       "extractionState" : "stale",
@@ -1319,22 +1330,22 @@
         }
       }
     },
-    "Done" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "完成"
-          }
-        }
-      }
-    },
     "Don’t Allow" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "不允许"
+          }
+        }
+      }
+    },
+    "Done" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完成"
           }
         }
       }
@@ -1427,15 +1438,6 @@
         }
       }
     },
-    "Ending…" : {
-
-    },
-    "Enter Details Manually" : {
-
-    },
-    "Enter Manually" : {
-
-    },
     "Enter a phone number." : {
       "localizations" : {
         "zh-Hans" : {
@@ -1445,6 +1447,9 @@
           }
         }
       }
+    },
+    "Enter a valid eSIM activation code." : {
+
     },
     "Enter a valid HTTPS server address." : {
       "localizations" : {
@@ -1456,9 +1461,6 @@
         }
       }
     },
-    "Enter a valid eSIM activation code." : {
-
-    },
     "Enter a valid phone number." : {
       "localizations" : {
         "zh-Hans" : {
@@ -1468,6 +1470,12 @@
           }
         }
       }
+    },
+    "Enter Details Manually" : {
+
+    },
+    "Enter Manually" : {
+
     },
     "Enter plus" : {
       "localizations" : {
@@ -1480,6 +1488,15 @@
       }
     },
     "Enter the activation code provided by your carrier." : {
+
+    },
+    "eSIM" : {
+
+    },
+    "eSIM Configuration" : {
+
+    },
+    "eSIM Unavailable" : {
 
     },
     "Expires" : {
@@ -1603,16 +1620,10 @@
         }
       }
     },
-    "Get notified to pick up" : {
-
-    },
     "Hide Alerts" : {
 
     },
     "Hide Keypad" : {
-
-    },
-    "Hold Assist" : {
 
     },
     "Home iPhone" : {
@@ -1628,6 +1639,16 @@
     },
     "ICCID" : {
 
+    },
+    "iCloud Keychain recovery" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud 钥匙串恢复"
+          }
+        }
+      }
     },
     "Identity" : {
       "localizations" : {
@@ -1680,6 +1701,16 @@
         }
       }
     },
+    "Incoming call notifications" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "来电通知"
+          }
+        }
+      }
+    },
     "Incoming Calls" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1696,16 +1727,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "接收短信"
-          }
-        }
-      }
-    },
-    "Incoming call notifications" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "来电通知"
           }
         }
       }
@@ -1732,9 +1753,6 @@
           }
         }
       }
-    },
-    "LPA:1$…" : {
-
     },
     "License Unavailable" : {
       "localizations" : {
@@ -1787,22 +1805,22 @@
         }
       }
     },
-    "Loading Contacts…" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在载入联系人…"
-          }
-        }
-      }
-    },
     "Loading calls" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在加载通话"
+          }
+        }
+      }
+    },
+    "Loading Contacts…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在载入联系人…"
           }
         }
       }
@@ -1863,35 +1881,8 @@
         }
       }
     },
-    "MMS" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "彩信"
-          }
-        }
-      }
-    },
-    "MMS Configuration" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "彩信配置"
-          }
-        }
-      }
-    },
-    "MMSC" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "MMSC"
-          }
-        }
-      }
+    "LPA:1$…" : {
+
     },
     "Mail" : {
 
@@ -1952,6 +1943,9 @@
     "Media ports are supplied by the server and cannot be changed on this iPhone." : {
 
     },
+    "Merge Calls" : {
+
+    },
     "Message" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2002,22 +1996,22 @@
         }
       }
     },
-    "Messages Unavailable" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法加载短信"
-          }
-        }
-      }
-    },
     "Messages sent through sim-deck appear here." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "通过 sim-deck 收发的短信会显示在这里。"
+          }
+        }
+      }
+    },
+    "Messages Unavailable" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法加载短信"
           }
         }
       }
@@ -2041,6 +2035,39 @@
           }
         }
       }
+    },
+    "MMS" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "彩信"
+          }
+        }
+      }
+    },
+    "MMS Configuration" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "彩信配置"
+          }
+        }
+      }
+    },
+    "MMSC" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MMSC"
+          }
+        }
+      }
+    },
+    "mobile" : {
+
     },
     "Mobile Data" : {
       "localizations" : {
@@ -2149,7 +2176,30 @@
         }
       }
     },
+    "No devices found yet" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂未发现设备"
+          }
+        }
+      }
+    },
+    "No eSIM Profiles" : {
+
+    },
     "No Messages" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无短信"
+          }
+        }
+      }
+    },
+    "No messages yet" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2165,6 +2215,47 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有未接来电"
+          }
+        }
+      }
+    },
+    "No new device found yet." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂未发现新设备。"
+          }
+        }
+      }
+    },
+    "No online SIM" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有在线 SIM"
+          }
+        }
+      }
+    },
+    "No phone number" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有电话号码"
+          }
+        }
+      }
+    },
+    "No Services Enabled" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未开启任何服务"
           }
         }
       }
@@ -2202,16 +2293,6 @@
         }
       }
     },
-    "No Services Enabled" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "未开启任何服务"
-          }
-        }
-      }
-    },
     "No Unknown Callers" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2222,56 +2303,13 @@
         }
       }
     },
-    "No devices found yet" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "暂未发现设备"
-          }
-        }
-      }
-    },
-    "No eSIM Profiles" : {
-
-    },
-    "No messages yet" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "暂无短信"
-          }
-        }
-      }
-    },
-    "No new device found yet." : {
+    "Not available" : {
       "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暂未发现新设备。"
-          }
-        }
-      }
-    },
-    "No online SIM" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "没有在线 SIM"
-          }
-        }
-      }
-    },
-    "No phone number" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "没有电话号码"
+            "value" : "不可用"
           }
         }
       }
@@ -2299,17 +2337,6 @@
     "Not Registered" : {
 
     },
-    "Not available" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "不可用"
-          }
-        }
-      }
-    },
     "Notifications" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2331,9 +2358,6 @@
         }
       }
     },
-    "OK" : {
-
-    },
     "Off" : {
 
     },
@@ -2346,6 +2370,9 @@
           }
         }
       }
+    },
+    "OK" : {
+
     },
     "On" : {
 
@@ -2394,12 +2421,34 @@
         }
       }
     },
+    "Open dialer" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开拨号盘"
+          }
+        }
+      }
+    },
     "Open Settings" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "打开设置"
+          }
+        }
+      }
+    },
+    "Open source license notices appear here." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开源许可声明将显示在这里。"
           }
         }
       }
@@ -2421,28 +2470,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "打开系统设置"
-          }
-        }
-      }
-    },
-    "Open dialer" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "打开拨号盘"
-          }
-        }
-      }
-    },
-    "Open source license notices appear here." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "开源许可声明将显示在这里。"
           }
         }
       }
@@ -2579,7 +2606,7 @@
         }
       }
     },
-    "Phone Numbers" : {
+    "Phone number" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2589,7 +2616,7 @@
         }
       }
     },
-    "Phone number" : {
+    "Phone Numbers" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2712,9 +2739,6 @@
         }
       }
     },
-    "Record and Transcribe" : {
-
-    },
     "Recovery" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2760,6 +2784,9 @@
         }
       }
     },
+    "Remove attachment" : {
+
+    },
     "Remove Device" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2769,9 +2796,6 @@
           }
         }
       }
-    },
-    "Remove attachment" : {
-
     },
     "Remove this device?" : {
       "localizations" : {
@@ -2887,172 +2911,12 @@
     "Ringing…" : {
 
     },
-    "SIM" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SIM"
-          }
-        }
-      }
-    },
-    "SIM %lld" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SIM %lld"
-          }
-        }
-      }
-    },
-    "SIM %lld is ready to configure." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SIM %lld 已可配置。"
-          }
-        }
-      }
-    },
-    "SIM %lld · %@" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SIM %1$lld · %2$@"
-          }
-        }
-      }
-    },
-    "SIM %lld, %@, %@" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SIM %1$lld，%2$@，%3$@"
-          }
-        }
-      }
-    },
-    "SIM %lld, %@, %@, %@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "SIM %1$lld, %2$@, %3$@, %4$@"
-          }
-        }
-      }
-    },
-    "SIM %lld, line %@" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SIM %1$lld，线路 %2$@"
-          }
-        }
-      }
-    },
-    "SIM %lld, local number %@" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SIM %1$lld，本机号码 %2$@"
-          }
-        }
-      }
-    },
-    "SIM Card" : {
-
-    },
-    "SIM Card Information" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SIM 卡信息"
-          }
-        }
-      }
-    },
-    "SIM Card Unavailable" : {
-
-    },
-    "SIM Cards" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SIM 卡"
-          }
-        }
-      }
-    },
-    "SIM ID" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SIM ID"
-          }
-        }
-      }
-    },
-    "SIM ID: %lld" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SIM ID：%lld"
-          }
-        }
-      }
-    },
-    "SIM Information" : {
-
-    },
-    "SIM Line:" : {
-
-    },
-    "SIM cards appear after a modem reports its ICCID." : {
-
-    },
-    "SMS" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "短信"
-          }
-        }
-      }
-    },
     "Save" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "保存"
-          }
-        }
-      }
-    },
-    "Save Without Restart" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保存但不重启"
           }
         }
       }
@@ -3074,6 +2938,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "将配对码保存为 Docker secret"
+          }
+        }
+      }
+    },
+    "Save Without Restart" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存但不重启"
           }
         }
       }
@@ -3133,9 +3007,6 @@
         }
       }
     },
-    "Select SIM" : {
-
-    },
     "Select an online SIM." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3145,6 +3016,9 @@
           }
         }
       }
+    },
+    "Select SIM" : {
+
     },
     "Send" : {
       "extractionState" : "stale",
@@ -3250,9 +3124,6 @@
     "Show Alerts" : {
 
     },
-    "Show More" : {
-
-    },
     "Show message preview" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3263,12 +3134,28 @@
         }
       }
     },
+    "Show More" : {
+
+    },
     "Sign In" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "登录"
+          }
+        }
+      }
+    },
+    "Sign in to manage trusted iPhones." : {
+
+    },
+    "Sign in to the server first." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请先登录服务器。"
           }
         }
       }
@@ -3293,19 +3180,6 @@
         }
       }
     },
-    "Sign in to manage trusted iPhones." : {
-
-    },
-    "Sign in to the server first." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请先登录服务器。"
-          }
-        }
-      }
-    },
     "Signal unavailable" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3315,6 +3189,119 @@
           }
         }
       }
+    },
+    "SIM" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SIM"
+          }
+        }
+      }
+    },
+    "SIM %lld" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SIM %lld"
+          }
+        }
+      }
+    },
+    "SIM %lld · %@" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SIM %1$lld · %2$@"
+          }
+        }
+      }
+    },
+    "SIM %lld is ready to configure." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SIM %lld 已可配置。"
+          }
+        }
+      }
+    },
+    "SIM %lld, %@, %@" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SIM %1$lld，%2$@，%3$@"
+          }
+        }
+      }
+    },
+    "SIM %lld, %@, %@, %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "SIM %1$lld, %2$@, %3$@, %4$@"
+          }
+        }
+      }
+    },
+    "SIM %lld, line %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SIM %1$lld，线路 %2$@"
+          }
+        }
+      }
+    },
+    "SIM %lld, local number %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SIM %1$lld，本机号码 %2$@"
+          }
+        }
+      }
+    },
+    "SIM Card" : {
+
+    },
+    "SIM Card Information" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SIM 卡信息"
+          }
+        }
+      }
+    },
+    "SIM Card Unavailable" : {
+
+    },
+    "SIM Cards" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SIM 卡"
+          }
+        }
+      }
+    },
+    "SIM cards appear after a modem reports its ICCID." : {
+
     },
     "Sim Deck could not read your contacts." : {
       "localizations" : {
@@ -3335,6 +3322,33 @@
           }
         }
       }
+    },
+    "SIM ID" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SIM ID"
+          }
+        }
+      }
+    },
+    "SIM ID: %lld" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SIM ID：%lld"
+          }
+        }
+      }
+    },
+    "SIM Information" : {
+
+    },
+    "SIM Line:" : {
+
     },
     "Size limit: %lld KB" : {
       "localizations" : {
@@ -3368,6 +3382,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "卡槽控制"
+          }
+        }
+      }
+    },
+    "SMS" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "短信"
           }
         }
       }
@@ -3514,30 +3538,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "短信 · SMS"
-          }
-        }
-      }
-    },
-    "The SIM identity and its encrypted profile will be removed from this account. A future insertion creates a new managed record." : {
-
-    },
-    "The Sim Deck iOS source code is licensed under MPL 2.0." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sim Deck iOS 源代码采用 MPL 2.0 许可。"
-          }
-        }
-      }
-    },
-    "The WebRTC license could not be loaded." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法加载 WebRTC 许可文本。"
           }
         }
       }
@@ -3722,6 +3722,20 @@
         }
       }
     },
+    "The Sim Deck iOS source code is licensed under MPL 2.0." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sim Deck iOS 源代码采用 MPL 2.0 许可。"
+          }
+        }
+      }
+    },
+    "The SIM identity and its encrypted profile will be removed from this account. A future insertion creates a new managed record." : {
+
+    },
     "The slot must be online before its controls can be changed." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3738,6 +3752,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "系统返回了无效的通行密钥凭证。"
+          }
+        }
+      }
+    },
+    "The WebRTC license could not be loaded." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法加载 WebRTC 许可文本。"
           }
         }
       }
@@ -3779,26 +3803,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "第三方软件"
-          }
-        }
-      }
-    },
-    "This SIM is no longer available." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "这张 SIM 已不可用。"
-          }
-        }
-      }
-    },
-    "This SIM is offline." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "这张 SIM 已离线。"
           }
         }
       }
@@ -3882,6 +3886,26 @@
         }
       }
     },
+    "This SIM is no longer available." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这张 SIM 已不可用。"
+          }
+        }
+      }
+    },
+    "This SIM is offline." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这张 SIM 已离线。"
+          }
+        }
+      }
+    },
     "Time" : {
       "localizations" : {
         "zh-Hans" : {
@@ -3938,7 +3962,7 @@
         }
       }
     },
-    "Turn On This Line" : {
+    "Turn on a plan to use it for calls, messages, or data. Only one plan can be active on this line." : {
 
     },
     "Turn on Device Discovery to add a modem." : {
@@ -3951,6 +3975,9 @@
         }
       }
     },
+    "Turn on Device Discovery, then start one Linux modem container for each modem." : {
+
+    },
     "Turn on Device Discovery, then start one Linux modem container for each SIM." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -3962,10 +3989,7 @@
         }
       }
     },
-    "Turn on Device Discovery, then start one Linux modem container for each modem." : {
-
-    },
-    "Turn on a plan to use it for calls, messages, or data. Only one plan can be active on this line." : {
+    "Turn On This Line" : {
 
     },
     "Type" : {
@@ -4229,39 +4253,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "你的后台负责管理可信 iPhone 和 SIM 设备，但不会接收短信或通话内容。"
-          }
-        }
-      }
-    },
-    "eSIM" : {
-
-    },
-    "eSIM Configuration" : {
-
-    },
-    "eSIM Unavailable" : {
-
-    },
-    "iCloud Keychain recovery" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "iCloud 钥匙串恢复"
-          }
-        }
-      }
-    },
-    "mobile" : {
-
-    },
-    "·" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "·"
           }
         }
       }

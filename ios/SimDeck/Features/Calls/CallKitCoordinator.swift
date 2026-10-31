@@ -216,9 +216,6 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
 
         activeCall?.status = .connecting
         do {
-            if integratesWithSystem {
-                try configureAudioSession()
-            }
             try await transport.answerIncomingCall(callID: callID)
             incomingCalls.removeValue(forKey: callID)
             return true
@@ -649,15 +646,14 @@ extension CallKitCoordinator: @preconcurrency CXProviderDelegate {
     }
 
     func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
+        // CallKit owns the answer UI and has a short action deadline. A remote
+        // claim and media setup may take longer, so acknowledge the system
+        // action first and finish the transport work in the background.
+        action.fulfill()
         Task {
             do {
-                if try await answerIncomingCall(callID: action.callUUID) {
-                    action.fulfill()
-                } else {
-                    action.fail()
-                }
+                _ = try await answerIncomingCall(callID: action.callUUID)
             } catch {
-                action.fail()
                 self.provider.reportCall(
                     with: action.callUUID,
                     endedAt: .now,

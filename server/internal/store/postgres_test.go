@@ -1652,6 +1652,19 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 			context.Background(), owner.ID, "01900000-0000-7000-8000-000000000099", first.ID, now,
 		)
 		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
+
+		Expect(database.ReleaseIncomingCall(
+			context.Background(), "01900000-0000-7000-8000-000000000099", notification.ID, first.ID,
+		)).To(MatchError(pgx.ErrNoRows))
+		Expect(database.ReleaseIncomingCall(
+			context.Background(), owner.ID, notification.ID, first.ID,
+		)).To(Succeed())
+		var claims int64
+		Expect(database.db.Model(&incomingCallClaimModel{}).Where("notification_id = ?", notification.ID).Count(&claims).Error).To(Succeed())
+		Expect(claims).To(BeZero())
+		Expect(database.ReleaseIncomingCall(
+			context.Background(), owner.ID, notification.ID, first.ID,
+		)).To(Succeed())
 	})
 
 	It("lists only unexpired encrypted events after a sequence cursor", func() {

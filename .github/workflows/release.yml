@@ -1,10 +1,10 @@
-name: Release
+name: Publish Images
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (x.y.z or vx.y.z; takes precedence)"
+        description: "Image version (x.y.z or vx.y.z; takes precedence)"
         required: false
         type: string
       bump:
@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: Resolve release version
+      - name: Resolve image version
         id: version
         env:
           VERSION_INPUT: ${{ inputs.version }}
@@ -150,21 +150,20 @@ jobs:
             "$IMAGE:$VERSION-arm64"
           docker buildx imagetools inspect "$IMAGE:$VERSION"
 
-  release:
+  tag:
     needs: [prepare, manifest]
     permissions:
       contents: write
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ needs.prepare.outputs.version }}
-          target_commitish: ${{ github.sha }}
-          generate_release_notes: true
-          body: |
-            Images:
-            - `ghcr.io/${{ needs.prepare.outputs.owner }}/sim-deck-server:${{ needs.prepare.outputs.version }}`
-            - `ghcr.io/${{ needs.prepare.outputs.owner }}/sim-deck-device:${{ needs.prepare.outputs.version }}`
+      - name: Create version tag
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --annotate "v$VERSION" --message "Publish images $VERSION" "$GITHUB_SHA"
+          git push origin "refs/tags/v$VERSION"
 

@@ -9,7 +9,7 @@ Sim Deck connects one or more cellular modems to an iPhone for encrypted messagi
 - `device/` contains the Go modem agent and container tooling.
 - `ios/` contains the SwiftUI application and its extensions.
 
-The components remain independently buildable and deployable. The monorepo keeps protocol and implementation changes atomic while the release workflow publishes separate server and device container images.
+The components remain independently buildable and deployable. The monorepo keeps protocol and implementation changes atomic while the image publishing workflow publishes separate server and device container images.
 
 ## Development
 
@@ -27,9 +27,9 @@ swift build --package-path protocol
 
 The iOS project is located at `ios/SimDeck.xcodeproj`.
 
-## Releases
+## Image publishing
 
-The manual `Release` workflow creates both multi-architecture images and one GitHub release:
+The manual `Publish Images` workflow creates both multi-architecture images and a version tag. It does not create a GitHub release:
 
 - `ghcr.io/orangeboychen/sim-deck-server:X.Y.Z`
 - `ghcr.io/orangeboychen/sim-deck-device:X.Y.Z`

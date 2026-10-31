@@ -58,6 +58,11 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertEqual(coordinator.activeCall?.status, .active(connectedAt: transport.connectedAt))
         XCTAssertTrue(coordinator.showsInAppCallUI)
 
+        coordinator.setApplicationActive(false)
+        XCTAssertFalse(coordinator.showsInAppCallUI)
+        coordinator.setApplicationActive(true)
+        XCTAssertTrue(coordinator.showsInAppCallUI)
+
         try await coordinator.setMuted(true)
         try await coordinator.setHeld(true)
         try await coordinator.playDTMF("8")
@@ -402,6 +407,8 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertTrue(didFulfill)
         XCTAssertFalse(didFail)
         XCTAssertEqual(coordinator.activeCall?.status, .ringing)
+        XCTAssertTrue(coordinator.showsInAppCallUI)
+        coordinator.setApplicationActive(false)
         XCTAssertFalse(coordinator.showsInAppCallUI)
         for _ in 0..<10 where !transport.isStartPending {
             await Task.yield()

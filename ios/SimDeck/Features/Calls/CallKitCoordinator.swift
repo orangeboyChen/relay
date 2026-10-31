@@ -37,6 +37,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
     @ObservationIgnored private var pendingOutgoingEndReasons: [UUID: CallEndReason] = [:]
     @ObservationIgnored private var locallyEndedCallIDs: Set<UUID> = []
     @ObservationIgnored private var historyContexts: [UUID: CallHistoryContext] = [:]
+    @ObservationIgnored private var allowsInAppCallUI = false
     @ObservationIgnored private var historyHandler: (@MainActor (CallRecord) -> Void)?
     @ObservationIgnored private let now: () -> Date
 
@@ -116,10 +117,11 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
             status: .requesting,
             isMuted: false
         )
-        // CallKit owns the live call surface whenever system integration is
-        // enabled. Keep the custom surface only for the explicit in-process
-        // transport used by previews and tests.
-        showsInAppCallUI = !integratesWithSystem
+        // Keep the app call surface available while this app-initiated call is
+        // in the foreground. The scene phase toggles it off when iOS takes
+        // over with the system CallKit surface.
+        allowsInAppCallUI = true
+        showsInAppCallUI = true
         pendingOutgoing[callID] = request
         historyContexts[callID] = CallHistoryContext(
             lineID: lineID,
@@ -169,6 +171,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
             status: .ringing,
             isMuted: false
         )
+        allowsInAppCallUI = false
         // Incoming calls are presented and controlled by the system CallKit
         // surface, including when the user answers from the lock screen.
         showsInAppCallUI = false
@@ -370,6 +373,10 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
         activeCall?.displayName = displayName
     }
 
+    func setApplicationActive(_ isActive: Bool) {
+        showsInAppCallUI = allowsInAppCallUI && isActive && activeCall != nil
+    }
+
     func handleTransportEvent(_ event: CallTransportEvent) {
         switch event {
         case .ringing(let callID):
@@ -554,6 +561,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
     private func dismissCallPresentation(callID: UUID) {
         guard activeCall?.id == callID else { return }
         activeCall = nil
+        allowsInAppCallUI = false
         showsInAppCallUI = false
         if callStartFailureID == callID {
             callStartFailureID = nil
@@ -573,6 +581,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
             result: result ?? defaultEndResult(callID: callID)
         )
         activeCall = nil
+        allowsInAppCallUI = false
         showsInAppCallUI = false
         if callStartFailureID == callID {
             callStartFailureID = nil

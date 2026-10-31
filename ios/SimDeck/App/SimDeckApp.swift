@@ -210,6 +210,7 @@ struct SimDeckApp: App {
                     model.startRealtimeUpdates()
                 }
                 .onChange(of: scenePhase) { _, phase in
+                    model.callCoordinator.setApplicationActive(phase == .active)
                     guard shouldStartLiveServices else { return }
                     if phase == .active {
                         Task {

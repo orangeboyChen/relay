@@ -7,6 +7,11 @@ import (
 
 var ErrUntrustedInstallationRecipient = errors.New("incoming call recipient is not an approved installation")
 
+// IncomingCallRetention bounds the lifetime of transient call invitations.
+// Call history is persisted separately; an invitation only needs to survive
+// APNs delivery and the short answer window.
+const IncomingCallRetention = 2 * time.Minute
+
 // IncomingCallRecipient carries one iPhone-specific opaque call payload.
 type IncomingCallRecipient struct {
 	InstallationID  string `json:"installation_id"`

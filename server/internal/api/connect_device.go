@@ -170,7 +170,7 @@ func (service *deviceService) UploadIncomingCall(ctx context.Context, request *c
 	if notification.OccurredAt.After(now.Add(maxEventFutureSkew)) {
 		return nil, connect.NewError(connect.CodeInvalidArgument, "incoming call timestamp is too far in the future")
 	}
-	expiresAt := notification.OccurredAt.Add(eventRetention)
+	expiresAt := notification.OccurredAt.Add(domain.IncomingCallRetention)
 	if !expiresAt.After(now) {
 		return nil, connect.NewError(connect.CodeInvalidArgument, "incoming call is outside the retention window")
 	}

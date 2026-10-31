@@ -70,7 +70,7 @@ var _ = Describe("Encrypted incoming call ingestion", func() {
 		Expect(repository.authenticatedDeviceID).To(Equal(notification.DeviceUUID))
 		Expect(repository.authenticatedCredential).To(Equal("device-secret"))
 		Expect(repository.incomingCall).To(Equal(notification))
-		Expect(repository.incomingCallExpiry).To(Equal(notification.OccurredAt.Add(365 * 24 * time.Hour)))
+		Expect(repository.incomingCallExpiry).To(Equal(notification.OccurredAt.Add(domain.IncomingCallRetention)))
 		Expect(response.Body.String()).To(ContainSubstring(`"created":true`))
 	})
 

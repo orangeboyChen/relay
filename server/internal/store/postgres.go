@@ -536,7 +536,7 @@ func (store *Postgres) InsertIncomingCall(ctx context.Context, notification doma
 			if err != nil {
 				return fmt.Errorf("encode incoming call delivery: %w", err)
 			}
-			expires := notification.OccurredAt.Add(2 * time.Minute)
+			expires := notification.OccurredAt.Add(domain.IncomingCallRetention)
 			if err := tx.Create(&outboxJobModel{Kind: "voip.incoming_call", RoutingKey: recipient.InstallationID, Payload: delivery, AvailableAt: time.Now().UTC(), ExpiresAt: &expires}).Error; err != nil {
 				return fmt.Errorf("enqueue incoming call delivery: %w", err)
 			}

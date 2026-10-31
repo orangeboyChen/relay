@@ -115,6 +115,7 @@ const (
 	maxEventFutureSkew         = 5 * time.Minute
 	commandLease               = 30 * time.Second
 	maxCommandLifetime         = 5 * time.Minute
+	incomingCallRetention      = domain.IncomingCallRetention
 	commandPublicKeyBytes      = 32
 	commandNonceBytes          = 12
 	commandSignatureBytes      = ed25519.SignatureSize
@@ -284,7 +285,7 @@ func (router *router) insertIncomingCall(writer http.ResponseWriter, request *ht
 		writeError(writer, http.StatusUnprocessableEntity, "invalid_incoming_call_time", "Incoming call timestamp is too far in the future.")
 		return
 	}
-	expiresAt := body.Notification.OccurredAt.Add(eventRetention)
+	expiresAt := body.Notification.OccurredAt.Add(incomingCallRetention)
 	if !expiresAt.After(now) {
 		writeError(writer, http.StatusUnprocessableEntity, "incoming_call_expired", "Incoming call is outside the retention window.")
 		return

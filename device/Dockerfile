@@ -2,10 +2,15 @@
 
 FROM golang:1.26-alpine AS build
 WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY cmd ./cmd
-COPY internal ./internal
+COPY device/go.mod device/go.sum ./device/
+COPY protocol/sdk/go.mod protocol/sdk/go.sum ./protocol/sdk/
+COPY protocol/sdk/gen ./protocol/sdk/gen
+RUN cd device \
+    && go mod edit -replace=github.com/orangeboyChen/relay-sdk=../protocol/sdk \
+    && go mod download
+COPY device/cmd ./device/cmd
+COPY device/internal ./device/internal
+WORKDIR /src/device
 ARG TARGETOS=linux
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \

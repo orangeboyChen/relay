@@ -5,9 +5,15 @@ ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
 
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
+COPY server/go.mod server/go.sum ./server/
+COPY protocol/sdk/go.mod protocol/sdk/go.sum ./protocol/sdk/
+COPY protocol/sdk/gen ./protocol/sdk/gen
+RUN cd server \
+    && go mod edit -replace=github.com/orangeboyChen/relay-sdk=../protocol/sdk \
+    && go mod download
+COPY server/cmd ./server/cmd
+COPY server/internal ./server/internal
+WORKDIR /src/server
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/sim-deck-server ./cmd/sim-deck-server
 
 FROM alpine:3.22

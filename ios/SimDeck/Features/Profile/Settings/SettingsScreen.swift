@@ -9,10 +9,16 @@ struct SettingsScreen: View {
 
     var body: some View {
         List {
-            Section {
+            Section("Account") {
                 SettingsLink("Server", symbol: "server.rack") {
                     ServerSettingsScreen(model: model)
                 }
+                SettingsLink("Security", symbol: "lock.shield") {
+                    SecuritySettingsScreen(model: model)
+                }
+            }
+
+            Section("Communication") {
                 SettingsLink("Default Lines", symbol: "simcard.2") {
                     DefaultLineSettingsScreen(model: model)
                 }
@@ -22,12 +28,15 @@ struct SettingsScreen: View {
                 SettingsLink("Contacts", symbol: "person.crop.circle") {
                     ContactsSettingsScreen()
                 }
-                SettingsLink("Security", symbol: "lock.shield") {
-                    SecuritySettingsScreen(model: model)
-                }
+            }
+
+            Section("Data") {
                 SettingsLink("Messages & Storage", symbol: "externaldrive") {
                     StorageSettingsScreen(model: model)
                 }
+            }
+
+            Section("Other") {
                 SettingsLink("Advanced", symbol: "gearshape.2") {
                     AdvancedSettingsScreen(connection: model.serverConnection)
                 }

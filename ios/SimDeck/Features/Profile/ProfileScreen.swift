@@ -26,9 +26,6 @@ struct ProfileScreen: View {
                 NavigationLink(value: ProfileNavigationRoute.deviceManagement) {
                     Label("Device Management", systemImage: "simcard.2")
                 }
-                NavigationLink(value: ProfileNavigationRoute.simManagement) {
-                    Label("SIM Cards", systemImage: "simcard")
-                }
                 NavigationLink(value: ProfileNavigationRoute.settings) {
                     Label("Settings", systemImage: "gearshape")
                 }

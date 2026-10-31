@@ -1449,7 +1449,8 @@ func (store *Postgres) GetHistorySnapshot(ctx context.Context, ownerID string, k
 	return domain.HistorySnapshot{OwnerID: model.OwnerID, Kind: model.Kind, Revision: model.Revision, Ciphertext: append([]byte(nil), model.Ciphertext...), UpdatedAt: model.UpdatedAt}, nil
 }
 
-// PutHistorySnapshot replaces an archive only when its current revision matches expectedRevision.
+// PutHistorySnapshot is retained for legacy migrations; the public API rejects
+// client snapshot writes because history is server-owned.
 func (store *Postgres) PutHistorySnapshot(ctx context.Context, ownerID string, kind int, expectedRevision int64, ciphertext []byte, now time.Time) (domain.HistorySnapshot, error) {
 	var model encryptedHistorySnapshotModel
 	err := store.database(ctx).Transaction(func(tx *gorm.DB) error {

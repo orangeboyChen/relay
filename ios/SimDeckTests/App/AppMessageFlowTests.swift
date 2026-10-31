@@ -320,6 +320,63 @@ final class AppMessageFlowTests: XCTestCase {
         )
     }
 
+    func testRefreshReplaysServerEventsWhenLocalHistoryCacheIsMissing() async throws {
+        let vaultKey = try VaultKey(data: Data(repeating: 8, count: VaultKey.length))
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let remoteMessages = EncryptedMessageHistoryStore(
+            fileURL: directory.appending(path: "remote-messages.bin")
+        )
+        let remoteCalls = EncryptedCallHistoryStore(
+            fileURL: directory.appending(path: "remote-calls.bin")
+        )
+        try remoteMessages.save([], using: vaultKey)
+        try remoteCalls.save([], using: vaultKey)
+
+        let delivery = IncomingMessageDelivery(
+            id: UUID(),
+            sourceID: String(repeating: "b", count: 64),
+            lineID: firstLine.id,
+            remoteNumber: "10086",
+            body: "From server event log",
+            receivedAt: Date(timeIntervalSince1970: 200)
+        )
+        let transport = MessageTransportFake(currentSequence: 7, deliveries: [delivery])
+        let syncClient = HistorySnapshotClient(
+            messages: try XCTUnwrap(remoteMessages.encryptedData()),
+            calls: try XCTUnwrap(remoteCalls.encryptedData())
+        )
+        let defaults = UserDefaults(suiteName: "AppHistoryReplayTests.\(UUID().uuidString)")!
+        defaults.set("https://deck.example.test", forKey: "sim-deck.server-address.v1")
+        let connection = ServerConnectionManager(
+            network: MessageServerNetwork(),
+            sessionStore: MessageSessionStore(value: Self.activeSession),
+            defaults: defaults,
+            communicationSyncClientFactory: HistorySnapshotClientFactory(client: syncClient)
+        )
+        let model = AppModel(
+            devices: [firstLine],
+            serverConnection: connection,
+            installationBootstrapper: MessageInstallationBootstrapper(vaultKey: vaultKey),
+            messageTransport: transport,
+            messageHistoryStore: EncryptedMessageHistoryStore(
+                fileURL: directory.appending(path: "local-messages.bin")
+            ),
+            callHistoryStore: EncryptedCallHistoryStore(
+                fileURL: directory.appending(path: "local-calls.bin")
+            ),
+            remoteDeviceRefreshEnabled: false
+        )
+        model.bootstrapInstallation()
+
+        await model.refreshCommunicationHistory()
+
+        XCTAssertEqual(transport.resetSequenceCount, 1)
+        XCTAssertEqual(model.messageItems.map(\.body), ["From server event log"])
+    }
+
     func testRefreshResolvesFormattedContactNameForEverySIMConversation() async {
         let contactStore = MessageContactStore(
             authorizationState: .authorized,

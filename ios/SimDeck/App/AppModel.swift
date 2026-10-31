@@ -1346,6 +1346,16 @@ final class AppModel {
 
     private func synchronizeEncryptedHistory() async throws {
         guard let recoveredVaultKey else { return }
+
+        // A persisted event cursor is only meaningful while the local cache it
+        // backs is present. If the cache was cleared or lost, replay the
+        // server-owned event log from the beginning before acknowledging new
+        // events; otherwise an empty local history can remain empty forever.
+        let hasLocalMessageCache = (try? messageHistoryStore.encryptedData())?.isEmpty == false
+        if !hasLocalMessageCache {
+            messageTransport.resetSequence()
+        }
+
         let remoteMessages = try await serverConnection.getHistorySnapshot(kind: .messages)
         if !remoteMessages.ciphertext.isEmpty {
             // The event stream is the source of newly received messages. A

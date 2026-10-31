@@ -36,7 +36,6 @@ func ownerIDFromRPC(ctx context.Context) (string, error) {
 
 type historyRepository interface {
 	GetHistorySnapshot(context.Context, string, int) (domain.HistorySnapshot, error)
-	PutHistorySnapshot(context.Context, string, int, int64, []byte, time.Time) (domain.HistorySnapshot, error)
 }
 
 type syncService struct {
@@ -339,29 +338,10 @@ func (service *syncService) GetHistorySnapshot(ctx context.Context, request *com
 }
 
 func (service *syncService) PutHistorySnapshot(ctx context.Context, request *communicationv1.PutHistorySnapshotRequest) (*communicationv1.PutHistorySnapshotResponse, error) {
-	if request == nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, "history snapshot is required")
-	}
-	kind, err := historyKind(request.GetKind())
-	if err != nil || len(request.GetCiphertext()) == 0 || len(request.GetCiphertext()) > 16<<20 {
-		return nil, connect.NewError(connect.CodeInvalidArgument, "history snapshot is invalid")
-	}
-	ownerID, ok := ctx.Value(rpcOwnerContextKey{}).(string)
-	if !ok || ownerID == "" {
-		return nil, connect.NewError(connect.CodeUnauthenticated, "owner credential is required")
-	}
-	repository, ok := service.router.repository.(historyRepository)
-	if !ok {
-		return nil, connect.NewError(connect.CodeUnimplemented, "history snapshots are not configured")
-	}
-	snapshot, err := repository.PutHistorySnapshot(ctx, ownerID, kind, request.GetExpectedRevision(), request.GetCiphertext(), service.router.now())
-	if err != nil {
-		if errors.Is(err, domain.ErrHistoryRevisionConflict) {
-			return nil, connect.NewError(connect.CodeAborted, "history snapshot revision has changed")
-		}
-		return nil, connect.NewError(connect.CodeInternal, "unable to write encrypted history")
-	}
-	return &communicationv1.PutHistorySnapshotResponse{Snapshot: snapshotProto(snapshot)}, nil
+	// History is server-owned. Clients pull encrypted snapshots and event pages;
+	// accepting an opaque client snapshot would allow a stale or empty cache to
+	// replace the durable server state.
+	return nil, connect.NewError(connect.CodeUnimplemented, "history snapshots are read-only")
 }
 
 func rpcBearer(ctx context.Context) string {

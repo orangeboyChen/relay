@@ -20,7 +20,7 @@ service CommunicationSyncService {
   // GetHistorySnapshot returns the latest owner-scoped encrypted archive.
   rpc GetHistorySnapshot(GetHistorySnapshotRequest) returns (GetHistorySnapshotResponse);
 
-  // PutHistorySnapshot atomically replaces an archive at an expected revision.
+  // Deprecated: history is server-owned and this method is read-only for clients.
   rpc PutHistorySnapshot(PutHistorySnapshotRequest) returns (PutHistorySnapshotResponse);
 }
 

@@ -74,25 +74,13 @@ var _ = Describe("Connect encrypted sync service", func() {
 		Expect(response.Body.String()).To(ContainSubstring(`"ciphertext":"AQID"`))
 	})
 
-	It("writes a ciphertext snapshot using the expected revision", func() {
+	It("rejects client snapshot writes", func() {
 		response := request("PutHistorySnapshot", "Bearer owner-token",
 			`{"kind":"HISTORY_KIND_CALLS","expectedRevision":"4","ciphertext":"AQID"}`)
 
-		Expect(response.Code).To(Equal(http.StatusOK))
-		Expect(response.Body.String()).To(ContainSubstring(`"revision":"5"`))
-		Expect(repository.historyWriteExpected).To(Equal(int64(4)))
-		Expect(repository.historyWriteCiphertext).To(Equal([]byte{1, 2, 3}))
-		Expect(repository.historyWriteAt).To(Equal(now))
-	})
-
-	It("maps concurrent snapshot writes to an aborted RPC", func() {
-		repository.historyWriteError = domain.ErrHistoryRevisionConflict
-
-		response := request("PutHistorySnapshot", "Bearer owner-token",
-			`{"kind":"HISTORY_KIND_MESSAGES","expectedRevision":"2","ciphertext":"AQID"}`)
-
-		Expect(response.Code).To(Equal(http.StatusConflict))
-		Expect(response.Body.String()).To(ContainSubstring("aborted"))
+		Expect(response.Code).To(Equal(http.StatusNotImplemented))
+		Expect(response.Body.String()).To(ContainSubstring("read-only"))
+		Expect(repository.historyWriteCiphertext).To(BeNil())
 	})
 
 	It("does not expose repository errors for snapshot reads", func() {

@@ -56,6 +56,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
     private let makeMediaSession: @MainActor () throws -> any CallMediaSession
     private let makeRelayMediaSession: @MainActor ([CallTURNCredentials]) throws -> any CallMediaSession
     private let waitBeforePollingAgain: () async throws -> Void
+    private let waitBeforeCommandPolling: (Int) async throws -> Void
     private let waitBeforeCallLeaseRenewal: () async throws -> Void
     private let waitBeforeMediaRestart: () async throws -> Void
     private let waitBeforeMediaHealthCheck: () async throws -> Void
@@ -97,6 +98,9 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
         waitBeforePollingAgain: @escaping () async throws -> Void = {
             try await Task.sleep(for: .milliseconds(500))
         },
+        waitBeforeCommandPolling: @escaping (Int) async throws -> Void = { attempt in
+            try await Task.sleep(for: attempt < 4 ? .milliseconds(250) : .seconds(1))
+        },
         waitBeforeCallLeaseRenewal: @escaping () async throws -> Void = {
             try await Task.sleep(for: .seconds(10))
         },
@@ -117,6 +121,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
         self.makeMediaSession = makeMediaSession
         self.makeRelayMediaSession = makeRelayMediaSession
         self.waitBeforePollingAgain = waitBeforePollingAgain
+        self.waitBeforeCommandPolling = waitBeforeCommandPolling
         self.waitBeforeCallLeaseRenewal = waitBeforeCallLeaseRenewal
         self.waitBeforeMediaRestart = waitBeforeMediaRestart
         self.waitBeforeMediaHealthCheck = waitBeforeMediaHealthCheck
@@ -682,7 +687,7 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
         )
 
         var lastState: String?
-        for attempt in 0..<60 {
+        for attempt in 0..<34 {
             let status = try await api.commandStatus(deviceID: deviceID, commandID: commandID)
             if status.state != lastState {
                 Self.logger.info(
@@ -713,8 +718,8 @@ final class LiveCallTransport: CallTransport, CallLineRouting, CallNetworkPathHa
                     result: result
                 )
             }
-            if attempt < 59 {
-                try await waitBeforePollingAgain()
+            if attempt < 33 {
+                try await waitBeforeCommandPolling(attempt)
             }
         }
         throw LiveCallTransportError.commandTimedOut

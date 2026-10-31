@@ -8,10 +8,11 @@ struct ContactDetailScreen: View {
     let contact: ContactRecord
     let lines: [DeviceLineIdentity]
     let defaultMessageLineID: UUID?
-    let callAction: (String) async -> Void
+    let callAction: (String, UUID?) async -> Void
     let sendAction: (UUID, String, String) async throws -> Void
 
     @State private var pendingAction: ContactCommunicationAction?
+    @State private var pendingCall: PendingCall?
     @State private var messageRecipient: ContactPhoneNumber?
 
     var body: some View {
@@ -58,6 +59,29 @@ struct ContactDetailScreen: View {
             Button("Cancel", role: .cancel) {
                 pendingAction = nil
             }
+        }
+        .confirmationDialog(
+            "Choose a SIM to call with",
+            isPresented: Binding(
+                get: { pendingCall != nil },
+                set: { if !$0 { pendingCall = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            ForEach(onlineCallLines) { line in
+                Button {
+                    guard let pendingCall else { return }
+                    self.pendingCall = nil
+                    call(pendingCall.phoneNumber, using: line.id)
+                } label: {
+                    SIMLabel(line: line)
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingCall = nil
+            }
+        } message: {
+            Text("Choose which online SIM should place this call.")
         }
         .sheet(item: $messageRecipient) { phoneNumber in
             NewMessageScreen(
@@ -120,9 +144,7 @@ struct ContactDetailScreen: View {
         VStack(spacing: 0) {
             ForEach(Array(contact.phoneNumbers.enumerated()), id: \.element.id) { index, phoneNumber in
                 Button {
-                    Task {
-                        await callAction(phoneNumber.value)
-                    }
+                    beginCall(phoneNumber)
                 } label: {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 2) {
@@ -146,9 +168,7 @@ struct ContactDetailScreen: View {
                 .accessibilityLabel("Call \(phoneNumber.displayValue) with Sim Deck")
                 .contextMenu {
                     Button {
-                        Task {
-                            await callAction(phoneNumber.value)
-                        }
+                        beginCall(phoneNumber)
                     } label: {
                         Label("Call", systemImage: "phone.fill")
                     }
@@ -209,15 +229,39 @@ struct ContactDetailScreen: View {
         pendingAction = nil
         switch action {
         case .call:
-            Task {
-                await callAction(phoneNumber.value)
-            }
+            beginCall(phoneNumber)
         case .message:
             messageRecipient = phoneNumber
         case nil:
             break
         }
     }
+
+    private var onlineCallLines: [DeviceLineIdentity] {
+        lines.filter(\.isOnline)
+    }
+
+    private func beginCall(_ phoneNumber: ContactPhoneNumber) {
+        switch OutgoingCallLineRouter.resolve(lines: lines, preferredLineID: nil) {
+        case .ready(let line):
+            call(phoneNumber, using: line.id)
+        case .selectionRequired:
+            pendingCall = PendingCall(phoneNumber: phoneNumber)
+        case .unavailable:
+            call(phoneNumber, using: nil)
+        }
+    }
+
+    private func call(_ phoneNumber: ContactPhoneNumber, using lineID: UUID?) {
+        Task {
+            await callAction(phoneNumber.value, lineID)
+        }
+    }
+}
+
+private struct PendingCall: Identifiable {
+    let id = UUID()
+    let phoneNumber: ContactPhoneNumber
 }
 
 private enum ContactCommunicationAction {
@@ -257,7 +301,7 @@ private struct ContactActionButton: View {
             contact: PreviewContactFixtures.contacts[0],
             lines: PreviewFixtures.devices,
             defaultMessageLineID: PreviewFixtures.devices[0].id,
-            callAction: { _ in },
+            callAction: { _, _ in },
             sendAction: { _, _, _ in }
         )
     }
@@ -269,7 +313,7 @@ private struct ContactActionButton: View {
             contact: PreviewContactFixtures.contacts[1],
             lines: PreviewFixtures.devices,
             defaultMessageLineID: nil,
-            callAction: { _ in },
+            callAction: { _, _ in },
             sendAction: { _, _, _ in }
         )
     }

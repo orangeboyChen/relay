@@ -533,8 +533,11 @@ struct RootTabView: View {
                 markReadAction: { selectedConversationID in
                     model.markConversationRead(selectedConversationID)
                 },
-                callAction: { number in
-                    await model.handleExternalDial(number: number)
+                callAction: { number, lineID in
+                    await model.handleExternalDial(
+                        number: number,
+                        requiredLineID: lineID
+                    )
                 }
             )
         } else {
@@ -554,10 +557,10 @@ struct RootTabView: View {
             contact: contact,
             lines: model.devices,
             defaultMessageLineID: requiredLineID ?? model.defaultMessageLineID,
-            callAction: { number in
+            callAction: { number, lineID in
                 await model.handleExternalDial(
                     number: number,
-                    requiredLineID: requiredLineID
+                    requiredLineID: lineID ?? requiredLineID
                 )
             },
             sendAction: { lineID, number, body in

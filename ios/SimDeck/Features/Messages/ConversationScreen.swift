@@ -17,7 +17,7 @@ struct ConversationScreen: View {
     let retryAction: (UUID) async throws -> Void
     let deleteAction: (Set<UUID>) throws -> Void
     let markReadAction: (ConversationID) -> Void
-    let callAction: (String) async -> Void
+    let callAction: (String, UUID?) async -> Void
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
@@ -53,7 +53,7 @@ struct ConversationScreen: View {
         retryAction: @escaping (UUID) async throws -> Void = { _ in },
         deleteAction: @escaping (Set<UUID>) throws -> Void = { _ in },
         markReadAction: @escaping (ConversationID) -> Void = { _ in },
-        callAction: @escaping (String) async -> Void = { _ in }
+        callAction: @escaping (String, UUID?) async -> Void = { _, _ in }
     ) {
         self.conversations = conversations
         self.lines = lines

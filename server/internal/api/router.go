@@ -65,6 +65,7 @@ type Repository interface {
 	ListApprovedAppInstallationRecipients(context.Context) ([]store.AppInstallationRecipient, error)
 	InsertIncomingCall(context.Context, domain.IncomingCallNotification, time.Time) (bool, error)
 	ClaimIncomingCall(context.Context, string, string, string, time.Time) (domain.IncomingCallClaim, error)
+	ReleaseIncomingCall(context.Context, string, string, string) error
 }
 
 // Config describes public endpoints advertised to clients.

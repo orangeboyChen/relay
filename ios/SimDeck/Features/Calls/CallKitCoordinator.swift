@@ -221,6 +221,12 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
             return true
         } catch {
             activeCall?.status = .ringing
+            if let incomingCallClaimer = incomingCallClaimer as? any IncomingCallClaimReleasing {
+                try? await incomingCallClaimer.releaseIncomingCall(
+                    notificationID: call.notificationID,
+                    installationID: call.installationID
+                )
+            }
             Self.logger.error("Answering incoming call failed for call \(callID.uuidString, privacy: .public): \(String(reflecting: error), privacy: .public)")
             throw error
         }

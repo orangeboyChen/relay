@@ -320,6 +320,13 @@ func (fake *fakeRepository) ClaimIncomingCall(_ context.Context, ownerID string,
 	return fake.incomingClaim, fake.incomingClaimError
 }
 
+func (fake *fakeRepository) ReleaseIncomingCall(_ context.Context, ownerID string, notificationID string, installationID string) error {
+	fake.incomingClaimOwnerID = ownerID
+	fake.incomingClaimNotificationID = notificationID
+	fake.incomingClaimInstallationID = installationID
+	return nil
+}
+
 func (fake *fakeRepository) ListEvents(_ context.Context, afterSequence int64, limit int, now time.Time) ([]domain.EventEnvelope, error) {
 	fake.listEventsMutex.Lock()
 	defer fake.listEventsMutex.Unlock()

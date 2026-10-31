@@ -561,6 +561,27 @@ func (service *ownerService) ClaimIncomingCall(ctx context.Context, request *com
 	return &communicationv1.ClaimIncomingCallResponse{NotificationId: claim.NotificationID, InstallationId: claim.InstallationID, ClaimedAt: timestamppb.New(claim.ClaimedAt), Won: claim.Won}, nil
 }
 
+func (service *ownerService) ReleaseIncomingCall(ctx context.Context, request *communicationv1.ReleaseIncomingCallRequest) (*communicationv1.ReleaseIncomingCallResponse, error) {
+	ownerID, err := ownerIDFromRPC(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if request == nil || !validUUID(request.GetNotificationId()) || !validUUID(request.GetInstallationId()) {
+		return nil, connect.NewError(connect.CodeInvalidArgument, "notification and installation identities are invalid")
+	}
+	if err := service.router.repository.ReleaseIncomingCall(
+		ctx,
+		ownerID,
+		request.GetNotificationId(),
+		request.GetInstallationId(),
+	); errors.Is(err, pgx.ErrNoRows) {
+		return nil, connect.NewError(connect.CodeNotFound, "incoming call is unavailable to this installation")
+	} else if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, "unable to release the incoming call")
+	}
+	return &communicationv1.ReleaseIncomingCallResponse{}, nil
+}
+
 func (service *ownerService) EnqueueCommand(ctx context.Context, request *communicationv1.EnqueueCommandRequest) (*communicationv1.EnqueueCommandResponse, error) {
 	command := request.GetCommand()
 	if command == nil {

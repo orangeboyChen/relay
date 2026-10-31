@@ -125,6 +125,9 @@ func (repository *memoryRepository) EnqueueCommand(context.Context, domain.Encry
 func (repository *memoryRepository) ClaimCommand(context.Context, string, time.Time, time.Time) (domain.EncryptedCommand, error) {
 	return domain.EncryptedCommand{}, pgx.ErrNoRows
 }
+func (repository *memoryRepository) ReleaseIncomingCall(context.Context, string, string, string) error {
+	return nil
+}
 func (repository *memoryRepository) CompleteCommand(context.Context, string, string, domain.EncryptedCommandResult, time.Time) error {
 	return nil
 }

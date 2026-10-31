@@ -239,6 +239,11 @@ protocol IncomingCallClaiming: AnyObject {
         -> IncomingCallClaim
 }
 
+@MainActor
+protocol IncomingCallClaimReleasing: AnyObject {
+    func releaseIncomingCall(notificationID: UUID, installationID: UUID) async throws
+}
+
 enum PushTokenKind: String, Sendable {
     case alert
     case voip
@@ -1330,6 +1335,20 @@ final class ServerConnectionManager {
         return IncomingCallClaim(notificationID: notificationID, installationID: installationID, claimedAt: response.claimedAt.date, won: response.won)
     }
 
+    func releaseIncomingCall(
+        notificationID: UUID,
+        installationID: UUID
+    ) async throws {
+        let (service, token) = try await ownerService()
+        _ = try await service.releaseIncomingCall(
+            request: .with {
+                $0.notificationID = notificationID.uuidString.lowercased()
+                $0.installationID = installationID.uuidString.lowercased()
+            },
+            headers: ["authorization": ["Bearer \(token)"]]
+        ).result.get()
+    }
+
     func registerPushToken(
         _ token: Data,
         kind: PushTokenKind,
@@ -1476,7 +1495,7 @@ final class ServerConnectionManager {
 
 extension ServerConnectionManager: EncryptedCallCommandAPI, CallTURNCredentialProviding {}
 extension ServerConnectionManager: EncryptedEventStreamOpening {}
-extension ServerConnectionManager: IncomingCallClaiming {}
+extension ServerConnectionManager: IncomingCallClaiming, IncomingCallClaimReleasing {}
 extension ServerConnectionManager: PushTokenRegistering {}
 extension ServerConnectionManager: DeviceDiscoveryAPI {}
 

@@ -635,6 +635,28 @@ func (store *Postgres) ClaimIncomingCall(ctx context.Context, ownerID string, no
 	return claim, nil
 }
 
+// ReleaseIncomingCall removes a claim owned by the installation. The operation
+// is idempotent so a failed answer can safely retry cleanup.
+func (store *Postgres) ReleaseIncomingCall(ctx context.Context, ownerID string, notificationID string, installationID string) error {
+	var installation appInstallationModel
+	if err := store.database(ctx).Where(
+		"id = ? AND owner_id = ? AND approved_at IS NOT NULL AND revoked_at IS NULL",
+		installationID,
+		ownerID,
+	).First(&installation).Error; err != nil {
+		return databaseNotFound(err)
+	}
+	result := store.database(ctx).Where(
+		"notification_id = ? AND installation_id = ?",
+		notificationID,
+		installationID,
+	).Delete(&incomingCallClaimModel{})
+	if result.Error != nil {
+		return fmt.Errorf("release incoming call: %w", result.Error)
+	}
+	return nil
+}
+
 // ClaimVoIPPushJob leases the next time-sensitive VoIP outbox job without blocking another worker.
 func (store *Postgres) ClaimVoIPPushJob(ctx context.Context, now time.Time, leaseDuration time.Duration) (OutboxPushJob, error) {
 	var output OutboxPushJob

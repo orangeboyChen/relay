@@ -33,6 +33,7 @@ service OwnerService {
   rpc UpsertPushToken(UpsertPushTokenRequest) returns (UpsertPushTokenResponse);
   rpc DeletePushToken(DeletePushTokenRequest) returns (DeletePushTokenResponse);
   rpc ClaimIncomingCall(ClaimIncomingCallRequest) returns (ClaimIncomingCallResponse);
+  rpc ReleaseIncomingCall(ReleaseIncomingCallRequest) returns (ReleaseIncomingCallResponse);
   rpc EnqueueCommand(EnqueueCommandRequest) returns (EnqueueCommandResponse);
   rpc GetCommandStatus(GetCommandStatusRequest) returns (GetCommandStatusResponse);
   rpc GetCommandRecipient(GetCommandRecipientRequest) returns (GetCommandRecipientResponse);
@@ -300,6 +301,13 @@ message ClaimIncomingCallResponse {
   google.protobuf.Timestamp claimed_at = 3;
   bool won = 4;
 }
+
+message ReleaseIncomingCallRequest {
+  string notification_id = 1;
+  string installation_id = 2;
+}
+
+message ReleaseIncomingCallResponse {}
 
 message EnqueueCommandRequest {
   EncryptedCommand command = 1;

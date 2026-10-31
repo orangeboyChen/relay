@@ -1,0 +1,11 @@
+.git
+.github
+.env
+**/.env
+**/secrets
+ios
+**/.build
+**/.swiftpm
+**/coverage.out
+protocol/Sources
+protocol/sdk/Sources

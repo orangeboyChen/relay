@@ -102,7 +102,8 @@ struct RootTabView: View {
             navigationContainer
                 .accessibilityHidden(model.callCoordinator.activeCall != nil)
 
-            if model.callCoordinator.activeCall != nil {
+            if model.callCoordinator.activeCall != nil,
+               !model.callCoordinator.usesSystemCallUI {
                 InCallScreen(
                     coordinator: model.callCoordinator,
                     lines: model.devices,

@@ -18,6 +18,8 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
     private(set) var activeCall: ActiveCallSession?
     private(set) var callStartFailureID: UUID?
 
+    var usesSystemCallUI: Bool { integratesWithSystem }
+
     let capabilities: CallCapabilities
     let audioRoutes: CallAudioRouteController
 

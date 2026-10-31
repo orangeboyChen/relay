@@ -187,6 +187,11 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		credentials, err := database.WebAuthnCredentials(context.Background(), owner.ID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(credentials).To(Equal([]webauthnlib.Credential{credential}))
+		records, err := database.WebAuthnCredentialRecords(context.Background(), owner.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(records).To(HaveLen(1))
+		Expect(records[0].ID).To(Equal(credential.ID))
+		Expect(records[0].LastUsedAt).NotTo(BeNil())
 
 		credential.Authenticator.SignCount = 4
 		Expect(database.SaveWebAuthnCredential(context.Background(), owner.ID, credential)).To(Succeed())
@@ -196,6 +201,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 
 		disabledAt := now.Add(time.Minute)
 		Expect(database.DisableOwnerPassword(context.Background(), owner.ID, disabledAt)).To(Succeed())
+		Expect(database.DisableOwnerPassword(context.Background(), "01900000-0000-7000-8000-000000000099", disabledAt)).To(MatchError(pgx.ErrNoRows))
 		owner, err = database.OwnerCredentialByUsername(context.Background(), "admin")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(owner.PasswordHash).To(BeEmpty())
@@ -214,6 +220,22 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 
 		_, err = database.WebAuthnCredentials(context.Background(), owner.ID)
 		Expect(err).To(MatchError(ContainSubstring("decode passkey credential")))
+	})
+
+	It("reads an encrypted history snapshot", func() {
+		owner := createOwner()
+		ciphertext := []byte("encrypted history")
+		Expect(database.db.Create(&encryptedHistorySnapshotModel{
+			OwnerID: owner.ID, Kind: 1, Revision: 2, Ciphertext: ciphertext, UpdatedAt: now,
+		}).Error).To(Succeed())
+
+		snapshot, err := database.GetHistorySnapshot(context.Background(), owner.ID, 1)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(snapshot.OwnerID).To(Equal(owner.ID))
+		Expect(snapshot.Kind).To(Equal(1))
+		Expect(snapshot.Revision).To(Equal(int64(2)))
+		Expect(snapshot.Ciphertext).To(Equal(ciphertext))
+		Expect(snapshot.UpdatedAt).To(BeTemporally("==", now))
 	})
 
 	It("creates, authenticates, rotates, and revokes owner sessions", func() {
@@ -762,6 +784,22 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(records[1].NumericID).To(Equal(5))
 	})
 
+	It("creates a device with an empty encrypted profile when none is supplied", func() {
+		device, err := database.CreateDevice(
+			context.Background(), firstDeviceID, nil, bytes.Repeat([]byte{8}, ed25519.PublicKeySize), nil,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(device.ProfileCiphertext).To(BeEmpty())
+		Expect(device.Slots).To(HaveLen(1))
+		Expect(device.Slots[0].ProfileCiphertext).To(BeEmpty())
+	})
+
+	It("rejects device profile updates without an active SIM slot", func() {
+		device := createDevice(firstDeviceID)
+		Expect(database.db.Model(&deviceSlotModel{}).Where("id = ?", device.Slots[0].ID).Updates(map[string]any{"removed_at": now}).Error).To(Succeed())
+		Expect(database.UpdateDeviceProfile(context.Background(), device.ID, []byte("profile"))).To(MatchError(pgx.ErrNoRows))
+	})
+
 	It("updates encrypted profiles and immediately revokes device credentials", func() {
 		owner := createOwner()
 		pairingToken := newToken()
@@ -905,6 +943,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
 		Expect(database.UpdateDeviceCommandPublicKey(context.Background(), secondDeviceID, commandKey)).To(MatchError(pgx.ErrNoRows))
 		Expect(database.UpdateDeviceRadioStatus(context.Background(), secondDeviceID, "1", 1, "LTE", nil, now)).To(MatchError(pgx.ErrNoRows))
+		Expect(database.UpdateDeviceRadioStatus(context.Background(), device.ID, "missing", 1, "LTE", nil, now)).To(MatchError(ContainSubstring(pgx.ErrNoRows.Error())))
 
 		unknownDeviceCommand := encrypted
 		unknownDeviceCommand.ID = "01900000-0000-7000-8000-000000000051"
@@ -1015,7 +1054,7 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(profileOne.Name).To(Equal("Primary"))
 		profileTwo, err := database.UpsertESIMProfile(context.Background(), ESIMProfileRecord{
-			SIMID: simID, ProfileID: "profile-two", Name: "Backup", ICCID: "890100000000000002", OperatorName: "Test Carrier", CreatedAt: now,
+			SIMID: simID, ProfileID: "profile-two", Name: "Backup", ICCID: "890100000000000002", OperatorName: "Test Carrier",
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(profileTwo.IsEnabled).To(BeFalse())
@@ -1053,6 +1092,8 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
 		_, err = database.SetESIMProfileEnabled(context.Background(), simID, "missing", true)
 		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue())
+		_, err = database.RenameESIMProfile(context.Background(), simID, "", "name")
+		Expect(errors.Is(err, domain.ErrInvalidESIMProfile)).To(BeTrue())
 		remaining, err := database.ListESIMProfiles(context.Background(), simID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(remaining).To(HaveLen(1))
@@ -1078,6 +1119,8 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(errors.Is(err, context.Canceled)).To(BeTrue())
 		Expect(errors.Is(database.DeleteESIMProfile(ctx, simID, "profile"), context.Canceled)).To(BeTrue())
 		_, err = database.GetHistorySnapshot(ctx, owner.ID, 1)
+		Expect(errors.Is(err, context.Canceled)).To(BeTrue())
+		_, err = database.WebAuthnCredentialRecords(ctx, owner.ID)
 		Expect(errors.Is(err, context.Canceled)).To(BeTrue())
 	})
 
@@ -1452,6 +1495,16 @@ var _ = Describe("PostgreSQL integration", Ordered, func() {
 		Expect(job.Attempt).To(Equal(2))
 		Expect(database.CompletePushJob(context.Background(), job.ID, job.Attempt, now.Add(6*time.Second))).To(Succeed())
 		Expect(database.CompletePushJob(context.Background(), job.ID, job.Attempt, now.Add(7*time.Second))).To(MatchError(pgx.ErrNoRows))
+		Expect(database.RetryPushJob(context.Background(), job.ID, job.Attempt, now.Add(8*time.Second), "late retry")).To(MatchError(pgx.ErrNoRows))
+
+		orphanExpiresAt := now.Add(2 * time.Minute)
+		orphanJob := outboxJobModel{Kind: "voip.incoming_call", RoutingKey: "01900000-0000-7000-8000-000000000099", Payload: []byte("orphan push"), AvailableAt: now, ExpiresAt: &orphanExpiresAt}
+		Expect(database.db.Create(&orphanJob).Error).To(Succeed())
+		orphan, err := database.ClaimVoIPPushJob(context.Background(), now, 20*time.Second)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(orphan.ID).To(Equal(orphanJob.ID))
+		Expect(orphan.Environment).To(BeEmpty())
+		Expect(orphan.DeviceToken).To(BeEmpty())
 
 		Expect(database.DeleteVoIPPushToken(context.Background(), installation.ID, "sandbox", token)).To(Succeed())
 		var tokens int64

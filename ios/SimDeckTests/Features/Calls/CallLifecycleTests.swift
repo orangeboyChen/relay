@@ -56,6 +56,7 @@ final class CallLifecycleTests: XCTestCase {
             [.init(callID: callID, remoteNumber: "10086", lineID: lineID)]
         )
         XCTAssertEqual(coordinator.activeCall?.status, .active(connectedAt: transport.connectedAt))
+        XCTAssertTrue(coordinator.showsInAppCallUI)
 
         try await coordinator.setMuted(true)
         try await coordinator.setHeld(true)
@@ -71,6 +72,7 @@ final class CallLifecycleTests: XCTestCase {
 
         XCTAssertEqual(transport.endedCallIDs, [callID])
         XCTAssertNil(coordinator.activeCall)
+        XCTAssertFalse(coordinator.showsInAppCallUI)
     }
 
     func testCompletedOutgoingCallIsAddedToAppHistory() async throws {
@@ -400,6 +402,7 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertTrue(didFulfill)
         XCTAssertFalse(didFail)
         XCTAssertEqual(coordinator.activeCall?.status, .ringing)
+        XCTAssertTrue(coordinator.showsInAppCallUI)
         for _ in 0..<10 where !transport.isStartPending {
             await Task.yield()
         }
@@ -442,6 +445,7 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertEqual(provider.incomingUpdate?.supportsHolding, true)
         XCTAssertEqual(provider.incomingUpdate?.supportsDTMF, true)
         XCTAssertEqual(coordinator.activeCall?.status, .ringing)
+        XCTAssertFalse(coordinator.showsInAppCallUI)
         XCTAssertEqual(coordinator.activeCall?.lineID, call.lineID)
         XCTAssertEqual(transport.registeredIncomingCalls.first?.callSecret, call.callSecret)
         XCTAssertEqual(

@@ -17,6 +17,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
     )
     private(set) var activeCall: ActiveCallSession?
     private(set) var callStartFailureID: UUID?
+    private(set) var showsInAppCallUI = false
 
     var usesSystemCallUI: Bool { integratesWithSystem }
 
@@ -115,6 +116,11 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
             status: .requesting,
             isMuted: false
         )
+        // CallKit does not expose a public API to foreground its system call
+        // screen over an active application scene. Keep an in-app control
+        // surface visible for calls initiated here; CallKit still owns the
+        // call when the app is backgrounded or the device is locked.
+        showsInAppCallUI = true
         pendingOutgoing[callID] = request
         historyContexts[callID] = CallHistoryContext(
             lineID: lineID,
@@ -164,6 +170,9 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
             status: .ringing,
             isMuted: false
         )
+        // Incoming calls are presented and controlled by the system CallKit
+        // surface, including when the user answers from the lock screen.
+        showsInAppCallUI = false
         historyContexts[call.callID] = CallHistoryContext(
             lineID: call.lineID,
             remoteNumber: call.remoteNumber,
@@ -546,6 +555,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
     private func dismissCallPresentation(callID: UUID) {
         guard activeCall?.id == callID else { return }
         activeCall = nil
+        showsInAppCallUI = false
         if callStartFailureID == callID {
             callStartFailureID = nil
         }
@@ -564,6 +574,7 @@ final class CallKitCoordinator: NSObject, CallStarting, CallControlling, Incomin
             result: result ?? defaultEndResult(callID: callID)
         )
         activeCall = nil
+        showsInAppCallUI = false
         if callStartFailureID == callID {
             callStartFailureID = nil
         }

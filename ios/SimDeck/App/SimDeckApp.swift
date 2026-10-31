@@ -194,6 +194,7 @@ struct SimDeckApp: App {
                     model.startVoIPPushes()
                     await model.refreshDevices()
                     await model.refreshSIMCards()
+                    await model.refreshPasskeys()
                     await model.refreshCommunicationHistory()
                     appDelegate.setRemoteNotificationHandlers(
                         onActivity: {

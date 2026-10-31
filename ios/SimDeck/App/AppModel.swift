@@ -37,6 +37,7 @@ final class AppModel {
     var selectedTab: AppTab
     private(set) var isOnboardingPresented: Bool
     var keyRecoveryState: KeyRecoveryState
+    private(set) var passkeys: [PasskeySummary]
     var installationID: UUID?
     private(set) var installationTrust: AppInstallationTrust?
     var pendingInstallationRevocationIDs: [UUID]
@@ -84,6 +85,7 @@ final class AppModel {
         defaultMessageLineID: UUID? = nil,
         selectedTab: AppTab = .calls,
         keyRecoveryState: KeyRecoveryState = .checking,
+        passkeys: [PasskeySummary] = [],
         serverConnection: ServerConnectionManager? = nil,
         callCoordinator: CallKitCoordinator? = nil,
         installationBootstrapper: any InstallationBootstrapping = InstallationBootstrapper.live(),
@@ -118,6 +120,7 @@ final class AppModel {
         let resolvedCommandSigner = InstallationCommandSigner()
         self.isOnboardingPresented = !resolvedOnboardingStore.isCompleted
         self.keyRecoveryState = keyRecoveryState
+        self.passkeys = passkeys
         self.installationTrust = nil
         self.pendingInstallationRevocationIDs = []
         self.serverConnection = resolvedServerConnection
@@ -249,6 +252,7 @@ final class AppModel {
         callCoordinator.updateLineRoutes(devices)
         messageTransport.updateLineRoutes(devices)
         await refreshSIMCards()
+        await refreshPasskeys()
         try? await synchronizeEncryptedHistory()
         resolvePendingMessageNotificationSelection()
         if voipPushCoordinator != nil || alertPushCoordinator != nil {
@@ -265,6 +269,19 @@ final class AppModel {
             throw WebPasskeyAuthorizationError.invalidURL
         }
         try await webPasskeyAuthorizer.register(baseURL: baseURL, accessToken: accessToken)
+        await refreshPasskeys()
+    }
+
+    func refreshPasskeys() async {
+        guard serverConnection.isSignedIn else {
+            passkeys = []
+            return
+        }
+        do {
+            passkeys = try await serverConnection.listPasskeys()
+        } catch {
+            Self.logger.error("Passkey list refresh failed: \(String(reflecting: error), privacy: .public)")
+        }
     }
 
     func startVoIPPushes() {
@@ -487,6 +504,7 @@ final class AppModel {
         guard messageEventMonitor?.isRunning != true else { return }
         await refreshDevices()
         await refreshSIMCards()
+        await refreshPasskeys()
         await refreshCommunicationHistory()
     }
 

@@ -12,6 +12,8 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
+
+	"sim-deck-server/internal/store"
 )
 
 type Store interface {
@@ -19,6 +21,15 @@ type Store interface {
 	WebAuthnCredentials(context.Context, string) ([]webauthn.Credential, error)
 	SaveWebAuthnCredential(context.Context, string, webauthn.Credential) error
 	DisableOwnerPassword(context.Context, string, time.Time) error
+}
+
+type CredentialSummary struct {
+	CreatedAt  time.Time
+	LastUsedAt *time.Time
+}
+
+type CredentialRecordStore interface {
+	WebAuthnCredentialRecords(context.Context, string) ([]store.WebAuthnCredentialRecord, error)
 }
 
 type User struct {
@@ -67,6 +78,29 @@ func (service *Service) user(ctx context.Context, ownerID string) (User, error) 
 		return User{}, err
 	}
 	return User{ID: ownerID, Credentials: credentials}, nil
+}
+
+func (service *Service) ListCredentialSummaries(ctx context.Context, ownerID string) ([]CredentialSummary, error) {
+	if recordStore, ok := service.store.(CredentialRecordStore); ok {
+		records, err := recordStore.WebAuthnCredentialRecords(ctx, ownerID)
+		if err != nil {
+			return nil, err
+		}
+		summaries := make([]CredentialSummary, 0, len(records))
+		for _, record := range records {
+			summaries = append(summaries, CredentialSummary{
+				CreatedAt:  record.CreatedAt,
+				LastUsedAt: record.LastUsedAt,
+			})
+		}
+		return summaries, nil
+	}
+
+	credentials, err := service.store.WebAuthnCredentials(ctx, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	return make([]CredentialSummary, len(credentials)), nil
 }
 
 func (service *Service) BeginRegistration(ctx context.Context, ownerID string) (string, json.RawMessage, error) {

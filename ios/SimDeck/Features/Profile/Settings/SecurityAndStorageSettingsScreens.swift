@@ -8,8 +8,23 @@ struct SecuritySettingsScreen: View {
 
     var body: some View {
         List {
-            Section("Authentication") {
-                Button("Register Passkey") {
+            Section("Passkeys") {
+                if model.passkeys.isEmpty {
+                    Text("No passkeys registered")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(model.passkeys) { passkey in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Passkey")
+                            if let createdAt = passkey.createdAt {
+                                Text("Registered \(createdAt, format: .dateTime.year().month().day())")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                Button("Register Another Passkey") {
                     isRegisteringPasskey = true
                     Task {
                         defer { isRegisteringPasskey = false }
@@ -18,6 +33,8 @@ struct SecuritySettingsScreen: View {
                     }
                 }
                 .disabled(isRegisteringPasskey || !model.serverConnection.isSignedIn)
+            }
+            Section("Trusted Devices") {
                 NavigationLink("Trusted iPhones") {
                     TrustedDevicesScreen(model: model)
                 }

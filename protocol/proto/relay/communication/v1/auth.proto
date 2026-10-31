@@ -13,6 +13,7 @@ service AuthenticationService {
   rpc Logout(LogoutRequest) returns (LogoutResponse);
   rpc BeginPasskeyRegistration(BeginPasskeyRegistrationRequest) returns (BeginPasskeyRegistrationResponse);
   rpc FinishPasskeyRegistration(FinishPasskeyRegistrationRequest) returns (FinishPasskeyRegistrationResponse);
+  rpc ListPasskeys(ListPasskeysRequest) returns (ListPasskeysResponse);
   rpc BeginPasskeyLogin(BeginPasskeyLoginRequest) returns (BeginPasskeyLoginResponse);
   rpc FinishPasskeyLogin(FinishPasskeyLoginRequest) returns (FinishPasskeyLoginResponse);
 }
@@ -57,6 +58,17 @@ message FinishPasskeyRegistrationRequest {
 }
 
 message FinishPasskeyRegistrationResponse {}
+
+message ListPasskeysRequest {}
+
+message ListPasskeysResponse {
+  repeated PasskeyRecord passkeys = 1;
+}
+
+message PasskeyRecord {
+  google.protobuf.Timestamp created_at = 1;
+  google.protobuf.Timestamp last_used_at = 2;
+}
 
 message BeginPasskeyLoginRequest {}
 

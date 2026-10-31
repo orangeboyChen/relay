@@ -105,6 +105,13 @@ type OwnerCredential struct {
 	PasswordDisabledAt *time.Time
 }
 
+// WebAuthnCredentialRecord contains passkey metadata safe for the owner to display.
+type WebAuthnCredentialRecord struct {
+	ID         []byte
+	CreatedAt  time.Time
+	LastUsedAt *time.Time
+}
+
 // DevicePairing contains the public-key material and encrypted profile supplied by a new agent.
 type DevicePairing struct {
 	DeviceUUID        string
@@ -264,6 +271,23 @@ func (store *Postgres) WebAuthnCredentials(ctx context.Context, ownerID string) 
 		credentials = append(credentials, credential)
 	}
 	return credentials, nil
+}
+
+// WebAuthnCredentialRecords loads passkey metadata without exposing public keys.
+func (store *Postgres) WebAuthnCredentialRecords(ctx context.Context, ownerID string) ([]WebAuthnCredentialRecord, error) {
+	var models []webauthnCredentialModel
+	if err := store.database(ctx).Where("owner_id = ?", ownerID).Order("created_at").Find(&models).Error; err != nil {
+		return nil, fmt.Errorf("list passkey records: %w", err)
+	}
+	records := make([]WebAuthnCredentialRecord, 0, len(models))
+	for _, model := range models {
+		records = append(records, WebAuthnCredentialRecord{
+			ID:         append([]byte(nil), model.ID...),
+			CreatedAt:  model.CreatedAt,
+			LastUsedAt: model.LastUsedAt,
+		})
+	}
+	return records, nil
 }
 
 // SaveWebAuthnCredential stores the complete credential while keeping the lookup ID indexed.

@@ -107,6 +107,29 @@ func (service *authenticationService) FinishPasskeyRegistration(ctx context.Cont
 	return &communicationv1.FinishPasskeyRegistrationResponse{}, nil
 }
 
+func (service *authenticationService) ListPasskeys(ctx context.Context, _ *communicationv1.ListPasskeysRequest) (*communicationv1.ListPasskeysResponse, error) {
+	ownerID, ok := ctx.Value(rpcOwnerContextKey{}).(string)
+	if !ok || service.router.webAuthn == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, "passkey authentication is unavailable")
+	}
+	summaries, err := service.router.webAuthn.ListCredentialSummaries(ctx, ownerID)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, "unable to list passkeys")
+	}
+	response := &communicationv1.ListPasskeysResponse{}
+	for _, summary := range summaries {
+		item := &communicationv1.PasskeyRecord{}
+		if !summary.CreatedAt.IsZero() {
+			item.CreatedAt = timestamppb.New(summary.CreatedAt)
+		}
+		if summary.LastUsedAt != nil {
+			item.LastUsedAt = timestamppb.New(*summary.LastUsedAt)
+		}
+		response.Passkeys = append(response.Passkeys, item)
+	}
+	return response, nil
+}
+
 func (service *authenticationService) BeginPasskeyLogin(context.Context, *communicationv1.BeginPasskeyLoginRequest) (*communicationv1.BeginPasskeyLoginResponse, error) {
 	if service.router.webAuthn == nil {
 		return nil, connect.NewError(connect.CodeUnimplemented, "passkey authentication is unavailable")

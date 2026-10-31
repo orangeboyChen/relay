@@ -440,6 +440,12 @@ struct PasskeyOptionsPayload: Equatable, Sendable {
     let optionsJSON: Data
 }
 
+struct PasskeySummary: Identifiable, Equatable, Sendable {
+    let id: UUID
+    let createdAt: Date?
+    let lastUsedAt: Date?
+}
+
 @MainActor
 protocol PasskeyRPCClient: AnyObject {
     func bootstrap(username: String, password: String) async throws -> ServerSession
@@ -447,8 +453,16 @@ protocol PasskeyRPCClient: AnyObject {
     func logout(accessToken: String) async throws
     func beginRegistration(accessToken: String) async throws -> PasskeyOptionsPayload
     func finishRegistration(ceremonyID: String, credentialJSON: Data, accessToken: String) async throws
+    func listPasskeys(accessToken: String) async throws -> [PasskeySummary]
     func beginLogin() async throws -> PasskeyOptionsPayload
     func finishLogin(ceremonyID: String, credentialJSON: Data) async throws -> ServerSession
+}
+
+@MainActor
+extension PasskeyRPCClient {
+    func listPasskeys(accessToken: String) async throws -> [PasskeySummary] {
+        []
+    }
 }
 
 @MainActor
@@ -517,6 +531,21 @@ private final class ConnectPasskeyRPCClient: PasskeyRPCClient {
             headers: ["authorization": ["Bearer \(accessToken)"]]
         )
         _ = try response.result.get()
+    }
+
+    func listPasskeys(accessToken: String) async throws -> [PasskeySummary] {
+        let response = await client.listPasskeys(
+            request: Relay_Communication_V1_ListPasskeysRequest(),
+            headers: ["authorization": ["Bearer \(accessToken)"]]
+        )
+        let result = try response.result.get()
+        return result.passkeys.enumerated().map { index, passkey in
+            PasskeySummary(
+                id: UUID(uuidString: "00000000-0000-0000-0000-\(String(format: "%012d", index + 1))") ?? UUID(),
+                createdAt: passkey.hasCreatedAt ? passkey.createdAt.date : nil,
+                lastUsedAt: passkey.hasLastUsedAt ? passkey.lastUsedAt.date : nil
+            )
+        }
     }
 
     func beginLogin() async throws -> PasskeyOptionsPayload {
@@ -735,6 +764,13 @@ final class ServerConnectionManager {
                 userName: user.name
             )
         )
+    }
+
+    func listPasskeys() async throws -> [PasskeySummary] {
+        let baseURL = try validatedBaseURL()
+        let session = try await validSession(baseURL: baseURL)
+        return try await passkeyRPCClientFactory.makeClient(baseURL: baseURL)
+            .listPasskeys(accessToken: session.accessToken)
     }
 
     func finishPasskeyRegistration(

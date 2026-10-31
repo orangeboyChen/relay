@@ -51,6 +51,16 @@ struct SIMBadge: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityLabel)
     }
+
+    static func inlineText(number: Int?) -> Text {
+        Text(Image(systemName: systemImageName(for: number)))
+    }
+
+    static func systemImageName(for number: Int?) -> String {
+        guard let number else { return "questionmark.square.fill" }
+        let candidate = "\(number).square.fill"
+        return UIImage(systemName: candidate) == nil ? "simcard.fill" : candidate
+    }
 }
 
 private struct SIMNumberSymbol: View {
@@ -82,8 +92,8 @@ private struct SIMNumberSymbol: View {
 
     private var symbolName: String? {
         guard let number else { return nil }
-        let candidate = "\(number).square.fill"
-        return UIImage(systemName: candidate) == nil ? nil : candidate
+        let candidate = SIMBadge.systemImageName(for: number)
+        return candidate == "simcard.fill" ? nil : candidate
     }
 }
 

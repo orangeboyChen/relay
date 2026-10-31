@@ -72,6 +72,7 @@ struct ConversationRow: View {
     var isEditing = false
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .subheadline) private var previewLineHeight = 18
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -180,15 +181,18 @@ struct ConversationRow: View {
     }
 
     private var previewRow: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 7) {
-            SIMBadge(snapshot: linePresentation.snapshot, size: 14)
-
-            Text(summary)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(isEditing ? 1 : 2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
+        (
+            SIMBadge.inlineText(number: linePresentation.snapshot?.numericID)
+            + Text(" \(summary)")
+        )
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .lineLimit(2)
+            .frame(
+                maxWidth: .infinity,
+                minHeight: previewLineHeight * 2,
+                alignment: .topLeading
+            )
     }
 
     private var summary: String {

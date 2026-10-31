@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import Intents
 import SwiftUI
 import SwiftUIIntrospect
 import UIKit
@@ -83,17 +82,6 @@ struct RootTabView: View {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text("The call history could not be saved.")
-            }
-            .onContinueUserActivity(INStartCallIntentIdentifier) { activity in
-                Task {
-                    await model.handleDefaultCallingActivity(activity)
-                }
-            }
-            .onOpenURL { url in
-                guard let request = DefaultCallingRequestParser.request(from: url) else { return }
-                Task {
-                    await model.handleDefaultCallingRequest(request)
-                }
             }
     }
 

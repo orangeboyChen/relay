@@ -347,11 +347,22 @@ final class AppModel {
     }
 
     func handleDefaultCallingActivity(_ activity: NSUserActivity) async {
-        guard let request = DefaultCallingRequestParser.request(from: activity) else { return }
+        guard let request = DefaultCallingRequestParser.request(from: activity) else {
+            Self.logger.error(
+                "Default calling activity did not contain a dialable number: \(activity.activityType, privacy: .public)"
+            )
+            return
+        }
         await handleDefaultCallingRequest(request)
     }
 
     func handleDefaultCallingRequest(_ request: DefaultCallingRequest) async {
+        // The scene can receive the activity before the app's initial device
+        // refresh finishes. Load the current lines before deciding whether to
+        // place the call or ask the user to choose a SIM.
+        if devices.isEmpty, serverConnection.isSignedIn {
+            await refreshDevices()
+        }
         let requiredLineID = request.isCallBack ? recentLineID(for: request) : nil
         await handleExternalDial(number: request.number, requiredLineID: requiredLineID)
     }

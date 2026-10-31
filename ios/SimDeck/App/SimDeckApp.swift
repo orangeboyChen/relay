@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import Foundation
+import Intents
 import SwiftUI
 import UIKit
 import UserNotifications
@@ -217,6 +218,17 @@ struct SimDeckApp: App {
                         }
                     } else {
                         model.stopRealtimeUpdates()
+                    }
+                }
+                .onContinueUserActivity(INStartCallIntentIdentifier) { activity in
+                    Task {
+                        await model.handleDefaultCallingActivity(activity)
+                    }
+                }
+                .onOpenURL { url in
+                    guard let request = DefaultCallingRequestParser.request(from: url) else { return }
+                    Task {
+                        await model.handleDefaultCallingRequest(request)
                     }
                 }
         }

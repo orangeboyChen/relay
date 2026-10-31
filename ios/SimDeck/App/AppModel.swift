@@ -1117,12 +1117,14 @@ final class AppModel {
         guard serverConnection.isSignedIn else {
             throw ServerConnectionError.authenticationRequired
         }
-        try deleteEncryptedHistory()
-        messages = .loaded([])
-        callHistory = .loaded([])
-        messageTransport.resetSequence()
-        try await synchronizeEncryptedHistory()
-        await refreshMessages()
+        try await withCommunicationSync {
+            try deleteEncryptedHistory()
+            messages = .loaded([])
+            callHistory = .loaded([])
+            messageTransport.resetSequence()
+            try await synchronizeEncryptedHistory()
+            try await synchronizeMessages()
+        }
     }
 
     func deleteCallHistoryRecords(withIDs recordIDs: Set<UUID>) throws {
